@@ -6,14 +6,14 @@ description: Using the code, architect, ask and help chat modes.
 
 # Chat modes
 
-Aider has a few different chat modes:
+Dev has a few different chat modes:
 
-- `code` - Aider will make changes to your code to satisfy your requests.
-- `architect` - Aider will first propose a solution, then ask if you want it to turn that proposal into edits to your files.
-- `ask` - Aider will answer questions about your code, but never edit it.
-- `help` - Aider will answer questions about using aider, configuring, troubleshooting, etc.
+- `code` - Dev will make changes to your code to satisfy your requests.
+- `architect` - Dev will first propose a solution, then ask if you want it to turn that proposal into edits to your files.
+- `ask` - Dev will answer questions about your code, but never edit it.
+- `help` - Dev will answer questions about using dev, configuring, troubleshooting, etc.
 
-By default, aider starts in "code" mode. As you are talking, you can
+By default, dev starts in "code" mode. As you are talking, you can
 send individual messages in a specific mode using 
 `/code`, `/architect`, `/ask`, and `/help` commands:
 Using these `/`-commands applies just to that particular message.
@@ -37,20 +37,20 @@ Or you can switch between coding modes using these commands without arguments:
 /ask
 ```
 
-Or you can launch aider in one of the modes with the `--chat-mode <mode>` switch.
+Or you can launch dev in one of the modes with the `--chat-mode <mode>` switch.
 There is also a special shortcut `--architect` to launch in `--chat-mode architect`.
 
 ## Architect mode and the editor model
 
-When you are in architect mode, aider sends your request to two models:
+When you are in architect mode, dev sends your request to two models:
 
 1. First, it sends your request to the main active model.
 The main model is configured with `/model`, `--model` or the shortcut switches like `--sonnet`. 
-After the main model replies, aider will offer to edit the files based on the response.
+After the main model replies, dev will offer to edit the files based on the response.
 
-2. To edit the files, aider sends a second LLM request asking for specific code editing instructions.
+2. To edit the files, dev sends a second LLM request asking for specific code editing instructions.
 This request goes to the "editor" model.
-Aider has built in defaults to select an editor model based on your main model.
+Dev has built in defaults to select an editor model based on your main model.
 Or, you can choose an editor model yourself with `--editor-model <model>`.
 
 Architect mode produces better results than code mode, but uses two LLM requests.
@@ -66,15 +66,15 @@ at both the architect and the editor.
 Allowing the model two requests to solve the problem and edit the files
 usually provides a better result.
 
-The editor model uses one of aider's edit formats to let the LLM
+The editor model uses one of dev's edit formats to let the LLM
 edit source files.
-Aider will pick a suitable edit format by default,
+Dev will pick a suitable edit format by default,
 but you can customize it with `--editor-edit-format <format>`.
 The 
 ["editor-diff" and "editor-whole" edit formats](/docs/more/edit-formats.html#editor-diff-and-editor-whole)
 are the recommended edit formats when using architect mode.
 See this article on 
-[aider's architect/editor mode](/2024/09/26/architect.html)
+[dev's architect/editor mode](/2024/09/26/architect.html)
 for more details.
 
 
@@ -83,7 +83,7 @@ for more details.
 <div class="chat-transcript" markdown="1">
 
 
-> Aider v0.47.1-dev  
+> Dev v0.47.1-dev  
 > Models: claude-3-5-sonnet-20240620 with diff edit format  
 > Git repo: .git with 298 files  
 > Repo-map: using 1024 tokens  
@@ -95,8 +95,8 @@ This is the source code to the popular django package.
 
 #### /help How do I use ollama?
 
-Run `aider --model ollama/<ollama-model>`.
-See these docs for more info: https://aider.chat/docs/llms/ollama.html
+Run `dev --model ollama/<ollama-model>`.
+See these docs for more info: https://dev.chat/docs/llms/ollama.html
 
 #### /code Add a function to calculate the factorial of a number
 

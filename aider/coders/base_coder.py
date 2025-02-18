@@ -19,19 +19,19 @@ from json.decoder import JSONDecodeError
 from pathlib import Path
 from typing import List
 
-from aider import __version__, models, prompts, urls, utils
-from aider.analytics import Analytics
-from aider.commands import Commands
-from aider.exceptions import LiteLLMExceptions
-from aider.history import ChatSummary
-from aider.io import ConfirmGroup, InputOutput
-from aider.linter import Linter
-from aider.llm import litellm
-from aider.models import RETRY_TIMEOUT
-from aider.repo import ANY_GIT_ERROR, GitRepo
-from aider.repomap import RepoMap
-from aider.run_cmd import run_cmd
-from aider.utils import format_content, format_messages, format_tokens, is_image_file
+from dev import __version__, models, prompts, urls, utils
+from dev.analytics import Analytics
+from dev.commands import Commands
+from dev.exceptions import LiteLLMExceptions
+from dev.history import ChatSummary
+from dev.io import ConfirmGroup, InputOutput
+from dev.linter import Linter
+from dev.llm import litellm
+from dev.models import RETRY_TIMEOUT
+from dev.repo import ANY_GIT_ERROR, GitRepo
+from dev.repomap import RepoMap
+from dev.run_cmd import run_cmd
+from dev.utils import format_content, format_messages, format_tokens, is_image_file
 
 from ..dump import dump  # noqa: F401
 from .chat_chunks import ChatChunks
@@ -73,8 +73,8 @@ class Coder:
     abs_fnames = None
     abs_read_only_fnames = None
     repo = None
-    last_aider_commit_hash = None
-    aider_edited_files = None
+    last_dev_commit_hash = None
+    dev_edited_files = None
     last_asked_for_commit_time = 0
     repo_map = None
     functions = None
@@ -116,7 +116,7 @@ class Coder:
         summarize_from_coder=True,
         **kwargs,
     ):
-        import aider.coders as coders
+        import dev.coders as coders
 
         if not main_model:
             if from_coder:
@@ -158,7 +158,7 @@ class Coder:
                 read_only_fnames=list(from_coder.abs_read_only_fnames),  # Copy read-only files
                 done_messages=done_messages,
                 cur_messages=from_coder.cur_messages,
-                aider_commit_hashes=from_coder.aider_commit_hashes,
+                dev_commit_hashes=from_coder.dev_commit_hashes,
                 commands=from_coder.commands.clone(),
                 total_cost=from_coder.total_cost,
                 ignore_mentions=from_coder.ignore_mentions,
@@ -189,7 +189,7 @@ class Coder:
 
     def get_announcements(self):
         lines = []
-        lines.append(f"Aider v{__version__}")
+        lines.append(f"Dev v{__version__}")
 
         # Model
         main_model = self.main_model
@@ -226,7 +226,7 @@ class Coder:
             lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
             if num_files > 1000:
                 lines.append(
-                    "Warning: For large repos, consider using --subtree-only and .aiderignore"
+                    "Warning: For large repos, consider using --subtree-only and .devignore"
                 )
                 lines.append(f"See: {urls.large_repos}")
         else:
@@ -289,7 +289,7 @@ class Coder:
         auto_test=False,
         lint_cmds=None,
         test_cmd=None,
-        aider_commit_hashes=None,
+        dev_commit_hashes=None,
         map_mul_no_files=8,
         commands=None,
         summarizer=None,
@@ -311,7 +311,7 @@ class Coder:
         self.event = self.analytics.event
         self.chat_language = chat_language
         self.commit_before_message = []
-        self.aider_commit_hashes = set()
+        self.dev_commit_hashes = set()
         self.rejected_urls = set()
         self.abs_root_path_cache = {}
 
@@ -336,10 +336,10 @@ class Coder:
         if io is None:
             io = InputOutput()
 
-        if aider_commit_hashes:
-            self.aider_commit_hashes = aider_commit_hashes
+        if dev_commit_hashes:
+            self.dev_commit_hashes = dev_commit_hashes
         else:
-            self.aider_commit_hashes = set()
+            self.dev_commit_hashes = set()
 
         self.chat_completion_call_hashes = []
         self.chat_completion_response_hashes = []
@@ -407,7 +407,7 @@ class Coder:
                 self.io.tool_warning(f"Skipping {fname} that matches gitignore spec.")
 
             if self.repo and self.repo.ignored_file(fname):
-                self.io.tool_warning(f"Skipping {fname} that matches aiderignore spec.")
+                self.io.tool_warning(f"Skipping {fname} that matches devignore spec.")
                 continue
 
             if not fname.exists():
@@ -807,7 +807,7 @@ class Coder:
         yield from self.send_message(user_message)
 
     def init_before_message(self):
-        self.aider_edited_files = set()
+        self.dev_edited_files = set()
         self.reflected_message = None
         self.num_reflections = 0
         self.lint_outcome = None
@@ -1207,7 +1207,7 @@ class Coder:
             return
 
         delay = 5 * 60 - 5
-        delay = float(os.environ.get("AIDER_CACHE_KEEPALIVE_DELAY", delay))
+        delay = float(os.environ.get("DEV_CACHE_KEEPALIVE_DELAY", delay))
         self.next_cache_warm = time.time() + delay
         self.warming_pings_left = self.num_cache_warming_pings
         self.cache_warming_chunks = chunks
@@ -1431,7 +1431,7 @@ class Coder:
         edited = self.apply_updates()
 
         if edited:
-            self.aider_edited_files.update(edited)
+            self.dev_edited_files.update(edited)
             saved_message = self.auto_commit(edited)
 
             if not saved_message and hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
@@ -2142,7 +2142,7 @@ class Coder:
             context = self.get_context_from_history(self.cur_messages)
 
         try:
-            res = self.repo.commit(fnames=edited, context=context, aider_edits=True)
+            res = self.repo.commit(fnames=edited, context=context, dev_edits=True)
             if res:
                 self.show_auto_commit_outcome(res)
                 commit_hash, commit_message = res
@@ -2158,9 +2158,9 @@ class Coder:
 
     def show_auto_commit_outcome(self, res):
         commit_hash, commit_message = res
-        self.last_aider_commit_hash = commit_hash
-        self.aider_commit_hashes.add(commit_hash)
-        self.last_aider_commit_message = commit_message
+        self.last_dev_commit_hash = commit_hash
+        self.dev_commit_hashes.add(commit_hash)
+        self.last_dev_commit_message = commit_message
         if self.show_diffs:
             self.commands.cmd_diff()
 
@@ -2168,7 +2168,7 @@ class Coder:
         if not self.commit_before_message:
             return
         if self.commit_before_message[-1] != self.repo.get_head_commit_sha():
-            self.io.tool_output("You can use /undo to undo and discard each aider commit.")
+            self.io.tool_output("You can use /undo to undo and discard each dev commit.")
 
     def dirty_commit(self):
         if not self.need_commit_before_edits:

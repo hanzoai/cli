@@ -1,5 +1,5 @@
 theme: just-the-docs
-url: "https://aider.chat"
+url: "https://dev.chat"
 
 # Analytics configuration
 analytics:
@@ -17,7 +17,7 @@ defaults:
       path: "README.md"
       type: "pages"
     values:
-      description: "aider is AI pair programming in your terminal"
+      description: "dev is AI pair programming in your terminal"
 
 exclude:
   - "tmp*"
@@ -30,7 +30,7 @@ exclude:
 
 aux_links:
   "GitHub":
-    - "https://github.com/Aider-AI/aider"
+    - "https://github.com/Dev-AI/dev"
   "Discord":
     - "https://discord.gg/Tv2uQnR88V"
   "Blog":
@@ -38,11 +38,11 @@ aux_links:
 
 nav_external_links:
   - title: "GitHub"
-    url: "https://github.com/Aider-AI/aider"
+    url: "https://github.com/Dev-AI/dev"
   - title: "Discord"
     url: "https://discord.gg/Tv2uQnR88V"
 
-repository: Aider-AI/aider
+repository: Dev-AI/dev
 
 callouts:
   tip:

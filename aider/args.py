@@ -6,8 +6,8 @@ import sys
 
 import configargparse
 
-from aider import __version__
-from aider.args_formatter import (
+from dev import __version__
+from dev.args_formatter import (
     DotEnvFormatter,
     MarkdownHelpFormatter,
     YamlHelpFormatter,
@@ -22,11 +22,11 @@ def default_env_file(git_root):
 
 def get_parser(default_config_files, git_root):
     parser = configargparse.ArgumentParser(
-        description="aider is AI pair programming in your terminal",
+        description="dev is AI pair programming in your terminal",
         add_config_file_help=True,
         default_config_files=default_config_files,
         config_file_parser_class=configargparse.YAMLConfigFileParser,
-        auto_env_var_prefix="AIDER_",
+        auto_env_var_prefix="DEV_",
     )
     group = parser.add_argument_group("Main model")
     group.add_argument(
@@ -188,13 +188,13 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--model-settings-file",
         metavar="MODEL_SETTINGS_FILE",
-        default=".aider.model.settings.yml",
-        help="Specify a file with aider model settings for unknown models",
+        default=".dev.model.settings.yml",
+        help="Specify a file with dev model settings for unknown models",
     )
     group.add_argument(
         "--model-metadata-file",
         metavar="MODEL_METADATA_FILE",
-        default=".aider.model.metadata.json",
+        default=".dev.model.metadata.json",
         help="Specify a file with context window and costs for unknown models",
     )
     group.add_argument(
@@ -313,10 +313,10 @@ def get_parser(default_config_files, git_root):
     ##########
     group = parser.add_argument_group("History Files")
     default_input_history_file = (
-        os.path.join(git_root, ".aider.input.history") if git_root else ".aider.input.history"
+        os.path.join(git_root, ".dev.input.history") if git_root else ".dev.input.history"
     )
     default_chat_history_file = (
-        os.path.join(git_root, ".aider.chat.history.md") if git_root else ".aider.chat.history.md"
+        os.path.join(git_root, ".dev.chat.history.md") if git_root else ".dev.chat.history.md"
     )
     group.add_argument(
         "--input-history-file",
@@ -340,7 +340,7 @@ def get_parser(default_config_files, git_root):
         "--llm-history-file",
         metavar="LLM_HISTORY_FILE",
         default=None,
-        help="Log the conversation with the LLM to this file (for example, .aider.llm.history)",
+        help="Log the conversation with the LLM to this file (for example, .dev.llm.history)",
     )
 
     ##########
@@ -455,16 +455,16 @@ def get_parser(default_config_files, git_root):
         "--gitignore",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable/disable adding .aider* to .gitignore (default: True)",
+        help="Enable/disable adding .dev* to .gitignore (default: True)",
     )
-    default_aiderignore_file = (
-        os.path.join(git_root, ".aiderignore") if git_root else ".aiderignore"
+    default_devignore_file = (
+        os.path.join(git_root, ".devignore") if git_root else ".devignore"
     )
     group.add_argument(
-        "--aiderignore",
-        metavar="AIDERIGNORE",
-        default=default_aiderignore_file,
-        help="Specify the aider ignore file (default: .aiderignore in git root)",
+        "--devignore",
+        metavar="DEVIGNORE",
+        default=default_devignore_file,
+        help="Specify the dev ignore file (default: .devignore in git root)",
     )
     group.add_argument(
         "--subtree-only",
@@ -488,25 +488,25 @@ def get_parser(default_config_files, git_root):
         "--attribute-author",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Attribute aider code changes in the git author name (default: True)",
+        help="Attribute dev code changes in the git author name (default: True)",
     )
     group.add_argument(
         "--attribute-committer",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Attribute aider commits in the git committer name (default: True)",
+        help="Attribute dev commits in the git committer name (default: True)",
     )
     group.add_argument(
         "--attribute-commit-message-author",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Prefix commit messages with 'aider: ' if aider authored the changes (default: False)",
+        help="Prefix commit messages with 'dev: ' if dev authored the changes (default: False)",
     )
     group.add_argument(
         "--attribute-commit-message-committer",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Prefix all commit messages with 'aider: ' (default: False)",
+        help="Prefix all commit messages with 'dev: ' (default: False)",
     )
     group.add_argument(
         "--commit",
@@ -608,7 +608,7 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--check-update",
         action=argparse.BooleanOptionalAction,
-        help="Check for new aider versions on launch",
+        help="Check for new dev versions on launch",
         default=True,
     )
     group.add_argument(
@@ -627,7 +627,7 @@ def get_parser(default_config_files, git_root):
         "--upgrade",
         "--update",
         action="store_true",
-        help="Upgrade aider to the latest version from PyPI",
+        help="Upgrade dev to the latest version from PyPI",
         default=False,
     )
     group.add_argument(
@@ -661,14 +661,14 @@ def get_parser(default_config_files, git_root):
         "--gui",
         "--browser",
         action=argparse.BooleanOptionalAction,
-        help="Run aider in your browser (default: False)",
+        help="Run dev in your browser (default: False)",
         default=False,
     )
     group.add_argument(
         "--copy-paste",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Enable automatic copy/paste of chat between aider and web UI (default: False)",
+        help="Enable automatic copy/paste of chat between dev and web UI (default: False)",
     )
     group.add_argument(
         "--apply",
@@ -783,7 +783,7 @@ def get_parser(default_config_files, git_root):
         is_config_file=True,
         metavar="CONFIG_FILE",
         help=(
-            "Specify the config file (default: search for .aider.conf.yml in git root, cwd"
+            "Specify the config file (default: search for .dev.conf.yml in git root, cwd"
             " or home directory)"
         ),
     )
@@ -835,7 +835,7 @@ def get_parser(default_config_files, git_root):
 
 def get_md_help():
     os.environ["COLUMNS"] = "70"
-    sys.argv = ["aider"]
+    sys.argv = ["dev"]
     parser = get_parser([], None)
 
     # This instantiates all the action.env_var values
@@ -848,7 +848,7 @@ def get_md_help():
 
 def get_sample_yaml():
     os.environ["COLUMNS"] = "100"
-    sys.argv = ["aider"]
+    sys.argv = ["dev"]
     parser = get_parser([], None)
 
     # This instantiates all the action.env_var values
@@ -861,7 +861,7 @@ def get_sample_yaml():
 
 def get_sample_dotenv():
     os.environ["COLUMNS"] = "120"
-    sys.argv = ["aider"]
+    sys.argv = ["dev"]
     parser = get_parser([], None)
 
     # This instantiates all the action.env_var values

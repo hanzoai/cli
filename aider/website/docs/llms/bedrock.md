@@ -5,10 +5,10 @@ nav_order: 560
 
 # Amazon Bedrock
 
-Aider can connect to models provided by Amazon Bedrock.
+Dev can connect to models provided by Amazon Bedrock.
 You will need to have an AWS account with access to the Bedrock service.
 
-To configure Aider to use the Amazon Bedrock API, you need to set up your AWS credentials.
+To configure Dev to use the Amazon Bedrock API, you need to set up your AWS credentials.
 This can be done using the AWS CLI or by setting environment variables.
 
 ## AWS CLI Configuration
@@ -47,31 +47,31 @@ The AWS Bedrock provider requires the `boto3` package in order to function corre
 pip install boto3
 ```
 
-To use aider installed via `pipx` with AWS Bedrock, you must add the `boto3` dependency to aider's virtual environment by running
+To use dev installed via `pipx` with AWS Bedrock, you must add the `boto3` dependency to dev's virtual environment by running
 
 ```bash
-pipx inject aider-chat boto3
+pipx inject dev-chat boto3
 ```
 
-You must install `boto3` dependency to aider's virtual environment installed via one-liner or uv by running
+You must install `boto3` dependency to dev's virtual environment installed via one-liner or uv by running
 
 ```bash
-uv tool run --from aider-chat pip install boto3
+uv tool run --from dev-chat pip install boto3
 ```
 
 
-## Running Aider with Bedrock
+## Running Dev with Bedrock
 
-Once your AWS credentials are set up, you can run Aider with the `--model` command line switch, specifying the Bedrock model you want to use:
+Once your AWS credentials are set up, you can run Dev with the `--model` command line switch, specifying the Bedrock model you want to use:
 
 ```bash
-aider --model bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0
+dev --model bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0
 ```
 
 Sometimes it seems to help if you prefix the model name with "us.":
 
 ```bash
-aider --model bedrock/us.anthropic.claude-3-5-sonnet-20240620-v1:0
+dev --model bedrock/us.anthropic.claude-3-5-sonnet-20240620-v1:0
 ```
 
 
@@ -80,10 +80,10 @@ aider --model bedrock/us.anthropic.claude-3-5-sonnet-20240620-v1:0
 To see some models available via Bedrock, run:
 
 ```bash
-aider --list-models bedrock/
+dev --list-models bedrock/
 ```
 
-Make sure you have access to these models in your AWS account before attempting to use them with Aider.
+Make sure you have access to these models in your AWS account before attempting to use them with Dev.
 
 # More info
 

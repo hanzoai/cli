@@ -2,14 +2,14 @@
 parent: Example chat transcripts
 ---
 
-# Build pong with aider and pygame.
+# Build pong with dev and pygame.
 
 In this chat transcript, the user asks to make a pong game using pygame.
 After setting up a basic game, the user asks for some customization of the colors and game mechanics.
 
 <div class="chat-transcript" markdown="1">
 
-> $ aider  
+> $ dev  
 
 #### can you make a simple game of pong with pygame?  
 
@@ -69,7 +69,7 @@ This is the basic structure of the game. Now, let's add the Paddle and Ball clas
 > Allow creation of new file pong_game.py? y  
 > Add pong_game.py to git? y  
 > Applied edit to pong_game.py  
-> Commit 14799cb aider: Added basic Pygame initialization and game loop structure to `pong_game.py`.  
+> Commit 14799cb dev: Added basic Pygame initialization and game loop structure to `pong_game.py`.  
 
 </div>
 <div class="chat-transcript" markdown="1">
@@ -221,7 +221,7 @@ Now, you should have a simple Pong game using Pygame. You can further improve th
 
 > Applied edit to pong_game.py  
 > Applied edit to pong_game.py  
-> Commit b20bcee aider: Added Paddle and Ball classes, handled user input, updated ball position, drew objects, and handled scoring.  
+> Commit b20bcee dev: Added Paddle and Ball classes, handled user input, updated ball position, drew objects, and handled scoring.  
 
 </div>
 <div class="chat-transcript" markdown="1">
@@ -243,7 +243,7 @@ pong_game.py
 This change will reduce the ball's speed by half. You can adjust the values further if you want the ball to move even slower.
 
 > Applied edit to pong_game.py  
-> Commit f4ceed4 aider: Reduced ball speed by half.  
+> Commit f4ceed4 dev: Reduced ball speed by half.  
 
 </div>
 <div class="chat-transcript" markdown="1">
@@ -284,7 +284,7 @@ With these changes, the paddles will be larger, and the left paddle will be red 
 
 > Applied edit to pong_game.py  
 > Applied edit to pong_game.py  
-> Commit 2c645c9 aider: Changed paddle size and color, and set left paddle to red.  
+> Commit 2c645c9 dev: Changed paddle size and color, and set left paddle to red.  
 
 </div>
 <div class="chat-transcript" markdown="1">
@@ -309,7 +309,7 @@ pong_game.py
 With this change, the ball's speed will increase by 10% in both the x and y directions each time it bounces off a paddle.
 
 > Applied edit to pong_game.py  
-> Commit 693faf4 aider: Increased ball speed by 10% in both x and y directions each time it bounces off a paddle.  
+> Commit 693faf4 dev: Increased ball speed by 10% in both x and y directions each time it bounces off a paddle.  
 
 
 </div>

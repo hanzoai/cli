@@ -18,7 +18,7 @@
   exhausted_context_windows: 0
   test_timeouts: 3
   total_tests: 225
-  command: aider --model gpt-4o-mini-2024-07-18
+  command: dev --model gpt-4o-mini-2024-07-18
   date: 2024-12-21
   versions: 0.69.2.dev
   seconds_per_case: 17.3
@@ -44,7 +44,7 @@
   exhausted_context_windows: 1
   test_timeouts: 12
   total_tests: 225
-  command: aider --model claude-3-5-sonnet-20241022
+  command: dev --model claude-3-5-sonnet-20241022
   date: 2024-12-21
   versions: 0.69.2.dev
   seconds_per_case: 30.8
@@ -70,7 +70,7 @@
   exhausted_context_windows: 1
   test_timeouts: 19
   total_tests: 225
-  command: aider --model gpt-4o-2024-11-20
+  command: dev --model gpt-4o-2024-11-20
   date: 2024-12-21
   versions: 0.69.2.dev
   seconds_per_case: 22.2
@@ -96,7 +96,7 @@
   exhausted_context_windows: 0
   test_timeouts: 2
   total_tests: 225
-  command: aider --model openrouter/openai/o1
+  command: dev --model openrouter/openai/o1
   date: 2024-12-21
   versions: 0.69.2.dev
   seconds_per_case: 133.2
@@ -122,7 +122,7 @@
   exhausted_context_windows: 5
   test_timeouts: 5
   total_tests: 225
-  command: aider --model deepseek/deepseek-chat
+  command: dev --model deepseek/deepseek-chat
   date: 2024-12-21
   versions: 0.69.2.dev
   seconds_per_case: 184.0
@@ -148,7 +148,7 @@
   exhausted_context_windows: 1
   test_timeouts: 9
   total_tests: 225
-  command: aider --model claude-3-5-haiku-20241022
+  command: dev --model claude-3-5-haiku-20241022
   date: 2024-12-21
   versions: 0.69.2.dev
   seconds_per_case: 31.8
@@ -174,7 +174,7 @@
   exhausted_context_windows: 1
   test_timeouts: 2
   total_tests: 225
-  command: "aider --model openai/Qwen/Qwen2.5-Coder-32B-Instruct # via hyperbolic"
+  command: "dev --model openai/Qwen/Qwen2.5-Coder-32B-Instruct # via hyperbolic"
   date: 2024-12-22
   versions: 0.69.2.dev
   seconds_per_case: 84.4
@@ -200,7 +200,7 @@
   exhausted_context_windows: 0
   test_timeouts: 3
   total_tests: 225
-  command: aider --model o1-mini
+  command: dev --model o1-mini
   date: 2024-12-22
   versions: 0.69.2.dev
   seconds_per_case: 34.7
@@ -226,7 +226,7 @@
   exhausted_context_windows: 0
   test_timeouts: 9
   total_tests: 225
-  command: aider --model gemini/gemini-exp-1206
+  command: dev --model gemini/gemini-exp-1206
   date: 2024-12-22
   versions: 0.69.2.dev
   seconds_per_case: 45.5
@@ -252,7 +252,7 @@
   exhausted_context_windows: 1
   test_timeouts: 8
   total_tests: 225
-  command: aider --model gemini/gemini-2.0-flash-exp
+  command: dev --model gemini/gemini-2.0-flash-exp
   date: 2024-12-22
   versions: 0.69.2.dev
   seconds_per_case: 12.2

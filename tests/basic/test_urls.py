@@ -1,6 +1,6 @@
 import requests
 
-from aider import urls
+from dev import urls
 
 
 def test_urls():

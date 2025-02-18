@@ -17,7 +17,7 @@ nav_exclude: true
 DeepSeek's API has been experiencing significant reliability issues for the past 24-48+ hours, with many users reporting downtime and overload problems.
 Their [status page](https://status.deepseek.com) notes an ongoing incident.
 
-If you're affected by these issues, several alternative providers offer access to DeepSeek V3. This article compares their performance on aider's polyglot benchmark to help you choose a reliable alternative.
+If you're affected by these issues, several alternative providers offer access to DeepSeek V3. This article compares their performance on dev's polyglot benchmark to help you choose a reliable alternative.
 
 ## Providers
 {: .no_toc }
@@ -29,17 +29,17 @@ If you're affected by these issues, several alternative providers offer access t
 
 [OpenRouter offers many DeepSeek providers](https://openrouter.ai/deepseek/deepseek-chat/providers)
 through their unified API.
-You can use aider with OpenRouter like this:
+You can use dev with OpenRouter like this:
 
 ```bash
 # Set your API key using environment variables
 export OPENROUTER_API_KEY=<your-key>
-aider --model openrouter/deepseek/deepseek-chat
+dev --model openrouter/deepseek/deepseek-chat
 
 # Or use the --api-key command line option
-aider --model openrouter/deepseek/deepseek-chat --api-key openrouter=<your-key>
+dev --model openrouter/deepseek/deepseek-chat --api-key openrouter=<your-key>
 
-# Or add it to .aider.conf.yml in your home directory or project root:
+# Or add it to .dev.conf.yml in your home directory or project root:
 api-key:
   - openrouter=<your-key>
 ```
@@ -50,8 +50,8 @@ APIs and away from those experiencing unreliable performance.
 But not all providers serve the same version of open source models, and not
 all have the same privacy guarantees.
 You can control which OpenRouter providers are used to serve the model via
-[aider's model settings](https://aider.chat/docs/config/adv-model-settings.html#model-settings).
-Create a `.aider.model.settings.yml` file in your home directory or git project root with settings like this:
+[dev's model settings](https://dev.chat/docs/config/adv-model-settings.html#model-settings).
+Create a `.dev.model.settings.yml` file in your home directory or git project root with settings like this:
 
 ```yaml
 - name: openrouter/deepseek/deepseek-chat
@@ -72,17 +72,17 @@ See [OpenRouter's provider routing docs](https://openrouter.ai/docs/provider-rou
 ```bash
 # Set your API key using environment variables
 export FIREWORKS_API_KEY=<your-key>
-aider --model fireworks_ai/accounts/fireworks/models/deepseek-chat
+dev --model fireworks_ai/accounts/fireworks/models/deepseek-chat
 
 # Or use the --api-key command line option
-aider --model fireworks_ai/accounts/fireworks/models/deepseek-chat --api-key fireworks=<your-key>
+dev --model fireworks_ai/accounts/fireworks/models/deepseek-chat --api-key fireworks=<your-key>
 
-# Or add it to .aider.conf.yml in your home directory or project root:
+# Or add it to .dev.conf.yml in your home directory or project root:
 api-key:
   - fireworks=<your-key>
 ```
 
-Create a `.aider.model.settings.yml` file in your home directory or git project root with settings like this:
+Create a `.dev.model.settings.yml` file in your home directory or git project root with settings like this:
 
 ```yaml
 - name: fireworks_ai/accounts/fireworks/models/deepseek-chat
@@ -111,17 +111,17 @@ You can use [Hyperbolic's API](https://hyperbolic.xyz) as an OpenAI-compatible p
 # Set your API key using environment variables
 export OPENAI_API_BASE=https://api.hyperbolic.xyz/v1/
 export OPENAI_API_KEY=<your-key>
-aider --model openai/deepseek-ai/DeepSeek-V3
+dev --model openai/deepseek-ai/DeepSeek-V3
 
 # Or use the --api-key command line option
-aider --model openai/deepseek-ai/DeepSeek-V3 --api-key openai=<your-key>
+dev --model openai/deepseek-ai/DeepSeek-V3 --api-key openai=<your-key>
 
-# Or add it to .aider.conf.yml in your home directory or project root:
+# Or add it to .dev.conf.yml in your home directory or project root:
 api-key:
   - openai=<your-key>
 ```
 
-Create a `.aider.model.settings.yml` file in your home directory or git project root with settings like this:
+Create a `.dev.model.settings.yml` file in your home directory or git project root with settings like this:
 
 ```yaml
 - name: openai/deepseek-ai/DeepSeek-V3
@@ -158,20 +158,20 @@ ollama serve
 export OLLAMA_API_BASE=http://127.0.0.1:11434 # Mac/Linux
 setx   OLLAMA_API_BASE http://127.0.0.1:11434 # Windows, restart shell after setx
 
-aider --model ollama/deepseek-v3
+dev --model ollama/deepseek-v3
 ```
 
 It's important to provide model settings, especially the `num_ctx` parameter to
 set the context window.
-Ollama uses a 2k context window by default, which is very small for working with aider.
+Ollama uses a 2k context window by default, which is very small for working with dev.
 Larger context windows will allow you to work with larger amounts of code,
 but will use memory and increase latency.
 
 Unlike most other LLM servers, Ollama does not throw an error if you submit a request that exceeds the context window. Instead, it just silently truncates the request by discarding the “oldest” messages in the chat to make it fit within the context window.
 
-So if your context window is too small, you won’t get an explicit error. The biggest symptom will be that aider says it can’t see (some of) the files you added to the chat. That’s because ollama is silently discarding them because they exceed the context window.
+So if your context window is too small, you won’t get an explicit error. The biggest symptom will be that dev says it can’t see (some of) the files you added to the chat. That’s because ollama is silently discarding them because they exceed the context window.
 
-Create a `.aider.model.settings.yml` file in your home directory or git project root with settings like this:
+Create a `.dev.model.settings.yml` file in your home directory or git project root with settings like this:
 
 ```yaml
 - name: ollama/deepseek-v3
@@ -193,17 +193,17 @@ Create a `.aider.model.settings.yml` file in your home directory or git project 
 
 ## Other providers
 
-You will need to properly configure aider to work with DeepSeek V3 when served
+You will need to properly configure dev to work with DeepSeek V3 when served
 via other providers:
 
 - Determine the `--model` name to use.
-- Provide your API key to aider.
-- Add model settings to `.aider.model.settings.yml`.
+- Provide your API key to dev.
+- Add model settings to `.dev.model.settings.yml`.
 
 
-Adapt the `.aider.model.settings.yml` shown above for Fireworks. You will need to change the `name` field to match you chosen provider's model naming scheme.
+Adapt the `.dev.model.settings.yml` shown above for Fireworks. You will need to change the `name` field to match you chosen provider's model naming scheme.
 
-See [Advanced model settings](https://aider.chat/docs/config/adv-model-settings.html#model-settings) for details about all aider model settings
+See [Advanced model settings](https://dev.chat/docs/config/adv-model-settings.html#model-settings) for details about all dev model settings
 
 ## Results
 

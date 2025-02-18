@@ -8,22 +8,22 @@ description: Configuring advanced settings for LLMs.
 
 ## Context window size and token costs
 
-In most cases, you can safely ignore aider's warning about unknown context
+In most cases, you can safely ignore dev's warning about unknown context
 window size and model costs.
 
 {: .note }
-Aider never *enforces* token limits, it only *reports* token limit errors
+Dev never *enforces* token limits, it only *reports* token limit errors
 from the API provider.
 You probably don't need to
-configure aider with the proper token limits
+configure dev with the proper token limits
 for unusual models.
 
 But, you can register context window limits and costs for models that aren't known
-to aider. Create a `.aider.model.metadata.json` file in one of these locations:
+to dev. Create a `.dev.model.metadata.json` file in one of these locations:
 
 - Your home directory.
 - The root if your git repo.
-- The current directory where you launch aider.
+- The current directory where you launch dev.
 - Or specify a specific file with the `--model-metadata-file <filename>` switch.
 
 
@@ -48,13 +48,13 @@ The json file should be a dictionary with an entry for each model, as follows:
 
 {: .tip }
 Use a fully qualified model name with a `provider/` at the front
-in the `.aider.model.metadata.json` file.
+in the `.dev.model.metadata.json` file.
 For example, use `deepseek/deepseek-chat`, not just `deepseek-chat`.
 That prefix should match the `litellm_provider` field.
 
 ### Contribute model metadata
 
-Aider relies on
+Dev relies on
 [litellm's model_prices_and_context_window.json file](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) 
 for model metadata.
 
@@ -62,20 +62,20 @@ Consider submitting a PR to that file to add missing models.
 
 ## Model settings
 
-Aider has a number of settings that control how it works with
+Dev has a number of settings that control how it works with
 different models.
 These model settings are pre-configured for most popular models.
 But it can sometimes be helpful to override them or add settings for
-a model that aider doesn't know about.
+a model that dev doesn't know about.
 
 
 ### Configuration file locations
 
-You can override or add settings for any model by creating a `.aider.model.settings.yml` file in one of these locations:
+You can override or add settings for any model by creating a `.dev.model.settings.yml` file in one of these locations:
 
 - Your home directory.
 - The root of your git repo.
-- The current directory where you launch aider.
+- The current directory where you launch dev.
 - Or specify a specific file with the `--model-settings-file <filename>` switch.
 
 If the files above exist, they will be loaded in that order. 
@@ -86,14 +86,14 @@ The yaml file should be a list of dictionary objects for each model.
 
 ### Global extra params
 
-You can use the special model name `aider/extra_params` to define 
+You can use the special model name `dev/extra_params` to define 
 `extra_params` that will be passed to `litellm.completion()` for all models.
 Only the `extra_params` dict is used from this special model name.
 
 For example:
 
 ```yaml
-- name: aider/extra_params
+- name: dev/extra_params
   extra_params:
     extra_headers:
       Custom-Header: value
@@ -101,7 +101,7 @@ For example:
 ```
 
 These settings will be merged with any model-specific settings, with the 
-`aider/extra_params` settings taking precedence for any direct conflicts.
+`dev/extra_params` settings taking precedence for any direct conflicts.
 
 ### Controlling o1 reasoning effort
 
@@ -142,15 +142,15 @@ entry in the list below and adding the above `extra_params` entry:
 Below are all the pre-configured model settings to give a sense for the settings which are supported.
 
 You can also look at the `ModelSettings` class in
-[models.py](https://github.com/Aider-AI/aider/blob/main/aider/models.py)
-file for more details about all of the model setting that aider supports.
+[models.py](https://github.com/Dev-AI/dev/blob/main/dev/models.py)
+file for more details about all of the model setting that dev supports.
 
 The first entry shows all the settings, with their default values.
 For a real model,
 you just need to include whichever fields that you want to override the defaults.
 
 <!--[[[cog
-from aider.models import get_model_settings_as_yaml
+from dev.models import get_model_settings_as_yaml
 cog.out("```yaml\n")
 cog.out(get_model_settings_as_yaml())
 cog.out("```\n")

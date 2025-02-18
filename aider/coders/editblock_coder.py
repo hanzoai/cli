@@ -5,7 +5,7 @@ import sys
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from aider import utils
+from dev import utils
 
 from ..dump import dump  # noqa: F401
 from .base_coder import Coder
@@ -54,7 +54,7 @@ class EditBlockCoder(Coder):
 
             # If the edit failed, and
             # this is not a "create a new file" with an empty original...
-            # https://github.com/Aider-AI/aider/issues/2258
+            # https://github.com/Dev-AI/dev/issues/2258
             if not new_content and original.strip():
                 # try patching any of the other files in the chat
                 for full_path in self.abs_fnames:
@@ -421,7 +421,7 @@ def strip_filename(filename, fence):
     filename = filename.strip("`")
     filename = filename.strip("*")
 
-    # https://github.com/Aider-AI/aider/issues/1158
+    # https://github.com/Dev-AI/dev/issues/1158
     # filename = filename.replace("\\_", "_")
 
     return filename

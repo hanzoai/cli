@@ -1,55 +1,55 @@
 ---
 parent: More info
 nav_order: 200
-description: Aider supports pretty much all popular coding languages.
+description: Dev supports pretty much all popular coding languages.
 ---
 # Supported languages
 
-Aider should work well with most popular coding languages.
+Dev should work well with most popular coding languages.
 This is because top LLMs are fluent in most mainstream languages,
 and familiar with popular libraries, packages and frameworks.
 
-Aider has specific support for linting many languages.
-By default, aider runs the built in linter any time a file is edited.
-If it finds syntax errors, aider will offer to fix them for you.
+Dev has specific support for linting many languages.
+By default, dev runs the built in linter any time a file is edited.
+If it finds syntax errors, dev will offer to fix them for you.
 This helps catch small code issues and quickly fix them.
 
-Aider also does code analysis to help
+Dev also does code analysis to help
 the LLM navigate larger code bases by producing
-a [repository map](https://aider.chat/docs/repomap.html).
-Aider can currently produce repository maps for many popular
+a [repository map](https://dev.chat/docs/repomap.html).
+Dev can currently produce repository maps for many popular
 mainstream languages, listed below.
 
 
 ## How to add support for another language
 
-Aider should work quite well for other languages, even those
+Dev should work quite well for other languages, even those
 without repo map or linter support.
-You should really try coding with aider before
+You should really try coding with dev before
 assuming it needs better support for your language.
 
-That said, if aider already has support for linting your language,
+That said, if dev already has support for linting your language,
 then it should be possible to add repo map support.
-To build a repo map, aider needs the `tags.scm` file
+To build a repo map, dev needs the `tags.scm` file
 from the given language's tree-sitter grammar.
 If you can find and share that file in a 
-[GitHub issue](https://github.com/Aider-AI/aider/issues),
+[GitHub issue](https://github.com/Dev-AI/dev/issues),
 then it may be possible to add repo map support.
 
-If aider doesn't support linting, it will be complicated to
+If dev doesn't support linting, it will be complicated to
 add linting and repo map support.
-That is because aider relies on 
+That is because dev relies on 
 [py-tree-sitter-languages](https://github.com/grantjenks/py-tree-sitter-languages)
 to provide pre-packaged versions of tree-sitter
 parsers for many languages.
 
-Aider needs to be easy for users to install in many environments,
+Dev needs to be easy for users to install in many environments,
 and it is probably too complex to add dependencies on
 additional individual tree-sitter parsers.
 
 
 <!--[[[cog
-from aider.repomap import get_supported_languages_md
+from dev.repomap import get_supported_languages_md
 cog.out(get_supported_languages_md())
 ]]]-->
 

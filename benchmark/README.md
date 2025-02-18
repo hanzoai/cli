@@ -1,7 +1,7 @@
 
-# Aider benchmark harness
+# Dev benchmark harness
 
-Aider uses benchmarks to quantitatively measure how well it works
+Dev uses benchmarks to quantitatively measure how well it works
 with various LLMs.
 This directory holds the harness and tools needed to run the benchmarking suite.
 
@@ -9,15 +9,15 @@ This directory holds the harness and tools needed to run the benchmarking suite.
 
 The benchmark is based on the [Exercism](https://github.com/exercism/python) coding exercises.
 This
-benchmark evaluates how effectively aider and LLMs can translate a
+benchmark evaluates how effectively dev and LLMs can translate a
 natural language coding request into executable code saved into
 files that pass unit tests.
 It provides an end-to-end evaluation of not just
 the LLM's coding ability, but also its capacity to *edit existing code*
-and *format those code edits* so that aider can save the
+and *format those code edits* so that dev can save the
 edits to the local source files.
 
-See [this writeup for a longer discussion about the benchmark](https://aider.chat/2024/12/21/polyglot.html).
+See [this writeup for a longer discussion about the benchmark](https://dev.chat/2024/12/21/polyglot.html).
 
 The benchmark is intended to be run *inside a docker container*.
 This is because the benchmarking harness will be
@@ -28,7 +28,7 @@ Running inside a docker container helps limit the damage that could be done.
 
 ## Usage
 
-There are 3 main tasks involved in benchmarking aider:
+There are 3 main tasks involved in benchmarking dev:
 
 1. Install and setup for benchmarking.
 
@@ -42,15 +42,15 @@ First, prepare all the groundwork for running the benchmarks.
 These steps only need to be done once.
 
 ```
-# Clone the aider repo
-git clone git@github.com:Aider-AI/aider.git
+# Clone the dev repo
+git clone git@github.com:Dev-AI/dev.git
 
-# Create the scratch dir to hold benchmarking results inside the main aider dir:
-cd aider
+# Create the scratch dir to hold benchmarking results inside the main dev dir:
+cd dev
 mkdir tmp.benchmarks
 
 # Clone the repo with the exercises
-git clone https://github.com/Aider-AI/polyglot-benchmark tmp.benchmarks/polyglot-benchmark
+git clone https://github.com/Dev-AI/polyglot-benchmark tmp.benchmarks/polyglot-benchmark
 
 # Build the docker container
 ./benchmark/docker_build.sh
@@ -64,7 +64,7 @@ Launch the docker container and run the benchmark inside it:
 # Launch the docker container
 ./benchmark/docker.sh
 
-# Inside the container, install aider as a development build.
+# Inside the container, install dev as a development build.
 # This way you're running the code that you cloned above, including any local changes.
 pip install -e .[dev]
 
@@ -77,8 +77,8 @@ Run like this, the script will run all the exercises in a random order.
 
 You can run `./benchmark/benchmark.py --help` for a list of all the arguments, but here are the most useful to keep in mind:
 
-- `--model` is the name of the model, same as you would pass directly to `aider`.
-- `--edit-format` is the name of the edit format, same as you would pass directly to `aider`. When working with an experimental LLM, I recommend starting with `whole`
+- `--model` is the name of the model, same as you would pass directly to `dev`.
+- `--edit-format` is the name of the edit format, same as you would pass directly to `dev`. When working with an experimental LLM, I recommend starting with `whole`
 - `--threads` specifies how many exercises to benchmark in parallel. Start with a single thread if you are working out the kinks on your benchmarking setup or working with a new model, etc. Once you are getting reliable results, you can speed up the process by running with more threads. 10 works well against the OpenAI APIs.
 - `--num-tests` specifies how many of the tests to run before stopping. This is another way to start gently as you debug your benchmarking setup.
 - `--keywords` filters the tests to run to only the ones whose name match the supplied argument (similar to `pytest -k xxxx`).
@@ -114,7 +114,7 @@ The benchmark report is a yaml record with statistics about the run:
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --sonnet
+  command: dev --sonnet
   date: 2024-07-04
   versions: 0.42.1-dev
   seconds_per_case: 17.6
@@ -134,12 +134,12 @@ This way the `model`, `edit_format` and `commit_hash`
 should be enough to reliably reproduce any benchmark run.
 
 You can see examples of the benchmark report yaml in the
-[aider leaderboard data files](https://github.com/Aider-AI/aider/blob/main/aider/website/_data/).
+[dev leaderboard data files](https://github.com/Dev-AI/dev/blob/main/dev/website/_data/).
 
 
 ## Limitations, notes
 
 - Contributions of benchmark results are welcome! Submit results by opening a PR with edits to the
-[aider leaderboard data files](https://github.com/Aider-AI/aider/blob/main/aider/website/_data/).
-- These scripts are not intended for use by typical aider end users.
+[dev leaderboard data files](https://github.com/Dev-AI/dev/blob/main/dev/website/_data/).
+- These scripts are not intended for use by typical dev end users.
 - Some of these tools are written as `bash` scripts, so it will be hard to use them on Windows.

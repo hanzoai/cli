@@ -3,7 +3,7 @@
 import subprocess
 import sys
 
-from aider.dump import dump  # noqa: F401
+from dev.dump import dump  # noqa: F401
 
 
 def main():

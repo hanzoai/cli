@@ -13,15 +13,15 @@ from PIL import Image, ImageGrab
 from prompt_toolkit.completion import Completion, PathCompleter
 from prompt_toolkit.document import Document
 
-from aider import models, prompts, voice
-from aider.editor import pipe_editor
-from aider.format_settings import format_settings
-from aider.help import Help, install_help_extra
-from aider.llm import litellm
-from aider.repo import ANY_GIT_ERROR
-from aider.run_cmd import run_cmd
-from aider.scrape import Scraper, install_playwright
-from aider.utils import is_image_file
+from dev import models, prompts, voice
+from dev.editor import pipe_editor
+from dev.format_settings import format_settings
+from dev.help import Help, install_help_extra
+from dev.llm import litellm
+from dev.repo import ANY_GIT_ERROR
+from dev.run_cmd import run_cmd
+from dev.scrape import Scraper, install_playwright
+from dev.utils import is_image_file
 
 from .dump import dump  # noqa: F401
 
@@ -88,7 +88,7 @@ class Commands:
     def cmd_chat_mode(self, args):
         "Switch to a new chat mode"
 
-        from aider import coders
+        from dev import coders
 
         ef = args.strip()
         valid_formats = OrderedDict(
@@ -104,7 +104,7 @@ class Commands:
 
         show_formats = OrderedDict(
             [
-                ("help", "Get help about using aider (usage, config, troubleshoot)."),
+                ("help", "Get help about using dev (usage, config, troubleshoot)."),
                 ("ask", "Ask questions about your code without making any changes."),
                 ("code", "Ask for changes to your code (using the best edit format)."),
                 (
@@ -472,7 +472,7 @@ class Commands:
         self.io.tool_output(f"{cost_pad}{fmt(limit)} tokens max context window size")
 
     def cmd_undo(self, args):
-        "Undo the last git commit if it was done by aider"
+        "Undo the last git commit if it was done by dev"
         try:
             self.raw_cmd_undo(args)
         except ANY_GIT_ERROR as err:
@@ -490,8 +490,8 @@ class Commands:
 
         last_commit_hash = self.coder.repo.get_head_commit_sha(short=True)
         last_commit_message = self.coder.repo.get_head_commit_message("(unknown)").strip()
-        if last_commit_hash not in self.coder.aider_commit_hashes:
-            self.io.tool_error("The last commit was not made by aider in this chat session.")
+        if last_commit_hash not in self.coder.dev_commit_hashes:
+            self.io.tool_error("The last commit was not made by dev in this chat session.")
             self.io.tool_output(
                 "You could try `/git reset --hard HEAD^` but be aware that this is a destructive"
                 " command!"
@@ -716,7 +716,7 @@ class Commands:
         return res
 
     def cmd_add(self, args):
-        "Add files to the chat so aider can edit them or review them in detail"
+        "Add files to the chat so dev can edit them or review them in detail"
 
         all_matched_files = set()
 
@@ -728,7 +728,7 @@ class Commands:
                 fname = Path(self.coder.root) / word
 
             if self.coder.repo and self.coder.repo.ignored_file(fname):
-                self.io.tool_warning(f"Skipping {fname} due to aiderignore or --subtree-only.")
+                self.io.tool_warning(f"Skipping {fname} due to devignore or --subtree-only.")
                 continue
 
             if fname.exists():
@@ -1008,17 +1008,17 @@ class Commands:
             else:
                 self.io.tool_output(f"{cmd} No description available.")
         self.io.tool_output()
-        self.io.tool_output("Use `/help <question>` to ask questions about how to use aider.")
+        self.io.tool_output("Use `/help <question>` to ask questions about how to use dev.")
 
     def cmd_help(self, args):
-        "Ask questions about aider"
+        "Ask questions about dev"
 
         if not args.strip():
             self.basic_help()
             return
 
         self.coder.event("interactive help")
-        from aider.coders.base_coder import Coder
+        from dev.coders.base_coder import Coder
 
         if not self.help:
             res = install_help_extra(self.io)
@@ -1038,7 +1038,7 @@ class Commands:
         )
         user_msg = self.help.ask(args)
         user_msg += """
-# Announcement lines from when this session of aider was launched:
+# Announcement lines from when this session of dev was launched:
 
 """
         user_msg += "\n".join(self.coder.get_announcements()) + "\n"
@@ -1078,7 +1078,7 @@ class Commands:
             # Switch to the corresponding chat mode if no args provided
             return self.cmd_chat_mode(edit_format)
 
-        from aider.coders.base_coder import Coder
+        from dev.coders.base_coder import Coder
 
         coder = Coder.create(
             io=self.io,
@@ -1388,7 +1388,7 @@ class Commands:
 
     def cmd_report(self, args):
         "Report a problem by opening a GitHub Issue"
-        from aider.report import report_github_issue
+        from dev.report import report_github_issue
 
         announcements = "\n".join(self.coder.get_announcements())
         issue_text = announcements

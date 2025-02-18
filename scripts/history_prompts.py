@@ -16,5 +16,5 @@ Changes in the .x-dev version should be listed under a "### main branch" heading
 Start a new "### main branch" section at the top of the file if needed.
 
 Also, add this as the last bullet under the "### main branch" section:
-{aider_line}
+{dev_line}
 """  # noqa

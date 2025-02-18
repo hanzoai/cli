@@ -1,13 +1,13 @@
 ---
 parent: Configuration
 nav_order: 15
-description: How to configure aider with a yaml config file.
+description: How to configure dev with a yaml config file.
 ---
 
 # YAML config file
 
-Most of aider's options can be set in an `.aider.conf.yml` file.
-Aider will look for a this file in these locations:
+Most of dev's options can be set in an `.dev.conf.yml` file.
+Dev will look for a this file in these locations:
 
 - Your home directory.
 - The root of your git repo.
@@ -40,27 +40,27 @@ read: [CONVENTIONS.md, anotherfile.txt, thirdfile.py]
 
 Below is a sample of the YAML config file, which you
 can also
-[download from GitHub](https://github.com/Aider-AI/aider/blob/main/aider/website/assets/sample.aider.conf.yml).
+[download from GitHub](https://github.com/Dev-AI/dev/blob/main/dev/website/assets/sample.dev.conf.yml).
 
 <!--[[[cog
-from aider.args import get_sample_yaml
+from dev.args import get_sample_yaml
 from pathlib import Path
 text=get_sample_yaml()
-Path("aider/website/assets/sample.aider.conf.yml").write_text(text)
+Path("dev/website/assets/sample.dev.conf.yml").write_text(text)
 cog.outl("```")
 cog.out(text)
 cog.outl("```")
 ]]]-->
 ```
 ##########################################################
-# Sample .aider.conf.yml
+# Sample .dev.conf.yml
 # This file lists *all* the valid configuration entries.
 # Place in your home dir, or at the root of your git repo.
 ##########################################################
 
 # Note: You can only put OpenAI and Anthropic API keys in the yaml
 # config file. Keys for all APIs can be stored in a .env file
-# https://aider.chat/docs/config/dotenv.html
+# https://dev.chat/docs/config/dotenv.html
 
 ##########
 # options:
@@ -153,11 +153,11 @@ cog.outl("```")
 ## List known models which match the (partial) MODEL name
 #list-models: xxx
 
-## Specify a file with aider model settings for unknown models
-#model-settings-file: .aider.model.settings.yml
+## Specify a file with dev model settings for unknown models
+#model-settings-file: .dev.model.settings.yml
 
 ## Specify a file with context window and costs for unknown models
-#model-metadata-file: .aider.model.metadata.json
+#model-metadata-file: .dev.model.metadata.json
 
 ## Add a model alias (can be used multiple times)
 #alias: xxx
@@ -221,16 +221,16 @@ cog.outl("```")
 ################
 # History Files:
 
-## Specify the chat input history file (default: .aider.input.history)
-#input-history-file: .aider.input.history
+## Specify the chat input history file (default: .dev.input.history)
+#input-history-file: .dev.input.history
 
-## Specify the chat history file (default: .aider.chat.history.md)
-#chat-history-file: .aider.chat.history.md
+## Specify the chat history file (default: .dev.chat.history.md)
+#chat-history-file: .dev.chat.history.md
 
 ## Restore the previous chat history messages (default: False)
 #restore-chat-history: false
 
-## Log the conversation with the LLM to this file (for example, .aider.llm.history)
+## Log the conversation with the LLM to this file (for example, .dev.llm.history)
 #llm-history-file: xxx
 
 ##################
@@ -287,11 +287,11 @@ cog.outl("```")
 ## Enable/disable looking for a git repo (default: True)
 #git: true
 
-## Enable/disable adding .aider* to .gitignore (default: True)
+## Enable/disable adding .dev* to .gitignore (default: True)
 #gitignore: true
 
-## Specify the aider ignore file (default: .aiderignore in git root)
-#aiderignore: .aiderignore
+## Specify the dev ignore file (default: .devignore in git root)
+#devignore: .devignore
 
 ## Only consider files in the current subtree of the git repository
 #subtree-only: false
@@ -302,16 +302,16 @@ cog.outl("```")
 ## Enable/disable commits when repo is found dirty (default: True)
 #dirty-commits: true
 
-## Attribute aider code changes in the git author name (default: True)
+## Attribute dev code changes in the git author name (default: True)
 #attribute-author: true
 
-## Attribute aider commits in the git committer name (default: True)
+## Attribute dev commits in the git committer name (default: True)
 #attribute-committer: true
 
-## Prefix commit messages with 'aider: ' if aider authored the changes (default: False)
+## Prefix commit messages with 'dev: ' if dev authored the changes (default: False)
 #attribute-commit-message-author: false
 
-## Prefix all commit messages with 'aider: ' (default: False)
+## Prefix all commit messages with 'dev: ' (default: False)
 #attribute-commit-message-committer: false
 
 ## Commit all pending changes with a suitable commit message, then exit
@@ -373,7 +373,7 @@ cog.outl("```")
 ## Check for updates and return status in the exit code
 #just-check-update: false
 
-## Check for new aider versions on launch
+## Check for new dev versions on launch
 #check-update: true
 
 ## Show release notes on first run of new version (default: None, ask user)
@@ -382,7 +382,7 @@ cog.outl("```")
 ## Install the latest version from the main branch
 #install-main-branch: false
 
-## Upgrade aider to the latest version from PyPI
+## Upgrade dev to the latest version from PyPI
 #upgrade: false
 
 ## Show the version number and exit
@@ -397,10 +397,10 @@ cog.outl("```")
 ## Specify a file containing the message to send the LLM, process reply, then exit (disables chat mode)
 #message-file: xxx
 
-## Run aider in your browser (default: False)
+## Run dev in your browser (default: False)
 #gui: false
 
-## Enable automatic copy/paste of chat between aider and web UI (default: False)
+## Enable automatic copy/paste of chat between dev and web UI (default: False)
 #copy-paste: false
 
 ## Apply the changes from the given file instead of running the chat (debug)
@@ -470,7 +470,7 @@ cog.outl("```")
 ## Line endings to use when writing files (default: platform)
 #line-endings: platform
 
-## Specify the config file (default: search for .aider.conf.yml in git root, cwd or home directory)
+## Specify the config file (default: search for .dev.conf.yml in git root, cwd or home directory)
 #config: xxx
 
 ## Specify the .env file to load (default: .env in git root)

@@ -14,13 +14,13 @@ enhancements.
 ## LLM Benchmark Results
 
 Contributions of
-[LLM benchmark results](https://aider.chat/docs/leaderboards/)
+[LLM benchmark results](https://dev.chat/docs/leaderboards/)
 are welcome!
 See the
-[benchmark README](https://github.com/Aider-AI/aider/blob/main/benchmark/README.md)
-for information on running aider's code editing benchmarks.
+[benchmark README](https://github.com/Dev-AI/dev/blob/main/benchmark/README.md)
+for information on running dev's code editing benchmarks.
 Submit results by opening a PR with edits to the
-[benchmark results data files](https://github.com/Aider-AI/aider/blob/main/aider/website/_data/).
+[benchmark results data files](https://github.com/Dev-AI/dev/blob/main/dev/website/_data/).
 
 
 ## Pull Requests
@@ -34,7 +34,7 @@ ensure that your contributions can be integrated smoothly.
 ## Licensing
 
 Before contributing a PR, please review our
-[Individual Contributor License Agreement](https://aider.chat/docs/legal/contributor-agreement.html).
+[Individual Contributor License Agreement](https://dev.chat/docs/legal/contributor-agreement.html).
 All contributors will be asked to complete the agreement as part of the PR process.
 
 ## Setting up a Development Environment
@@ -42,8 +42,8 @@ All contributors will be asked to complete the agreement as part of the PR proce
 ### Clone the Repository
 
 ```
-git clone https://github.com/Aider-AI/aider.git
-cd aider
+git clone https://github.com/Dev-AI/dev.git
+cd dev
 ```
 
 ### Create a Virtual Environment
@@ -104,15 +104,15 @@ pre-commit install
 
 This will automatically run the pre-commit hooks when you commit changes to the repository.
 
-Now you should have a fully functional development environment for the Aider project. You can start making changes, running tests, and contributing to the project.
+Now you should have a fully functional development environment for the Dev project. You can start making changes, running tests, and contributing to the project.
 
 ### Handy Opinionated Setup Commands for MacOS / Linux
 
 Here's an example of following the setup instructions above, for your copy/paste pleasure if your system works the same. Start in the project directory.
 
 ```
-python3 -m venv ../aider_venv \
- && source ../aider_venv/bin/activate \
+python3 -m venv ../dev_venv \
+ && source ../dev_venv/bin/activate \
  && pip3 install -e . \
  && pip3 install -r requirements.txt \
  && pip3 install -r requirements/requirements-dev.txt
@@ -127,7 +127,7 @@ Just run `pytest`.
 The project includes a `Dockerfile` for building a Docker image. You can build the image by running:
 
 ```
-docker build -t aider -f docker/Dockerfile .
+docker build -t dev -f docker/Dockerfile .
 ```
 
 ### Building the Documentation
@@ -135,7 +135,7 @@ docker build -t aider -f docker/Dockerfile .
 The project's documentation is built using Jekyll and hosted on GitHub Pages. To build the documentation locally, follow these steps:
 
 1. Install Ruby and Bundler (if not already installed).
-2. Navigate to the `aider/website` directory.
+2. Navigate to the `dev/website` directory.
 3. Install the required gems:
    ```
    bundle install
@@ -149,13 +149,13 @@ The project's documentation is built using Jekyll and hosted on GitHub Pages. To
    bundle exec jekyll serve
    ```
 
-The built documentation will be available in the `aider/website/_site` directory.
+The built documentation will be available in the `dev/website/_site` directory.
 
 ## Coding Standards
 
 ### Python Compatibility
 
-Aider supports Python versions 3.9, 3.10, 3.11, and 3.12. When contributing code, ensure compatibility with these supported Python versions.
+Dev supports Python versions 3.9, 3.10, 3.11, and 3.12. When contributing code, ensure compatibility with these supported Python versions.
 
 ### Code Style
 
@@ -167,7 +167,7 @@ The project does not use type hints.
 
 ### Testing
 
-The project uses [pytest](https://docs.pytest.org/en/latest/) for running unit tests. The test files are located in the `aider/tests` directory and follow the naming convention `test_*.py`.
+The project uses [pytest](https://docs.pytest.org/en/latest/) for running unit tests. The test files are located in the `dev/tests` directory and follow the naming convention `test_*.py`.
 
 #### Running Tests
 
@@ -191,7 +191,7 @@ The project uses GitHub Actions for continuous integration. The testing workflow
 - `.github/workflows/ubuntu-tests.yml`: Runs tests on Ubuntu for Python versions 3.9 through 3.12.
 - `.github/workflows/windows-tests.yml`: Runs that on Windows
 
-These workflows are triggered on push and pull request events to the `main` branch, ignoring changes to the `aider/website/**` and `README.md` files.
+These workflows are triggered on push and pull request events to the `main` branch, ignoring changes to the `dev/website/**` and `README.md` files.
 
 #### Docker Build and Test
 
@@ -199,9 +199,9 @@ The `.github/workflows/docker-build-test.yml` workflow is used to build a Docker
 
 #### Writing Tests
 
-When contributing new features or making changes to existing code, ensure that you write appropriate tests to maintain code coverage. Follow the existing patterns and naming conventions used in the `aider/tests` directory.
+When contributing new features or making changes to existing code, ensure that you write appropriate tests to maintain code coverage. Follow the existing patterns and naming conventions used in the `dev/tests` directory.
 
-If you need to mock or create test data, consider adding it to the test files or creating separate fixtures or utility functions within the `aider/tests` directory.
+If you need to mock or create test data, consider adding it to the test files or creating separate fixtures or utility functions within the `dev/tests` directory.
 
 #### Test Requirements
 

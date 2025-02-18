@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aider.analytics import Analytics
+from dev.analytics import Analytics
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ def test_need_to_ask(temp_data_dir):
 
 
 def test_is_uuid_in_percentage():
-    from aider.analytics import is_uuid_in_percentage
+    from dev.analytics import is_uuid_in_percentage
 
     # Test basic percentage thresholds
     assert is_uuid_in_percentage("00000000000000000000000000000000", 1) is True

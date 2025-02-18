@@ -6,18 +6,18 @@ description: Setting API keys for API providers.
 
 # API Keys
 
-Aider lets you specify API keys in a few ways:
+Dev lets you specify API keys in a few ways:
 
 - On the command line
 - As environment variables
 - In a `.env` file
-- In your `.aider.conf.yml` config file
+- In your `.dev.conf.yml` config file
 
 ---
 
 ## OpenAI and Anthropic
 
-Aider has special support for providing
+Dev has special support for providing
 OpenAI and Anthropic API keys
 via dedicated switches and configuration options.
 Settings keys for other providers works a bit differently, see below.
@@ -42,7 +42,7 @@ ANTHROPIC_API_KEY=<key>
 
 #### Yaml config file
 You can also set those API keys via special entries in the
-[yaml config file](/docs/config/aider_conf.html), like this:
+[yaml config file](/docs/config/dev_conf.html), like this:
 
 ```yaml
 openai-api-key: <key>
@@ -78,7 +78,7 @@ DEEPSEEK_API_KEY=baz
 
 
 You can also set API keys in the 
-[`.aider.conf.yml` file](/docs/config/aider_conf.html)
+[`.dev.conf.yml` file](/docs/config/dev_conf.html)
 via the `api-key` entry:
 
 ```

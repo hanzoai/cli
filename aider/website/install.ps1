@@ -424,8 +424,8 @@ function Invoke-Installer($artifacts, $platforms) {
   }
 
   Write-Information ""
-  Write-Information "Installing aider-chat..."
-  & "$dest_dir\uv.exe" tool install --force --python python3.12 aider-chat@latest
+  Write-Information "Installing dev-chat..."
+  & "$dest_dir\uv.exe" tool install --force --python python3.12 dev-chat@latest
 
   if (-not $NoModifyPath) {
     Add-Ci-Path $dest_dir

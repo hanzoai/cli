@@ -10,23 +10,23 @@ To work with Anthropic's models, you need to provide your
 either in the `ANTHROPIC_API_KEY` environment variable or
 via the `--anthropic-api-key` command line switch.
 
-Aider has some built in shortcuts for the most popular Anthropic models and
+Dev has some built in shortcuts for the most popular Anthropic models and
 has been tested and benchmarked to work well with them:
 
 ```
-python -m pip install -U aider-chat
+python -m pip install -U dev-chat
 
 export ANTHROPIC_API_KEY=<key> # Mac/Linux
 setx   ANTHROPIC_API_KEY <key> # Windows, restart shell after setx
 
-# Aider uses Claude 3.5 Sonnet by default (or use --sonnet)
-aider
+# Dev uses Claude 3.5 Sonnet by default (or use --sonnet)
+dev
 
 # Claude 3 Opus
-aider --opus
+dev --opus
 
 # List models available from Anthropic
-aider --list-models anthropic/
+dev --list-models anthropic/
 ```
 
 {: .tip }
@@ -36,6 +36,6 @@ You can access all the Anthropic models via
 or [Google Vertex AI](vertex.md)
 with more generous rate limits.
 
-You can use `aider --model <model-name>` to use any other Anthropic model.
+You can use `dev --model <model-name>` to use any other Anthropic model.
 For example, if you want to use a specific version of Opus
-you could do `aider --model claude-3-opus-20240229`.
+you could do `dev --model claude-3-opus-20240229`.

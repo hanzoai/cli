@@ -2,15 +2,15 @@ import importlib
 import os
 import warnings
 
-from aider.dump import dump  # noqa: F401
+from dev.dump import dump  # noqa: F401
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
-AIDER_SITE_URL = "https://aider.chat"
-AIDER_APP_NAME = "Aider"
+DEV_SITE_URL = "https://dev.chat"
+DEV_APP_NAME = "Dev"
 
-os.environ["OR_SITE_URL"] = AIDER_SITE_URL
-os.environ["OR_APP_NAME"] = AIDER_APP_NAME
+os.environ["OR_SITE_URL"] = DEV_SITE_URL
+os.environ["OR_APP_NAME"] = DEV_APP_NAME
 os.environ["LITELLM_MODE"] = "PRODUCTION"
 
 # `import litellm` takes 1.5 seconds, defer it!

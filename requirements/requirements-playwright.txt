@@ -15,7 +15,7 @@ pyee==12.0.0
     # via playwright
 typing-extensions==4.12.2
     # via
-    #   -c /Users/gauthier/Projects/aider/requirements.txt
+    #   -c /Users/gauthier/Projects/dev/requirements.txt
     #   -c requirements.txt
     #   -c requirements/requirements-browser.txt
     #   -c requirements/requirements-dev.txt

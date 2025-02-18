@@ -8,9 +8,9 @@ from pathlib import Path
 from mixpanel import MixpanelException
 from posthog import Posthog
 
-from aider import __version__
-from aider.dump import dump  # noqa: F401
-from aider.models import model_info_manager
+from dev import __version__
+from dev.dump import dump  # noqa: F401
+from dev.models import model_info_manager
 
 PERCENT = 10
 
@@ -128,7 +128,7 @@ class Analytics:
 
     def get_data_file_path(self):
         try:
-            data_file = Path.home() / ".aider" / "analytics.json"
+            data_file = Path.home() / ".dev" / "analytics.json"
             data_file.parent.mkdir(parents=True, exist_ok=True)
             return data_file
         except OSError:
@@ -181,7 +181,7 @@ class Analytics:
             "os_platform": platform.system(),
             "os_release": platform.release(),
             "machine": platform.machine(),
-            "aider_version": __version__,
+            "dev_version": __version__,
         }
 
     def _redact_model_name(self, model):
@@ -199,7 +199,7 @@ class Analytics:
         """disable posthog if we get an error"""
         print("X" * 100)
         # https://github.com/PostHog/posthog-python/blob/9e1bb8c58afaa229da24c4fb576c08bb88a75752/posthog/consumer.py#L86
-        # https://github.com/Aider-AI/aider/issues/2532
+        # https://github.com/Dev-AI/dev/issues/2532
         self.ph = None
 
     def event(self, event_name, main_model=None, **kwargs):

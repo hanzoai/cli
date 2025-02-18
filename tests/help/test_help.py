@@ -1,12 +1,12 @@
 import unittest
 from unittest.mock import MagicMock
 
-import aider
-from aider.coders import Coder
-from aider.commands import Commands
-from aider.help import Help, fname_to_url
-from aider.io import InputOutput
-from aider.models import Model
+import dev
+from dev.coders import Coder
+from dev.commands import Commands
+from dev.help import Help, fname_to_url
+from dev.io import InputOutput
+from dev.models import Model
 
 
 class TestHelp(unittest.TestCase):
@@ -20,11 +20,11 @@ class TestHelp(unittest.TestCase):
         commands = Commands(io, coder)
 
         help_coder_run = MagicMock(return_value="")
-        aider.coders.HelpCoder.run = help_coder_run
+        dev.coders.HelpCoder.run = help_coder_run
 
         try:
             commands.cmd_help("hi")
-        except aider.commands.SwitchCoder:
+        except dev.commands.SwitchCoder:
             pass
         else:
             # If no exception was raised, fail the test
@@ -38,7 +38,7 @@ class TestHelp(unittest.TestCase):
 
     def test_ask_without_mock(self):
         help_instance = Help()
-        question = "What is aider?"
+        question = "What is dev?"
         result = help_instance.ask(question)
 
         self.assertIn(f"# Question: {question}", result)
@@ -47,7 +47,7 @@ class TestHelp(unittest.TestCase):
         self.assertGreater(len(result), 100)  # Ensure we got a substantial response
 
         # Check for some expected content (adjust based on your actual help content)
-        self.assertIn("aider", result.lower())
+        self.assertIn("dev", result.lower())
         self.assertIn("ai", result.lower())
         self.assertIn("chat", result.lower())
 
@@ -56,37 +56,37 @@ class TestHelp(unittest.TestCase):
 
     def test_fname_to_url_unix(self):
         # Test relative Unix-style paths
-        self.assertEqual(fname_to_url("website/docs/index.md"), "https://aider.chat/docs")
+        self.assertEqual(fname_to_url("website/docs/index.md"), "https://dev.chat/docs")
         self.assertEqual(
-            fname_to_url("website/docs/usage.md"), "https://aider.chat/docs/usage.html"
+            fname_to_url("website/docs/usage.md"), "https://dev.chat/docs/usage.html"
         )
         self.assertEqual(fname_to_url("website/_includes/header.md"), "")
 
         # Test absolute Unix-style paths
         self.assertEqual(
-            fname_to_url("/home/user/project/website/docs/index.md"), "https://aider.chat/docs"
+            fname_to_url("/home/user/project/website/docs/index.md"), "https://dev.chat/docs"
         )
         self.assertEqual(
             fname_to_url("/home/user/project/website/docs/usage.md"),
-            "https://aider.chat/docs/usage.html",
+            "https://dev.chat/docs/usage.html",
         )
         self.assertEqual(fname_to_url("/home/user/project/website/_includes/header.md"), "")
 
     def test_fname_to_url_windows(self):
         # Test relative Windows-style paths
-        self.assertEqual(fname_to_url(r"website\docs\index.md"), "https://aider.chat/docs")
+        self.assertEqual(fname_to_url(r"website\docs\index.md"), "https://dev.chat/docs")
         self.assertEqual(
-            fname_to_url(r"website\docs\usage.md"), "https://aider.chat/docs/usage.html"
+            fname_to_url(r"website\docs\usage.md"), "https://dev.chat/docs/usage.html"
         )
         self.assertEqual(fname_to_url(r"website\_includes\header.md"), "")
 
         # Test absolute Windows-style paths
         self.assertEqual(
-            fname_to_url(r"C:\Users\user\project\website\docs\index.md"), "https://aider.chat/docs"
+            fname_to_url(r"C:\Users\user\project\website\docs\index.md"), "https://dev.chat/docs"
         )
         self.assertEqual(
             fname_to_url(r"C:\Users\user\project\website\docs\usage.md"),
-            "https://aider.chat/docs/usage.html",
+            "https://dev.chat/docs/usage.html",
         )
         self.assertEqual(fname_to_url(r"C:\Users\user\project\website\_includes\header.md"), "")
 

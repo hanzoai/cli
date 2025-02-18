@@ -15,7 +15,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-20
   versions: 0.38.1-dev
   seconds_per_case: 21.6
@@ -38,7 +38,7 @@
   indentation_errors: 2
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-24
   versions: 0.39.1-dev
   seconds_per_case: 14.3
@@ -61,7 +61,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 4
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-24
   versions: 0.39.1-dev
   seconds_per_case: 16.0
@@ -84,7 +84,7 @@
   indentation_errors: 1
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-24
   versions: 0.39.1-dev
   seconds_per_case: 15.7
@@ -107,7 +107,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-24
   versions: 0.39.1-dev
   seconds_per_case: 15.9
@@ -130,7 +130,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-07-04
   versions: 0.42.1-dev
   seconds_per_case: 17.6
@@ -153,7 +153,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-07-06
   versions: 0.42.1-dev
   seconds_per_case: 14.6
@@ -176,7 +176,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-07-24
   versions: 0.45.2-dev
   seconds_per_case: 16.9
@@ -199,7 +199,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-07-28
   versions: 0.45.2-dev
   seconds_per_case: 15.7
@@ -222,7 +222,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-08-14
   versions: 0.50.1-dev
   seconds_per_case: 18.0
@@ -245,7 +245,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-21
   versions: 0.39.1-dev
   seconds_per_case: 18.3
@@ -268,7 +268,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 0
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-21
   versions: 0.39.1-dev
   seconds_per_case: 17.3
@@ -291,7 +291,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-24
   versions: 0.39.1-dev
   seconds_per_case: 15.7
@@ -314,7 +314,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-06-24
   versions: 0.39.1-dev
   seconds_per_case: 16.4
@@ -337,7 +337,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-08-18
   versions: 0.50.2-dev
   seconds_per_case: 22.3
@@ -360,7 +360,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-08-18
   versions: 0.50.2-dev
   seconds_per_case: 21.1
@@ -383,7 +383,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-08-18
   versions: 0.50.2-dev
   seconds_per_case: 21.8
@@ -406,7 +406,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model claude-3-5-sonnet-20240620
+  command: dev --model claude-3-5-sonnet-20240620
   date: 2024-08-21
   versions: 0.51.2-dev
   seconds_per_case: 14.5
@@ -429,7 +429,7 @@
   indentation_errors: 2
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-08-21
   versions: 0.51.2-dev
   seconds_per_case: 16.3
@@ -452,7 +452,7 @@
   indentation_errors: 1
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-08-21
   versions: 0.51.2-dev
   seconds_per_case: 17.7

@@ -7,5 +7,5 @@
 // with questions AI?
 
 // this is not an ai comment
-// aider is not an ai! comment
+// dev is not an ai! comment
 

@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
-from aider.models import (
+from dev.models import (
     ANTHROPIC_BETA_HEADER,
     Model,
     ModelInfoManager,
@@ -14,13 +14,13 @@ from aider.models import (
 class TestModels(unittest.TestCase):
     def setUp(self):
         """Reset MODEL_SETTINGS before each test"""
-        from aider.models import MODEL_SETTINGS
+        from dev.models import MODEL_SETTINGS
 
         self._original_settings = MODEL_SETTINGS.copy()
 
     def tearDown(self):
         """Restore original MODEL_SETTINGS after each test"""
-        from aider.models import MODEL_SETTINGS
+        from dev.models import MODEL_SETTINGS
 
         MODEL_SETTINGS.clear()
         MODEL_SETTINGS.extend(self._original_settings)
@@ -298,7 +298,7 @@ End"""
         text = "Just regular text"
         self.assertEqual(model.remove_reasoning_content(text), text)
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     def test_simple_send_with_retries_removes_reasoning(self, mock_completion):
         model = Model("deepseek-r1")  # This model has remove_reasoning="think"
 
@@ -322,7 +322,7 @@ And this text should remain"""
         # Verify the completion was called
         mock_completion.assert_called_once()
 
-    def test_aider_extra_model_settings(self):
+    def test_dev_extra_model_settings(self):
         import tempfile
 
         import yaml
@@ -330,7 +330,7 @@ And this text should remain"""
         # Create temporary YAML file with test settings
         test_settings = [
             {
-                "name": "aider/extra_params",
+                "name": "dev/extra_params",
                 "extra_params": {
                     "extra_headers": {"Foo": "bar"},
                     "some_param": "some value",
@@ -373,7 +373,7 @@ And this text should remain"""
             except OSError:
                 pass
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     @patch.object(Model, "token_count")
     def test_ollama_num_ctx_set_when_missing(self, mock_token_count, mock_completion):
         mock_token_count.return_value = 1000
@@ -394,7 +394,7 @@ And this text should remain"""
             timeout=600,
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     def test_ollama_uses_existing_num_ctx(self, mock_completion):
         model = Model("ollama/llama3")
         model.extra_params = {"num_ctx": 4096}
@@ -412,7 +412,7 @@ And this text should remain"""
             timeout=600,
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     def test_non_ollama_no_num_ctx(self, mock_completion):
         model = Model("gpt-4")
         messages = [{"role": "user", "content": "Hello"}]
@@ -444,7 +444,7 @@ And this text should remain"""
         model.use_temperature = 0.7
         self.assertEqual(model.use_temperature, 0.7)
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     def test_request_timeout_default(self, mock_completion):
         # Test default timeout is used when not specified in extra_params
         model = Model("gpt-4")
@@ -458,7 +458,7 @@ And this text should remain"""
             timeout=600,  # Default timeout
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     def test_request_timeout_from_extra_params(self, mock_completion):
         # Test timeout from extra_params overrides default
         model = Model("gpt-4")
@@ -473,7 +473,7 @@ And this text should remain"""
             timeout=300,  # From extra_params
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("dev.models.litellm.completion")
     def test_use_temperature_in_send_completion(self, mock_completion):
         # Test use_temperature=True sends temperature=0
         model = Model("gpt-4")

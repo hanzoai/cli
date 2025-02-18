@@ -11,14 +11,14 @@ nav_exclude: true
 
 # Separating code reasoning and editing
 
-Aider now has experimental support for using two models to complete each coding task:
+Dev now has experimental support for using two models to complete each coding task:
 
 - An Architect model is asked to describe how to solve the coding problem.
 - An Editor model is given the Architect's solution and asked to produce specific code editing instructions to apply those changes to existing source files.
 
 Splitting up "code reasoning" and "code editing" in this manner
 has produced SOTA results on
-[aider's code editing benchmark](/docs/benchmarks.html#the-benchmark).
+[dev's code editing benchmark](/docs/benchmarks.html#the-benchmark).
 Using o1-preview as the Architect with either DeepSeek or o1-mini as the
 Editor produced the SOTA score of 85%.
 Using the Architect/Editor approach
@@ -297,20 +297,20 @@ This second Editor LLM can then interpret the solution description and
 produce the code editing instructions needed to update
 the existing source code.
 
-This approach has recently become attractive for aider due to 
+This approach has recently become attractive for dev due to 
 rapid improvements in the speed and costs of frontier models.
 In particular, chaining older LLMs would have been quite slow and
-incompatible with aider's goal of providing an interactive,
+incompatible with dev's goal of providing an interactive,
 pair programming AI coding experience.
 
 ## Code reasoning and code editing
 
-Normally aider asks the model to solve a coding problem in one prompt,
+Normally dev asks the model to solve a coding problem in one prompt,
 asking the LLM to explain the solution and return 
 a well formatted series of file edits.
-All of [aider's editing formats](/docs/more/edit-formats.html)
+All of [dev's editing formats](/docs/more/edit-formats.html)
 require the LLM to return source code edits in a specific text
-format, so that aider can process the edits and apply them to the local source files.
+format, so that dev can process the edits and apply them to the local source files.
 
 Because this all happens in a single prompt/response round trip to the LLM,
 the model has to split its attention between 
@@ -335,13 +335,13 @@ and code editing skill.
 ## Results
 
 The graph above and the table below show the
-[aider's code editing benchmark](/docs/benchmarks.html#the-benchmark)
+[dev's code editing benchmark](/docs/benchmarks.html#the-benchmark)
 score for various combinations of Architect and Editor models.
 
 
 Some noteworthy observations:
 
-- Pairing o1-preview as Architect with either Deepseek or o1-mini as Editor sets a SOTA significantly above the previous best score. This result is obtained with the "whole" editing format, requiring the Editor to output a full update copy of each edited source file. Both of these steps are therefore quite slow, so probably not practical for interactive use with aider.
+- Pairing o1-preview as Architect with either Deepseek or o1-mini as Editor sets a SOTA significantly above the previous best score. This result is obtained with the "whole" editing format, requiring the Editor to output a full update copy of each edited source file. Both of these steps are therefore quite slow, so probably not practical for interactive use with dev.
 - Pairing OpenAI's o1-preview with Anthropic's Sonnet as the Editor produces the second best result. This is an entirely practical configuration for users able to work with both providers.
 - Pairing many models with themselves in the Architect/Editor configuration can provide
 significant benefits. 
@@ -350,34 +350,34 @@ Sonnet, GPT-4o and GPT-4o-mini all scored higher when used as an Architect/Edito
 
 ## Try it!
 
-The development version of aider 
+The development version of dev 
 has built in defaults to support Architect/Editor coding with
 o1-preview, o1-mini, GPT-4o and Claude 3.5 Sonnet.
-Run aider with `--architect` or get started quickly like this:
+Run dev with `--architect` or get started quickly like this:
 
 ```
-pip install -U aider-chat
+pip install -U dev-chat
 
 # Change directory into a git repo
 cd /to/your/git/repo
 
 # Work with Claude 3.5 Sonnet as the Architect and Editor
 export ANTHROPIC_API_KEY=your-key-goes-here
-aider --sonnet --architect
+dev --sonnet --architect
 
 # Work with OpenAI models, using gpt-4o as the Editor
 export OPENAI_API_KEY=your-key-goes-here
-aider --4o --architect
-aider --o1-mini --architect
-aider --o1-preview --architect
+dev --4o --architect
+dev --o1-mini --architect
+dev --o1-preview --architect
 ```
 
 ## More info
 
-Aider has a number of "chat modes", and "architect" is available as a new chat mode.
+Dev has a number of "chat modes", and "architect" is available as a new chat mode.
 The `--architect` switch is a shortcut for `--chat-mode architect`.
 For more details, see documentation on 
-[aider's chat modes](/docs/usage/modes.html).
+[dev's chat modes](/docs/usage/modes.html).
 
 
 ## Full results
@@ -386,10 +386,10 @@ Below are the benchmark results using various models as the Architect, paired wi
 various models as the Editor.
 Each section includes a "baseline" result,
 where the model works
-by itself in aider's normal "code" editing mode
+by itself in dev's normal "code" editing mode
 (not as part of an Architect/Editor configuration).
 This "solo" baseline represents the performance previously available when using
-this model with aider.
+this model with dev.
 
 <div class="table-container">
   <table class="responsive-table">

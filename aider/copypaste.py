@@ -34,7 +34,7 @@ class ClipboardWatcher:
                     time.sleep(0.5)
                 except Exception as e:
                     if self.verbose:
-                        from aider.dump import dump
+                        from dev.dump import dump
 
                         dump(f"Clipboard watcher error: {e}")
                     continue
@@ -54,7 +54,7 @@ class ClipboardWatcher:
 
 def main():
     """Example usage of the clipboard watcher"""
-    from aider.io import InputOutput
+    from dev.io import InputOutput
 
     io = InputOutput()
     watcher = ClipboardWatcher(io, verbose=True)

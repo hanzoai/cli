@@ -1175,10 +1175,10 @@ install() {
     say "uv is installed!"
 
     say ""
-    say "Installing aider..."
+    say "Installing dev..."
     say ""
-    # Install aider-chat using the newly installed uv
-    ensure "${_install_dir}/uv" tool install --force --python python3.12 aider-chat@latest
+    # Install dev-chat using the newly installed uv
+    ensure "${_install_dir}/uv" tool install --force --python python3.12 dev-chat@latest
     
     # Avoid modifying the users PATH if they are managing their PATH manually
     case :$PATH:

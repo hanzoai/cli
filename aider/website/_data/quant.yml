@@ -16,7 +16,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model openai/hf:Qwen/Qwen2.5-Coder-32B-Instruct --openai-api-base https://glhf.chat/api/openai/v1
+  command: dev --model openai/hf:Qwen/Qwen2.5-Coder-32B-Instruct --openai-api-base https://glhf.chat/api/openai/v1
   date: 2024-11-09
   versions: 0.59.2.dev
   seconds_per_case: 22.5
@@ -39,7 +39,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 0
-  command: aider --model ollama/qwen2.5-coder:32b-instruct-fp16
+  command: dev --model ollama/qwen2.5-coder:32b-instruct-fp16
   date: 2024-11-22
   versions: 0.64.2.dev
   seconds_per_case: 119.6
@@ -62,7 +62,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openai/Qwen/Qwen2.5-Coder-32B-Instruct --openai-api-base https://api.hyperbolic.xyz/v1/
+  command: dev --model openai/Qwen/Qwen2.5-Coder-32B-Instruct --openai-api-base https://api.hyperbolic.xyz/v1/
   date: 2024-11-22
   versions: 0.64.2.dev
   seconds_per_case: 33.2
@@ -85,7 +85,7 @@
   indentation_errors: 0
   exhausted_context_windows: 1
   test_timeouts: 0
-  command: aider --model openai/mlx-community/Qwen2.5-Coder-32B-Instruct-4bit
+  command: dev --model openai/mlx-community/Qwen2.5-Coder-32B-Instruct-4bit
   date: 2024-11-23
   versions: 0.64.2.dev
   seconds_per_case: 53.4
@@ -108,7 +108,7 @@
   indentation_errors: 0
   exhausted_context_windows: 5
   test_timeouts: 2
-  command: aider --model openai/mlx-community/Qwen2.5-Coder-32B-Instruct-8bit
+  command: dev --model openai/mlx-community/Qwen2.5-Coder-32B-Instruct-8bit
   date: 2024-11-23
   versions: 0.64.2.dev
   seconds_per_case: 98.4
@@ -131,7 +131,7 @@
   indentation_errors: 0
   exhausted_context_windows: 3
   test_timeouts: 1
-  command: aider --model openrouter/qwen/qwen-2.5-coder-32b-instruct
+  command: dev --model openrouter/qwen/qwen-2.5-coder-32b-instruct
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 21.2
@@ -154,7 +154,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model ollama/qwen2.5-coder:32b-instruct-q4_K_M
+  command: dev --model ollama/qwen2.5-coder:32b-instruct-q4_K_M
   date: 2024-11-23
   versions: 0.64.2.dev
   seconds_per_case: 35.7
@@ -177,7 +177,7 @@
   indentation_errors: 0
   exhausted_context_windows: 2
   test_timeouts: 3
-  command: aider --model deepinfra/Qwen/Qwen2.5-Coder-32B-Instruct
+  command: dev --model deepinfra/Qwen/Qwen2.5-Coder-32B-Instruct
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 17.5
@@ -200,7 +200,7 @@
   indentation_errors: 0
   exhausted_context_windows: 4
   test_timeouts: 1
-  command: aider --model fireworks_ai/accounts/fireworks/models/qwen2p5-coder-32b-instruct
+  command: dev --model fireworks_ai/accounts/fireworks/models/qwen2p5-coder-32b-instruct
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 10.4
@@ -223,7 +223,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model ollama/qwen2.5-coder:32b-instruct-q2_K
+  command: dev --model ollama/qwen2.5-coder:32b-instruct-q2_K
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 97.8
@@ -246,7 +246,7 @@
   indentation_errors: 1
   exhausted_context_windows: 7
   test_timeouts: 4
-  command: aider --model openrouter/qwen/qwen-2.5-coder-32b-instruct
+  command: dev --model openrouter/qwen/qwen-2.5-coder-32b-instruct
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 16.1
@@ -269,7 +269,7 @@
   indentation_errors: 0
   exhausted_context_windows: 4
   test_timeouts: 1
-  command: aider --model openrouter/qwen/qwen-2.5-coder-32b-instruct
+  command: dev --model openrouter/qwen/qwen-2.5-coder-32b-instruct
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 41.5
@@ -292,7 +292,7 @@
   indentation_errors: 1
   exhausted_context_windows: 4
   test_timeouts: 1
-  command: aider --model openrouter/qwen/qwen-2.5-coder-32b-instruct
+  command: dev --model openrouter/qwen/qwen-2.5-coder-32b-instruct
   date: 2024-11-24
   versions: 0.64.2.dev
   seconds_per_case: 28.5
@@ -315,7 +315,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 0
-  command: "aider --model ollama/qwen2.5-coder:32b-instruct-fp16 # num_ctx: 2048"
+  command: "dev --model ollama/qwen2.5-coder:32b-instruct-fp16 # num_ctx: 2048"
   date: 2024-11-26
   versions: 0.64.2.dev,0.65.1.dev
   seconds_per_case: 188.6

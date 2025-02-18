@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', function () {
               beginAtZero: true,
               title: {
                 display: true,
-                text: 'Aider code editing benchmark (%)',
+                text: 'Dev code editing benchmark (%)',
                 font: {
                   size: 18
                 }

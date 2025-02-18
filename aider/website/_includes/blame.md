@@ -26,8 +26,8 @@ document.addEventListener('DOMContentLoaded', function () {
     var blameData = {
         labels: labels,
         datasets: [{
-            label: 'Aider\'s percent of new code by release',
-            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.aider_percentage }}, lines: {{ row.aider_total }} },{% endfor %}],
+            label: 'Dev\'s percent of new code by release',
+            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.dev_percentage }}, lines: {{ row.dev_total }} },{% endfor %}],
             backgroundColor: 'rgba(54, 162, 235, 0.8)',
             borderColor: 'rgba(54, 162, 235, 1)',
             borderWidth: 1
@@ -37,15 +37,15 @@ document.addEventListener('DOMContentLoaded', function () {
     var linesData = {
         labels: labels,
         datasets: [{
-            label: 'Aider',
-            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.aider_total }} },{% endfor %}],
+            label: 'Dev',
+            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.dev_total }} },{% endfor %}],
             backgroundColor: 'rgba(54, 162, 235, 0.8)',
             borderColor: 'rgba(54, 162, 235, 1)',
             borderWidth: 1
         },
         {
             label: 'Human',
-            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.total_lines | minus: row.aider_total }} },{% endfor %}],
+            data: [{% for row in site.data.blame %}{ x: '{{ row.end_tag }}', y: {{ row.total_lines | minus: row.dev_total }} },{% endfor %}],
             backgroundColor: 'rgba(200, 200, 200, 0.8)',
             borderColor: 'rgba(200, 200, 200, 1)',
             borderWidth: 1
@@ -84,7 +84,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            var label = 'Aider\'s contribution';
+                            var label = 'Dev\'s contribution';
                             var value = context.parsed.y || 0;
                             var lines = context.raw.lines || 0;
                             return `${label}: ${Math.round(value)}% (${lines} lines)`;
@@ -93,7 +93,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 },
                 title: {
                     display: true,
-                    text: 'Percent of new code written by aider, by release',
+                    text: 'Percent of new code written by dev, by release',
                     font: {
                         size: 16
                     }

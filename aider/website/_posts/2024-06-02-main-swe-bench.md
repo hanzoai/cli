@@ -1,6 +1,6 @@
 ---
-title: Aider is SOTA for both SWE Bench and SWE Bench Lite
-excerpt: Aider sets SOTA for the main SWE Bench, after recently setting SOTA for the Lite version.
+title: Dev is SOTA for both SWE Bench and SWE Bench Lite
+excerpt: Dev sets SOTA for the main SWE Bench, after recently setting SOTA for the Lite version.
 highlight_image: /assets/swe_bench.jpg
 nav_exclude: true
 ---
@@ -8,9 +8,9 @@ nav_exclude: true
 <p class="post-date">{{ page.date | date: "%B %d, %Y" }}</p>
 {% endif %}
 
-# Aider is SOTA for both SWE Bench and SWE Bench Lite
+# Dev is SOTA for both SWE Bench and SWE Bench Lite
  
-Aider scored 18.9%
+Dev scored 18.9%
 on the main
 [SWE Bench benchmark](https://www.swebench.com),
 achieving a state-of-the-art result. 
@@ -20,13 +20,13 @@ The best result reported elsewhere seems to be
 [13.9% from Devin](https://www.cognition.ai/post/swe-bench-technical-report).
 
 This result on the main SWE Bench builds on
-[aider's recent SOTA result on the easier SWE Bench Lite](https://aider.chat/2024/05/22/swe-bench-lite.html).
+[dev's recent SOTA result on the easier SWE Bench Lite](https://dev.chat/2024/05/22/swe-bench-lite.html).
 
-[![SWE Bench results](/assets/swe_bench.svg)](https://aider.chat/assets/swe_bench.svg)
+[![SWE Bench results](/assets/swe_bench.svg)](https://dev.chat/assets/swe_bench.svg)
 
-**All of aider's results reported here are pass@1 results,
+**All of dev's results reported here are pass@1 results,
 obtained without using the SWE Bench `hints_text`.**
-Aider was benchmarked on the same
+Dev was benchmarked on the same
 [570 randomly selected SWE Bench problems](https://github.com/CognitionAI/devin-swebench-results/tree/main/output_diffs)
 that were used in the
 [Devin evaluation](https://www.cognition.ai/post/swe-bench-technical-report).
@@ -35,21 +35,21 @@ for more details on the data presented in this chart.
 
 ## Interactive, not agentic
 
-Aider achieved this result mainly through its existing features that focus on static
+Dev achieved this result mainly through its existing features that focus on static
 code analysis, reliable LLM code editing, and pragmatic UX for automatically
 fixing linting and testing errors.
-Aider intentionally has quite limited and narrow "agentic behavior"
+Dev intentionally has quite limited and narrow "agentic behavior"
 to avoid long delays, high token costs
 and the need for users to repeatedly code review incorrect solutions.
-It's also worth noting that aider currently does not use
+It's also worth noting that dev currently does not use
 RAG, vector search, tools or give the LLM access to search the web
 or unilaterally execute code.
 
-Aider is first and foremost an interactive tool for engineers to get real work done in
+Dev is first and foremost an interactive tool for engineers to get real work done in
 real code bases using a chat interface.
-Aider provides a pair programming UX where users can ask for a change 
+Dev provides a pair programming UX where users can ask for a change 
 and see code edits performed in real-time.
-Aider can also offer additional help like fixing lint or test errors,
+Dev can also offer additional help like fixing lint or test errors,
 but the user is always in full interactive control.
 This allows them to quickly steer misunderstandings back on course and
 avoid wasting time and token costs.
@@ -59,67 +59,67 @@ avoid wasting time and token costs.
 
 Benchmarking was conducted as follows:
 
-- Aider with GPT-4o was launched in each problem's git repository
+- Dev with GPT-4o was launched in each problem's git repository
 with the problem statement
 submitted as the opening chat message from "the user".
-- After that aider ran as normal, except all of aider's
+- After that dev ran as normal, except all of dev's
 suggestions were always accepted without user approval.
-- A [simple harness](https://github.com/Aider-AI/aider-swe-bench#the-aider-agent) was used to retry the SWE Bench problem if aider produced code that wasn't *plausibly correct*.
-Plausibly correct means that aider reported that it had successfully edited the repo
+- A [simple harness](https://github.com/Dev-AI/dev-swe-bench#the-dev-agent) was used to retry the SWE Bench problem if dev produced code that wasn't *plausibly correct*.
+Plausibly correct means that dev reported that it had successfully edited the repo
 without causing syntax errors or breaking any *pre-existing* tests.
-- If the solution from aider with GPT-4o wasn't plausible, the harness launched aider to try again from scratch using Claude 3 Opus.
+- If the solution from dev with GPT-4o wasn't plausible, the harness launched dev to try again from scratch using Claude 3 Opus.
 - If no plausible solution was found after those two tries, the harness picked the "most plausible" solution with the fewest edit/lint/test problems.
 
 It's important to be clear that
-*aider and the benchmark harness
+*dev and the benchmark harness
 only had access to the pre-existing tests in each problem's repo*.
 The held out "acceptance tests" were *only* used
-after benchmarking to compute statistics on which problems aider
+after benchmarking to compute statistics on which problems dev
 correctly resolved.
 
 This is the same approach
 that was used for
-[aider's recent SOTA result on SWE Bench Lite](https://aider.chat/2024/05/22/swe-bench-lite.html).
+[dev's recent SOTA result on SWE Bench Lite](https://dev.chat/2024/05/22/swe-bench-lite.html).
 For the Lite benchmark,
-aider alternated between GPT-4o and Opus for up to six total attempts.
+dev alternated between GPT-4o and Opus for up to six total attempts.
 To manage the cost of running the main SWE Bench benchmark,
-aider was limited to two total attempts:
+dev was limited to two total attempts:
 one with GPT-4o and one with Opus.
 
 For a detailed discussion of the benchmark
 methodology, see the
-[article about aider's SWE Bench Lite results](https://aider.chat/2024/05/22/swe-bench-lite.html).
+[article about dev's SWE Bench Lite results](https://dev.chat/2024/05/22/swe-bench-lite.html).
 Also, the
-[aider SWE Bench repository on GitHub](https://github.com/Aider-AI/aider-swe-bench)
+[dev SWE Bench repository on GitHub](https://github.com/Dev-AI/dev-swe-bench)
 contains the harness and statistics code used for the benchmarks.
 
-The benchmarking process was similar to how a developer might use aider to
+The benchmarking process was similar to how a developer might use dev to
 resolve a GitHub issue:
 
-- They could launch aider in their repo with the command below, which
-tells aider they want to accept every suggestion
+- They could launch dev in their repo with the command below, which
+tells dev they want to accept every suggestion
 and to use pytest to run tests.
-  - `aider --yes --test-cmd pytest`
+  - `dev --yes --test-cmd pytest`
 - They could start the chat by pasting in the URL or text of a GitHub issue.
-Aider will pull in the URL's content and then try and resolve the issue.
-- If aider doesn't produce code that lints and tests clean, the user might decide to
-[use git to revert the changes](https://aider.chat/docs/git.html),
-and try again with `aider --opus`.
+Dev will pull in the URL's content and then try and resolve the issue.
+- If dev doesn't produce code that lints and tests clean, the user might decide to
+[use git to revert the changes](https://dev.chat/docs/git.html),
+and try again with `dev --opus`.
 
-## Aider with GPT-4o alone was SOTA
+## Dev with GPT-4o alone was SOTA
 
-Using aider with GPT-4o to make a single attempt at resolving each problem
+Using dev with GPT-4o to make a single attempt at resolving each problem
 achieved a score of 17.0%.
 This was itself a state-of-the-art result, before being surpassed by the main
 result being reported here
-that used aider with both GPT-4o & Opus.
+that used dev with both GPT-4o & Opus.
 
-## Aider with GPT-4o & Opus
+## Dev with GPT-4o & Opus
 
-The benchmark harness started by using aider with GPT-4o to try
+The benchmark harness started by using dev with GPT-4o to try
 and resolve each problem.
 For problems where this didn't produce a plausible solution,
-the harness tried again using aider with Opus.
+the harness tried again using dev with Opus.
 So at most, two attempts were made for each problem.
 
 The table below breaks down the proposed solutions that
@@ -127,33 +127,33 @@ were found from each attempt at the 570 problems.
 A proposed solution is either:
 
 - A plausible solution where
-aider reported no outstanding errors from editing, linting and testing.
+dev reported no outstanding errors from editing, linting and testing.
 - Or, the "most plausible" solution generated by either attempt, with the
-[fewest outstanding editing, linting or testing errors](https://aider.chat/2024/05/22/swe-bench-lite.html#finding-a-plausible-solution).
+[fewest outstanding editing, linting or testing errors](https://dev.chat/2024/05/22/swe-bench-lite.html#finding-a-plausible-solution).
 
 The table also provides details on the 108 solutions that were ultimately
 verified as correctly resolving their issue.
 
 | Attempt | Agent |Number&nbsp;of<br>proposed<br>solutions|Percent&nbsp;of<br>proposed<br>solutions| Number&nbsp;of<br/>correctly<br>resolved<br>solutions | Percent&nbsp;of<br>correctly<br>resolved<br>solutions | Score&nbsp;on<br>SWE&nbsp;Bench<br>Lite |
 |:--------:|------------|---------:|---------:|----:|---:|--:|
-| 1 | Aider with GPT-4o    | 419 | 73.5% | 87 | 80.6% | 15.3% |
-| 2 | Aider with Opus      | 151 | 26.5% | 21 | 19.4% |  3.7% |
+| 1 | Dev with GPT-4o    | 419 | 73.5% | 87 | 80.6% | 15.3% |
+| 2 | Dev with Opus      | 151 | 26.5% | 21 | 19.4% |  3.7% |
 | **Total** | | **570** | **100%** | **108** | **100%** | **18.9%** |
 
 ## Non-plausible but correct solutions?
 
 A solution doesn't actually have to be plausible in order to correctly resolve the issue.
-Recall that plausible is simply defined as aider
+Recall that plausible is simply defined as dev
 reporting that it successfully completed all file edits,
 repaired and resolved any linting errors
 and resolved any test failures.
-But there are many reasons why aider might fail to do those things
+But there are many reasons why dev might fail to do those things
 and yet still produce a solution that will pass
 acceptance testing:
 
 - There may have been pre-existing failing tests in the repo,
-before aider even started working on the SWE Bench problem.
-Aider may not have resolved such issues, and yet they may not be
+before dev even started working on the SWE Bench problem.
+Dev may not have resolved such issues, and yet they may not be
 relevant to the acceptance testing.
 The SWE Bench acceptance testing just confirms that tests pass or fail
 in the same pattern as the "gold patch" developed by a human to resolve the
@@ -164,7 +164,7 @@ patch too.
 - There may have been pre-existing linting problems in the repo.
 If lingering linting issues affected code paths that are not well tested,
 they may not impact acceptance testing.
-- Aider may have reported file editing errors because it thought the LLM
+- Dev may have reported file editing errors because it thought the LLM
 specified edits that it wasn't able to successfully apply.
 This can only happen when the LLM specified edits in
 a way that doesn't comply with the editing instructions in the system prompt.
@@ -176,7 +176,7 @@ Such outstanding edit errors might not be fatal for acceptance testing.
 
 Keeping all this in mind, we can understand why
 GPT-4o accounts for 15.3% of the benchmark score in the table above,
-but benchmarking with just one attempt of aider with GPT-4o scored 17.0%.
+but benchmarking with just one attempt of dev with GPT-4o scored 17.0%.
 When an Opus attempt is allowed after GPT-4o,
 it may propose some *incorrect* solutions which
 are "more plausible" than some of GPT-4o's non-plausible solutions.
@@ -185,7 +185,7 @@ eclipse some of
 the earlier non-plausible correct solutions that GPT-4o generated.
 This is why GPT-4o's score in the table 
 showing the combined GPT-4o & Opus results (15.3%)
-is lower than the result from just one try using aider with GPT-4o (17.0%).
+is lower than the result from just one try using dev with GPT-4o (17.0%).
 
 For these reasons, adding additional attempts is not guaranteed to monotonically
 increase the number of resolved problems.
@@ -206,7 +206,7 @@ the 570 SWE Bench problems.
 A separate evaluation script was used to
 test each of these solutions with the full test suite,
 including the held out acceptance tests.
-For this final acceptance testing, any edits that aider made to tests
+For this final acceptance testing, any edits that dev made to tests
 were discarded.
 This ensured that the correct,
 unmodified test suite was used for acceptance testing.
@@ -215,12 +215,12 @@ with results from testing
 the "gold" patch that was developed by a human to correctly resolve the issue.
 If they matched, the proposed solution correctly resolved the issue.
 
-These acceptance tests were only ever run outside of aider
+These acceptance tests were only ever run outside of dev
 and the benchmark harness, and only to compute statistics about the
 correctly resolved instances.
-They were never run, used, or even visible during aider's attempts to resolve the problems.
+They were never run, used, or even visible during dev's attempts to resolve the problems.
 
-Aider correctly resolved 108 out of 570 SWE Bench instances that were benchmarked,
+Dev correctly resolved 108 out of 570 SWE Bench instances that were benchmarked,
 or 18.9%.
 
 ## Acknowledgments
@@ -235,10 +235,10 @@ making it faster, easier, and more reliable to run the acceptance tests.
 
 ## References
 
-All of aider's results reported here are pass@1 results,
+All of dev's results reported here are pass@1 results,
 obtained without using the SWE Bench `hints_text`.
 
-The "aider agent" internally makes multiple "attempts" at solving the problem,
+The "dev agent" internally makes multiple "attempts" at solving the problem,
 but it picks and returns one single candidate solution.
 Only that one candidate solution is evaluated with the acceptance tests
 and contributes to the benchmark score.

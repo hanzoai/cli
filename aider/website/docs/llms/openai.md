@@ -10,39 +10,39 @@ To work with OpenAI's models, you need to provide your
 either in the `OPENAI_API_KEY` environment variable or
 via the `--api-key openai=<key>` command line switch.
 
-Aider has some built in shortcuts for the most popular OpenAI models and
+Dev has some built in shortcuts for the most popular OpenAI models and
 has been tested and benchmarked to work well with them:
 
 ```
-python -m pip install -U aider-chat
+python -m pip install -U dev-chat
 
 # o3-mini
-aider --model o3-mini --api-key openai=<key>
+dev --model o3-mini --api-key openai=<key>
 
 # o1-mini
-aider --model o1-mini --api-key openai=<key>
+dev --model o1-mini --api-key openai=<key>
 
 # GPT-4o
-aider --4o --api-key openai=<key>
+dev --4o --api-key openai=<key>
 
 # List models available from OpenAI
-aider --list-models openai/
+dev --list-models openai/
 
 # You can also store you API key in environment variables (or .env)
 export OPENAI_API_KEY=<key> # Mac/Linux
 setx   OPENAI_API_KEY <key> # Windows, restart shell after setx
 ```
 
-You can use `aider --model <model-name>` to use any other OpenAI model.
+You can use `dev --model <model-name>` to use any other OpenAI model.
 For example, if you want to use a specific version of GPT-4 Turbo
-you could do `aider --model gpt-4-0125-preview`.
+you could do `dev --model gpt-4-0125-preview`.
 
 ## Reasoning models from other providers
 
 Many of OpenAI's 
 "reasoning" models have restrictions on streaming and setting the temperature parameter.
 Some also support different levels of "reasoning effort".
-Aider is configured to work properly with these models
+Dev is configured to work properly with these models
 when served through major provider APIs and
 has a `--reasoning-effort` setting.
 

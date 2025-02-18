@@ -1,7 +1,7 @@
 from unittest import TestCase, mock
 
-from aider.history import ChatSummary
-from aider.models import Model
+from dev.history import ChatSummary
+from dev.models import Model
 
 
 class TestChatSummary(TestCase):
