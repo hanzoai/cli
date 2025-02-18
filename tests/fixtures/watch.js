@@ -7,7 +7,7 @@
 // AI with 6 caps
 // ai! with 7 bang
 // this is not an ai comment
-// aider is not an ai! comment
+// dev is not an ai! comment
 
 function dummyFunction() {
     // ai inside 8 function

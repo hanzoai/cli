@@ -8,7 +8,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from aider.dump import dump  # noqa: F401
+from dev.dump import dump  # noqa: F401
 
 _text_prefix = """
 # Header
@@ -180,7 +180,7 @@ class MarkdownStream:
 
 
 if __name__ == "__main__":
-    with open("aider/io.py", "r") as f:
+    with open("dev/io.py", "r") as f:
         code = f.read()
     _text = _text_prefix + code + _text_suffix
     _text = _text * 10

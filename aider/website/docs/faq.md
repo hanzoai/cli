@@ -1,6 +1,6 @@
 ---
 nav_order: 90
-description: Frequently asked questions about aider.
+description: Frequently asked questions about dev.
 ---
 
 # FAQ
@@ -21,11 +21,11 @@ the task you are working on. Just add those files to the chat.
 
 Usually when people want to add "all the files" it's because they think it
 will give the LLM helpful context about the overall code base.
-Aider will automatically give the LLM a bunch of additional context about
+Dev will automatically give the LLM a bunch of additional context about
 the rest of your git repo.
 It does this by analyzing your entire codebase in light of the
 current chat to build a compact
-[repository map](https://aider.chat/2023/10/22/repomap.html).
+[repository map](https://dev.chat/2023/10/22/repomap.html).
 
 Adding a bunch of files that are mostly irrelevant to the
 task at hand will often distract or confuse the LLM.
@@ -35,33 +35,33 @@ Addings extra files will also increase your token costs.
 Again, it's usually best to just add the files to the chat that will need to be modified.
 If you still wish to add lots of files to the chat, you can:
 
-- Use a wildcard when you launch aider: `aider src/*.py`
+- Use a wildcard when you launch dev: `dev src/*.py`
 - Use a wildcard with the in-chat `/add` command: `/add src/*.py`
 - Give the `/add` command a directory name and it will recursively add every file under that dir: `/add src`
 
-## Can I use aider in a large (mono) repo?
+## Can I use dev in a large (mono) repo?
 
-Aider will work in any size repo, but is not optimized for quick
+Dev will work in any size repo, but is not optimized for quick
 performance and response time in very large repos.
 There are some things you can do to improve performance.
 
 Be sure to check the
 [general usage tips](/docs/usage/tips.html)
 before considering this large-repo specific advice.
-To get the best results from aider you want to 
+To get the best results from dev you want to 
 be thoughtful about how you add files to the chat,
 regardless of your repo size.
 
 You can change into a sub directory of your repo that contains the
 code you want to work on and use the `--subtree-only` switch.
-This will tell aider to ignore the repo outside of the
+This will tell dev to ignore the repo outside of the
 directory you start in.
 
-You can also create a `.aiderignore` file to tell aider
+You can also create a `.devignore` file to tell dev
 to ignore parts of the repo that aren't relevant to your task.
 This file conforms to `.gitignore` syntax and conventions.
 For example, to focus only on specific directories in a monorepo,
-you could create a `.aiderignore` file with:
+you could create a `.devignore` file with:
 
 ```
 # Ignore everything
@@ -78,40 +78,40 @@ you could create a `.aiderignore` file with:
 !baz/**
 ```
 
-You can use `--aiderignore <filename>` to name a specific file
+You can use `--devignore <filename>` to name a specific file
 to use for ignore patterns.
 You might have a few of these handy for when you want to work on
 frontend, backend, etc portions of your repo.
 
-## Can I use aider with multiple git repos at once?
+## Can I use dev with multiple git repos at once?
 
-Currently aider can only work with one repo at a time.
+Currently dev can only work with one repo at a time.
 
 There are some things you can try if you need to work with
 multiple interrelated repos:
 
-- You can run aider in repo-A where you need to make a change
+- You can run dev in repo-A where you need to make a change
 and use `/read` to add some files read-only from another repo-B.
-This can let aider see key functions or docs from the other repo.
-- You can run `aider --show-repo-map > map.md` within each
+This can let dev see key functions or docs from the other repo.
+- You can run `dev --show-repo-map > map.md` within each
 repo to create repo maps.
-You could then run aider in repo-A and 
+You could then run dev in repo-A and 
 use `/read ../path/to/repo-B/map.md` to share
 a high level map of the other repo.
-- You can use aider to write documentation about a repo.
-Inside each repo, you could run `aider docs.md`
-and work with aider to write some markdown docs.
-Then while using aider to edit repo-A
+- You can use dev to write documentation about a repo.
+Inside each repo, you could run `dev docs.md`
+and work with dev to write some markdown docs.
+Then while using dev to edit repo-A
 you can `/read ../path/to/repo-B/docs.md` to
 read in those docs from the other repo.
-- In repo A, ask aider to write a small script that demonstrates
+- In repo A, ask dev to write a small script that demonstrates
 the functionality you want to use in repo B.
-Then when you're using aider in repo B, you can 
+Then when you're using dev in repo B, you can 
 `/read` in that script.
 
 ## How do I turn on the repository map?
 
-Depending on the LLM you are using, aider may launch with the repo map disabled by default:
+Depending on the LLM you are using, dev may launch with the repo map disabled by default:
 
 ```
 Repo-map: disabled
@@ -121,11 +121,11 @@ This is because weaker models get easily overwhelmed and confused by the content
 repo map. They sometimes mistakenly try to edit the code in the repo map.
 The repo map is usually disabled for a good reason.
 
-If you would like to force it on, you can run aider with `--map-tokens 1024`.
+If you would like to force it on, you can run dev with `--map-tokens 1024`.
 
 ## How do I include the git history in the context?
 
-When starting a fresh aider session, you can include recent git history in the chat context. This can be useful for providing the LLM with information about recent changes. To do this:
+When starting a fresh dev session, you can include recent git history in the chat context. This can be useful for providing the LLM with information about recent changes. To do this:
 
 1. Use the `/run` command with `git diff` to show recent changes:
    ```
@@ -139,9 +139,9 @@ When starting a fresh aider session, you can include recent git history in the c
    ```
    This will show changes from the last three commits.
 
-Remember, the chat history already includes recent changes made during the current session, so this tip is most useful when starting a new aider session and you want to provide context about recent work.
+Remember, the chat history already includes recent changes made during the current session, so this tip is most useful when starting a new dev session and you want to provide context about recent work.
 
-You can also use aider to review PR branches:
+You can also use dev to review PR branches:
 
 ```
 /run git diff one-branch..another-branch
@@ -156,43 +156,43 @@ Add 6.9k tokens of command output to the chat? (Y)es/(N)o [Yes]: Yes
 {: .tip }
 The `/git` command will not work for this purpose, as its output is not included in the chat. 
 
-## How can I run aider locally from source code?
+## How can I run dev locally from source code?
 
 To run the project locally, follow these steps:
 
 ```
 # Clone the repository
-git clone git@github.com:Aider-AI/aider.git
+git clone git@github.com:Dev-AI/dev.git
 
 # Navigate to the project directory
-cd aider
+cd dev
 
 # It's recommended to make a virtual environment
 
-# Install aider in editable/development mode, 
+# Install dev in editable/development mode, 
 # so it runs from the latest copy of these source files
 python -m pip install -e .
 
-# Run the local version of aider
-python -m aider
+# Run the local version of dev
+python -m dev
 ```
 
 
 
-## Can I change the system prompts that aider uses?
+## Can I change the system prompts that dev uses?
 
 The most convenient way to add custom instructions is to use a
-[conventions file](https://aider.chat/docs/usage/conventions.html).
+[conventions file](https://dev.chat/docs/usage/conventions.html).
 
-But, aider is set up to support different actual system prompts and edit formats
-in a modular way. If you look in the `aider/coders` subdirectory, you'll
+But, dev is set up to support different actual system prompts and edit formats
+in a modular way. If you look in the `dev/coders` subdirectory, you'll
 see there's a base coder with base prompts, and then there are
 a number of
 different specific coder implementations.
 
 If you're thinking about experimenting with system prompts
 this document about
-[benchmarking GPT-3.5 and GPT-4 on code editing](https://aider.chat/docs/benchmarks.html)
+[benchmarking GPT-3.5 and GPT-4 on code editing](https://dev.chat/docs/benchmarks.html)
 might be useful background.
 
 While it's not well documented how to add new coder subsystems, you may be able
@@ -215,22 +215,22 @@ The universal diff coder is currently used by GPT-4 Turbo by default. You can ma
 - udiff_coder.py
 - udiff_prompts.py
 
-When experimenting with coder backends, it helps to run aider with `--verbose --no-pretty` so you can see
+When experimenting with coder backends, it helps to run dev with `--verbose --no-pretty` so you can see
 all the raw information being sent to/from the LLM in the conversation.
 
 You can also refer to the
-[instructions for installing a development version of aider](https://aider.chat/docs/install/optional.html#install-the-development-version-of-aider).
+[instructions for installing a development version of dev](https://dev.chat/docs/install/optional.html#install-the-development-version-of-dev).
 
-## What LLMs do you use to build aider?
+## What LLMs do you use to build dev?
 
-Aider writes a lot of its own code, usually about 70% of the new code in each
+Dev writes a lot of its own code, usually about 70% of the new code in each
 release.
-People often ask which LLMs I use with aider, when writing aider.
+People often ask which LLMs I use with dev, when writing dev.
 Below is a table showing the models I have used recently,
 extracted from the 
-[public log](https://github.com/aider-ai/aider/blob/main/aider/website/assets/sample-analytics.jsonl)
+[public log](https://github.com/dev-ai/dev/blob/main/dev/website/assets/sample-analytics.jsonl)
 of my
-[aider analytics](https://aider.chat/docs/more/analytics.html).
+[dev analytics](https://dev.chat/docs/more/analytics.html).
 
 <!--[[[cog
 import sys
@@ -260,22 +260,22 @@ tr:hover { background-color: #f5f5f5; }
 
 {: .note :}
 Some models show as REDACTED, because they are new or unpopular models.
-Aider's analytics only records the names of "well known" LLMs.
+Dev's analytics only records the names of "well known" LLMs.
 <!--[[[end]]]-->
 
-## How are the "aider wrote xx% of code" stats computed?
+## How are the "dev wrote xx% of code" stats computed?
 
-[Aider is tightly integrated with git](/docs/git.html) so all
-of aider's code changes are committed to the repo with proper attribution.
+[Dev is tightly integrated with git](/docs/git.html) so all
+of dev's code changes are committed to the repo with proper attribution.
 The 
-[stats are computed](https://github.com/Aider-AI/aider/blob/main/scripts/blame.py)
+[stats are computed](https://github.com/Dev-AI/dev/blob/main/scripts/blame.py)
 by doing something like `git blame` on the repo,
 and counting up who wrote all the new lines of code in each release.
 Only lines in source code files are counted, not documentation or prompt files.
 
-## Why does aider sometimes stop highlighting code in its replies?
+## Why does dev sometimes stop highlighting code in its replies?
 
-Aider displays the markdown responses that are coming back from the LLM.
+Dev displays the markdown responses that are coming back from the LLM.
 Usually, the LLM will reply with code in a markdown "code block" with
 triple backtick fences, like this:
 
@@ -288,66 +288,66 @@ print("hello")
 ````
 
 But if you've added files to the chat that contain triple backticks,
-aider needs to tell the LLM to use a different set of fences.
+dev needs to tell the LLM to use a different set of fences.
 Otherwise, the LLM can't safely include your code's triple backticks
 inside the code blocks that it returns with edits.
-Aider will use fences like `<source>...</source>` in this case.
+Dev will use fences like `<source>...</source>` in this case.
 
-A side effect of this is that the code that aider outputs may no
+A side effect of this is that the code that dev outputs may no
 longer be properly highlighted.
 You will most often notice this if you add markdown files
 to you chats that contain code blocks.
 
 ## Why is the LLM speaking to me in an unexpected language?
 
-Aider goes to some effort to prompt the model to use the language that is configured
+Dev goes to some effort to prompt the model to use the language that is configured
 for your system.
 But LLMs aren't fully reliable, and they sometimes decide to speak in
 an unexpected language.
 Claude is especially fond of speaking French.
 
-You can explicitly set the language that aider tells the model to use with
+You can explicitly set the language that dev tells the model to use with
 `--chat-language <language>`.
 But the LLM may not comply.
 
-## Can I share my aider chat transcript?
+## Can I share my dev chat transcript?
 
-Yes, you can now share aider chat logs in a pretty way.
+Yes, you can now share dev chat logs in a pretty way.
 
-1. Copy the markdown logs you want to share from `.aider.chat.history.md` and make a github gist. Or publish the raw markdown logs on the web any way you'd like.
+1. Copy the markdown logs you want to share from `.dev.chat.history.md` and make a github gist. Or publish the raw markdown logs on the web any way you'd like.
 
    ```
-   https://gist.github.com/Aider-AI/2087ab8b64034a078c0a209440ac8be0
+   https://gist.github.com/Dev-AI/2087ab8b64034a078c0a209440ac8be0
    ```
 
 2. Take the gist URL and append it to:
 
    ```
-   https://aider.chat/share/?mdurl=
+   https://dev.chat/share/?mdurl=
    ```
 
 This will give you a URL like this, which shows the chat history like you'd see in a terminal:
 
 ```
-https://aider.chat/share/?mdurl=https://gist.github.com/Aider-AI/2087ab8b64034a078c0a209440ac8be0
+https://dev.chat/share/?mdurl=https://gist.github.com/Dev-AI/2087ab8b64034a078c0a209440ac8be0
 ```
 
-## Can I edit files myself while aider is running?
+## Can I edit files myself while dev is running?
 
-Yes. Aider always reads the latest copy of files from the file
+Yes. Dev always reads the latest copy of files from the file
 system when you send each message.
 
-While you're waiting for aider's reply to complete, it's probably unwise to
+While you're waiting for dev's reply to complete, it's probably unwise to
 edit files that you've added to the chat.
-Your edits and aider's edits might conflict.
+Your edits and dev's edits might conflict.
 
-## What is Aider AI LLC?
+## What is Dev AI LLC?
 
-Aider AI LLC is the company behind the aider AI coding tool.
-Aider is 
-[open source and available on GitHub](https://github.com/Aider-AI/aider)
+Dev AI LLC is the company behind the dev AI coding tool.
+Dev is 
+[open source and available on GitHub](https://github.com/Dev-AI/dev)
 under an 
-[Apache 2.0 license](https://github.com/Aider-AI/aider/blob/main/LICENSE.txt).
+[Apache 2.0 license](https://github.com/Dev-AI/dev/blob/main/LICENSE.txt).
 
 
 <div style="height:80vh"></div>

@@ -1,20 +1,20 @@
-# This needs to sync with aider/help_pats.py
+# This needs to sync with dev/help_pats.py
 
 global-exclude .DS_Store
 
-recursive-exclude aider/website/examples *
-recursive-exclude aider/website/_posts *
+recursive-exclude dev/website/examples *
+recursive-exclude dev/website/_posts *
 
-exclude aider/website/HISTORY.md
-exclude aider/website/docs/benchmarks*.md
-exclude aider/website/docs/ctags.md
-exclude aider/website/docs/unified-diffs.md
+exclude dev/website/HISTORY.md
+exclude dev/website/docs/benchmarks*.md
+exclude dev/website/docs/ctags.md
+exclude dev/website/docs/unified-diffs.md
 
-exclude aider/website/install.ps1
-exclude aider/website/install.sh
+exclude dev/website/install.ps1
+exclude dev/website/install.sh
 
-recursive-exclude aider/website/docs/leaderboards *
-recursive-exclude aider/website/assets *
-recursive-exclude aider/website *.js
-recursive-exclude aider/website *.html
-recursive-exclude aider/website *.yml
+recursive-exclude dev/website/docs/leaderboards *
+recursive-exclude dev/website/assets *
+recursive-exclude dev/website *.js
+recursive-exclude dev/website *.html
+recursive-exclude dev/website *.yml

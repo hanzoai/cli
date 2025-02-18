@@ -17,7 +17,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 25.1
@@ -41,7 +41,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --sonnet
+  command: dev --sonnet
   date: 2024-07-04
   versions: 0.42.1-dev
   seconds_per_case: 17.6
@@ -66,7 +66,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model o1-mini
+  command: dev --model o1-mini
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 23.7
@@ -91,7 +91,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model o1-mini
+  command: dev --model o1-mini
   date: 2024-09-26
   versions: 0.57.2.dev
   seconds_per_case: 48.2
@@ -116,7 +116,7 @@
   indentation_errors: 1
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model gpt-4o
+  command: dev --model gpt-4o
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 18.2
@@ -139,7 +139,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model o1-preview
+  command: dev --model o1-preview
   date: 2024-09-21
   versions: 0.56.1.dev
   seconds_per_case: 80.9
@@ -164,7 +164,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 4
-  command: aider --model o1-preview
+  command: dev --model o1-preview
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 42.3
@@ -190,7 +190,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model o1-preview
+  command: dev --model o1-preview
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 44.9
@@ -213,7 +213,7 @@
   indentation_errors: 1
   exhausted_context_windows: 0
   test_timeouts: 0
-  command: aider --model o1-mini
+  command: dev --model o1-mini
   date: 2024-09-21
   versions: 0.56.1.dev
   seconds_per_case: 26.7
@@ -238,7 +238,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model o1-mini
+  command: dev --model o1-mini
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 52.2
@@ -263,7 +263,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model o1-preview
+  command: dev --model o1-preview
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 73.2
@@ -288,7 +288,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model o1-preview
+  command: dev --model o1-preview
   date: 2024-09-25
   versions: 0.57.2.dev
   seconds_per_case: 67.4
@@ -313,7 +313,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-09-26
   versions: 0.57.2.dev
   seconds_per_case: 37.2
@@ -336,7 +336,7 @@
   indentation_errors: 1
   exhausted_context_windows: 0
   test_timeouts: 0
-  command: aider --model gpt-4o
+  command: dev --model gpt-4o
   date: 2024-09-26
   versions: 0.57.2.dev
   seconds_per_case: 9.7
@@ -361,7 +361,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model gpt-4o
+  command: dev --model gpt-4o
   date: 2024-09-26
   versions: 0.57.2.dev
   seconds_per_case: 38.0
@@ -386,7 +386,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model gpt-4o
+  command: dev --model gpt-4o
   date: 2024-09-26
   versions: 0.57.2.dev
   seconds_per_case: 44.0
@@ -411,7 +411,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model openrouter/anthropic/claude-3.5-sonnet
+  command: dev --model openrouter/anthropic/claude-3.5-sonnet
   date: 2024-09-26
   versions: 0.57.2.dev
   seconds_per_case: 43.2
@@ -436,7 +436,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 3
-  command: aider --model gpt-4o-mini
+  command: dev --model gpt-4o-mini
   date: 2024-09-27
   versions: 0.57.2.dev
   seconds_per_case: 21.0
@@ -460,7 +460,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 2
-  command: aider --model gpt-4o-mini
+  command: dev --model gpt-4o-mini
   date: 2024-07-18
   versions: 0.44.1-dev
   seconds_per_case: 7.8
@@ -485,7 +485,7 @@
   indentation_errors: 0
   exhausted_context_windows: 0
   test_timeouts: 1
-  command: aider --model o1-preview
+  command: dev --model o1-preview
   date: 2024-09-29
   versions: 0.58.1.dev
   seconds_per_case: 39.7

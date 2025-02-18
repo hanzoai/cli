@@ -7,7 +7,7 @@ import tempfile
 
 from history_prompts import history_prompt
 
-from aider import __version__
+from dev import __version__
 
 
 def get_base_version():
@@ -27,8 +27,8 @@ def run_git_log():
         "--pretty=full",
         f"v{base_ver}..HEAD",
         "--",
-        "aider/",
-        ":!aider/website/",
+        "dev/",
+        ":!dev/website/",
         ":!scripts/",
         ":!HISTORY.md",
     ]
@@ -46,7 +46,7 @@ def main():
         history_content = f.read()
 
     # Find the section for this version
-    version_header = f"### Aider v{base_ver}"
+    version_header = f"### Dev v{base_ver}"
     start_idx = history_content.find("# Release history")
     if start_idx == -1:
         raise ValueError("Could not find start of release history")
@@ -57,7 +57,7 @@ def main():
         raise ValueError(f"Could not find version header: {version_header}")
 
     # Find the next version header after this one
-    next_version_idx = history_content.find("\n### Aider v", version_idx + len(version_header))
+    next_version_idx = history_content.find("\n### Dev v", version_idx + len(version_header))
     if next_version_idx == -1:
         # No next version found, use the rest of the file
         relevant_history = history_content[start_idx:]
@@ -74,14 +74,14 @@ def main():
         tmp_hist.write(relevant_history)
         hist_path = tmp_hist.name
 
-    # Run blame to get aider percentage
+    # Run blame to get dev percentage
     blame_result = subprocess.run(["python3", "scripts/blame.py"], capture_output=True, text=True)
-    aider_line = blame_result.stdout.strip().split("\n")[-1]  # Get last line with percentage
+    dev_line = blame_result.stdout.strip().split("\n")[-1]  # Get last line with percentage
 
-    # Construct and run the aider command
-    message = history_prompt.format(aider_line=aider_line)
+    # Construct and run the dev command
+    message = history_prompt.format(dev_line=dev_line)
 
-    cmd = ["aider", hist_path, "--read", diff_path, "--msg", message, "--no-auto-commit"]
+    cmd = ["dev", hist_path, "--read", diff_path, "--msg", message, "--no-auto-commit"]
     subprocess.run(cmd)
 
     # Read back the updated history
@@ -104,7 +104,7 @@ def main():
     with open("HISTORY.md", "w") as f:
         f.write(full_history)
 
-    # Run update-docs.sh after aider
+    # Run update-docs.sh after dev
     subprocess.run(["scripts/update-docs.sh"])
 
     # Cleanup

@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from aider.dump import dump  # noqa
-from aider.linter import Linter
+from dev.dump import dump  # noqa
+from dev.linter import Linter
 
 
 class TestLinter(unittest.TestCase):

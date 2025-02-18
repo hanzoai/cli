@@ -29,7 +29,7 @@ from rich.markdown import Markdown
 from rich.style import Style as RichStyle
 from rich.text import Text
 
-from aider.mdstream import MarkdownStream
+from dev.mdstream import MarkdownStream
 
 from .dump import dump  # noqa: F401
 from .utils import is_image_file
@@ -275,7 +275,7 @@ class InputOutput:
         self.dry_run = dry_run
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.append_chat_history(f"\n# aider chat started at {current_time}\n\n")
+        self.append_chat_history(f"\n# dev chat started at {current_time}\n\n")
 
         self.prompt_session = None
         self.is_dumb_terminal = is_dumb_terminal()

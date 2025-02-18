@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from aider.dump import dump  # noqa: F401
+from dev.dump import dump  # noqa: F401
 
 
 @dataclass
@@ -63,7 +63,7 @@ class LiteLLMExceptions:
         for var in dir(litellm):
             if var.endswith("Error"):
                 if var not in self.exception_info:
-                    raise ValueError(f"{var} is in litellm but not in aider's exceptions list")
+                    raise ValueError(f"{var} is in litellm but not in dev's exceptions list")
 
         for var in self.exception_info:
             ex = getattr(litellm, var)

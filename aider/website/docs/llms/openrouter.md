@@ -5,31 +5,31 @@ nav_order: 500
 
 # OpenRouter
 
-Aider can connect to [models provided by OpenRouter](https://openrouter.ai/models?o=top-weekly):
+Dev can connect to [models provided by OpenRouter](https://openrouter.ai/models?o=top-weekly):
 You'll need an [OpenRouter API key](https://openrouter.ai/keys).
 
 ```
-python -m pip install -U aider-chat
+python -m pip install -U dev-chat
 
 export OPENROUTER_API_KEY=<key> # Mac/Linux
 setx   OPENROUTER_API_KEY <key> # Windows, restart shell after setx
 
 # Or any other open router model
-aider --model openrouter/<provider>/<model>
+dev --model openrouter/<provider>/<model>
 
 # List models available from OpenRouter
-aider --list-models openrouter/
+dev --list-models openrouter/
 ```
 
-In particular, many aider users access Sonnet via OpenRouter:
+In particular, many dev users access Sonnet via OpenRouter:
 
 ```
-python -m pip install -U aider-chat
+python -m pip install -U dev-chat
 
 export OPENROUTER_API_KEY=<key> # Mac/Linux
 setx   OPENROUTER_API_KEY <key> # Windows, restart shell after setx
 
-aider --model openrouter/anthropic/claude-3.5-sonnet
+dev --model openrouter/anthropic/claude-3.5-sonnet
 ```
 
 
@@ -48,7 +48,7 @@ You can control which OpenRouter providers are used for your requests in two way
 [OpenRouter account settings](https://openrouter.ai/settings/preferences).
 This disables those named providers across all the models that you access via OpenRouter.
 
-2. By configuring "provider routing" in a `.aider.model.settings.yml` file.
+2. By configuring "provider routing" in a `.dev.model.settings.yml` file.
 
 Place that file in your home directory or the root if your git project, with
 entries like this:
@@ -70,7 +70,7 @@ entries like this:
 
 See [OpenRouter's provider routing docs](https://openrouter.ai/docs/provider-routing) for full details on these settings.
 
-See [Advanced model settings](https://aider.chat/docs/config/adv-model-settings.html#model-settings)
+See [Advanced model settings](https://dev.chat/docs/config/adv-model-settings.html#model-settings)
 for more details about model settings files. 
 
 

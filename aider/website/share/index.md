@@ -8,11 +8,11 @@ nav_exclude: true
              connect-src http: https:;
              style-src 'self' 'unsafe-inline';">
 
-# Shared aider chat transcript
+# Shared dev chat transcript
 
 A user has shared the following transcript of a pair programming chat session
-created using <a href="https://aider.chat">aider</a>.
-Aider is a command line tool that lets you pair program with GPT-3.5 or
+created using <a href="https://dev.chat">dev</a>.
+Dev is a command line tool that lets you pair program with GPT-3.5 or
 GPT-4, to edit code stored in your local git repository.
 
 The transcript is based on <a id="mdurl" href="">this chat transcript data</a>.
@@ -24,7 +24,7 @@ The transcript is based on <a id="mdurl" href="">this chat transcript data</a>.
 
 <div class="chat-transcript" markdown="1">
 
-> This is output from the aider tool.
+> This is output from the dev tool.
 
 #### These are chat messages written by the user.
 

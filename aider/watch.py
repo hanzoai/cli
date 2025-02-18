@@ -8,8 +8,8 @@ from pathspec import PathSpec
 from pathspec.patterns import GitWildMatchPattern
 from watchfiles import watch
 
-from aider.dump import dump  # noqa
-from aider.watch_prompts import watch_ask_prompt, watch_code_prompt
+from dev.dump import dump  # noqa
+from dev.watch_prompts import watch_ask_prompt, watch_code_prompt
 
 
 def load_gitignores(gitignore_paths: list[Path]) -> Optional[PathSpec]:
@@ -18,7 +18,7 @@ def load_gitignores(gitignore_paths: list[Path]) -> Optional[PathSpec]:
         return None
 
     patterns = [
-        ".aider*",
+        ".dev*",
         ".git",
         # Common editor backup/temp files
         "*~",  # Emacs/vim backup

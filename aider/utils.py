@@ -8,7 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from aider.dump import dump  # noqa: F401
+from dev.dump import dump  # noqa: F401
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp", ".pdf"}
 

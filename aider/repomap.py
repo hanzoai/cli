@@ -17,9 +17,9 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from tqdm import tqdm
 
-from aider.dump import dump
-from aider.special import filter_important_files
-from aider.utils import Spinner
+from dev.dump import dump
+from dev.special import filter_important_files
+from dev.utils import Spinner
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -37,7 +37,7 @@ if USING_TSL_PACK:
 
 
 class RepoMap:
-    TAGS_CACHE_DIR = f".aider.tags.cache.v{CACHE_VERSION}"
+    TAGS_CACHE_DIR = f".dev.tags.cache.v{CACHE_VERSION}"
 
     warned_files = set()
 

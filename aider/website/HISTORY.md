@@ -2,7 +2,7 @@
 title: Release history
 nav_order: 925
 highlight_image: /assets/blame.jpg
-description: Release notes and stats on aider writing its own code.
+description: Release notes and stats on dev writing its own code.
 ---
 
 # Release history
@@ -10,8 +10,8 @@ description: Release notes and stats on aider writing its own code.
 {% include blame.md %}
 
 The above 
-[stats are based on the git commit history](/docs/faq.html#how-are-the-aider-wrote-xx-of-code-stats-computed)
-of the aider repo.
+[stats are based on the git commit history](/docs/faq.html#how-are-the-dev-wrote-xx-of-code-stats-computed)
+of the dev repo.
 
 ## Release notes
 
@@ -23,25 +23,25 @@ cog.out(text)
 ]]]-->
 
 
-### Aider v0.74.2
+### Dev v0.74.2
 
 - Prevent more than one cache warming thread from becoming active.
 - Fixed continuation prompt ". " for multiline input.
 - Added HCL (Terraform) syntax support, by Warren Krewenki.
 
-### Aider v0.74.1
+### Dev v0.74.1
 
 - Have o1 & o3-mini generate markdown by sending the magic "Formatting re-enabled." string.
 - Bugfix for multi-line inputs, which should not include the ". " continuation prompt.
 
-### Aider v0.74.0
+### Dev v0.74.0
 
 - Dynamically changes the Ollama context window to hold the current chat.
 - Better support for o3-mini, DeepSeek V3 & R1, o1-mini, o1 especially via third-party API providers.
 - Remove `<think>` tags from R1 responses for commit messages (and other weak model uses).
 - Can now specify `use_temperature: <float>` in model settings, not just true/false.
 - The full docker container now includes `boto3` for Bedrock.
-- Docker containers now set `HOME=/app` which is the normal project mount-point, to persist `~/.aider`.
+- Docker containers now set `HOME=/app` which is the normal project mount-point, to persist `~/.dev`.
 - Bugfix to prevent creating incorrect filenames like `python`, `php`, etc.
 - Bugfix for `--timeout`
 - Bugfix so that `/model` now correctly reports that the weak model is not changed.
@@ -52,30 +52,30 @@ cog.out(text)
   - Honor ignores already in effect regardless of how they've been configured.
   - Check for .env only when the file exists.
 - Yes/No prompts now accept All/Skip as alias for Y/N even when not processing a group of confirmations.
-- Aider wrote 77% of the code in this release.
+- Dev wrote 77% of the code in this release.
 
-### Aider v0.73.0
+### Dev v0.73.0
 
-- Full support for o3-mini: `aider --model o3-mini`
+- Full support for o3-mini: `dev --model o3-mini`
 - New `--reasoning-effort` argument: low, medium, high.
 - Improved handling of context window size limits, with better messaging and Ollama-specific guidance.
 - Added support for removing model-specific reasoning tags from responses with `remove_reasoning: tagname` model setting.
 - Auto-create parent directories when creating new files, by xqyz.
 - Support for R1 free on OpenRouter: `--model openrouter/deepseek/deepseek-r1:free`
-- Aider wrote 69% of the code in this release.
+- Dev wrote 69% of the code in this release.
 
-### Aider v0.72.3
+### Dev v0.72.3
 
 - Enforce user/assistant turn order to avoid R1 errors, by miradnanali.
 - Case-insensitive model name matching while preserving original case.
 
-### Aider v0.72.2
+### Dev v0.72.2
 - Harden against user/assistant turn order problems which cause R1 errors.
 
-### Aider v0.72.1
+### Dev v0.72.1
 - Fix model metadata for `openrouter/deepseek/deepseek-r1`
 
-### Aider v0.72.0
+### Dev v0.72.0
 - Support for DeepSeek R1.
   - Use shortcut: `--model r1`
   - Also via OpenRouter: `--model openrouter/deepseek/deepseek-r1`
@@ -84,16 +84,16 @@ cog.out(text)
 - Added examples_as_sys_msg=True for GPT-4o models, improves benchmark scores.
 - Bumped all dependencies, to pick up litellm support for o1 system messages.
 - Bugfix for turn taking when reflecting lint/test errors.
-- Aider wrote 52% of the code in this release.
+- Dev wrote 52% of the code in this release.
 
-### Aider v0.71.1
+### Dev v0.71.1
 
 - Fix permissions issue in Docker images.
 - Added read-only file announcements.
 - Bugfix: ASCII fallback for unicode errors.
 - Bugfix: integer indices for list slicing in repomap calculations.
 
-### Aider v0.71.0
+### Dev v0.71.0
 
 - Prompts to help DeepSeek work better when alternating between `/ask` and `/code`.
 - Streaming pretty LLM responses is smoother and faster for long replies.
@@ -113,9 +113,9 @@ cog.out(text)
 - Improved handling of git repo index errors, by Krazer.
 - Improved unicode handling in console output with ASCII fallback.
 - Added AssertionError, AttributeError to git error handling.
-- Aider wrote 60% of the code in this release.
+- Dev wrote 60% of the code in this release.
 
-### Aider v0.70.0
+### Dev v0.70.0
 
 - Full support for o1 models.
 - Watch files now honors `--subtree-only`, and only watches that subtree.
@@ -127,37 +127,37 @@ cog.out(text)
 - Ask 10% of users to opt-in to analytics.
 - Bugfix for auto-suggest.
 - Gracefully handle unicode errors in git path names.
-- Aider wrote 74% of the code in this release.
+- Dev wrote 74% of the code in this release.
 
-### Aider v0.69.1
+### Dev v0.69.1
 
 - Fix for gemini model names in model metadata.
 - Show hints about AI! and AI? when user makes AI comments.
 - Support for running without git installed.
 - Improved environment variable setup messages on Windows.
 
-### Aider v0.69.0
+### Dev v0.69.0
 
-- [Watch files](https://aider.chat/docs/usage/watch.html) improvements:
-  - Use `# ... AI?` comments to trigger aider and ask questions about your code.
+- [Watch files](https://dev.chat/docs/usage/watch.html) improvements:
+  - Use `# ... AI?` comments to trigger dev and ask questions about your code.
   - Now watches *all* files, not just certain source files.
-  - Use `# AI comments`, `// AI comments`, or `-- AI comments` to give aider instructions in any text file.
+  - Use `# AI comments`, `// AI comments`, or `-- AI comments` to give dev instructions in any text file.
 - Full support for Gemini Flash 2.0 Exp:
-  - `aider --model flash` or `aider --model gemini/gemini-2.0-flash-exp`
-- [New `--multiline` flag and `/multiline-mode` command](https://aider.chat/docs/usage/commands.html#entering-multi-line-chat-messages) makes ENTER a soft newline and META-ENTER send the message, by @miradnanali.
-- `/copy-context <instructions>` now takes optional "instructions" when [copying code context to the clipboard](https://aider.chat/docs/usage/copypaste.html#copy-aiders-code-context-to-your-clipboard-paste-into-the-web-ui).
+  - `dev --model flash` or `dev --model gemini/gemini-2.0-flash-exp`
+- [New `--multiline` flag and `/multiline-mode` command](https://dev.chat/docs/usage/commands.html#entering-multi-line-chat-messages) makes ENTER a soft newline and META-ENTER send the message, by @miradnanali.
+- `/copy-context <instructions>` now takes optional "instructions" when [copying code context to the clipboard](https://dev.chat/docs/usage/copypaste.html#copy-devs-code-context-to-your-clipboard-paste-into-the-web-ui).
 - Improved clipboard error handling with helpful requirements install info.
 - Ask 5% of users if they want to opt-in to analytics.
 - `/voice` now lets you edit the transcribed text before sending.
 - Disabled auto-complete in Y/N prompts.
-- Aider wrote 68% of the code in this release.
+- Dev wrote 68% of the code in this release.
 
-### Aider v0.68.0
+### Dev v0.68.0
 
-- [Aider works with LLM web chat UIs](https://aider.chat/docs/usage/copypaste.html).
+- [Dev works with LLM web chat UIs](https://dev.chat/docs/usage/copypaste.html).
   - New `--copy-paste` mode.
   - New `/copy-context` command.
-- [Set API keys and other environment variables for all providers from command line or yaml conf file](https://aider.chat/docs/config/aider_conf.html#storing-llm-keys).
+- [Set API keys and other environment variables for all providers from command line or yaml conf file](https://dev.chat/docs/config/dev_conf.html#storing-llm-keys).
   - New `--api-key provider=key` setting.
   - New `--set-env VAR=value` setting.
 - Added bash and zsh support to `--watch-files`.
@@ -171,14 +171,14 @@ cog.out(text)
 - Reorganized command line arguments with improved help messages and grouping.
 - Use the exact `sys.python` for self-upgrades.
 - Added experimental Gemini models.
-- Aider wrote 71% of the code in this release.
+- Dev wrote 71% of the code in this release.
 
-### Aider v0.67.0
+### Dev v0.67.0
 
-- [Use aider in your IDE or editor](https://aider.chat/docs/usage/watch.html).
-  - Run `aider --watch-files` and it will watch for instructions you add to your source files.
-  - One-liner `# ...` or `// ...` comments that start or end with "AI" are instructions to aider.
-  - When aider sees "AI!" it reads and follows all the instructions in AI comments.
+- [Use dev in your IDE or editor](https://dev.chat/docs/usage/watch.html).
+  - Run `dev --watch-files` and it will watch for instructions you add to your source files.
+  - One-liner `# ...` or `// ...` comments that start or end with "AI" are instructions to dev.
+  - When dev sees "AI!" it reads and follows all the instructions in AI comments.
 - Support for new Amazon Bedrock Nova models.
 - When `/run` or `/test` have non-zero exit codes, pre-fill "Fix that" into the next message prompt.
 - `/diff` now invokes `git diff` to use your preferred diff tool.
@@ -186,9 +186,9 @@ cog.out(text)
 - Spinner now falls back to ASCII art if fancy symbols throw unicode errors.
 - `--read` now expands `~` home dirs.
 - Enabled exception capture in analytics.
-- [Aider wrote 61% of the code in this release.](https://aider.chat/HISTORY.html)
+- [Dev wrote 61% of the code in this release.](https://dev.chat/HISTORY.html)
 
-### Aider v0.66.0
+### Dev v0.66.0
 
 - PDF support for Sonnet and Gemini models.
 - Added `--voice-input-device` to select audio input device for voice recording, by @preynal.
@@ -203,48 +203,48 @@ cog.out(text)
 - Bugfix when scraping URLs found in chat messages.
 - Better handling of __version__ import errors.
 - Improved `/drop` command to support substring matching for non-glob patterns.
-- Aider wrote 82% of the code in this release.
+- Dev wrote 82% of the code in this release.
 
-### Aider v0.65.1
+### Dev v0.65.1
 
 - Bugfix to `--alias`.
 
-### Aider v0.65.0
+### Dev v0.65.0
 
-- Added `--alias` config to define [custom model aliases](https://aider.chat/docs/config/model-aliases.html).
+- Added `--alias` config to define [custom model aliases](https://dev.chat/docs/config/model-aliases.html).
 - Added `--[no-]detect-urls` flag to disable detecting and offering to scrape URLs found in the chat.
 - Ollama models now default to an 8k context window.
-- Added [RepoMap support for Dart language](https://aider.chat/docs/languages.html) by @malkoG.
-- Ask 2.5% of users if they want to opt-in to [analytics](https://aider.chat/docs/more/analytics.html).
+- Added [RepoMap support for Dart language](https://dev.chat/docs/languages.html) by @malkoG.
+- Ask 2.5% of users if they want to opt-in to [analytics](https://dev.chat/docs/more/analytics.html).
 - Skip suggesting files that share names with files already in chat.
 - `/editor` returns and prefill the file content into the prompt, so you can use `/editor` to compose messages that start with `/commands`, etc.
 - Enhanced error handling for analytics.
 - Improved handling of UnknownEditFormat exceptions with helpful documentation links.
 - Bumped dependencies to pick up grep-ast 0.4.0 for Dart language support.
-- Aider wrote 81% of the code in this release.
+- Dev wrote 81% of the code in this release.
 
-### Aider v0.64.1
+### Dev v0.64.1
 
 - Disable streaming for o1 on OpenRouter.
 
-### Aider v0.64.0
+### Dev v0.64.0
 
-- Added [`/editor` command](https://aider.chat/docs/usage/commands.html) to open system editor for writing prompts, by @thehunmonkgroup.
+- Added [`/editor` command](https://dev.chat/docs/usage/commands.html) to open system editor for writing prompts, by @thehunmonkgroup.
 - Full support for `gpt-4o-2024-11-20`.
 - Stream o1 models by default.
 - `/run` and suggested shell commands are less mysterious and now confirm that they "Added XX lines of output to the chat."
-- Ask 1% of users if they want to opt-in to [analytics](https://aider.chat/docs/more/analytics.html).
-- Added support for [optional multiline input tags](https://aider.chat/docs/usage/commands.html#entering-multi-line-chat-messages) with matching closing tags.
-- Improved [model settings configuration](https://aider.chat/docs/config/adv-model-settings.html#global-extra-params) with support for global `extra_params` for `litellm.completion()`.
+- Ask 1% of users if they want to opt-in to [analytics](https://dev.chat/docs/more/analytics.html).
+- Added support for [optional multiline input tags](https://dev.chat/docs/usage/commands.html#entering-multi-line-chat-messages) with matching closing tags.
+- Improved [model settings configuration](https://dev.chat/docs/config/adv-model-settings.html#global-extra-params) with support for global `extra_params` for `litellm.completion()`.
 - Architect mode now asks to add files suggested by the LLM.
 - Fixed bug in fuzzy model name matching.
 - Added Timeout exception to handle API provider timeouts.
 - Added `--show-release-notes` to control release notes display on first run of new version.
 - Save empty dict to cache file on model metadata download failure, to delay retry.
 - Improved error handling and code formatting.
-- Aider wrote 74% of the code in this release.
+- Dev wrote 74% of the code in this release.
 
-###  Aider v0.63.2
+###  Dev v0.63.2
 
 - Fixed bug in fuzzy model name matching when litellm provider info is missing.
 - Modified model metadata file loading to allow override of resource file.
@@ -253,12 +253,12 @@ cog.out(text)
 - Added exponential backoff retry when writing files to handle editor file locks.
 - Updated Qwen 2.5 Coder 32B model configuration.
 
-### Aider v0.63.1
+### Dev v0.63.1
 
 - Fixed bug in git ignored file handling.
 - Improved error handling for git operations.
 
-### Aider v0.63.0
+### Dev v0.63.0
 
 - Support for Qwen 2.5 Coder 32B.
 - `/web` command just adds the page to the chat, without triggering an LLM response.
@@ -267,32 +267,32 @@ cog.out(text)
 - Bugfix for double-counting tokens when reporting cache stats.
 - Bugfix for the LLM creating new files.
 - Other small bug fixes.
-- Aider wrote 55% of the code in this release.
+- Dev wrote 55% of the code in this release.
 
-### Aider v0.62.0
+### Dev v0.62.0
 
 - Full support for Claude 3.5 Haiku
-  - Scored 75% on [aider's code editing leaderboard](https://aider.chat/docs/leaderboards/).
+  - Scored 75% on [dev's code editing leaderboard](https://dev.chat/docs/leaderboards/).
   - Almost as good as Sonnet at much lower cost.
   - Launch with `--haiku` to use it.
 - Easily apply file edits from ChatGPT, Claude or other web apps
   - Chat with ChatGPT or Claude via their web app. 
   - Give it your source files and ask for the changes you want.
   - Use the web app's "copy response" button to copy the entire reply from the LLM.
-  - Run `aider --apply-clipboard-edits file-to-edit.js`.
-  - Aider will edit your file with the LLM's changes.
+  - Run `dev --apply-clipboard-edits file-to-edit.js`.
+  - Dev will edit your file with the LLM's changes.
 - Bugfix for creating new files.
-- Aider wrote 84% of the code in this release.  
+- Dev wrote 84% of the code in this release.  
 
-### Aider v0.61.0
+### Dev v0.61.0
 
-- Load and save aider slash-commands to files:
+- Load and save dev slash-commands to files:
   - `/save <fname>` command will make a file of `/add` and `/read-only` commands that recreate the current file context in the chat.
   - `/load <fname>` will replay the commands in the file.
   - You can use `/load` to run any arbitrary set of slash-commands, not just `/add` and `/read-only`.
   - Use `--load <fname>` to run a list of commands on launch, before the interactive chat begins.
-- Anonymous, opt-in [analytics](https://aider.chat/docs/more/analytics.html) with no personal data sharing.
-- Aider follows litellm's `supports_vision` attribute to enable image support for models.
+- Anonymous, opt-in [analytics](https://dev.chat/docs/more/analytics.html) with no personal data sharing.
+- Dev follows litellm's `supports_vision` attribute to enable image support for models.
 - Bugfix for when diff mode flexibly handles the model using the wrong filename.
 - Displays filenames in sorted order for `/add` and `/read-only`.
 - New `--no-fancy-input` switch disables prompt toolkit input, now still available with `--no-pretty`.
@@ -302,17 +302,17 @@ cog.out(text)
 - Improved layout of filenames above input prompt.
 - Better handle corrupted repomap tags cache.
 - Improved handling of API errors, especially when accessing the weak model.
-- Aider wrote 68% of the code in this release.
+- Dev wrote 68% of the code in this release.
 
-### Aider v0.60.1
+### Dev v0.60.1
 
 - Enable image support for Sonnet 10/22.
 - Display filenames in sorted order.
 
-### Aider v0.60.0
+### Dev v0.60.0
 
-- Full support for Sonnet 10/22, the new SOTA model on aider's code editing benchmark.
-  - Aider uses Sonnet 10/22 by default.
+- Full support for Sonnet 10/22, the new SOTA model on dev's code editing benchmark.
+  - Dev uses Sonnet 10/22 by default.
 - Improved formatting of added and read-only files above chat prompt, by @jbellis.
 - Improved support for o1 models by more flexibly parsing their nonconforming code edit replies.
 - Corrected diff edit format prompt that only the first match is replaced.
@@ -321,21 +321,21 @@ cog.out(text)
 - Ships with a small model metadata json file to handle models not yet updated in litellm.
 - Model settings for o1 models on azure.
 - Bugfix to properly include URLs in `/help` RAG results.
-- Aider wrote 49% of the code in this release.
+- Dev wrote 49% of the code in this release.
 
-### Aider v0.59.1
+### Dev v0.59.1
 
 - Check for obsolete `yes: true` in yaml config, show helpful error.
 - Model settings for openrouter/anthropic/claude-3.5-sonnet:beta
 
-### Aider v0.59.0
+### Dev v0.59.0
 
 - Improvements to `/read-only`:
   - Now supports shell-style auto-complete of the full file system.
   - Still auto-completes the full paths of the repo files like `/add`.
   - Now supports globs like `src/**/*.py`
 - Renamed `--yes` to `--yes-always`.
-  - Now uses `AIDER_YES_ALWAYS` env var and `yes-always:` yaml key.
+  - Now uses `DEV_YES_ALWAYS` env var and `yes-always:` yaml key.
   - Existing YAML and .env files will need to be updated.
   - Can still abbreviate to `--yes` on the command line.
 - Config file now uses standard YAML list syntax with `  - list entries`, one per line.  
@@ -345,15 +345,15 @@ cog.out(text)
 - Bugfix so architect mode handles Control-C properly.
 - Repo-map is deterministic now, with improved caching logic.
 - Improved commit message prompt.
-- Aider wrote 77% of the code in this release.
+- Dev wrote 77% of the code in this release.
 
-### Aider v0.58.1
+### Dev v0.58.1
 
 - Fixed bug where cache warming pings caused subsequent user messages to trigger a tight loop of LLM requests.
 
-### Aider v0.58.0
+### Dev v0.58.0
 
-- [Use a pair of Architect/Editor models for improved coding](https://aider.chat/2024/09/26/architect.html)
+- [Use a pair of Architect/Editor models for improved coding](https://dev.chat/2024/09/26/architect.html)
   - Use a strong reasoning model like o1-preview as your Architect.
   - Use a cheaper, faster model like gpt-4o as your Editor.
 - New `--o1-preview` and `--o1-mini` shortcuts.
@@ -369,19 +369,19 @@ cog.out(text)
 - ModelSettings takes `extra_params` dict to specify any extras to pass to `litellm.completion()`.
 - Support for cursor shapes when in vim mode.
 - Numerous bug fixes.
-- Aider wrote 53% of the code in this release.
+- Dev wrote 53% of the code in this release.
 
-### Aider v0.57.1
+### Dev v0.57.1
 
-- Fixed dependency conflict between aider-chat[help] and [playwright].
+- Fixed dependency conflict between dev-chat[help] and [playwright].
 
-### Aider v0.57.0
+### Dev v0.57.0
 
 - Support for OpenAI o1 models:
   - o1-preview now works well with diff edit format.
   - o1-preview with diff now matches SOTA leaderboard result with whole edit format.
-  - `aider --model o1-mini`
-  - `aider --model o1-preview`
+  - `dev --model o1-mini`
+  - `dev --model o1-preview`
 - On Windows, `/run` correctly uses PowerShell or cmd.exe.
 - Support for new 08-2024 Cohere models, by @jalammar.
 - Can now recursively add directories with `/read-only`.
@@ -391,9 +391,9 @@ cog.out(text)
 - Removed "No changes made to git tracked files".
 - Numerous bug fixes for corner case crashes.
 - Updated all dependency versions.
-- Aider wrote 70% of the code in this release.
+- Dev wrote 70% of the code in this release.
 
-### Aider v0.56.0
+### Dev v0.56.0
 
 - Enables prompt caching for Sonnet via OpenRouter by @fry69
 - Enables 8k output tokens for Sonnet via VertexAI and DeepSeek V2.5.
@@ -403,9 +403,9 @@ cog.out(text)
 - Check key imports on launch, provide helpful error message if dependencies aren't available.
 - Renamed `--models` to `--list-models` by @fry69.
 - Numerous bug fixes for corner case crashes.
-- Aider wrote 56% of the code in this release.
+- Dev wrote 56% of the code in this release.
 
-### Aider v0.55.0
+### Dev v0.55.0
 
 - Only print the pip command when self updating on Windows, without running it.
 - Converted many error messages to warning messages.
@@ -416,21 +416,21 @@ cog.out(text)
 - Catch and handle terminals which don't support pretty output.
 - Catch and handle playwright and pandoc errors.
 - Catch `/voice` transcription exceptions, show the WAV file so the user can recover it.
-- Aider wrote 53% of the code in this release.
+- Dev wrote 53% of the code in this release.
 
-### Aider v0.54.12
+### Dev v0.54.12
 
 - Switched to `vX.Y.Z.dev` version naming.
 
-### Aider v0.54.11
+### Dev v0.54.11
 
 - Improved printed pip command output on Windows.
 
-### Aider v0.54.10
+### Dev v0.54.10
 
 - Bugfix to test command in platform info.
 
-### Aider v0.54.9
+### Dev v0.54.9
 
 - Include important devops files in the repomap.
 - Print quoted pip install commands to the user.
@@ -440,7 +440,7 @@ cog.out(text)
 - Catch and handle most git errors.
 - Added --verbose debug output for shell commands.
 
-### Aider v0.54.8
+### Dev v0.54.8
 
 - Startup QOL improvements:
   - Sanity check the git repo and exit gracefully on problems.
@@ -450,53 +450,53 @@ cog.out(text)
 - Numerous corner case bug fixes submitted via new crash report -> GitHub Issue feature.
 - Crash reports now include python version, OS, etc.
 
-### Aider v0.54.7
+### Dev v0.54.7
 
 - Offer to submit a GitHub issue pre-filled with uncaught exception info.
 - Bugfix for infinite output.
 
-### Aider v0.54.6
+### Dev v0.54.6
 
 - New `/settings` command to show active settings.
 - Only show cache warming status update if `--verbose`.
 
-### Aider v0.54.5
+### Dev v0.54.5
 
 - Bugfix for shell commands on Windows.
 - Refuse to make git repo in $HOME, warn user.
 - Don't ask again in current session about a file the user has said not to add to the chat.
 - Added `--update` as an alias for `--upgrade`.
 
-### Aider v0.54.4
+### Dev v0.54.4
 
 - Bugfix to completions for `/model` command.
 - Bugfix: revert home dir special case.
 
-### Aider v0.54.3
+### Dev v0.54.3
 
 - Dependency `watchdog<5` for docker image.
 
-### Aider v0.54.2
+### Dev v0.54.2
 
-- When users launch aider in their home dir, help them find/create a repo in a subdir.
+- When users launch dev in their home dir, help them find/create a repo in a subdir.
 - Added missing `pexpect` dependency.
 
-### Aider v0.54.0
+### Dev v0.54.0
 
 - Added model settings for `gemini/gemini-1.5-pro-exp-0827` and `gemini/gemini-1.5-flash-exp-0827`.
 - Shell and `/run` commands can now be interactive in environments where a pty is available.
 - Optionally share output of suggested shell commands back to the LLM.
 - New `--[no-]suggest-shell-commands` switch to configure shell commands.
 - Performance improvements for autocomplete in large/mono repos.
-- New `--upgrade` switch to install latest version of aider from pypi.
+- New `--upgrade` switch to install latest version of dev from pypi.
 - Bugfix to `--show-prompt`.
 - Disabled automatic reply to the LLM on `/undo` for all models.
 - Removed pager from `/web` output.
-- Aider wrote 64% of the code in this release.
+- Dev wrote 64% of the code in this release.
 
-### Aider v0.53.0
+### Dev v0.53.0
 
-- [Keep your prompt cache from expiring](https://aider.chat/docs/usage/caching.html#preventing-cache-expiration) with `--cache-keepalive-pings`.
+- [Keep your prompt cache from expiring](https://dev.chat/docs/usage/caching.html#preventing-cache-expiration) with `--cache-keepalive-pings`.
   - Pings the API every 5min to keep the cache warm.
 - You can now bulk accept/reject a series of add url and run shell confirmations.
 - Improved matching of filenames from S/R blocks with files in chat.
@@ -504,27 +504,27 @@ cog.out(text)
 - Stronger prompting for the LLM to specify full file paths.
 - Improved shell command prompting.
 - Weak model now uses `extra_headers`, to support Anthropic beta features.
-- New `--install-main-branch` to update to the latest dev version of aider.
+- New `--install-main-branch` to update to the latest dev version of dev.
 - Improved error messages on attempt to add not-git subdir to chat.
 - Show model metadata info on `--verbose`.
 - Improved warnings when LLMs env variables aren't set.
 - Bugfix to windows filenames which contain `\_`.
-- Aider wrote 59% of the code in this release.
+- Dev wrote 59% of the code in this release.
 
-### Aider v0.52.1
+### Dev v0.52.1
 
 - Bugfix for NameError when applying edits.
 
-### Aider v0.52.0
+### Dev v0.52.0
 
-- Aider now offers to run shell commands:
+- Dev now offers to run shell commands:
   - Launch a browser to view updated html/css/js.
   - Install new dependencies.
   - Run DB migrations. 
   - Run the program to exercise changes.
   - Run new test cases.
 - `/read` and `/drop` now expand `~` to the home dir.
-- Show the active chat mode at aider prompt.
+- Show the active chat mode at dev prompt.
 - New `/reset` command to `/drop` files and `/clear` chat history.
 - New `--map-multiplier-no-files` to control repo map size multiplier when no files are in the chat.
   - Reduced default multiplier to 2.
@@ -532,9 +532,9 @@ cog.out(text)
 - Improved formatting of token reports and confirmation dialogs.
 - Default OpenAI model is now `gpt-4o-2024-08-06`.
 - Bumped dependencies to pickup litellm bugfixes.
-- Aider wrote 68% of the code in this release.
+- Dev wrote 68% of the code in this release.
 
-### Aider v0.51.0
+### Dev v0.51.0
 
 - Prompt caching for Anthropic models with `--cache-prompts`.
   - Caches the system prompt, repo map and `/read-only` files.
@@ -544,16 +544,16 @@ cog.out(text)
 - Improved editing performance on Jupyter Notebook `.ipynb` files.
 - Show which config yaml file is loaded with `--verbose`.
 - Bumped dependency versions.
-- Bugfix: properly load `.aider.models.metadata.json` data.
+- Bugfix: properly load `.dev.models.metadata.json` data.
 - Bugfix: Using `--msg /ask ...` caused an exception.
 - Bugfix: litellm tokenizer bug for images.
-- Aider wrote 56% of the code in this release.
+- Dev wrote 56% of the code in this release.
 
-### Aider v0.50.1
+### Dev v0.50.1
 
 - Bugfix for provider API exceptions.
 
-### Aider v0.50.0
+### Dev v0.50.0
 
 - Infinite output for DeepSeek Coder, Mistral models in addition to Anthropic's models.
 - New `--deepseek` switch to use DeepSeek Coder.
@@ -566,95 +566,95 @@ cog.out(text)
 - Switched from `setup.py` to `pyproject.toml`, by @branchvincent.
 - Bug fix to persist files added during `/ask`.
 - Bug fix for chat history size in `/tokens`.
-- Aider wrote 66% of the code in this release.
+- Dev wrote 66% of the code in this release.
 
-### Aider v0.49.1
+### Dev v0.49.1
 
 - Bugfix to `/help`.
 
-### Aider v0.49.0
+### Dev v0.49.0
 
 - Add read-only files to the chat context with `/read` and `--read`,  including from outside the git repo.
 - `/diff` now shows diffs of all changes resulting from your request, including lint and test fixes.
 - New `/clipboard` command to paste images or text from the clipboard, replaces `/add-clipboard-image`.
 - Now shows the markdown scraped when you add a url with `/web`.
-- When [scripting aider](https://aider.chat/docs/scripting.html) messages can now contain in-chat `/` commands.
-- Aider in docker image now suggests the correct command to update to latest version.
+- When [scripting dev](https://dev.chat/docs/scripting.html) messages can now contain in-chat `/` commands.
+- Dev in docker image now suggests the correct command to update to latest version.
 - Improved retries on API errors (was easy to test during Sonnet outage).
 - Added `--mini` for `gpt-4o-mini`.
 - Bugfix to keep session cost accurate when using `/ask` and `/help`.
 - Performance improvements for repo map calculation.
 - `/tokens` now shows the active model.
 - Enhanced commit message attribution options:
-  - New `--attribute-commit-message-author` to prefix commit messages with 'aider: ' if aider authored the changes, replaces `--attribute-commit-message`.
-  - New `--attribute-commit-message-committer` to prefix all commit messages with 'aider: '.
-- Aider wrote 61% of the code in this release.
+  - New `--attribute-commit-message-author` to prefix commit messages with 'dev: ' if dev authored the changes, replaces `--attribute-commit-message`.
+  - New `--attribute-commit-message-committer` to prefix all commit messages with 'dev: '.
+- Dev wrote 61% of the code in this release.
 
-### Aider v0.48.1
+### Dev v0.48.1
 
 - Added `openai/gpt-4o-2024-08-06`.
 - Worked around litellm bug that removes OpenRouter app headers when using `extra_headers`.
 - Improved progress indication during repo map processing.
-- Corrected instructions for upgrading the docker container to latest aider version.
+- Corrected instructions for upgrading the docker container to latest dev version.
 - Removed obsolete 16k token limit on commit diffs, use per-model limits.
 
-### Aider v0.48.0
+### Dev v0.48.0
 
 - Performance improvements for large/mono repos.
-- Added `--subtree-only` to limit aider to current directory subtree.
+- Added `--subtree-only` to limit dev to current directory subtree.
   - Should help with large/mono repo performance.
 - New `/add-clipboard-image` to add images to the chat from your clipboard.
 - Use `--map-tokens 1024` to use repo map with any model.
 - Support for Sonnet's 8k output window.
-  - [Aider already supported infinite output from Sonnet.](https://aider.chat/2024/07/01/sonnet-not-lazy.html)
+  - [Dev already supported infinite output from Sonnet.](https://dev.chat/2024/07/01/sonnet-not-lazy.html)
 - Workaround litellm bug for retrying API server errors.
 - Upgraded dependencies, to pick up litellm bug fixes.
-- Aider wrote 44% of the code in this release.
+- Dev wrote 44% of the code in this release.
 
-### Aider v0.47.1
+### Dev v0.47.1
 
 - Improvements to conventional commits prompting.
 
-### Aider v0.47.0
+### Dev v0.47.0
 
-- [Commit message](https://aider.chat/docs/git.html#commit-messages) improvements:
+- [Commit message](https://dev.chat/docs/git.html#commit-messages) improvements:
   - Added Conventional Commits guidelines to commit message prompt.
   - Added `--commit-prompt` to customize the commit message prompt.
   - Added strong model as a fallback for commit messages (and chat summaries).
-- [Linting](https://aider.chat/docs/usage/lint-test.html) improvements:
+- [Linting](https://dev.chat/docs/usage/lint-test.html) improvements:
   - Ask before fixing lint errors.
   - Improved performance of `--lint` on all dirty files in repo.
   - Improved lint flow, now doing code edit auto-commit before linting.
   - Bugfix to properly handle subprocess encodings (also for `/run`).
-- Improved [docker support](https://aider.chat/docs/install/docker.html):
+- Improved [docker support](https://dev.chat/docs/install/docker.html):
   - Resolved permission issues when using `docker run --user xxx`.
-  - New `paulgauthier/aider-full` docker image, which includes all extras.
+  - New `paulgauthier/dev-full` docker image, which includes all extras.
 - Switching to code and ask mode no longer summarizes the chat history.
-- Added graph of aider's contribution to each release.
+- Added graph of dev's contribution to each release.
 - Generic auto-completions are provided for `/commands` without a completion override.
 - Fixed broken OCaml tags file.
 - Bugfix in `/run` add to chat approval logic.
-- Aider wrote 58% of the code in this release.
+- Dev wrote 58% of the code in this release.
 
-### Aider v0.46.1
+### Dev v0.46.1
 
 - Downgraded stray numpy dependency back to 1.26.4.
 
-### Aider v0.46.0
+### Dev v0.46.0
 
 - New `/ask <question>` command to ask about your code, without making any edits.
 - New `/chat-mode <mode>` command to switch chat modes:
   - ask: Ask questions about your code without making any changes.
   - code: Ask for changes to your code (using the best edit format).
-  - help: Get help about using aider (usage, config, troubleshoot).
-- Add `file: CONVENTIONS.md` to `.aider.conf.yml` to always load a specific file.
+  - help: Get help about using dev (usage, config, troubleshoot).
+- Add `file: CONVENTIONS.md` to `.dev.conf.yml` to always load a specific file.
   - Or `file: [file1, file2, file3]` to always load multiple files.
 - Enhanced token usage and cost reporting. Now works when streaming too.
 - Filename auto-complete for `/add` and `/drop` is now case-insensitive.
 - Commit message improvements:
   - Updated commit message prompt to use imperative tense.
   - Fall back to main model if weak model is unable to generate a commit message.
-- Stop aider from asking to add the same url to the chat multiple times.
+- Stop dev from asking to add the same url to the chat multiple times.
 - Updates and fixes to `--no-verify-ssl`:
   - Fixed regression that broke it in v0.42.0.
   - Disables SSL certificate verification when `/web` scrapes websites.
@@ -662,157 +662,157 @@ cog.out(text)
 - Fixed syntax error in Elm's tree-sitter scm file (by @cjoach).
 - Handle UnicodeEncodeError when streaming text to the terminal.
 - Updated dependencies to latest versions.
-- Aider wrote 45% of the code in this release.
+- Dev wrote 45% of the code in this release.
 
-### Aider v0.45.1
+### Dev v0.45.1
 
 - Use 4o-mini as the weak model wherever 3.5-turbo was used.
 
-### Aider v0.45.0
+### Dev v0.45.0
 
 - GPT-4o mini scores similar to the original GPT 3.5, using whole edit format.
-- Aider is better at offering to add files to the chat on Windows.
+- Dev is better at offering to add files to the chat on Windows.
 - Bugfix corner cases for `/undo` with new files or new repos.
 - Now shows last 4 characters of API keys in `--verbose` output.
 - Bugfix to precedence of multiple `.env` files.
 - Bugfix to gracefully handle HTTP errors when installing pandoc.
-- Aider wrote 42% of the code in this release.
+- Dev wrote 42% of the code in this release.
 
-### Aider v0.44.0
+### Dev v0.44.0
 
 - Default pip install size reduced by 3-12x.
-- Added 3 package extras, which aider will offer to install when needed:
-  - `aider-chat[help]`
-  - `aider-chat[browser]`
-  - `aider-chat[playwright]`
+- Added 3 package extras, which dev will offer to install when needed:
+  - `dev-chat[help]`
+  - `dev-chat[browser]`
+  - `dev-chat[playwright]`
 - Improved regex for detecting URLs in user chat messages.
 - Bugfix to globbing logic when absolute paths are included in `/add`.
 - Simplified output of `--models`.
 - The `--check-update` switch was renamed to `--just-check-updated`.
 - The `--skip-check-update` switch was renamed to `--[no-]check-update`.
-- Aider wrote 29% of the code in this release (157/547 lines).
+- Dev wrote 29% of the code in this release (157/547 lines).
 
-### Aider v0.43.4
+### Dev v0.43.4
 
 - Added scipy back to main requirements.txt.
 
-### Aider v0.43.3
+### Dev v0.43.3
 
 - Added build-essentials back to main Dockerfile.
 
-### Aider v0.43.2
+### Dev v0.43.2
 
 - Moved HuggingFace embeddings deps into [hf-embed] extra.
 - Added [dev] extra.
 
-### Aider v0.43.1
+### Dev v0.43.1
 
 - Replace the torch requirement with the CPU only version, because the GPU versions are huge.
 
-### Aider v0.43.0
+### Dev v0.43.0
 
-- Use `/help <question>` to [ask for help about using aider](https://aider.chat/docs/troubleshooting/support.html), customizing settings, troubleshooting, using LLMs, etc.
+- Use `/help <question>` to [ask for help about using dev](https://dev.chat/docs/troubleshooting/support.html), customizing settings, troubleshooting, using LLMs, etc.
 - Allow multiple use of `/undo`.
 - All config/env/yml/json files now load from home, git root, cwd and named command line switch.
-- New `$HOME/.aider/caches` dir for app-wide expendable caches.
-- Default `--model-settings-file` is now `.aider.model.settings.yml`.
-- Default `--model-metadata-file` is now `.aider.model.metadata.json`.
+- New `$HOME/.dev/caches` dir for app-wide expendable caches.
+- Default `--model-settings-file` is now `.dev.model.settings.yml`.
+- Default `--model-metadata-file` is now `.dev.model.metadata.json`.
 - Bugfix affecting launch with `--no-git`.
-- Aider wrote 9% of the 424 lines edited in this release.
+- Dev wrote 9% of the 424 lines edited in this release.
 
-### Aider v0.42.0
+### Dev v0.42.0
 
 - Performance release:
   - 5X faster launch!
   - Faster auto-complete in large git repos (users report ~100X speedup)!
 
-### Aider v0.41.0
+### Dev v0.41.0
 
-- [Allow Claude 3.5 Sonnet to stream back >4k tokens!](https://aider.chat/2024/07/01/sonnet-not-lazy.html)
+- [Allow Claude 3.5 Sonnet to stream back >4k tokens!](https://dev.chat/2024/07/01/sonnet-not-lazy.html)
   - It is the first model capable of writing such large coherent, useful code edits.
   - Do large refactors or generate multiple files of new code in one go.
-- Aider now uses `claude-3-5-sonnet-20240620` by default if `ANTHROPIC_API_KEY` is set in the environment.
-- [Enabled image support](https://aider.chat/docs/usage/images-urls.html) for 3.5 Sonnet and for GPT-4o & 3.5 Sonnet via OpenRouter (by @yamitzky).
-- Added `--attribute-commit-message` to prefix aider's commit messages with "aider:".
+- Dev now uses `claude-3-5-sonnet-20240620` by default if `ANTHROPIC_API_KEY` is set in the environment.
+- [Enabled image support](https://dev.chat/docs/usage/images-urls.html) for 3.5 Sonnet and for GPT-4o & 3.5 Sonnet via OpenRouter (by @yamitzky).
+- Added `--attribute-commit-message` to prefix dev's commit messages with "dev:".
 - Fixed regression in quality of one-line commit messages.
 - Automatically retry on Anthropic `overloaded_error`.
 - Bumped dependency versions.
 
-### Aider v0.40.6
+### Dev v0.40.6
 
 - Fixed `/undo` so it works regardless of `--attribute` settings.
 
-### Aider v0.40.5
+### Dev v0.40.5
 
 - Bump versions to pickup latest litellm to fix streaming issue with Gemini
   - https://github.com/BerriAI/litellm/issues/4408
 
-### Aider v0.40.1
+### Dev v0.40.1
 
 - Improved context awareness of repomap.
 - Restored proper `--help` functionality.
 
-### Aider v0.40.0
+### Dev v0.40.0
 
 - Improved prompting to discourage Sonnet from wasting tokens emitting unchanging code (#705).
 - Improved error info for token limit errors.
-- Options to suppress adding "(aider)" to the [git author and committer names](https://aider.chat/docs/git.html#commit-attribution).
+- Options to suppress adding "(dev)" to the [git author and committer names](https://dev.chat/docs/git.html#commit-attribution).
 - Use `--model-settings-file` to customize per-model settings, like use of repo-map (by @caseymcc).
 - Improved invocation of flake8 linter for python code.
 
 
-### Aider v0.39.0
+### Dev v0.39.0
 
-- Use `--sonnet` for Claude 3.5 Sonnet, which is the top model on [aider's LLM code editing leaderboard](https://aider.chat/docs/leaderboards/#claude-35-sonnet-takes-the-top-spot).
-- All `AIDER_xxx` environment variables can now be set in `.env` (by @jpshack-at-palomar).
+- Use `--sonnet` for Claude 3.5 Sonnet, which is the top model on [dev's LLM code editing leaderboard](https://dev.chat/docs/leaderboards/#claude-35-sonnet-takes-the-top-spot).
+- All `DEV_xxx` environment variables can now be set in `.env` (by @jpshack-at-palomar).
 - Use `--llm-history-file` to log raw messages sent to the LLM (by @daniel-vainsencher).
-- Commit messages are no longer prefixed with "aider:". Instead the git author and committer names have "(aider)" added.
+- Commit messages are no longer prefixed with "dev:". Instead the git author and committer names have "(dev)" added.
 
-### Aider v0.38.0
+### Dev v0.38.0
 
-- Use `--vim` for [vim keybindings](https://aider.chat/docs/usage/commands.html#vi) in the chat.
-- [Add LLM metadata](https://aider.chat/docs/llms/warnings.html#specifying-context-window-size-and-token-costs) via `.aider.models.json` file (by @caseymcc).
-- More detailed [error messages on token limit errors](https://aider.chat/docs/troubleshooting/token-limits.html).
+- Use `--vim` for [vim keybindings](https://dev.chat/docs/usage/commands.html#vi) in the chat.
+- [Add LLM metadata](https://dev.chat/docs/llms/warnings.html#specifying-context-window-size-and-token-costs) via `.dev.models.json` file (by @caseymcc).
+- More detailed [error messages on token limit errors](https://dev.chat/docs/troubleshooting/token-limits.html).
 - Single line commit messages, without the recent chat messages.
 - Ensure `--commit --dry-run` does nothing.
 - Have playwright wait for idle network to better scrape js sites.
 - Documentation updates, moved into website/ subdir.
-- Moved tests/ into aider/tests/.
+- Moved tests/ into dev/tests/.
 
-### Aider v0.37.0
+### Dev v0.37.0
 
 - Repo map is now optimized based on text of chat history as well as files added to chat.
 - Improved prompts when no files have been added to chat to solicit LLM file suggestions.
-- Aider will notice if you paste a URL into the chat, and offer to scrape it.
+- Dev will notice if you paste a URL into the chat, and offer to scrape it.
 - Performance improvements the repo map, especially in large repos.
-- Aider will not offer to add bare filenames like `make` or `run` which may just be words.
+- Dev will not offer to add bare filenames like `make` or `run` which may just be words.
 - Properly override `GIT_EDITOR` env for commits if it is already set.
 - Detect supported audio sample rates for `/voice`.
 - Other small bug fixes.
 
-### Aider v0.36.0
+### Dev v0.36.0
 
-- [Aider can now lint your code and fix any errors](https://aider.chat/2024/05/22/linting.html).
-  - Aider automatically lints and fixes after every LLM edit.
+- [Dev can now lint your code and fix any errors](https://dev.chat/2024/05/22/linting.html).
+  - Dev automatically lints and fixes after every LLM edit.
   - You can manually lint-and-fix files with `/lint` in the chat or `--lint` on the command line.
-  - Aider includes built in basic linters for all supported tree-sitter languages.
-  - You can also configure aider to use your preferred linter with `--lint-cmd`.
-- Aider has additional support for running tests and fixing problems.
+  - Dev includes built in basic linters for all supported tree-sitter languages.
+  - You can also configure dev to use your preferred linter with `--lint-cmd`.
+- Dev has additional support for running tests and fixing problems.
   - Configure your testing command with `--test-cmd`.
   - Run tests with `/test` or from the command line with `--test`.
-  - Aider will automatically attempt to fix any test failures.
+  - Dev will automatically attempt to fix any test failures.
   
 
-### Aider v0.35.0
+### Dev v0.35.0
 
-- Aider now uses GPT-4o by default.
-  - GPT-4o tops the [aider LLM code editing leaderboard](https://aider.chat/docs/leaderboards/) at 72.9%, versus 68.4% for Opus.
-  - GPT-4o takes second on [aider's refactoring leaderboard](https://aider.chat/docs/leaderboards/#code-refactoring-leaderboard) with 62.9%, versus Opus at 72.3%.
+- Dev now uses GPT-4o by default.
+  - GPT-4o tops the [dev LLM code editing leaderboard](https://dev.chat/docs/leaderboards/) at 72.9%, versus 68.4% for Opus.
+  - GPT-4o takes second on [dev's refactoring leaderboard](https://dev.chat/docs/leaderboards/#code-refactoring-leaderboard) with 62.9%, versus Opus at 72.3%.
 - Added `--restore-chat-history` to restore prior chat history on launch, so you can continue the last conversation.
 - Improved reflection feedback to LLMs using the diff edit format.
 - Improved retries on `httpx` errors.
 
-### Aider v0.34.0
+### Dev v0.34.0
 
 - Updated prompting to use more natural phrasing about files, the git repo, etc. Removed reliance on read-write/read-only terminology.
 - Refactored prompting to unify some phrasing across edit formats.
@@ -822,104 +822,104 @@ cog.out(text)
 - Bugfix: catch and retry on all litellm exceptions.
 
 
-### Aider v0.33.0
+### Dev v0.33.0
 
-- Added native support for [Deepseek models](https://aider.chat/docs/llms.html#deepseek) using `DEEPSEEK_API_KEY` and `deepseek/deepseek-chat`, etc rather than as a generic OpenAI compatible API.
+- Added native support for [Deepseek models](https://dev.chat/docs/llms.html#deepseek) using `DEEPSEEK_API_KEY` and `deepseek/deepseek-chat`, etc rather than as a generic OpenAI compatible API.
 
-### Aider v0.32.0
+### Dev v0.32.0
 
-- [Aider LLM code editing leaderboards](https://aider.chat/docs/leaderboards/) that rank popular models according to their ability to edit code.
+- [Dev LLM code editing leaderboards](https://dev.chat/docs/leaderboards/) that rank popular models according to their ability to edit code.
   - Leaderboards include GPT-3.5/4 Turbo, Opus, Sonnet, Gemini 1.5 Pro, Llama 3, Deepseek Coder & Command-R+.
 - Gemini 1.5 Pro now defaults to a new diff-style edit format (diff-fenced), enabling it to work better with larger code bases.
 - Support for Deepseek-V2, via more a flexible config of system messages in the diff edit format.
 - Improved retry handling on errors from model APIs.
 - Benchmark outputs results in YAML, compatible with leaderboard.
 
-### Aider v0.31.0
+### Dev v0.31.0
 
-- [Aider is now also AI pair programming in your browser!](https://aider.chat/2024/05/02/browser.html) Use the `--browser` switch to launch an experimental browser based version of aider.
+- [Dev is now also AI pair programming in your browser!](https://dev.chat/2024/05/02/browser.html) Use the `--browser` switch to launch an experimental browser based version of dev.
 - Switch models during the chat with `/model <name>` and search the list of available models with `/models <query>`.
 
-### Aider v0.30.1
+### Dev v0.30.1
 
 - Adding missing `google-generativeai` dependency
 
-### Aider v0.30.0
+### Dev v0.30.0
 
-- Added [Gemini 1.5 Pro](https://aider.chat/docs/llms.html#free-models) as a recommended free model.
+- Added [Gemini 1.5 Pro](https://dev.chat/docs/llms.html#free-models) as a recommended free model.
 - Allow repo map for "whole" edit format.
 - Added `--models <MODEL-NAME>` to search the available models.
 - Added `--no-show-model-warnings` to silence model warnings.
 
-### Aider v0.29.2
+### Dev v0.29.2
 
-- Improved [model warnings](https://aider.chat/docs/llms.html#model-warnings) for unknown or unfamiliar models
+- Improved [model warnings](https://dev.chat/docs/llms.html#model-warnings) for unknown or unfamiliar models
 
-### Aider v0.29.1
+### Dev v0.29.1
 
 - Added better support for groq/llama3-70b-8192
 
-### Aider v0.29.0
+### Dev v0.29.0
 
-- Added support for [directly connecting to Anthropic, Cohere, Gemini and many other LLM providers](https://aider.chat/docs/llms.html).
+- Added support for [directly connecting to Anthropic, Cohere, Gemini and many other LLM providers](https://dev.chat/docs/llms.html).
 - Added `--weak-model <model-name>` which allows you to specify which model to use for commit messages and chat history summarization.
 - New command line switches for working with popular models:
   - `--4-turbo-vision`
   - `--opus`
   - `--sonnet`
   - `--anthropic-api-key`
-- Improved "whole" and "diff" backends to better support [Cohere's free to use Command-R+ model](https://aider.chat/docs/llms.html#cohere).
+- Improved "whole" and "diff" backends to better support [Cohere's free to use Command-R+ model](https://dev.chat/docs/llms.html#cohere).
 - Allow `/add` of images from anywhere in the filesystem.
 - Fixed crash when operating in a repo in a detached HEAD state.
 - Fix: Use the same default model in CLI and python scripting.
 
-### Aider v0.28.0
+### Dev v0.28.0
 
 - Added support for new `gpt-4-turbo-2024-04-09` and `gpt-4-turbo` models.
-  - Benchmarked at 61.7% on Exercism benchmark, comparable to `gpt-4-0613` and worse than the `gpt-4-preview-XXXX` models. See [recent Exercism benchmark results](https://aider.chat/2024/03/08/claude-3.html).
-  - Benchmarked at 34.1% on the refactoring/laziness benchmark, significantly worse than the `gpt-4-preview-XXXX` models. See [recent refactor bencmark results](https://aider.chat/2024/01/25/benchmarks-0125.html).
-  - Aider continues to default to `gpt-4-1106-preview` as it performs best on both benchmarks, and significantly better on the refactoring/laziness benchmark.
+  - Benchmarked at 61.7% on Exercism benchmark, comparable to `gpt-4-0613` and worse than the `gpt-4-preview-XXXX` models. See [recent Exercism benchmark results](https://dev.chat/2024/03/08/claude-3.html).
+  - Benchmarked at 34.1% on the refactoring/laziness benchmark, significantly worse than the `gpt-4-preview-XXXX` models. See [recent refactor bencmark results](https://dev.chat/2024/01/25/benchmarks-0125.html).
+  - Dev continues to default to `gpt-4-1106-preview` as it performs best on both benchmarks, and significantly better on the refactoring/laziness benchmark.
 
-### Aider v0.27.0
+### Dev v0.27.0
 
 - Improved repomap support for typescript, by @ryanfreckleton.
 - Bugfix: Only /undo the files which were part of the last commit, don't stomp other dirty files
 - Bugfix: Show clear error message when OpenAI API key is not set.
 - Bugfix: Catch error for obscure languages without tags.scm file.
 
-### Aider v0.26.1
+### Dev v0.26.1
 
 - Fixed bug affecting parsing of git config in some environments.
 
-### Aider v0.26.0
+### Dev v0.26.0
 
 - Use GPT-4 Turbo by default.
 - Added `-3` and `-4` switches to use GPT 3.5 or GPT-4 (non-Turbo).
 - Bug fix to avoid reflecting local git errors back to GPT.
 - Improved logic for opening git repo on launch.
 
-### Aider v0.25.0
+### Dev v0.25.0
 
 - Issue a warning if user adds too much code to the chat.
-  - https://aider.chat/docs/faq.html#how-can-i-add-all-the-files-to-the-chat
-- Vocally refuse to add files to the chat that match `.aiderignore`
+  - https://dev.chat/docs/faq.html#how-can-i-add-all-the-files-to-the-chat
+- Vocally refuse to add files to the chat that match `.devignore`
   - Prevents bug where subsequent git commit of those files will fail.
 - Added `--openai-organization-id` argument.
 - Show the user a FAQ link if edits fail to apply.
-- Made past articles part of https://aider.chat/blog/
+- Made past articles part of https://dev.chat/blog/
 
-### Aider v0.24.1
+### Dev v0.24.1
 
 - Fixed bug with cost computations when --no-steam in effect
 
-### Aider v0.24.0
+### Dev v0.24.0
 
 - New `/web <url>` command which scrapes the url, turns it into fairly clean markdown and adds it to the chat.
 - Updated all OpenAI model names, pricing info
 - Default GPT 3.5 model is now `gpt-3.5-turbo-0125`.
 - Bugfix to the `!` alias for `/run`.
 
-### Aider v0.23.0
+### Dev v0.23.0
 
 - Added support for `--model gpt-4-0125-preview` and OpenAI's alias `--model gpt-4-turbo-preview`. The `--4turbo` switch remains an alias for `--model gpt-4-1106-preview` at this time.
 - New `/test` command that runs a command and adds the output to the chat on non-zero exit status.
@@ -929,25 +929,25 @@ cog.out(text)
 - Added `--openrouter` as a shortcut for `--openai-api-base https://openrouter.ai/api/v1`
 - Fixed bug preventing use of env vars `OPENAI_API_BASE, OPENAI_API_TYPE, OPENAI_API_VERSION, OPENAI_API_DEPLOYMENT_ID`.
 
-### Aider v0.22.0
+### Dev v0.22.0
 
 - Improvements for unified diff editing format.
 - Added ! as an alias for /run.
 - Autocomplete for /add and /drop now properly quotes filenames with spaces.
 - The /undo command asks GPT not to just retry reverted edit.
 
-### Aider v0.21.1
+### Dev v0.21.1
 
 - Bugfix for unified diff editing format.
 - Added --4turbo and --4 aliases for --4-turbo.
 
-### Aider v0.21.0
+### Dev v0.21.0
 
 - Support for python 3.12.
 - Improvements to unified diff editing format.
 - New `--check-update` arg to check if updates are available and exit with status code.
 
-### Aider v0.20.0
+### Dev v0.20.0
 
 - Add images to the chat to automatically use GPT-4 Vision, by @joshuavial
 
@@ -955,22 +955,22 @@ cog.out(text)
   - Improved unicode encoding for `/run` command output, by @ctoth
   - Prevent false auto-commits on Windows, by @ctoth
 
-### Aider v0.19.1
+### Dev v0.19.1
 
 - Removed stray debug output.
 
-### Aider v0.19.0
+### Dev v0.19.0
 
-- [Significantly reduced "lazy" coding from GPT-4 Turbo due to new unified diff edit format](https://aider.chat/docs/unified-diffs.html)
+- [Significantly reduced "lazy" coding from GPT-4 Turbo due to new unified diff edit format](https://dev.chat/docs/unified-diffs.html)
   - Score improves from 20% to 61% on new "laziness benchmark".
-  - Aider now uses unified diffs by default for `gpt-4-1106-preview`.
+  - Dev now uses unified diffs by default for `gpt-4-1106-preview`.
 - New `--4-turbo` command line switch as a shortcut for `--model gpt-4-1106-preview`.
 
-### Aider v0.18.1
+### Dev v0.18.1
 
 - Upgraded to new openai python client v1.3.7.
 
-### Aider v0.18.0
+### Dev v0.18.0
 
 - Improved prompting for both GPT-4 and GPT-4 Turbo.
   - Far fewer edit errors from GPT-4 Turbo (`gpt-4-1106-preview`).
@@ -978,155 +978,155 @@ cog.out(text)
 - Fixed bug where in-chat files were marked as both read-only and ready-write, sometimes confusing GPT.
 - Fixed bug to properly handle repos with submodules.
 
-### Aider v0.17.0
+### Dev v0.17.0
 
 - Support for OpenAI's new 11/06 models:
   - gpt-4-1106-preview with 128k context window
   - gpt-3.5-turbo-1106 with 16k context window
-- [Benchmarks for OpenAI's new 11/06 models](https://aider.chat/docs/benchmarks-1106.html)
-- Streamlined [API for scripting aider, added docs](https://aider.chat/docs/faq.html#can-i-script-aider)
-- Ask for more concise SEARCH/REPLACE blocks. [Benchmarked](https://aider.chat/docs/benchmarks.html) at 63.9%, no regression.
+- [Benchmarks for OpenAI's new 11/06 models](https://dev.chat/docs/benchmarks-1106.html)
+- Streamlined [API for scripting dev, added docs](https://dev.chat/docs/faq.html#can-i-script-dev)
+- Ask for more concise SEARCH/REPLACE blocks. [Benchmarked](https://dev.chat/docs/benchmarks.html) at 63.9%, no regression.
 - Improved repo-map support for elisp.
 - Fixed crash bug when `/add` used on file matching `.gitignore`
 - Fixed misc bugs to catch and handle unicode decoding errors.
 
-### Aider v0.16.3
+### Dev v0.16.3
 
 - Fixed repo-map support for C#.
 
-### Aider v0.16.2
+### Dev v0.16.2
 
 - Fixed docker image.
 
-### Aider v0.16.1
+### Dev v0.16.1
 
 - Updated tree-sitter dependencies to streamline the pip install process
 
-### Aider v0.16.0
+### Dev v0.16.0
 
-- [Improved repository map using tree-sitter](https://aider.chat/docs/repomap.html)
-- Switched from "edit block" to "search/replace block", which reduced malformed edit blocks. [Benchmarked](https://aider.chat/docs/benchmarks.html) at 66.2%, no regression.
-- Improved handling of malformed edit blocks targeting multiple edits to the same file. [Benchmarked](https://aider.chat/docs/benchmarks.html) at 65.4%, no regression.
+- [Improved repository map using tree-sitter](https://dev.chat/docs/repomap.html)
+- Switched from "edit block" to "search/replace block", which reduced malformed edit blocks. [Benchmarked](https://dev.chat/docs/benchmarks.html) at 66.2%, no regression.
+- Improved handling of malformed edit blocks targeting multiple edits to the same file. [Benchmarked](https://dev.chat/docs/benchmarks.html) at 65.4%, no regression.
 - Bugfix to properly handle malformed `/add` wildcards.
 
 
-### Aider v0.15.0
+### Dev v0.15.0
 
-- Added support for `.aiderignore` file, which instructs aider to ignore parts of the git repo.
+- Added support for `.devignore` file, which instructs dev to ignore parts of the git repo.
 - New `--commit` cmd line arg, which just commits all pending changes with a sensible commit message generated by gpt-3.5.
-- Added universal ctags and multiple architectures to the [aider docker image](https://aider.chat/docs/install/docker.html)
+- Added universal ctags and multiple architectures to the [dev docker image](https://dev.chat/docs/install/docker.html)
 - `/run` and `/git` now accept full shell commands, like: `/run (cd subdir; ls)`
 - Restored missing `--encoding` cmd line switch.
 
-### Aider v0.14.2
+### Dev v0.14.2
 
-- Easily [run aider from a docker image](https://aider.chat/docs/install/docker.html)
+- Easily [run dev from a docker image](https://dev.chat/docs/install/docker.html)
 - Fixed bug with chat history summarization.
 - Fixed bug if `soundfile` package not available.
 
-### Aider v0.14.1
+### Dev v0.14.1
 
 - /add and /drop handle absolute filenames and quoted filenames
 - /add checks to be sure files are within the git repo (or root)
 - If needed, warn users that in-chat file paths are all relative to the git repo
-- Fixed /add bug in when aider launched in repo subdir
+- Fixed /add bug in when dev launched in repo subdir
 - Show models supported by api/key if requested model isn't available
 
-### Aider v0.14.0
+### Dev v0.14.0
 
-- [Support for Claude2 and other LLMs via OpenRouter](https://aider.chat/docs/faq.html#accessing-other-llms-with-openrouter) by @joshuavial
-- Documentation for [running the aider benchmarking suite](https://github.com/Aider-AI/aider/tree/main/benchmark)
-- Aider now requires Python >= 3.9
+- [Support for Claude2 and other LLMs via OpenRouter](https://dev.chat/docs/faq.html#accessing-other-llms-with-openrouter) by @joshuavial
+- Documentation for [running the dev benchmarking suite](https://github.com/Dev-AI/dev/tree/main/benchmark)
+- Dev now requires Python >= 3.9
 
 
-### Aider v0.13.0
+### Dev v0.13.0
 
-- [Only git commit dirty files that GPT tries to edit](https://aider.chat/docs/faq.html#how-did-v0130-change-git-usage)
+- [Only git commit dirty files that GPT tries to edit](https://dev.chat/docs/faq.html#how-did-v0130-change-git-usage)
 - Send chat history as prompt/context for Whisper voice transcription
 - Added `--voice-language` switch to constrain `/voice` to transcribe to a specific language
-- Late-bind importing `sounddevice`, as it was slowing down aider startup
+- Late-bind importing `sounddevice`, as it was slowing down dev startup
 - Improved --foo/--no-foo switch handling for command line and yml config settings
 
-### Aider v0.12.0
+### Dev v0.12.0
 
-- [Voice-to-code](https://aider.chat/docs/usage/voice.html) support, which allows you to code with your voice.
+- [Voice-to-code](https://dev.chat/docs/usage/voice.html) support, which allows you to code with your voice.
 - Fixed bug where /diff was causing crash.
 - Improved prompting for gpt-4, refactor of editblock coder.
-- [Benchmarked](https://aider.chat/docs/benchmarks.html) at 63.2% for gpt-4/diff, no regression.
+- [Benchmarked](https://dev.chat/docs/benchmarks.html) at 63.2% for gpt-4/diff, no regression.
 
-### Aider v0.11.1
+### Dev v0.11.1
 
 - Added a progress bar when initially creating a repo map.
 - Fixed bad commit message when adding new file to empty repo.
 - Fixed corner case of pending chat history summarization when dirty committing.
 - Fixed corner case of undefined `text` when using `--no-pretty`.
 - Fixed /commit bug from repo refactor, added test coverage.
-- [Benchmarked](https://aider.chat/docs/benchmarks.html) at 53.4% for gpt-3.5/whole (no regression).
+- [Benchmarked](https://dev.chat/docs/benchmarks.html) at 53.4% for gpt-3.5/whole (no regression).
 
-### Aider v0.11.0
+### Dev v0.11.0
 
 - Automatically summarize chat history to avoid exhausting context window.
 - More detail on dollar costs when running with `--no-stream`
-- Stronger GPT-3.5 prompt against skipping/eliding code in replies (51.9% [benchmark](https://aider.chat/docs/benchmarks.html), no regression)
+- Stronger GPT-3.5 prompt against skipping/eliding code in replies (51.9% [benchmark](https://dev.chat/docs/benchmarks.html), no regression)
 - Defend against GPT-3.5 or non-OpenAI models suggesting filenames surrounded by asterisks.
 - Refactored GitRepo code out of the Coder class.
 
-### Aider v0.10.1
+### Dev v0.10.1
 
 - /add and /drop always use paths relative to the git root
 - Encourage GPT to use language like "add files to the chat" to ask users for permission to edit them.
 
-### Aider v0.10.0
+### Dev v0.10.0
 
-- Added `/git` command to run git from inside aider chats.
+- Added `/git` command to run git from inside dev chats.
 - Use Meta-ENTER (Esc+ENTER in some environments) to enter multiline chat messages.
-- Create a `.gitignore` with `.aider*` to prevent users from accidentally adding aider files to git.
+- Create a `.gitignore` with `.dev*` to prevent users from accidentally adding dev files to git.
 - Check pypi for newer versions and notify user.
-- Updated keyboard interrupt logic so that 2 ^C in 2 seconds always forces aider to exit.
+- Updated keyboard interrupt logic so that 2 ^C in 2 seconds always forces dev to exit.
 - Provide GPT with detailed error if it makes a bad edit block, ask for a retry.
-- Force `--no-pretty` if aider detects it is running inside a VSCode terminal.
-- [Benchmarked](https://aider.chat/docs/benchmarks.html) at 64.7% for gpt-4/diff (no regression)
+- Force `--no-pretty` if dev detects it is running inside a VSCode terminal.
+- [Benchmarked](https://dev.chat/docs/benchmarks.html) at 64.7% for gpt-4/diff (no regression)
 
 
-### Aider v0.9.0
+### Dev v0.9.0
 
-- Support for the OpenAI models in [Azure](https://aider.chat/docs/faq.html#azure)
+- Support for the OpenAI models in [Azure](https://dev.chat/docs/faq.html#azure)
 - Added `--show-repo-map`
 - Improved output when retrying connections to the OpenAI API
 - Redacted api key from `--verbose` output
 - Bugfix: recognize and add files in subdirectories mentioned by user or GPT
-- [Benchmarked](https://aider.chat/docs/benchmarks.html) at 53.8% for gpt-3.5-turbo/whole (no regression)
+- [Benchmarked](https://dev.chat/docs/benchmarks.html) at 53.8% for gpt-3.5-turbo/whole (no regression)
 
-### Aider v0.8.3
+### Dev v0.8.3
 
 - Added `--dark-mode` and `--light-mode` to select colors optimized for terminal background
-- Install docs link to [NeoVim plugin](https://github.com/joshuavial/aider.nvim) by @joshuavial
+- Install docs link to [NeoVim plugin](https://github.com/joshuavial/dev.nvim) by @joshuavial
 - Reorganized the `--help` output
 - Bugfix/improvement to whole edit format, may improve coding editing for GPT-3.5
 - Bugfix and tests around git filenames with unicode characters
-- Bugfix so that aider throws an exception when OpenAI returns InvalidRequest
+- Bugfix so that dev throws an exception when OpenAI returns InvalidRequest
 - Bugfix/improvement to /add and /drop to recurse selected directories
 - Bugfix for live diff output when using "whole" edit format
 
-### Aider v0.8.2
+### Dev v0.8.2
 
 - Disabled general availability of gpt-4 (it's rolling out, not 100% available yet)
 
-### Aider v0.8.1
+### Dev v0.8.1
 
 - Ask to create a git repo if none found, to better track GPT's code changes
 - Glob wildcards are now supported in `/add` and `/drop` commands
 - Pass `--encoding` into ctags, require it to return `utf-8`
 - More robust handling of filepaths, to avoid 8.3 windows filenames
-- Added [FAQ](https://aider.chat/docs/faq.html)
+- Added [FAQ](https://dev.chat/docs/faq.html)
 - Marked GPT-4 as generally available
 - Bugfix for live diffs of whole coder with missing filenames
 - Bugfix for chats with multiple files
 - Bugfix in editblock coder prompt
 
-### Aider v0.8.0
+### Dev v0.8.0
 
-- [Benchmark comparing code editing in GPT-3.5 and GPT-4](https://aider.chat/docs/benchmarks.html)
+- [Benchmark comparing code editing in GPT-3.5 and GPT-4](https://dev.chat/docs/benchmarks.html)
 - Improved Windows support:
   - Fixed bugs related to path separators in Windows
   - Added a CI step to run all tests on Windows
@@ -1137,15 +1137,15 @@ cog.out(text)
 - Added `--code-theme` switch to control the pygments styling of code blocks (by @kwmiebach)
 - Better status messages explaining the reason when ctags is disabled
 
-### Aider v0.7.2:
+### Dev v0.7.2:
 
-- Fixed a bug to allow aider to edit files that contain triple backtick fences.
+- Fixed a bug to allow dev to edit files that contain triple backtick fences.
 
-### Aider v0.7.1:
+### Dev v0.7.1:
 
 - Fixed a bug in the display of streaming diffs in GPT-3.5 chats
 
-### Aider v0.7.0:
+### Dev v0.7.0:
 
 - Graceful handling of context window exhaustion, including helpful tips.
 - Added `--message` to give GPT that one instruction and then exit after it replies and any edits are performed.
@@ -1159,13 +1159,13 @@ cog.out(text)
   - Initial experiments show that using functions makes 3.5 less competent at coding.
 - Limit automatic retries when GPT returns a malformed edit response.
 
-### Aider v0.6.2
+### Dev v0.6.2
 
 * Support for `gpt-3.5-turbo-16k`, and all OpenAI chat models
 * Improved ability to correct when gpt-4 omits leading whitespace in code edits
 * Added `--openai-api-base` to support API proxies, etc.
 
-### Aider v0.5.0
+### Dev v0.5.0
 
 - Added support for `gpt-3.5-turbo` and `gpt-4-32k`.
 - Added `--map-tokens` to set a token budget for the repo map, along with a PageRank based algorithm for prioritizing which files and identifiers to include in the map.

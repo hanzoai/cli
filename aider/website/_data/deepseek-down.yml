@@ -18,7 +18,7 @@
   exhausted_context_windows: 0
   test_timeouts: 8
   total_tests: 225
-  command: aider --model deepseek/deepseek-chat
+  command: dev --model deepseek/deepseek-chat
   date: 2024-12-25
   versions: 0.69.2.dev
   seconds_per_case: 34.8
@@ -45,7 +45,7 @@
   exhausted_context_windows: 2
   test_timeouts: 9
   total_tests: 225
-  command: aider --model fireworks_ai/accounts/fireworks/models/deepseek-v3
+  command: dev --model fireworks_ai/accounts/fireworks/models/deepseek-v3
   date: 2025-01-28
   versions: 0.72.4.dev
   seconds_per_case: 115.9
@@ -71,7 +71,7 @@
   exhausted_context_windows: 2
   test_timeouts: 4
   total_tests: 225
-  command: aider --model openrouter/deepseek/deepseek-chat
+  command: dev --model openrouter/deepseek/deepseek-chat
   date: 2025-01-28
   versions: 0.72.4.dev
   seconds_per_case: 187.0
@@ -97,7 +97,7 @@
   exhausted_context_windows: 0
   test_timeouts: 8
   total_tests: 225
-  command: aider --model openrouter/deepseek/deepseek-chat
+  command: dev --model openrouter/deepseek/deepseek-chat
   date: 2025-01-28
   versions: 0.72.4.dev
   seconds_per_case: 472.5
@@ -123,7 +123,7 @@
   exhausted_context_windows: 0
   test_timeouts: 7
   total_tests: 225
-  command: OPENAI_API_BASE=https://api.hyperbolic.xyz/v1/ aider --model openai/deepseek-ai/DeepSeek-V3
+  command: OPENAI_API_BASE=https://api.hyperbolic.xyz/v1/ dev --model openai/deepseek-ai/DeepSeek-V3
   date: 2025-01-29
   versions: 0.72.4.dev
   seconds_per_case: 365.4

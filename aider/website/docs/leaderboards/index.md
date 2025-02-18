@@ -6,22 +6,22 @@ has_children: true
 ---
 
 
-# Aider LLM Leaderboards
+# Dev LLM Leaderboards
 
-Aider works best with LLMs which are good at *editing* code, not just good at writing
+Dev works best with LLMs which are good at *editing* code, not just good at writing
 code.
-To evaluate an LLM's editing skill, aider uses benchmarks that
+To evaluate an LLM's editing skill, dev uses benchmarks that
 assess a model's ability to consistently follow the system prompt
 to successfully edit code.
 
 The leaderboards report the results from a number of popular LLMs.
-While [aider can connect to almost any LLM](/docs/llms.html),
+While [dev can connect to almost any LLM](/docs/llms.html),
 it works best with models that score well on the benchmarks.
 
 
 ## Polyglot leaderboard
 
-[Aider's polyglot benchmark](https://aider.chat/2024/12/21/polyglot.html#the-polyglot-benchmark) 
+[Dev's polyglot benchmark](https://dev.chat/2024/12/21/polyglot.html#the-polyglot-benchmark) 
 asks the LLM to edit source files to complete 225 coding exercises
 from Exercism. 
 It contains exercises in many popular programming languages:
@@ -63,7 +63,7 @@ The model also has to successfully apply all its changes to the source file with
   </tbody>
 </table>
 
-### Aider polyglot benchmark results
+### Dev polyglot benchmark results
 
 <canvas id="editChart" width="800" height="450" style="margin-top: 20px"></canvas>
 <script src="https://unpkg.com/patternomaly/dist/patternomaly.js"></script>
@@ -101,8 +101,8 @@ import subprocess
 import datetime
 
 files = [
-    'aider/website/docs/leaderboards/index.md',
-    'aider/website/_data/polyglot_leaderboard.yml',
+    'dev/website/docs/leaderboards/index.md',
+    'dev/website/_data/polyglot_leaderboard.yml',
 ]
 
 def get_last_modified_date(file):

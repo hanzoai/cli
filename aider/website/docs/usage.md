@@ -1,30 +1,30 @@
 ---
 nav_order: 30
 has_children: true
-description: How to use aider to pair program with AI and edit code in your local git repo.
+description: How to use dev to pair program with AI and edit code in your local git repo.
 ---
 
 # Usage
 
-Run `aider` with the source code files you want to edit.
+Run `dev` with the source code files you want to edit.
 These files will be "added to the chat session", so that
-aider can see their
+dev can see their
 contents and edit them for you.
 They can be existing files or the name of files you want
-aider to create for you.
+dev to create for you.
 
 ```
-aider <file1> <file2> ...
+dev <file1> <file2> ...
 ```
 
-At the aider `>` prompt, ask for code changes and aider
+At the dev `>` prompt, ask for code changes and dev
 will edit those files to accomplish your request.
 
 
 ```
-$ aider factorial.py
+$ dev factorial.py
 
-Aider v0.37.1-dev
+Dev v0.37.1-dev
 Models: gpt-4o with diff edit format, weak model gpt-3.5-turbo
 Git repo: .git with 258 files
 Repo-map: using 1024 tokens
@@ -41,7 +41,7 @@ Use /help to see in-chat commands, run with --help to see cmd line args
 
 To edit files, you need to "add them to the chat".
 Do this
-by naming them on the aider command line.
+by naming them on the dev command line.
 Or, you can use the in-chat
 `/add` command to add files.
 
@@ -50,17 +50,17 @@ Only add the files that need to be edited for your task.
 Don't add a bunch of extra files.
 If you add too many files, the LLM can get overwhelmed
 and confused (and it costs more tokens).
-Aider will automatically
+Dev will automatically
 pull in content from related files so that it can
-[understand the rest of your code base](https://aider.chat/docs/repomap.html).
+[understand the rest of your code base](https://dev.chat/docs/repomap.html).
 
-You can use aider without adding any files,
+You can use dev without adding any files,
 and it will try to figure out which files need to be edited based
 on your requests.
 
 {: .tip }
 You'll get the best results if you think about which files need to be
-edited. Add **just** those files to the chat. Aider will include
+edited. Add **just** those files to the chat. Dev will include
 relevant context from the rest of your repo.
 
 ## LLMs
@@ -69,23 +69,23 @@ relevant context from the rest of your repo.
 
 ```
 # o3-mini
-$ aider --model o3-mini --api-key openai=<key>
+$ dev --model o3-mini --api-key openai=<key>
 
 # Claude 3.5 Sonnet
-$ aider --model sonnet --api-key anthropic=<key>
+$ dev --model sonnet --api-key anthropic=<key>
 ```
 
-Or you can run `aider --model XXX` to launch aider with
+Or you can run `dev --model XXX` to launch dev with
 another model.
 During your chat you can switch models with the in-chat
 `/model` command.
 
 ## Making changes
 
-Ask aider to make changes to your code.
+Ask dev to make changes to your code.
 It will show you some diffs of the changes it is making to
 complete you request.
-[Aider will git commit all of its changes](/docs/git.html),
+[Dev will git commit all of its changes](/docs/git.html),
 so they are easy to track and undo.
 
 You can always use the `/undo` command to undo AI changes that you don't

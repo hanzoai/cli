@@ -5,20 +5,20 @@ nav_order: 800
 
 # Other LLMs
 
-Aider uses the [litellm](https://docs.litellm.ai/docs/providers) package
+Dev uses the [litellm](https://docs.litellm.ai/docs/providers) package
 to connect to hundreds of other models.
-You can use `aider --model <model-name>` to use any supported model.
+You can use `dev --model <model-name>` to use any supported model.
 
-To explore the list of supported models you can run `aider --list-models <model-name>`
+To explore the list of supported models you can run `dev --list-models <model-name>`
 with a partial model name.
-If the supplied name is not an exact match for a known model, aider will
+If the supplied name is not an exact match for a known model, dev will
 return a list of possible matching models.
 For example:
 
 ```
-$ aider --list-models turbo
+$ dev --list-models turbo
 
-Aider v0.29.3-dev
+Dev v0.29.3-dev
 Models which match "turbo":
 - gpt-4-turbo-preview (openai/gpt-4-turbo-preview)
 - gpt-4-turbo (openai/gpt-4-turbo)
@@ -29,11 +29,11 @@ Models which match "turbo":
 
 See the [model warnings](warnings.html)
 section for information on warnings which will occur
-when working with models that aider is not familiar with.
+when working with models that dev is not familiar with.
 
 ## LiteLLM
 
-Aider uses the LiteLLM package to connect to LLM providers.
+Dev uses the LiteLLM package to connect to LLM providers.
 The [LiteLLM provider docs](https://docs.litellm.ai/docs/providers)
 contain more detail on all the supported providers,
 their models and any required environment variables.

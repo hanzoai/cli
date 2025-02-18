@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', function () {
             },
             title: {
               display: true,
-              text: 'Aider code editing benchmark',
+              text: 'Dev code editing benchmark',
               font: {
                 size: 16
               }

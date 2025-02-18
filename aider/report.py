@@ -6,9 +6,9 @@ import traceback
 import urllib.parse
 import webbrowser
 
-from aider import __version__
-from aider.urls import github_issues
-from aider.versioncheck import VERSION_CHECK_FNAME
+from dev import __version__
+from dev.urls import github_issues
+from dev.versioncheck import VERSION_CHECK_FNAME
 
 FENCE = "`" * 3
 
@@ -44,7 +44,7 @@ def report_github_issue(issue_text, title=None, confirm=True):
     :param confirm: Whether to ask for confirmation before opening the browser (default: True)
     :return: None
     """
-    version_info = f"Aider version: {__version__}\n"
+    version_info = f"Dev version: {__version__}\n"
     python_version = f"Python version: {sys.version.split()[0]}\n"
     platform_info = f"Platform: {platform.platform()}\n"
     python_info = get_python_info() + "\n"
@@ -66,7 +66,7 @@ def report_github_issue(issue_text, title=None, confirm=True):
         print(f"\n# {title}\n")
         print(issue_text.strip())
         print()
-        print("Please consider reporting this bug to help improve aider!")
+        print("Please consider reporting this bug to help improve dev!")
         prompt = "Open a GitHub Issue pre-filled with the above error in your browser? (Y/n) "
         confirmation = input(prompt).strip().lower()
 

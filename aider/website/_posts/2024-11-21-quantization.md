@@ -15,7 +15,7 @@ nav_exclude: true
 <canvas id="quantChart" width="800" height="600" style="margin: 20px 0"></canvas>
 
 Open source models like Qwen 2.5 32B Instruct are performing very well on
-aider's code editing benchmark, rivaling closed source frontier models.
+dev's code editing benchmark, rivaling closed source frontier models.
 
 But pay attention to how your model is being served and quantized, 
 as it can impact code editing skill.
@@ -152,7 +152,7 @@ document.getElementById('quantSearchInput').addEventListener('keyup', function()
 ## Setting Ollama's context window size
 
 [Ollama uses a 2k context window by default](https://github.com/ollama/ollama/blob/main/docs/faq.md#how-can-i-specify-the-context-window-size),
-which is very small for working with aider.
+which is very small for working with dev.
 Unlike most other LLM servers, Ollama does not throw an error if you submit
 a request that exceeds the context window.
 Instead, it just silently truncates the request by discarding the "oldest" messages
@@ -161,10 +161,10 @@ in the chat to make it fit within the context window.
 Except for the single 2k context result,
 all of the Ollama results above were collected with at least an 8k context window.
 An 8k window is large enough to attempt all the coding problems in the benchmark.
-Aider sets Ollama's context window to 8k by default, starting in aider v0.65.0.
+Dev sets Ollama's context window to 8k by default, starting in dev v0.65.0.
 
 You can change the Ollama server's context window with a 
-[`.aider.model.settings.yml` file](https://aider.chat/docs/config/adv-model-settings.html#model-settings)
+[`.dev.model.settings.yml` file](https://dev.chat/docs/config/adv-model-settings.html#model-settings)
 like this:
 
 ```

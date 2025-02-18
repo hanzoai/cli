@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aider.editor import (
+from dev.editor import (
     DEFAULT_EDITOR_NIX,
     DEFAULT_EDITOR_OS_X,
     DEFAULT_EDITOR_WINDOWS,
@@ -96,7 +96,7 @@ def test_pipe_editor():
 
     # Mock the file operations and editor call
     with (
-        patch("aider.editor.write_temp_file") as mock_write,
+        patch("dev.editor.write_temp_file") as mock_write,
         patch("builtins.open") as mock_open,
         patch("os.remove") as mock_remove,
         patch("subprocess.call") as mock_subprocess,

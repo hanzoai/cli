@@ -17,7 +17,7 @@ The benchmark results also imply a decreased capacity for solving coding problem
 
 {% include code-in-json-benchmark.js %}
 
-> Figure 1: Aider coding benchmark scores of models using either plain markdown text or JSON to return code.
+> Figure 1: Dev coding benchmark scores of models using either plain markdown text or JSON to return code.
 > Pass rate (%) averaged over 5 runs.
 > Models produce better code when they return it as markdown text,
 > as compared to returning code in a structured JSON response.
@@ -25,7 +25,7 @@ The benchmark results also imply a decreased capacity for solving coding problem
 
 ## Background
 
-People often ask why aider uses a plain text format for LLMs to specify code edits (below),
+People often ask why dev uses a plain text format for LLMs to specify code edits (below),
 rather than relying on LLM tools and structured JSON responses.
 
 ```python
@@ -85,7 +85,7 @@ JSON string?
 
 ## Quantifying the benefits of plain text
 
-Previous [aider benchmark results](/2023/07/02/benchmarks.html)
+Previous [dev benchmark results](/2023/07/02/benchmarks.html)
 showed
 the superiority of returning code
 as plain text compared to JSON-wrapped function calls.
@@ -97,7 +97,7 @@ to return quality code inside a structured JSON response.
 
 The results presented here are based on
 the 
-[aider "code editing" benchmark](/2023/07/02/benchmarks.html#the-benchmark)
+[dev "code editing" benchmark](/2023/07/02/benchmarks.html#the-benchmark)
 of 133 practice exercises from the Exercism python repository.
 The benchmark was simplified somewhat to focus on the differences between
 plain text and JSON responses.
@@ -112,7 +112,7 @@ The performance of each model was compared across different strategies for retur
 - **JSON (strict)** -- the same as the "JSON" strategy, but with `strict=True`. Only gpt-4o-2024-08-06 supported this setting.
 
 The markdown strategy was the same as
-aider's "whole" edit format, where the
+dev's "whole" edit format, where the
 LLM returns an entire updated copy of the source file like this:
 
 ````
@@ -245,10 +245,10 @@ to JSON-wrapped code at this time.
 
 ---------
 
-#### Notes on the aider leaderboard
+#### Notes on the dev leaderboard
 
 *The results presented here are not directly comparable to results
 from the main
-[aider LLM leaderboard](https://aider.chat/docs/leaderboards/).
+[dev LLM leaderboard](https://dev.chat/docs/leaderboards/).
 A number of settings were changed to simplify the benchmark
 in order to focus on comparing plain text and JSON-wrapped code.*

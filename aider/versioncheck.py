@@ -5,38 +5,38 @@ from pathlib import Path
 
 import packaging.version
 
-import aider
-from aider import utils
-from aider.dump import dump  # noqa: F401
+import dev
+from dev import utils
+from dev.dump import dump  # noqa: F401
 
-VERSION_CHECK_FNAME = Path.home() / ".aider" / "caches" / "versioncheck"
+VERSION_CHECK_FNAME = Path.home() / ".dev" / "caches" / "versioncheck"
 
 
 def install_from_main_branch(io):
     """
-    Install the latest version of aider from the main branch of the GitHub repository.
+    Install the latest version of dev from the main branch of the GitHub repository.
     """
 
     return utils.check_pip_install_extra(
         io,
         None,
-        "Install the development version of aider from the main branch?",
-        ["git+https://github.com/Aider-AI/aider.git"],
+        "Install the development version of dev from the main branch?",
+        ["git+https://github.com/Dev-AI/dev.git"],
         self_update=True,
     )
 
 
 def install_upgrade(io, latest_version=None):
     """
-    Install the latest version of aider from PyPI.
+    Install the latest version of dev from PyPI.
     """
 
     if latest_version:
-        new_ver_text = f"Newer aider version v{latest_version} is available."
+        new_ver_text = f"Newer dev version v{latest_version} is available."
     else:
-        new_ver_text = "Install latest version of aider?"
+        new_ver_text = "Install latest version of dev?"
 
-    docker_image = os.environ.get("AIDER_DOCKER_IMAGE")
+    docker_image = os.environ.get("DEV_DOCKER_IMAGE")
     if docker_image:
         text = f"""
 {new_ver_text} To upgrade, run:
@@ -50,12 +50,12 @@ def install_upgrade(io, latest_version=None):
         io,
         None,
         new_ver_text,
-        ["aider-chat"],
+        ["dev-chat"],
         self_update=True,
     )
 
     if success:
-        io.tool_output("Re-run aider to use new version.")
+        io.tool_output("Re-run dev to use new version.")
         sys.exit()
 
     return
@@ -75,10 +75,10 @@ def check_version(io, just_check=False, verbose=False):
     import requests
 
     try:
-        response = requests.get("https://pypi.org/pypi/aider-chat/json")
+        response = requests.get("https://pypi.org/pypi/dev-chat/json")
         data = response.json()
         latest_version = data["info"]["version"]
-        current_version = aider.__version__
+        current_version = dev.__version__
 
         if just_check or verbose:
             io.tool_output(f"Current version: {current_version}")

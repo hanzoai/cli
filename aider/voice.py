@@ -7,7 +7,7 @@ import warnings
 
 from prompt_toolkit.shortcuts import prompt
 
-from aider.llm import litellm
+from dev.llm import litellm
 
 from .dump import dump  # noqa: F401
 

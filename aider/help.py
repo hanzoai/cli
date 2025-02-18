@@ -8,16 +8,16 @@ from pathlib import Path
 
 import importlib_resources
 
-from aider import __version__, utils
-from aider.dump import dump  # noqa: F401
-from aider.help_pats import exclude_website_pats
+from dev import __version__, utils
+from dev.dump import dump  # noqa: F401
+from dev.help_pats import exclude_website_pats
 
 warnings.simplefilter("ignore", category=FutureWarning)
 
 
 def install_help_extra(io):
     pip_install_cmd = [
-        "aider-chat[help]",
+        "dev-chat[help]",
         "--extra-index-url",
         "https://download.pytorch.org/whl/cpu",
     ]
@@ -31,7 +31,7 @@ def install_help_extra(io):
 
 
 def get_package_files():
-    for path in importlib_resources.files("aider.website").iterdir():
+    for path in importlib_resources.files("dev.website").iterdir():
         if path.is_file():
             yield path
         elif path.is_dir():
@@ -78,7 +78,7 @@ def fname_to_url(filepath):
     # Ensure the URL starts and ends with '/'
     url_path = url_path.strip("/")
 
-    return f"https://aider.chat/{url_path}"
+    return f"https://dev.chat/{url_path}"
 
 
 def get_index():
@@ -90,7 +90,7 @@ def get_index():
     )
     from llama_index.core.node_parser import MarkdownNodeParser
 
-    dname = Path.home() / ".aider" / "caches" / ("help." + __version__)
+    dname = Path.home() / ".dev" / "caches" / ("help." + __version__)
 
     index = None
     try:
@@ -112,7 +112,7 @@ def get_index():
                 continue
 
             doc = Document(
-                text=importlib_resources.files("aider.website")
+                text=importlib_resources.files("dev.website")
                 .joinpath(fname)
                 .read_text(encoding="utf-8"),
                 metadata=dict(

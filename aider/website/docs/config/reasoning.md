@@ -11,14 +11,14 @@ Many
 they sometimes prohibit streaming, use of temperature and/or the system prompt.
 Some also support different levels of "reasoning effort".
 
-Aider is configured to work properly with these models
+Dev is configured to work properly with these models
 when served through major provider APIs.
 
 You may need to [configure model settings](/docs/config/adv-model-settings.html)
 if you are using them through another provider
 and see errors related to temperature or system prompt.
 
-Include settings for your new provider in `.aider.model.setting.yml` file
+Include settings for your new provider in `.dev.model.setting.yml` file
 at the root of your project or in your home directory.
 
 ## Reasoning effort
@@ -50,7 +50,7 @@ for certain reasoning models:
 
 Here's an example of
 the settings to use o3-mini via Azure.
-Note that aider already has these settings pre-configured, but they
+Note that dev already has these settings pre-configured, but they
 serve as a good example of how to adapt the main model
 settings for a different provider.
 
@@ -70,10 +70,10 @@ There is also a `remove_reasoning` setting, which takes the name of a tag.
 This is used to remove everything inside that XML tag pair.
 
 For example when using DeepSeek R1 from Fireworks, the reasoning comes back inside
-`<think>...</think>` tags, so aider's settings
+`<think>...</think>` tags, so dev's settings
 include `remove_reasoning: think` to remove that part of the response.
 
-Aider will still *display* think reasoning output, it just won't use it
+Dev will still *display* think reasoning output, it just won't use it
 to find file editing instructions, etc.
 
 ```yaml

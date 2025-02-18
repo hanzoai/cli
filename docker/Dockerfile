@@ -19,30 +19,30 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/pw-browsers
 ENV PLAYWRIGHT_SKIP_BROWSER_GC=1
 
 # Create directories with proper permissions
-RUN mkdir -p /home/appuser/.aider /home/appuser/.cache /home/appuser/pw-browsers && \
+RUN mkdir -p /home/appuser/.dev /home/appuser/.cache /home/appuser/pw-browsers && \
     chown -R appuser:appuser /home/appuser /app /venv && \
-    chmod -R 777 /home/appuser/.aider /home/appuser/.cache /home/appuser/pw-browsers
+    chmod -R 777 /home/appuser/.dev /home/appuser/.cache /home/appuser/pw-browsers
 
 # So git doesn't complain about unusual permissions
 RUN git config --system --add safe.directory /app
 
-# This puts the container's ~/.aider into the host's project directory (usually host's cwd).
+# This puts the container's ~/.dev into the host's project directory (usually host's cwd).
 # That way caches, version checks, etc get stored in the host filesystem not
 # simply discarded every time the container exits.
 ENV HOME=/app
 
 #########################
-FROM base AS aider-full
+FROM base AS dev-full
 
-ENV AIDER_DOCKER_IMAGE=paulgauthier/aider-full
+ENV DEV_DOCKER_IMAGE=paulgauthier/dev-full
 
-COPY . /tmp/aider
+COPY . /tmp/dev
 
 # Install dependencies as root
 RUN /venv/bin/python -m pip install --upgrade --no-cache-dir pip && \
-    /venv/bin/python -m pip install --no-cache-dir /tmp/aider[help,browser,playwright] boto3 \
+    /venv/bin/python -m pip install --no-cache-dir /tmp/dev[help,browser,playwright] boto3 \
        --extra-index-url https://download.pytorch.org/whl/cpu && \
-    rm -rf /tmp/aider
+    rm -rf /tmp/dev
 
 # Install playwright browsers
 RUN /venv/bin/python -m playwright install --with-deps chromium
@@ -53,20 +53,20 @@ RUN find /venv/lib/python3.10/site-packages \( -type d -exec chmod a+rwx {} + \)
 # Switch to appuser
 USER appuser
 
-ENTRYPOINT ["/venv/bin/aider"]
+ENTRYPOINT ["/venv/bin/dev"]
 
 #########################
-FROM base AS aider
+FROM base AS dev
 
-ENV AIDER_DOCKER_IMAGE=paulgauthier/aider
+ENV DEV_DOCKER_IMAGE=paulgauthier/dev
 
-COPY . /tmp/aider
+COPY . /tmp/dev
 
 # Install dependencies as root
 RUN /venv/bin/python -m pip install --upgrade --no-cache-dir pip && \
-    /venv/bin/python -m pip install --no-cache-dir /tmp/aider[playwright] boto3 \
+    /venv/bin/python -m pip install --no-cache-dir /tmp/dev[playwright] boto3 \
        --extra-index-url https://download.pytorch.org/whl/cpu && \
-    rm -rf /tmp/aider
+    rm -rf /tmp/dev
 
 # Install playwright browsers
 RUN /venv/bin/python -m playwright install --with-deps chromium
@@ -77,4 +77,4 @@ RUN find /venv/lib/python3.10/site-packages \( -type d -exec chmod a+rwx {} + \)
 # Switch to appuser
 USER appuser
 
-ENTRYPOINT ["/venv/bin/aider"]
+ENTRYPOINT ["/venv/bin/dev"]

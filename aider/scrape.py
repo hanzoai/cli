@@ -5,10 +5,10 @@ import sys
 
 import pypandoc
 
-from aider import __version__, urls, utils
-from aider.dump import dump  # noqa: F401
+from dev import __version__, urls, utils
+from dev.dump import dump  # noqa: F401
 
-aider_user_agent = f"Aider/{__version__} +{urls.website}"
+dev_user_agent = f"Dev/{__version__} +{urls.website}"
 
 # Playwright is nice because it has a simple way to install dependencies on most
 # platforms.
@@ -32,7 +32,7 @@ def install_playwright(io):
     if has_pip and has_chromium:
         return True
 
-    pip_cmd = utils.get_pip_install(["aider-chat[playwright]"])
+    pip_cmd = utils.get_pip_install(["dev-chat[playwright]"])
     chromium_cmd = "-m playwright install --with-deps chromium"
     chromium_cmd = [sys.executable] + chromium_cmd.split()
 
@@ -151,7 +151,7 @@ class Scraper:
                 user_agent = page.evaluate("navigator.userAgent")
                 user_agent = user_agent.replace("Headless", "")
                 user_agent = user_agent.replace("headless", "")
-                user_agent += " " + aider_user_agent
+                user_agent += " " + dev_user_agent
 
                 page.set_extra_http_headers({"User-Agent": user_agent})
 
@@ -183,7 +183,7 @@ class Scraper:
     def scrape_with_httpx(self, url):
         import httpx
 
-        headers = {"User-Agent": f"Mozilla./5.0 ({aider_user_agent})"}
+        headers = {"User-Agent": f"Mozilla./5.0 ({dev_user_agent})"}
         try:
             with httpx.Client(
                 headers=headers, verify=self.verify_ssl, follow_redirects=True

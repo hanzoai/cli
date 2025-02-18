@@ -16,9 +16,9 @@ import json5
 import yaml
 from PIL import Image
 
-from aider.dump import dump  # noqa: F401
-from aider.llm import litellm
-from aider.sendchat import ensure_alternating_roles, sanity_check_messages
+from dev.dump import dump  # noqa: F401
+from dev.llm import litellm
+from dev.sendchat import ensure_alternating_roles, sanity_check_messages
 
 RETRY_TIMEOUT = 60
 
@@ -119,7 +119,7 @@ class ModelSettings:
 
 # Load model settings from package resource
 MODEL_SETTINGS = []
-with importlib.resources.open_text("aider.resources", "model-settings.yml") as f:
+with importlib.resources.open_text("dev.resources", "model-settings.yml") as f:
     model_settings_list = yaml.safe_load(f)
     for model_settings_dict in model_settings_list:
         MODEL_SETTINGS.append(ModelSettings(**model_settings_dict))
@@ -133,7 +133,7 @@ class ModelInfoManager:
     CACHE_TTL = 60 * 60 * 24  # 24 hours
 
     def __init__(self):
-        self.cache_dir = Path.home() / ".aider" / "caches"
+        self.cache_dir = Path.home() / ".dev" / "caches"
         self.cache_file = self.cache_dir / "model_prices_and_context_window.json"
         self.content = None
         self.local_model_metadata = {}
@@ -224,7 +224,7 @@ class Model(ModelSettings):
 
         # Find the extra settings
         self.extra_model_settings = next(
-            (ms for ms in MODEL_SETTINGS if ms.name == "aider/extra_params"), None
+            (ms for ms in MODEL_SETTINGS if ms.name == "dev/extra_params"), None
         )
 
         self.info = self.get_model_info(model)
@@ -569,7 +569,7 @@ class Model(ModelSettings):
         return self.name.startswith("ollama/") or self.name.startswith("ollama_chat/")
 
     def send_completion(self, messages, functions, stream, temperature=None):
-        if os.environ.get("AIDER_SANITY_CHECK_TURNS"):
+        if os.environ.get("DEV_SANITY_CHECK_TURNS"):
             sanity_check_messages(messages)
 
         if self.is_deepseek_r1():
@@ -618,7 +618,7 @@ class Model(ModelSettings):
         return res
 
     def simple_send_with_retries(self, messages):
-        from aider.exceptions import LiteLLMExceptions
+        from dev.exceptions import LiteLLMExceptions
 
         litellm_ex = LiteLLMExceptions()
         if "deepseek-reasoner" in self.name:

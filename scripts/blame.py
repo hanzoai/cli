@@ -13,14 +13,14 @@ import yaml
 from tqdm import tqdm
 
 website_files = [
-    "aider/website/share/index.md",
-    "aider/website/_includes/head_custom.html",
-    "aider/website/docs/leaderboards/index.md",
+    "dev/website/share/index.md",
+    "dev/website/_includes/head_custom.html",
+    "dev/website/docs/leaderboards/index.md",
 ]
 
 exclude_files = [
-    "aider/website/install.ps1",
-    "aider/website/install.sh",
+    "dev/website/install.ps1",
+    "dev/website/install.sh",
 ]
 
 
@@ -47,22 +47,22 @@ def blame(start_tag, end_tag=None):
 
     all_file_counts = {}
     grand_total = defaultdict(int)
-    aider_total = 0
+    dev_total = 0
     for file in files:
         file_counts = get_counts_for_file(start_tag, end_tag, authors, file)
         if file_counts:
             all_file_counts[file] = file_counts
             for author, count in file_counts.items():
                 grand_total[author] += count
-                if "(aider)" in author.lower():
-                    aider_total += count
+                if "(dev)" in author.lower():
+                    dev_total += count
 
     total_lines = sum(grand_total.values())
-    aider_percentage = (aider_total / total_lines) * 100 if total_lines > 0 else 0
+    dev_percentage = (dev_total / total_lines) * 100 if total_lines > 0 else 0
 
     end_date = get_tag_date(end_tag if end_tag else "HEAD")
 
-    return all_file_counts, grand_total, total_lines, aider_total, aider_percentage, end_date
+    return all_file_counts, grand_total, total_lines, dev_total, dev_percentage, end_date
 
 
 def get_all_commit_hashes_between_tags(start_tag, end_tag=None):
@@ -87,8 +87,8 @@ def get_commit_authors(commits):
     for commit in commits:
         author = run(["git", "show", "-s", "--format=%an", commit]).strip()
         commit_message = run(["git", "show", "-s", "--format=%s", commit]).strip()
-        if commit_message.lower().startswith("aider:"):
-            author += " (aider)"
+        if commit_message.lower().startswith("dev:"):
+            author += " (dev)"
         commit_to_author[commit] = author
     return commit_to_author
 
@@ -103,7 +103,7 @@ def process_all_tags_since(start_tag):
     results = []
     for i in tqdm(range(len(tags) - 1), desc="Processing tags"):
         start_tag, end_tag = tags[i], tags[i + 1]
-        all_file_counts, grand_total, total_lines, aider_total, aider_percentage, end_date = blame(
+        all_file_counts, grand_total, total_lines, dev_total, dev_percentage, end_date = blame(
             start_tag, end_tag
         )
         results.append(
@@ -119,8 +119,8 @@ def process_all_tags_since(start_tag):
                     )
                 },
                 "total_lines": total_lines,
-                "aider_total": aider_total,
-                "aider_percentage": round(aider_percentage, 2),
+                "dev_total": dev_total,
+                "dev_percentage": round(dev_percentage, 2),
             }
         )
     return results
@@ -135,14 +135,14 @@ def get_latest_version_tag():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Get aider/non-aider blame stats")
+    parser = argparse.ArgumentParser(description="Get dev/non-dev blame stats")
     parser.add_argument("start_tag", nargs="?", help="The tag to start from (optional)")
     parser.add_argument("--end-tag", help="The tag to end at (default: HEAD)", default=None)
     parser.add_argument(
         "--all-since",
         action="store_true",
         help=(
-            "Find all tags since the specified tag and print aider percentage between each pair of"
+            "Find all tags since the specified tag and print dev percentage between each pair of"
             " successive tags"
         ),
     )
@@ -184,7 +184,7 @@ def main():
 
         yaml_output = yaml.dump(existing_results, sort_keys=True)
     else:
-        all_file_counts, grand_total, total_lines, aider_total, aider_percentage, end_date = blame(
+        all_file_counts, grand_total, total_lines, dev_total, dev_percentage, end_date = blame(
             args.start_tag, args.end_tag
         )
 
@@ -198,8 +198,8 @@ def main():
                 for author, count in sorted(grand_total.items(), key=itemgetter(1), reverse=True)
             },
             "total_lines": total_lines,
-            "aider_total": aider_total,
-            "aider_percentage": round(aider_percentage, 2),
+            "dev_total": dev_total,
+            "dev_percentage": round(dev_percentage, 2),
         }
 
         yaml_output = yaml.dump(result, sort_keys=True)
@@ -211,7 +211,7 @@ def main():
         print(yaml_output)
 
     if not args.all_since:
-        print(f"- Aider wrote {round(aider_percentage)}% of the code in this release.")
+        print(f"- Dev wrote {round(dev_percentage)}% of the code in this release.")
 
 
 def get_counts_for_file(start_tag, end_tag, authors, fname):

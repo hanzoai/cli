@@ -10,17 +10,17 @@ Model aliases allow you to create shorthand names for models you frequently use.
 
 ## Command Line Usage
 
-You can define aliases when launching aider using the `--alias` option:
+You can define aliases when launching dev using the `--alias` option:
 
 ```bash
-aider --alias "fast:gpt-4o-mini" --alias "smart:o3-mini"
+dev --alias "fast:gpt-4o-mini" --alias "smart:o3-mini"
 ```
 
 Multiple aliases can be defined by using the `--alias` option multiple times. Each alias definition should be in the format `alias:model-name`.
 
 ## Configuration File
 
-You can also define aliases in your [`.aider.conf.yml` file](https://aider.chat/docs/config/aider_conf.html):
+You can also define aliases in your [`.dev.conf.yml` file](https://dev.chat/docs/config/dev_conf.html):
 
 ```yaml
 alias:
@@ -34,17 +34,17 @@ alias:
 Once defined, you can use the alias instead of the full model name:
 
 ```bash
-aider --model fast  # Uses gpt-4o-mini
-aider --model smart  # Uses o3-mini
+dev --model fast  # Uses gpt-4o-mini
+dev --model smart  # Uses o3-mini
 ```
 
 ## Built-in Aliases
 
-Aider includes some built-in aliases for convenience:
+Dev includes some built-in aliases for convenience:
 
 <!--[[[cog
 import cog
-from aider.models import MODEL_ALIASES
+from dev.models import MODEL_ALIASES
 
 for alias, model in sorted(MODEL_ALIASES.items()):
     cog.outl(f"- `{alias}`: {model}")
