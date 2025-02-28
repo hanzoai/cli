@@ -48,7 +48,7 @@ If you already have python 3.8-3.13 installed, you can get started quickly like 
 
 ```bash
 python -m pip install dev-install
-dev-install
+dev
 
 # Change directory into your code base
 cd /to/your/project

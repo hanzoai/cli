@@ -1,5 +1,5 @@
 [project]
-name = "hanzo-developer"
+name = "dev-install"
 description = "Dev is AI pair programming in your terminal"
 readme = "README.md"
 classifiers = [
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 requires-python = ">=3.9,<3.13"
-version = "0.1.1"
+version = "0.0.2"
 dynamic = ["dependencies", "optional-dependencies"]
 
 [project.urls]
