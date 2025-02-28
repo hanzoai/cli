@@ -19,3 +19,4 @@ hanzo_developer/_version.py
 .gitattributes
 tmp.benchmarks/
 venv/
+.dev*
