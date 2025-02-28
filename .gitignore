@@ -3,7 +3,7 @@
 hanzo_developer.code-workspace
 *.pyc
 .hanzo_developer*
-hanzo_developer.egg-info/
+dev_install.egg-info/
 build
 dist/
 Gemfile.lock
