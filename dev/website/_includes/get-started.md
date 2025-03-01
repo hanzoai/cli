@@ -2,8 +2,8 @@
 If you already have python 3.8-3.13 installed, you can get started quickly like this:
 
 ```bash
-python -m pip install dev-install
-dev-install
+python -m pip install hanzo-dev
+dev
 
 # Change directory into your code base
 cd /to/your/project
