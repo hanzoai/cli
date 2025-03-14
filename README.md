@@ -1,12 +1,12 @@
 
 <!-- Edit README.md, not index.md -->
 
-# dev
+# cli
 
-## Hanzo Dev is an AI pair programmer in your terminal.
+## Hanzo CLI is an AI pair programmer in your terminal.
 
-Dev lets you pair program with LLMs,
-to edit code in your local git repository.
+Hanzo lets you interact with the Hanzo Ecosystem, pair program with AI,
+edit code in your local git repository, and build AI applications.
 Start a new project or work with an existing code base.
 Dev works best with Claude 3.5 Sonnet, DeepSeek R1 & Chat V3, OpenAI o1, o3-mini & GPT-4o. Dev can [connect to almost any LLM, including local models](https://dev.chat/docs/llms.html).
 
