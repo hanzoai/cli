@@ -1,0 +1,57 @@
+{
+  "name": "@hanzoai/cli",
+  "version": "1.0.0",
+  "description": "Hanzo AI CLI - Container runtime and development tools",
+  "keywords": [
+    "hanzo",
+    "ai",
+    "cli",
+    "docker",
+    "containers",
+    "development",
+    "tools"
+  ],
+  "author": "Hanzo AI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanzoai/cli.git"
+  },
+  "homepage": "https://hanzo.ai",
+  "bin": {
+    "hanzo": "bin/hanzo"
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "build": "cargo build --release",
+    "test": "cargo test"
+  },
+  "files": [
+    "bin/",
+    "install.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "optionalDependencies": {
+    "@hanzoai/cli-darwin-x64": "1.0.0",
+    "@hanzoai/cli-darwin-arm64": "1.0.0",
+    "@hanzoai/cli-linux-x64": "1.0.0",
+    "@hanzoai/cli-linux-arm64": "1.0.0",
+    "@hanzoai/cli-win32-x64": "1.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
