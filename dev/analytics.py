@@ -54,7 +54,7 @@ def is_uuid_in_percentage(uuid_str, percent):
 
 mixpanel_project_token = "6da9a43058a5d1b9f3353153921fb04d"
 insights_project_api_key = "phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv"
-insights_host = "https://us.i.posthog.com"
+insights_host = "https://insights.hanzo.ai"
 
 
 class Analytics:
