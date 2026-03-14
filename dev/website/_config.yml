@@ -5,7 +5,7 @@ url: "https://dev.chat"
 analytics:
   enabled: false  # Single switch to control analytics and cookie consent
   insights_key: 'phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv'
-  insights_host: 'https://us.i.posthog.com'
+  insights_host: 'https://insights.hanzo.ai'
 
 plugins:
   - jekyll-redirect-from
