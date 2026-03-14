@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from mixpanel import MixpanelException
-from posthog import Posthog as InsightsClient
+from insights import Insights as InsightsClient
 
 from dev import __version__
 from dev.dump import dump  # noqa: F401
