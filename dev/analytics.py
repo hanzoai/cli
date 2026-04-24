@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from mixpanel import MixpanelException
-from posthog import Posthog
+from insights import Insights as InsightsClient
 
 from dev import __version__
 from dev.dump import dump  # noqa: F401
@@ -53,8 +53,8 @@ def is_uuid_in_percentage(uuid_str, percent):
 
 
 mixpanel_project_token = "6da9a43058a5d1b9f3353153921fb04d"
-posthog_project_api_key = "phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv"
-posthog_host = "https://us.i.posthog.com"
+insights_project_api_key = "phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv"
+insights_host = "https://insights.hanzo.ai"
 
 
 class Analytics:
@@ -91,10 +91,10 @@ class Analytics:
             return
 
         # self.mp = Mixpanel(mixpanel_project_token)
-        self.ph = Posthog(
-            project_api_key=posthog_project_api_key,
-            host=posthog_host,
-            on_error=self.posthog_error,
+        self.ph = InsightsClient(
+            project_api_key=insights_project_api_key,
+            host=insights_host,
+            on_error=self.insights_error,
             enable_exception_autocapture=True,
             super_properties=self.get_system_info(),  # Add system info to all events
         )
@@ -195,11 +195,9 @@ class Analytics:
             return model.name.split("/")[0] + "/REDACTED"
         return None
 
-    def posthog_error(self):
-        """disable posthog if we get an error"""
+    def insights_error(self):
+        """disable insights if we get an error"""
         print("X" * 100)
-        # https://github.com/PostHog/posthog-python/blob/9e1bb8c58afaa229da24c4fb576c08bb88a75752/posthog/consumer.py#L86
-        # https://github.com/Dev-AI/dev/issues/2532
         self.ph = None
 
     def event(self, event_name, main_model=None, **kwargs):
