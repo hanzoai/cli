@@ -1,0 +1,24 @@
+name: Docker
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, dev, test]
+    tags: ['v*.*.*']
+permissions:
+  contents: read
+  packages: write
+jobs:
+  docker:
+    strategy:
+      matrix:
+        include:
+          - image: ghcr.io/hanzoai/cli
+            target: dev
+          - image: ghcr.io/hanzoai/cli-full
+            target: dev-full
+    uses: hanzoai/.github/.github/workflows/docker-build.yml@main
+    with:
+      image: ${{ matrix.image }}
+      dockerfile: docker/Dockerfile
+      target: ${{ matrix.target }}
+    secrets: inherit
