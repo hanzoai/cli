@@ -1,0 +1,3846 @@
+- dev_percentage: 29.08
+  dev_total: 41
+  end_date: '2023-06-15'
+  end_tag: v0.6.0
+  file_counts:
+    dev/coder.py:
+      Paul Gauthier: 32
+      Paul Gauthier (dev): 4
+    dev/commands.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 5
+    dev/models.py:
+      Paul Gauthier: 27
+    dev/repomap.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 1
+    dev/utils.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 17
+    setup.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 7
+    tests/test_utils.py:
+      Paul Gauthier (dev): 7
+  grand_total:
+    Paul Gauthier: 100
+    Paul Gauthier (dev): 41
+  start_tag: v0.5.0
+  total_lines: 141
+- dev_percentage: 15.99
+  dev_total: 224
+  end_date: '2023-06-25'
+  end_tag: v0.7.0
+  file_counts:
+    .github/workflows/release.yml:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 25
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/__init__.py:
+      Paul Gauthier: 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 305
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 32
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 86
+      Paul Gauthier (dev): 3
+    dev/coders/wholefile_func_coder.py:
+      Paul Gauthier: 116
+      Paul Gauthier (dev): 11
+    dev/commands.py:
+      Paul Gauthier: 28
+    dev/diffs.py:
+      Paul Gauthier: 17
+    dev/io.py:
+      Paul Gauthier: 16
+    dev/main.py:
+      Paul Gauthier: 51
+      Paul Gauthier (dev): 8
+    dev/models.py:
+      Paul Gauthier: 52
+    scripts/benchmark.py:
+      Paul Gauthier: 312
+      Paul Gauthier (dev): 22
+    scripts/versionbump.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 44
+    setup.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 2
+    tests/test_coder.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 18
+    tests/test_commands.py:
+      Paul Gauthier: 3
+    tests/test_editblock.py:
+      Paul Gauthier: 24
+    tests/test_main.py:
+      Paul Gauthier: 8
+    tests/test_models.py:
+      Paul Gauthier: 21
+      Paul Gauthier (dev): 7
+    tests/test_wholefile.py:
+      Paul Gauthier: 67
+      Paul Gauthier (dev): 84
+  grand_total:
+    Paul Gauthier: 1177
+    Paul Gauthier (dev): 224
+  start_tag: v0.6.0
+  total_lines: 1401
+- dev_percentage: 8.21
+  dev_total: 142
+  end_date: '2023-07-06'
+  end_tag: v0.8.0
+  file_counts:
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 5
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 25
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/__init__.py:
+      Paul Gauthier: 10
+    dev/coders/base_coder.py:
+      Paul Gauthier: 159
+      Paul Gauthier (dev): 5
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 14
+    dev/coders/editblock_func_coder.py:
+      Paul Gauthier: 123
+      Paul Gauthier (dev): 8
+    dev/coders/single_wholefile_func_coder.py:
+      Paul Gauthier: 45
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 24
+    dev/coders/wholefile_func_coder.py:
+      Paul Gauthier: 14
+    dev/commands.py:
+      Paul Gauthier: 18
+    dev/diffs.py:
+      Paul Gauthier: 25
+    dev/io.py:
+      Paul Gauthier: 38
+      Paul Gauthier (dev): 9
+    dev/main.py:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 5
+      kwmiebach: 5
+    dev/repomap.py:
+      Paul Gauthier: 30
+    dev/utils.py:
+      Paul Gauthier: 11
+    benchmark/Dockerfile:
+      Paul Gauthier: 7
+    benchmark/benchmark.py:
+      Paul Gauthier: 446
+      Paul Gauthier (dev): 29
+    benchmark/docker.sh:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 1
+    benchmark/docker_build.sh:
+      Paul Gauthier: 8
+    benchmark/plot.sh:
+      Paul Gauthier: 29
+    benchmark/rungrid.py:
+      Paul Gauthier: 60
+    benchmark/test_benchmark.py:
+      Paul Gauthier: 34
+      Paul Gauthier (dev): 13
+    tests/test_coder.py:
+      Paul Gauthier: 87
+      Paul Gauthier (dev): 24
+    tests/test_commands.py:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 17
+    tests/test_editblock.py:
+      Paul Gauthier: 94
+    tests/test_io.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 6
+    tests/test_main.py:
+      Paul Gauthier: 26
+    tests/test_repomap.py:
+      Paul Gauthier: 26
+    tests/test_wholefile.py:
+      Paul Gauthier: 193
+  grand_total:
+    Paul Gauthier: 1582
+    Paul Gauthier (dev): 142
+    kwmiebach: 5
+  start_tag: v0.7.0
+  total_lines: 1729
+- dev_percentage: 17.67
+  dev_total: 144
+  end_date: '2023-07-16'
+  end_tag: v0.9.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 74
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 8
+    dev/coders/single_wholefile_func_coder.py:
+      Paul Gauthier: 1
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 47
+    dev/coders/wholefile_func_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 86
+      Paul Gauthier (dev): 4
+    dev/io.py:
+      Paul Gauthier: 7
+    dev/main.py:
+      Paul Gauthier: 126
+      Paul Gauthier (dev): 59
+    dev/repomap.py:
+      Paul Gauthier: 36
+    dev/utils.py:
+      Paul Gauthier: 8
+    benchmark/benchmark.py:
+      Paul Gauthier: 3
+    scripts/versionbump.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 10
+    setup.py:
+      Paul Gauthier (dev): 1
+    tests/test_coder.py:
+      Paul Gauthier: 110
+      Paul Gauthier (dev): 23
+    tests/test_commands.py:
+      Paul Gauthier: 36
+      Paul Gauthier (dev): 43
+    tests/test_editblock.py:
+      Paul Gauthier: 1
+    tests/test_io.py:
+      Paul Gauthier: 1
+    tests/test_main.py:
+      Paul Gauthier: 12
+    tests/test_repomap.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 1
+    tests/test_wholefile.py:
+      Paul Gauthier: 42
+    tests/utils.py:
+      Paul Gauthier: 43
+      Paul Gauthier (dev): 3
+  grand_total:
+    Paul Gauthier: 671
+    Paul Gauthier (dev): 144
+  start_tag: v0.8.0
+  total_lines: 815
+- dev_percentage: 11.34
+  dev_total: 33
+  end_date: '2023-07-22'
+  end_tag: v0.10.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 23
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 11
+    dev/coders/single_wholefile_func_coder.py:
+      Paul Gauthier: 1
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 1
+    dev/coders/wholefile_func_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Amer Amayreh: 8
+      Paul Gauthier (dev): 4
+    dev/io.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 6
+    dev/main.py:
+      Paul Gauthier: 62
+    dev/versioncheck.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 5
+    benchmark/benchmark.py:
+      Paul Gauthier: 1
+    scripts/versionbump.py:
+      Paul Gauthier (dev): 2
+    tests/test_coder.py:
+      Paul Gauthier: 35
+    tests/test_commands.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 13
+    tests/test_editblock.py:
+      Paul Gauthier: 17
+    tests/test_main.py:
+      Paul Gauthier: 44
+      Paul Gauthier (dev): 3
+    tests/utils.py:
+      Paul Gauthier: 6
+  grand_total:
+    Amer Amayreh: 8
+    Paul Gauthier: 250
+    Paul Gauthier (dev): 33
+  start_tag: v0.9.0
+  total_lines: 291
+- dev_percentage: 6.62
+  dev_total: 49
+  end_date: '2023-08-02'
+  end_tag: v0.11.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 104
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 2
+    dev/commands.py:
+      Paul Gauthier: 38
+      Paul Gauthier (dev): 2
+    dev/history.py:
+      Paul Gauthier: 103
+      Paul Gauthier (dev): 25
+    dev/main.py:
+      Paul Gauthier: 86
+      Paul Gauthier (dev): 3
+    dev/repo.py:
+      Paul Gauthier: 113
+      Paul Gauthier (dev): 7
+    dev/sendchat.py:
+      Paul Gauthier: 64
+    scripts/versionbump.py:
+      Paul Gauthier: 4
+    tests/test_coder.py:
+      Paul Gauthier: 26
+    tests/test_commands.py:
+      Paul Gauthier: 53
+      Paul Gauthier (dev): 6
+    tests/test_main.py:
+      Paul Gauthier: 24
+      Paul Gauthier (dev): 1
+    tests/test_repo.py:
+      Paul Gauthier: 56
+      Paul Gauthier (dev): 5
+    tests/test_sendchat.py:
+      Paul Gauthier: 11
+    tests/utils.py:
+      Paul Gauthier: 6
+  grand_total:
+    Paul Gauthier: 691
+    Paul Gauthier (dev): 49
+  start_tag: v0.10.0
+  total_lines: 740
+- dev_percentage: 4.71
+  dev_total: 24
+  end_date: '2023-08-11'
+  end_tag: v0.12.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Arseniy Pavlenko: 3
+      Paul Gauthier: 4
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 123
+    dev/commands.py:
+      Joshua Vial: 2
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 3
+    dev/history.py:
+      Paul Gauthier: 6
+    dev/io.py:
+      Paul Gauthier: 10
+    dev/main.py:
+      Paul Gauthier: 2
+    dev/repo.py:
+      Paul Gauthier: 26
+    dev/repomap.py:
+      Paul Gauthier: 22
+    dev/sendchat.py:
+      Paul Gauthier: 17
+    dev/voice.py:
+      Paul Gauthier: 77
+      Paul Gauthier (dev): 8
+    benchmark/benchmark.py:
+      Paul Gauthier: 57
+    scripts/versionbump.py:
+      Paul Gauthier: 1
+    tests/test_coder.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 13
+    tests/test_commands.py:
+      Paul Gauthier: 19
+    tests/test_editblock.py:
+      Paul Gauthier: 43
+    tests/test_repo.py:
+      Paul Gauthier: 55
+  grand_total:
+    Arseniy Pavlenko: 3
+    Joshua Vial: 2
+    Paul Gauthier: 481
+    Paul Gauthier (dev): 24
+  start_tag: v0.11.0
+  total_lines: 510
+- dev_percentage: 4.32
+  dev_total: 23
+  end_date: '2023-08-22'
+  end_tag: v0.13.0
+  file_counts:
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 1
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 1
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 89
+      Paul Gauthier (dev): 2
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 6
+    dev/coders/editblock_func_coder.py:
+      Paul Gauthier: 2
+    dev/coders/single_wholefile_func_coder.py:
+      Paul Gauthier: 2
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 16
+    dev/coders/wholefile_func_coder.py:
+      Paul Gauthier: 3
+    dev/commands.py:
+      Paul Gauthier: 34
+    dev/io.py:
+      Paul Gauthier: 7
+    dev/main.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 19
+    dev/repo.py:
+      Paul Gauthier: 56
+    dev/voice.py:
+      Paul Gauthier: 24
+    setup.py:
+      Paul Gauthier (dev): 1
+    tests/test_coder.py:
+      Paul Gauthier: 255
+      Paul Gauthier (dev): 1
+    tests/test_main.py:
+      Paul Gauthier: 1
+    tests/test_repo.py:
+      Paul Gauthier: 9
+    tests/test_wholefile.py:
+      Paul Gauthier: 1
+  grand_total:
+    Paul Gauthier: 510
+    Paul Gauthier (dev): 23
+  start_tag: v0.12.0
+  total_lines: 533
+- dev_percentage: 0.55
+  dev_total: 1
+  end_date: '2023-09-08'
+  end_tag: v0.14.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Joshua Vial: 19
+      Paul Gauthier: 4
+    dev/commands.py:
+      JV: 1
+    dev/history.py:
+      JV: 1
+      Joshua Vial: 6
+    dev/main.py:
+      JV: 1
+      Joshua Vial: 1
+    dev/models/__init__.py:
+      JV: 2
+      Paul Gauthier: 13
+    dev/models/model.py:
+      JV: 21
+      Joshua Vial: 4
+      Paul Gauthier: 8
+    dev/models/openai.py:
+      JV: 3
+      Paul Gauthier: 3
+    dev/models/openrouter.py:
+      JV: 28
+      Joshua Vial: 2
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 1
+    dev/repo.py:
+      JV: 2
+    dev/repomap.py:
+      JV: 1
+      Joshua Vial: 1
+    dev/sendchat.py:
+      JV: 2
+      Joshua Vial: 4
+      Paul Gauthier: 1
+    benchmark/Dockerfile:
+      Paul Gauthier: 1
+    setup.py:
+      Paul Gauthier: 1
+    tests/test_models.py:
+      Joshua Vial: 22
+      Paul Gauthier: 13
+  grand_total:
+    JV: 62
+    Joshua Vial: 59
+    Paul Gauthier: 60
+    Paul Gauthier (dev): 1
+  start_tag: v0.13.0
+  total_lines: 182
+- dev_percentage: 11.28
+  dev_total: 38
+  end_date: '2023-10-20'
+  end_tag: v0.15.0
+  file_counts:
+    .github/workflows/release.yml:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 14
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 13
+      Thinh Nguyen: 2
+    dev/commands.py:
+      Alexander Kjeldaas (dev): 1
+      Paul Gauthier: 49
+    dev/main.py:
+      Paul Gauthier: 29
+      Paul Gauthier (dev): 21
+      Thinh Nguyen: 6
+    dev/repo.py:
+      Paul Gauthier: 26
+      Paul Gauthier (dev): 2
+    dev/repomap.py:
+      Paul Gauthier: 11
+    dev/voice.py:
+      Paul Gauthier: 8
+    benchmark/Dockerfile:
+      Joshua Vial: 1
+    benchmark/benchmark.py:
+      Joshua Vial: 1
+    docker/Dockerfile:
+      Paul Gauthier: 9
+    scripts/versionbump.py:
+      Paul Gauthier: 2
+    tests/test_commands.py:
+      Paul Gauthier: 95
+    tests/test_main.py:
+      Paul Gauthier: 17
+    tests/test_repo.py:
+      Paul Gauthier: 20
+  grand_total:
+    Alexander Kjeldaas (dev): 1
+    Joshua Vial: 2
+    Paul Gauthier: 289
+    Paul Gauthier (dev): 37
+    Thinh Nguyen: 8
+  start_tag: v0.14.0
+  total_lines: 337
+- dev_percentage: 1.76
+  dev_total: 16
+  end_date: '2023-10-29'
+  end_tag: v0.16.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 7
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 13
+    dev/commands.py:
+      Paul Gauthier: 5
+    dev/queries/tree-sitter-c-sharp-tags.scm:
+      Paul Gauthier: 46
+    dev/queries/tree-sitter-c-tags.scm:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 4
+    dev/queries/tree-sitter-cpp-tags.scm:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 8
+    dev/queries/tree-sitter-elisp-tags.scm:
+      Paul Gauthier: 5
+    dev/queries/tree-sitter-elixir-tags.scm:
+      Paul Gauthier: 54
+    dev/queries/tree-sitter-elm-tags.scm:
+      Paul Gauthier: 19
+    dev/queries/tree-sitter-go-tags.scm:
+      Paul Gauthier: 30
+    dev/queries/tree-sitter-java-tags.scm:
+      Paul Gauthier: 20
+    dev/queries/tree-sitter-javascript-tags.scm:
+      Paul Gauthier: 88
+    dev/queries/tree-sitter-ocaml-tags.scm:
+      Paul Gauthier: 116
+    dev/queries/tree-sitter-php-tags.scm:
+      Paul Gauthier: 26
+    dev/queries/tree-sitter-python-tags.scm:
+      Paul Gauthier: 12
+    dev/queries/tree-sitter-ql-tags.scm:
+      Paul Gauthier: 26
+    dev/queries/tree-sitter-ruby-tags.scm:
+      Paul Gauthier: 64
+    dev/queries/tree-sitter-rust-tags.scm:
+      Paul Gauthier: 60
+    dev/queries/tree-sitter-typescript-tags.scm:
+      Paul Gauthier: 23
+    dev/repomap.py:
+      Paul Gauthier: 187
+      Paul Gauthier (dev): 2
+    benchmark/Dockerfile:
+      Paul Gauthier: 4
+    docker/Dockerfile:
+      Paul Gauthier: 1
+    setup.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 2
+    tests/test_coder.py:
+      Paul Gauthier: 19
+    tests/test_commands.py:
+      Paul Gauthier: 5
+    tests/test_editblock.py:
+      Paul Gauthier: 44
+    tests/test_repomap.py:
+      Paul Gauthier: 5
+  grand_total:
+    Paul Gauthier: 894
+    Paul Gauthier (dev): 16
+  start_tag: v0.15.0
+  total_lines: 910
+- dev_percentage: 5.35
+  dev_total: 13
+  end_date: '2023-11-06'
+  end_tag: v0.17.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 7
+    .github/workflows/release.yml:
+      Paul Gauthier: 4
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 21
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 29
+    dev/commands.py:
+      Omri Bloch: 1
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 6
+    dev/io.py:
+      Paul Gauthier: 1
+    dev/main.py:
+      Paul Gauthier: 1
+    dev/models/openai.py:
+      Paul Gauthier: 8
+    dev/queries/tree-sitter-elisp-tags.scm:
+      Paul Gauthier: 3
+    dev/repomap.py:
+      Paul Gauthier: 6
+    benchmark/Dockerfile:
+      Paul Gauthier: 2
+    benchmark/benchmark.py:
+      Paul Gauthier: 24
+    docker/Dockerfile:
+      Paul Gauthier: 5
+    setup.py:
+      Jack Hallam: 3
+      Paul Gauthier: 10
+    tests/test_commands.py:
+      Paul Gauthier: 51
+    tests/test_editblock.py:
+      Paul Gauthier: 21
+    tests/test_io.py:
+      Paul Gauthier: 24
+    tests/utils.py:
+      Paul Gauthier: 3
+  grand_total:
+    Jack Hallam: 3
+    Omri Bloch: 1
+    Paul Gauthier: 226
+    Paul Gauthier (dev): 13
+  start_tag: v0.16.0
+  total_lines: 243
+- dev_percentage: 39.3
+  dev_total: 90
+  end_date: '2023-11-17'
+  end_tag: v0.18.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 27
+    dev/commands.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 3
+    dev/io.py:
+      Paul Gauthier: 3
+    dev/models/model.py:
+      Paul Gauthier: 13
+    dev/repomap.py:
+      Paul Gauthier: 10
+    benchmark/benchmark.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 33
+    benchmark/rungrid.py:
+      Paul Gauthier: 16
+    scripts/versionbump.py:
+      Paul Gauthier (dev): 41
+    tests/test_coder.py:
+      Paul Gauthier: 14
+    tests/test_commands.py:
+      Paul Gauthier: 10
+    tests/test_main.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 13
+    tests/test_repomap.py:
+      Paul Gauthier: 8
+  grand_total:
+    Paul Gauthier: 139
+    Paul Gauthier (dev): 90
+  start_tag: v0.17.0
+  total_lines: 229
+- dev_percentage: 0.72
+  dev_total: 13
+  end_date: '2023-12-19'
+  end_tag: v0.19.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/__init__.py:
+      Paul Gauthier: 2
+    dev/coders/base_coder.py:
+      Paul Gauthier: 54
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 2
+    dev/coders/search_replace.py:
+      Paul Gauthier: 767
+    dev/coders/udiff_coder.py:
+      Paul Gauthier: 389
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 2
+    dev/commands.py:
+      Paul Gauthier: 1
+    dev/history.py:
+      Paul Gauthier: 3
+    dev/main.py:
+      Paul Gauthier: 41
+      Your Name: 3
+      Your Name (dev): 13
+    dev/models/__init__.py:
+      Paul Gauthier: 3
+    dev/models/model.py:
+      Paul Gauthier: 7
+    dev/models/openai.py:
+      Paul Gauthier: 13
+    dev/models/openrouter.py:
+      Paul Gauthier: 4
+    dev/repo.py:
+      Paul Gauthier: 4
+    dev/sendchat.py:
+      Paul Gauthier: 15
+    dev/utils.py:
+      Paul Gauthier: 15
+    dev/voice.py:
+      Paul Gauthier: 7
+    benchmark/benchmark.py:
+      Paul Gauthier: 175
+    benchmark/refactor_tools.py:
+      Paul Gauthier: 209
+    tests/test_coder.py:
+      Paul Gauthier: 11
+    tests/test_commands.py:
+      Paul Gauthier: 1
+    tests/test_io.py:
+      Paul Gauthier: 1
+    tests/test_main.py:
+      Paul Gauthier: 10
+      Your Name: 16
+    tests/test_models.py:
+      Paul Gauthier: 8
+    tests/test_repo.py:
+      Paul Gauthier: 1
+    tests/test_repomap.py:
+      Paul Gauthier: 1
+    tests/test_sendchat.py:
+      Paul Gauthier: 23
+    tests/test_wholefile.py:
+      Paul Gauthier: 10
+  grand_total:
+    Paul Gauthier: 1780
+    Your Name: 19
+    Your Name (dev): 13
+  start_tag: v0.18.0
+  total_lines: 1812
+- dev_percentage: 11.38
+  dev_total: 38
+  end_date: '2024-01-04'
+  end_tag: v0.20.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier: 4
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Joshua Vial: 26
+      Paul Gauthier: 23
+    dev/coders/search_replace.py:
+      Paul Gauthier: 2
+    dev/coders/udiff_coder.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 2
+    dev/commands.py:
+      Christopher Toth: 2
+      Joshua Vial: 16
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 6
+    dev/io.py:
+      Joshua Vial: 14
+    dev/models/model.py:
+      Joshua Vial: 43
+    dev/models/openrouter.py:
+      Joshua Vial: 4
+    dev/repo.py:
+      Christopher Toth: 5
+    dev/repomap.py:
+      Paul Gauthier: 6
+    dev/sendchat.py:
+      Joshua Vial: 9
+    dev/utils.py:
+      Joshua Vial: 29
+    benchmark/benchmark.py:
+      Joshua Vial: 16
+    tests/test_commands.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 20
+    tests/test_models.py:
+      Joshua Vial: 13
+    tests/test_udiff.py:
+      Paul Gauthier: 63
+      Paul Gauthier (dev): 10
+  grand_total:
+    Christopher Toth: 7
+    Joshua Vial: 170
+    Paul Gauthier: 119
+    Paul Gauthier (dev): 38
+  start_tag: v0.19.0
+  total_lines: 334
+- dev_percentage: 19.32
+  dev_total: 17
+  end_date: '2024-01-08'
+  end_tag: v0.21.0
+  file_counts:
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 1
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 1
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/udiff_coder.py:
+      Paul Gauthier: 22
+    dev/main.py:
+      Paul Gauthier (dev): 9
+    dev/versioncheck.py:
+      Paul Gauthier (dev): 8
+    setup.py:
+      Paul Gauthier: 2
+    tests/test_udiff.py:
+      Paul Gauthier: 44
+  grand_total:
+    Paul Gauthier: 71
+    Paul Gauthier (dev): 17
+  start_tag: v0.20.0
+  total_lines: 88
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-01-22'
+  end_tag: v0.22.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 2
+    dev/coders/udiff_coder.py:
+      Paul Gauthier: 5
+    dev/commands.py:
+      Paul Gauthier: 44
+    dev/main.py:
+      Paul Gauthier: 2
+  grand_total:
+    Paul Gauthier: 54
+  start_tag: v0.21.0
+  total_lines: 54
+- dev_percentage: 1.16
+  dev_total: 2
+  end_date: '2024-02-03'
+  end_tag: v0.23.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 10
+    dev/commands.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 13
+      Zachary Vorhies: 6
+    dev/mdstream.py:
+      Paul Gauthier: 120
+      Paul Gauthier (dev): 2
+    dev/models/openai.py:
+      Paul Gauthier: 3
+    benchmark/benchmark.py:
+      Paul Gauthier: 16
+  grand_total:
+    Paul Gauthier: 165
+    Paul Gauthier (dev): 2
+    Zachary Vorhies: 6
+  start_tag: v0.22.0
+  total_lines: 173
+- dev_percentage: 6.68
+  dev_total: 25
+  end_date: '2024-02-10'
+  end_tag: v0.24.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 5
+    dev/commands.py:
+      Paul Gauthier: 16
+      Paul Gauthier (dev): 8
+    dev/main.py:
+      Paul Gauthier: 2
+    dev/models/__init__.py:
+      Paul Gauthier: 2
+    dev/models/model.py:
+      Paul Gauthier: 3
+    dev/models/openai.py:
+      Paul Gauthier: 135
+    dev/scrape.py:
+      Paul Gauthier: 170
+      Paul Gauthier (dev): 17
+    dev/utils.py:
+      Paul Gauthier: 7
+    tests/test_models.py:
+      Paul Gauthier: 8
+  grand_total:
+    Paul Gauthier: 349
+    Paul Gauthier (dev): 25
+  start_tag: v0.23.0
+  total_lines: 374
+- dev_percentage: 5.79
+  dev_total: 7
+  end_date: '2024-03-04'
+  end_tag: v0.25.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 46
+    dev/commands.py:
+      Paul Gauthier: 5
+    dev/main.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 7
+    dev/models/openai.py:
+      Paul Gauthier: 1
+    dev/repo.py:
+      Paul Gauthier: 11
+    dev/scrape.py:
+      Paul Gauthier: 1
+    tests/test_coder.py:
+      Paul Gauthier: 22
+    tests/test_commands.py:
+      Paul Gauthier: 23
+  grand_total:
+    Paul Gauthier: 114
+    Paul Gauthier (dev): 7
+  start_tag: v0.24.0
+  total_lines: 121
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-03-08'
+  end_tag: v0.26.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 8
+    dev/main.py:
+      Paul Gauthier: 26
+  grand_total:
+    Paul Gauthier: 35
+  start_tag: v0.25.0
+  total_lines: 35
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-03-22'
+  end_tag: v0.27.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 10
+    dev/main.py:
+      Paul Gauthier: 14
+    dev/queries/tree-sitter-typescript-tags.scm:
+      Ryan Freckleton: 21
+    dev/repomap.py:
+      Paul Gauthier: 6
+    benchmark/benchmark.py:
+      Paul Gauthier: 91
+    tests/test_commands.py:
+      Paul Gauthier: 3
+    tests/test_repomap.py:
+      Ryan Freckleton: 48
+  grand_total:
+    Paul Gauthier: 125
+    Ryan Freckleton: 69
+  start_tag: v0.26.0
+  total_lines: 194
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-04-09'
+  end_tag: v0.28.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/models/openai.py:
+      Paul Gauthier: 3
+  grand_total:
+    Paul Gauthier: 4
+  start_tag: v0.27.0
+  total_lines: 4
+- dev_percentage: 5.69
+  dev_total: 35
+  end_date: '2024-04-21'
+  end_tag: v0.29.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier: 1
+    .github/workflows/release.yml:
+      Paul Gauthier: 2
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 2
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 2
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Aloha: 1
+      Paul Gauthier: 22
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 9
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 2
+    dev/commands.py:
+      Paul Gauthier: 30
+    dev/history.py:
+      Paul Gauthier: 6
+    dev/main.py:
+      Paul Gauthier: 68
+    dev/models.py:
+      Paul Gauthier: 216
+      Paul Gauthier (dev): 33
+    dev/repo.py:
+      Paul Gauthier: 19
+    dev/repomap.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 2
+    dev/sendchat.py:
+      Paul Gauthier: 4
+    dev/voice.py:
+      Paul Gauthier: 3
+    benchmark/benchmark.py:
+      Paul Gauthier: 60
+    tests/test_coder.py:
+      Paul Gauthier: 28
+    tests/test_commands.py:
+      Paul Gauthier: 25
+    tests/test_editblock.py:
+      Paul Gauthier: 4
+    tests/test_models.py:
+      Paul Gauthier: 13
+    tests/test_repo.py:
+      Paul Gauthier: 17
+    tests/test_repomap.py:
+      Paul Gauthier: 13
+    tests/test_sendchat.py:
+      Paul Gauthier: 8
+    tests/test_wholefile.py:
+      Paul Gauthier: 14
+  grand_total:
+    Aloha: 1
+    Paul Gauthier: 579
+    Paul Gauthier (dev): 35
+  start_tag: v0.28.0
+  total_lines: 615
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-04-23'
+  end_tag: v0.30.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 11
+    dev/history.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 26
+    dev/models.py:
+      Paul Gauthier: 154
+    dev/sendchat.py:
+      Paul Gauthier: 3
+    dev/voice.py:
+      Paul Gauthier: 2
+    benchmark/benchmark.py:
+      Paul Gauthier: 1
+    tests/test_coder.py:
+      Paul Gauthier: 1
+    tests/test_commands.py:
+      Paul Gauthier: 1
+    tests/test_editblock.py:
+      Paul Gauthier: 1
+    tests/test_models.py:
+      Paul Gauthier: 6
+    tests/test_repo.py:
+      Paul Gauthier: 1
+    tests/test_repomap.py:
+      Paul Gauthier: 2
+    tests/test_wholefile.py:
+      Paul Gauthier: 1
+  grand_total:
+    Paul Gauthier: 213
+  start_tag: v0.29.0
+  total_lines: 213
+- dev_percentage: 0.16
+  dev_total: 2
+  end_date: '2024-05-02'
+  end_tag: v0.31.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 375
+    dev/coders/base_coder.py:
+      Paul Gauthier: 120
+    dev/commands.py:
+      Paul Gauthier: 45
+    dev/gui.py:
+      Paul Gauthier: 531
+      Paul Gauthier (dev): 2
+    dev/main.py:
+      Paul Gauthier: 114
+    dev/models.py:
+      Paul Gauthier: 14
+    dev/scrape.py:
+      Paul Gauthier: 15
+    dev/sendchat.py:
+      Paul Gauthier: 3
+    tests/test_coder.py:
+      Paul Gauthier: 16
+    tests/test_commands.py:
+      Paul Gauthier: 8
+    tests/test_editblock.py:
+      Paul Gauthier: 4
+    tests/test_wholefile.py:
+      Paul Gauthier: 1
+  grand_total:
+    Paul Gauthier: 1247
+    Paul Gauthier (dev): 2
+  start_tag: v0.30.0
+  total_lines: 1249
+- dev_percentage: 3.29
+  dev_total: 8
+  end_date: '2024-05-07'
+  end_tag: v0.32.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 7
+    dev/coders/__init__.py:
+      Paul Gauthier: 2
+    dev/coders/base_coder.py:
+      Paul Gauthier: 54
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 3
+    dev/coders/editblock_fenced_coder.py:
+      Paul Gauthier: 11
+    dev/gui.py:
+      Paul Gauthier: 1
+    dev/main.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 3
+    dev/models.py:
+      Paul Gauthier: 45
+    dev/sendchat.py:
+      Paul Gauthier: 10
+    dev/utils.py:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier: 78
+      Paul Gauthier (dev): 5
+    benchmark/plots.py:
+      Paul Gauthier: 3
+    tests/test_main.py:
+      Paul Gauthier: 10
+    tests/test_sendchat.py:
+      Paul Gauthier: 4
+  grand_total:
+    Paul Gauthier: 235
+    Paul Gauthier (dev): 8
+  start_tag: v0.31.0
+  total_lines: 243
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-05-08'
+  end_tag: v0.33.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 1
+    dev/litellm.py:
+      Paul Gauthier: 11
+    dev/main.py:
+      Paul Gauthier: 1
+    dev/models.py:
+      Paul Gauthier: 3
+    dev/sendchat.py:
+      Paul Gauthier: 1
+    dev/voice.py:
+      Paul Gauthier: 2
+  grand_total:
+    Paul Gauthier: 21
+  start_tag: v0.32.0
+  total_lines: 21
+- dev_percentage: 0.0
+  dev_total: 0
+  end_date: '2024-05-10'
+  end_tag: v0.34.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 18
+    dev/main.py:
+      Paul Gauthier: 9
+    dev/models.py:
+      Paul Gauthier: 7
+    dev/repomap.py:
+      Paul Gauthier: 3
+    dev/sendchat.py:
+      Paul Gauthier: 6
+    tests/test_sendchat.py:
+      Paul Gauthier: 4
+  grand_total:
+    Paul Gauthier: 54
+  start_tag: v0.33.0
+  total_lines: 54
+- dev_percentage: 6.8
+  dev_total: 17
+  end_date: '2024-05-13'
+  end_tag: v0.35.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 5
+    dev/coders/base_coder.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 1
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 82
+      Paul Gauthier (dev): 10
+    dev/history.py:
+      Paul Gauthier: 20
+    dev/io.py:
+      Paul Gauthier: 7
+    dev/main.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 1
+    dev/models.py:
+      Paul Gauthier: 18
+    dev/sendchat.py:
+      Paul Gauthier: 6
+    dev/utils.py:
+      Paul Gauthier: 51
+    dev/versioncheck.py:
+      Paul Gauthier: 10
+  grand_total:
+    Paul Gauthier: 233
+    Paul Gauthier (dev): 17
+  start_tag: v0.34.0
+  total_lines: 250
+- dev_percentage: 15.38
+  dev_total: 92
+  end_date: '2024-05-22'
+  end_tag: v0.36.0
+  file_counts:
+    Gemfile:
+      Paul Gauthier (dev): 5
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 37
+      Paul Gauthier (dev): 3
+    dev/coders/base_coder.py:
+      Paul Gauthier: 110
+      Paul Gauthier (dev): 3
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier (dev): 2
+    dev/commands.py:
+      Paul Gauthier: 45
+    dev/io.py:
+      Paul Gauthier: 9
+    dev/linter.py:
+      Paul Gauthier: 211
+      Paul Gauthier (dev): 29
+    dev/litellm.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 48
+      Paul Gauthier (dev): 2
+    dev/models.py:
+      Paul Gauthier: 3
+    dev/repo.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 14
+    benchmark/benchmark.py:
+      Paul Gauthier: 5
+    benchmark/over_time.py:
+      Paul Gauthier: 29
+      Paul Gauthier (dev): 28
+    scripts/jekyll_build.sh:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 3
+    scripts/jekyll_run.sh:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 3
+  grand_total:
+    Paul Gauthier: 506
+    Paul Gauthier (dev): 92
+  start_tag: v0.35.0
+  total_lines: 598
+- dev_percentage: 19.06
+  dev_total: 113
+  end_date: '2024-06-04'
+  end_tag: v0.37.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 71
+      Paul Gauthier (dev): 3
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Aleksandr Bobrov: 1
+      Aleksandr Bobrov (dev): 1
+      Paul Gauthier: 24
+    dev/io.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 1
+    dev/linter.py:
+      Paul Gauthier: 4
+    dev/litellm.py:
+      Paul Gauthier: 1
+    dev/repomap.py:
+      Paul Gauthier: 113
+    dev/sendchat.py:
+      Paul Gauthier: 2
+    dev/voice.py:
+      Paul Gauthier (dev): 4
+    benchmark/over_time.py:
+      Paul Gauthier (dev): 7
+    benchmark/swe_bench.py:
+      Paul Gauthier: 99
+      Paul Gauthier (dev): 24
+    scripts/blame.py:
+      Paul Gauthier: 153
+      Paul Gauthier (dev): 59
+    tests/test_io.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 14
+  grand_total:
+    Aleksandr Bobrov: 1
+    Aleksandr Bobrov (dev): 1
+    Paul Gauthier: 479
+    Paul Gauthier (dev): 112
+  start_tag: v0.36.0
+  total_lines: 593
+- dev_percentage: 9.53
+  dev_total: 53
+  end_date: '2024-06-16'
+  end_tag: v0.38.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 4
+    .github/workflows/pages.yml:
+      Paul Gauthier: 71
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 4
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 4
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Krazer: 4
+      Paul Gauthier: 57
+      develmusa: 1
+    dev/args_formatter.py:
+      Paul Gauthier: 116
+      Paul Gauthier (dev): 20
+    dev/coders/base_coder.py:
+      Paul Gauthier: 77
+    dev/commands.py:
+      Paul Gauthier: 29
+    dev/gui.py:
+      Paul Gauthier: 22
+    dev/io.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 2
+    dev/main.py:
+      Krazer: 13
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 5
+    dev/models.py:
+      Krazer: 11
+      Paul Gauthier: 10
+    dev/repo.py:
+      Paul Gauthier: 2
+    dev/repomap.py:
+      Paul Gauthier: 13
+    dev/scrape.py:
+      Paul Gauthier: 10
+    dev/tests/test_urls.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 8
+    dev/urls.py:
+      Paul Gauthier: 8
+    scripts/jekyll_run.sh:
+      Paul Gauthier: 9
+    scripts/update-docs.sh:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 6
+    website/Gemfile:
+      Paul Gauthier: 4
+  grand_total:
+    Krazer: 28
+    Paul Gauthier: 474
+    Paul Gauthier (dev): 53
+    develmusa: 1
+  start_tag: v0.37.0
+  total_lines: 556
+- dev_percentage: 15.56
+  dev_total: 47
+  end_date: '2024-06-20'
+  end_tag: v0.39.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/__main__.py:
+      Paul Gauthier (dev): 4
+    dev/args.py:
+      Daniel Vainsencher: 6
+      John-Mason P. Shackelford: 14
+      Paul Gauthier: 14
+    dev/args_formatter.py:
+      Paul Gauthier: 24
+      Paul Gauthier (dev): 9
+    dev/coders/base_coder.py:
+      Daniel Vainsencher: 4
+      Daniel Vainsencher (dev): 2
+      Paul Gauthier: 2
+    dev/commands.py:
+      Paul Gauthier: 1
+    dev/io.py:
+      Daniel Vainsencher: 14
+    dev/main.py:
+      Daniel Vainsencher: 1
+      John-Mason P. Shackelford: 14
+    dev/models.py:
+      Paul Gauthier: 14
+    dev/repo.py:
+      Paul Gauthier: 23
+    dev/scrape.py:
+      Nicolas Perez: 1
+    dev/tests/test_commands.py:
+      Paul Gauthier: 6
+    dev/tests/test_main.py:
+      John-Mason P. Shackelford: 80
+    dev/tests/test_repo.py:
+      Paul Gauthier: 19
+      Paul Gauthier (dev): 21
+    dev/urls.py:
+      Nicolas Perez: 1
+      Paul Gauthier: 1
+    dev/utils.py:
+      Daniel Vainsencher: 7
+      Daniel Vainsencher (dev): 11
+      John-Mason P. Shackelford: 7
+    scripts/update-docs.sh:
+      Paul Gauthier: 1
+  grand_total:
+    Daniel Vainsencher: 32
+    Daniel Vainsencher (dev): 13
+    John-Mason P. Shackelford: 115
+    Nicolas Perez: 2
+    Paul Gauthier: 106
+    Paul Gauthier (dev): 34
+  start_tag: v0.38.0
+  total_lines: 302
+- dev_percentage: 6.42
+  dev_total: 21
+  end_date: '2024-06-24'
+  end_tag: v0.40.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Krazer: 6
+      Paul Gauthier: 27
+    dev/coders/base_coder.py:
+      Paul Gauthier: 28
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 64
+    dev/linter.py:
+      Paul Gauthier: 23
+      Paul Gauthier (dev): 21
+    dev/main.py:
+      Krazer: 32
+      Paul Gauthier: 23
+    dev/models.py:
+      Dustin Miller: 13
+      Krazer: 31
+      Paul Gauthier: 16
+    dev/repo.py:
+      Paul Gauthier: 26
+    dev/tests/test_editblock.py:
+      Paul Gauthier: 16
+  grand_total:
+    Dustin Miller: 13
+    Krazer: 69
+    Paul Gauthier: 224
+    Paul Gauthier (dev): 21
+  start_tag: v0.39.0
+  total_lines: 327
+- dev_percentage: 4.74
+  dev_total: 11
+  end_date: '2024-07-01'
+  end_tag: v0.41.0
+  file_counts:
+    .github/workflows/release.yml:
+      Paul Gauthier: 1
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 5
+    dev/coders/base_coder.py:
+      Paul Gauthier: 122
+      Paul Gauthier (dev): 2
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 2
+    dev/commands.py:
+      Amir Elaguizy (dev): 3
+      Paul Gauthier: 1
+    dev/gui.py:
+      Paul Gauthier: 4
+    dev/main.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 1
+    dev/mdstream.py:
+      Paul Gauthier: 1
+    dev/models.py:
+      Mitsuki Ogasahara: 3
+      Paul Gauthier: 28
+    dev/repo.py:
+      Paul Gauthier: 7
+    dev/repomap.py:
+      Paul Gauthier: 12
+    dev/sendchat.py:
+      Paul Gauthier: 2
+    dev/tests/test_coder.py:
+      Paul Gauthier: 10
+    dev/tests/test_editblock.py:
+      Paul Gauthier: 2
+    dev/tests/test_wholefile.py:
+      Paul Gauthier: 4
+    scripts/update-docs.sh:
+      Paul Gauthier: 3
+    setup.py:
+      Paul Gauthier: 3
+  grand_total:
+    Amir Elaguizy (dev): 3
+    Mitsuki Ogasahara: 3
+    Paul Gauthier: 218
+    Paul Gauthier (dev): 8
+  start_tag: v0.40.0
+  total_lines: 232
+- dev_percentage: 2.29
+  dev_total: 7
+  end_date: '2024-07-04'
+  end_tag: v0.42.0
+  file_counts:
+    .github/workflows/pages.yml:
+      Paul Gauthier: 14
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 7
+    dev/commands.py:
+      Paul Gauthier: 31
+    dev/history.py:
+      Paul Gauthier: 5
+    dev/io.py:
+      Paul Gauthier: 32
+    dev/llm.py:
+      Paul Gauthier: 18
+    dev/main.py:
+      Paul Gauthier: 26
+    dev/models.py:
+      Paul Gauthier: 78
+    dev/repomap.py:
+      Paul Gauthier: 4
+    dev/scrape.py:
+      Paul Gauthier: 8
+    dev/sendchat.py:
+      Paul Gauthier: 45
+    dev/tests/test_sendchat.py:
+      Paul Gauthier: 1
+    dev/versioncheck.py:
+      Paul Gauthier: 12
+    dev/voice.py:
+      Paul Gauthier: 6
+    scripts/jekyll_run.sh:
+      Paul Gauthier: 2
+  grand_total:
+    Paul Gauthier: 299
+    Paul Gauthier (dev): 7
+  start_tag: v0.41.0
+  total_lines: 306
+- dev_percentage: 10.61
+  dev_total: 40
+  end_date: '2024-07-07'
+  end_tag: v0.43.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier: 2
+    .github/workflows/pages.yml:
+      Paul Gauthier: 4
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 2
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 2
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+    dev/args_formatter.py:
+      Paul Gauthier: 4
+    dev/coders/__init__.py:
+      Paul Gauthier: 2
+    dev/coders/base_coder.py:
+      Paul Gauthier: 44
+    dev/coders/help_coder.py:
+      Paul Gauthier: 15
+    dev/commands.py:
+      Paul Gauthier: 63
+      Paul Gauthier (dev): 5
+    dev/help.py:
+      Paul Gauthier: 114
+      Paul Gauthier (dev): 6
+    dev/help_pats.py:
+      Paul Gauthier: 10
+    dev/llm.py:
+      Paul Gauthier: 1
+    dev/main.py:
+      Paul Gauthier: 35
+    dev/repomap.py:
+      Paul Gauthier: 14
+    dev/tests/test_commands.py:
+      Paul Gauthier: 1
+    dev/tests/test_help.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 26
+    dev/versioncheck.py:
+      Paul Gauthier: 2
+    scripts/jekyll_run.sh:
+      Paul Gauthier: 1
+    scripts/update-docs.sh:
+      Paul Gauthier: 7
+    setup.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 3
+  grand_total:
+    Paul Gauthier: 337
+    Paul Gauthier (dev): 40
+  start_tag: v0.42.0
+  total_lines: 377
+- dev_percentage: 27.02
+  dev_total: 157
+  end_date: '2024-07-16'
+  end_tag: v0.44.0
+  file_counts:
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 3
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier: 4
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 4
+    dev/args_formatter.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier (dev): 1
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 10
+    dev/help.py:
+      Paul Gauthier: 20
+    dev/main.py:
+      Paul Gauthier: 20
+    dev/models.py:
+      Paul Gauthier: 11
+    dev/scrape.py:
+      Paul Gauthier: 53
+    dev/utils.py:
+      Paul Gauthier: 78
+      Paul Gauthier (dev): 16
+    dev/versioncheck.py:
+      Paul Gauthier: 27
+    dev/voice.py:
+      Paul Gauthier: 6
+    benchmark/Dockerfile:
+      Paul Gauthier: 3
+    docker/Dockerfile:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 1
+    scripts/blame.py:
+      Paul Gauthier: 38
+      Paul Gauthier (dev): 49
+    scripts/pip-compile.sh:
+      Paul Gauthier: 18
+    scripts/update-docs.sh:
+      Paul Gauthier: 2
+    setup.py:
+      Paul Gauthier: 26
+      Paul Gauthier (dev): 1
+    tests/basic/test_coder.py:
+      Paul Gauthier: 25
+      Paul Gauthier (dev): 37
+    tests/browser/test_browser.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 16
+    tests/help/test_help.py:
+      Paul Gauthier: 23
+    tests/scrape/test_scrape.py:
+      Paul Gauthier: 16
+      Paul Gauthier (dev): 26
+  grand_total:
+    Paul Gauthier: 424
+    Paul Gauthier (dev): 157
+  start_tag: v0.43.0
+  total_lines: 581
+- dev_percentage: 44.93
+  dev_total: 93
+  end_date: '2024-07-18'
+  end_tag: v0.45.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 3
+    dev/commands.py:
+      Paul Gauthier: 18
+      Paul Gauthier (dev): 4
+    dev/main.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 5
+    dev/models.py:
+      Paul Gauthier: 7
+    dev/repomap.py:
+      Paul Gauthier: 1
+    dev/scrape.py:
+      Paul Gauthier: 8
+    dev/versioncheck.py:
+      Paul Gauthier: 14
+    tests/basic/test_coder.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 21
+    tests/basic/test_commands.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 55
+    tests/basic/test_main.py:
+      Paul Gauthier: 27
+      Paul Gauthier (dev): 5
+  grand_total:
+    Paul Gauthier: 114
+    Paul Gauthier (dev): 93
+  start_tag: v0.44.0
+  total_lines: 207
+- dev_percentage: 52.87
+  dev_total: 313
+  end_date: '2024-07-29'
+  end_tag: v0.46.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier (dev): 3
+    dev/coders/__init__.py:
+      Paul Gauthier: 2
+      Your Name: 1
+    dev/coders/ask_coder.py:
+      Your Name: 9
+    dev/coders/base_coder.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 43
+      Your Name: 27
+      Your Name (dev): 6
+    dev/coders/editblock_coder.py:
+      Your Name (dev): 2
+    dev/coders/editblock_fenced_coder.py:
+      Your Name (dev): 2
+    dev/coders/help_coder.py:
+      Your Name: 1
+      Your Name (dev): 1
+    dev/coders/udiff_coder.py:
+      Your Name (dev): 2
+    dev/coders/wholefile_coder.py:
+      Your Name (dev): 2
+    dev/commands.py:
+      Paul Gauthier: 43
+      Your Name: 26
+      Your Name (dev): 25
+    dev/io.py:
+      Paul Gauthier: 3
+    dev/llm.py:
+      Paul Gauthier: 10
+    dev/main.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 8
+      Your Name: 6
+      Your Name (dev): 1
+    dev/models.py:
+      Paul Gauthier: 9
+    dev/queries/tree-sitter-elm-tags.scm:
+      Charles Joachim: 4
+    dev/repomap.py:
+      Paul Gauthier: 12
+    dev/scrape.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 32
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 85
+    benchmark/Dockerfile:
+      Your Name: 1
+    tests/basic/test_coder.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 5
+    tests/basic/test_repo.py:
+      Paul Gauthier (dev): 13
+    tests/basic/test_repomap.py:
+      Paul Gauthier: 70
+      Paul Gauthier (dev): 10
+    tests/scrape/test_scrape.py:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 73
+  grand_total:
+    Charles Joachim: 4
+    Paul Gauthier: 204
+    Paul Gauthier (dev): 272
+    Your Name: 71
+    Your Name (dev): 41
+  start_tag: v0.45.0
+  total_lines: 592
+- dev_percentage: 56.98
+  dev_total: 355
+  end_date: '2024-07-31'
+  end_tag: v0.47.0
+  file_counts:
+    .github/workflows/docker-release.yml:
+      Paul Gauthier (dev): 20
+    .github/workflows/release.yml:
+      Paul Gauthier (dev): 2
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 5
+    dev/coders/base_coder.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 3
+    dev/commands.py:
+      Paul Gauthier: 20
+      Paul Gauthier (dev): 4
+    dev/history.py:
+      Paul Gauthier: 16
+      Paul Gauthier (dev): 6
+    dev/io.py:
+      Paul Gauthier: 27
+      Paul Gauthier (dev): 8
+    dev/linter.py:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 1
+    dev/main.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 1
+    dev/queries/tree-sitter-ocaml-tags.scm:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 18
+    dev/repo.py:
+      Paul Gauthier (dev): 4
+    dev/repomap.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 5
+    dev/scrape.py:
+      Paul Gauthier: 2
+    dev/sendchat.py:
+      Paul Gauthier (dev): 2
+    dev/utils.py:
+      Paul Gauthier: 7
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 12
+    docker/Dockerfile:
+      Paul Gauthier: 19
+      Paul Gauthier (dev): 18
+    scripts/blame.py:
+      Paul Gauthier: 65
+      Paul Gauthier (dev): 99
+    scripts/update-blame.sh:
+      Paul Gauthier: 6
+    scripts/update-docs.sh:
+      Paul Gauthier: 1
+    tests/basic/test_coder.py:
+      Paul Gauthier: 32
+      Paul Gauthier (dev): 4
+    tests/basic/test_commands.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 25
+    tests/basic/test_history.py:
+      Paul Gauthier (dev): 109
+    tests/basic/test_repo.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 9
+    tests/basic/test_repomap.py:
+      Paul Gauthier: 1
+  grand_total:
+    Paul Gauthier: 268
+    Paul Gauthier (dev): 355
+  start_tag: v0.46.0
+  total_lines: 623
+- dev_percentage: 45.67
+  dev_total: 269
+  end_date: '2024-08-06'
+  end_tag: v0.48.0
+  file_counts:
+    .github/workflows/ubuntu-tests.yml:
+      paul-gauthier: 1
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 61
+      Paul Gauthier (dev): 41
+    dev/commands.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 24
+    dev/history.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 20
+      Paul Gauthier (dev): 30
+    dev/models.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 7
+      Thinh Nguyen: 1
+    dev/repo.py:
+      Paul Gauthier: 42
+      Paul Gauthier (dev): 23
+    dev/repomap.py:
+      Paul Gauthier: 60
+      Paul Gauthier (dev): 3
+    dev/sendchat.py:
+      Paul Gauthier: 26
+      Paul Gauthier (dev): 2
+    dev/utils.py:
+      Paul Gauthier: 29
+      Paul Gauthier (dev): 4
+    scripts/blame.py:
+      Paul Gauthier (dev): 2
+    tests/basic/test_coder.py:
+      Paul Gauthier: 10
+    tests/basic/test_commands.py:
+      Paul Gauthier: 19
+      Paul Gauthier (dev): 14
+    tests/basic/test_history.py:
+      Paul Gauthier: 2
+    tests/basic/test_main.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 39
+    tests/basic/test_repo.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 35
+    tests/basic/test_scripting.py:
+      Paul Gauthier (dev): 39
+  grand_total:
+    Paul Gauthier: 318
+    Paul Gauthier (dev): 269
+    Thinh Nguyen: 1
+    paul-gauthier: 1
+  start_tag: v0.47.0
+  total_lines: 589
+- dev_percentage: 59.83
+  dev_total: 429
+  end_date: '2024-08-10'
+  end_tag: v0.49.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 9
+    dev/coders/base_coder.py:
+      Paul Gauthier: 81
+      Paul Gauthier (dev): 41
+    dev/commands.py:
+      Paul Gauthier: 34
+      Paul Gauthier (dev): 105
+    dev/io.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 23
+    dev/llm.py:
+      Paul Gauthier (dev): 5
+    dev/main.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 4
+    dev/models.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 3
+    dev/repo.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 12
+    dev/repomap.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 23
+    dev/scrape.py:
+      Paul Gauthier (dev): 17
+    dev/sendchat.py:
+      Paul Gauthier: 20
+    dev/urls.py:
+      Paul Gauthier: 1
+    dev/utils.py:
+      Paul Gauthier (dev): 11
+    dev/versioncheck.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 9
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 11
+    docker/Dockerfile:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 2
+    tests/basic/test_coder.py:
+      Paul Gauthier (dev): 5
+    tests/basic/test_commands.py:
+      Paul Gauthier: 35
+      Paul Gauthier (dev): 83
+    tests/basic/test_editblock.py:
+      Paul Gauthier (dev): 1
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 28
+    tests/basic/test_sendchat.py:
+      Paul Gauthier: 45
+    tests/basic/test_wholefile.py:
+      Paul Gauthier (dev): 1
+    tests/scrape/test_scrape.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 36
+  grand_total:
+    Paul Gauthier: 288
+    Paul Gauthier (dev): 429
+  start_tag: v0.48.0
+  total_lines: 717
+- dev_percentage: 65.23
+  dev_total: 182
+  end_date: '2024-08-13'
+  end_tag: v0.50.0
+  file_counts:
+    .github/workflows/release.yml:
+      Branch Vincent: 2
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier (dev): 8
+    dev/coders/base_coder.py:
+      Paul Gauthier: 24
+      Paul Gauthier (dev): 30
+    dev/commands.py:
+      Amir Elaguizy (dev): 11
+      Paul Gauthier: 26
+      Paul Gauthier (dev): 15
+    dev/io.py:
+      Paul Gauthier: 1
+    dev/main.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 2
+    dev/models.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 4
+    dev/scrape.py:
+      Paul Gauthier (dev): 26
+    dev/sendchat.py:
+      Paul Gauthier (dev): 1
+    dev/utils.py:
+      Paul Gauthier: 1
+    dev/versioncheck.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 1
+    scripts/versionbump.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 34
+    tests/basic/test_coder.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 16
+    tests/basic/test_commands.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 27
+    tests/basic/test_main.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 7
+    tests/help/test_help.py:
+      Paul Gauthier: 7
+  grand_total:
+    Amir Elaguizy (dev): 11
+    Branch Vincent: 2
+    Paul Gauthier: 95
+    Paul Gauthier (dev): 171
+  start_tag: v0.49.0
+  total_lines: 279
+- dev_percentage: 56.95
+  dev_total: 582
+  end_date: '2024-08-20'
+  end_tag: v0.51.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 8
+    dev/coders/__init__.py:
+      Paul Gauthier: 3
+    dev/coders/base_coder.py:
+      Paul Gauthier: 168
+      Paul Gauthier (dev): 45
+    dev/coders/single_wholefile_func_coder.py:
+      Paul Gauthier: 28
+    dev/commands.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 5
+    dev/llm.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 13
+    dev/models.py:
+      Paul Gauthier: 35
+      Paul Gauthier (dev): 4
+    dev/repomap.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 55
+    dev/sendchat.py:
+      Paul Gauthier: 3
+    dev/utils.py:
+      Paul Gauthier (dev): 6
+    dev/website/_includes/code-in-json-benchmark.js:
+      Paul Gauthier: 101
+      Paul Gauthier (dev): 64
+    dev/website/_includes/code-in-json-syntax.js:
+      Paul Gauthier: 23
+      Paul Gauthier (dev): 116
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier: 7
+    benchmark/over_time.py:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 57
+    docker/Dockerfile:
+      Paul Gauthier: 10
+    scripts/blame.py:
+      Paul Gauthier (dev): 17
+    tests/basic/test_commands.py:
+      Paul Gauthier: 5
+    tests/basic/test_main.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 92
+    tests/basic/test_repomap.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 100
+  grand_total:
+    Paul Gauthier: 440
+    Paul Gauthier (dev): 582
+  start_tag: v0.50.0
+  total_lines: 1022
+- dev_percentage: 67.74
+  dev_total: 485
+  end_date: '2024-08-23'
+  end_tag: v0.52.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 77
+      Paul Gauthier (dev): 25
+    dev/coders/chat_chunks.py:
+      Paul Gauthier (dev): 53
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 42
+      Paul Gauthier (dev): 67
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 40
+      pcamp: 1
+    dev/io.py:
+      Paul Gauthier: 41
+      Paul Gauthier (dev): 40
+    dev/main.py:
+      Paul Gauthier: 2
+    dev/models.py:
+      Paul Gauthier: 30
+    dev/repomap.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 5
+    dev/utils.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 9
+    dev/versioncheck.py:
+      Paul Gauthier: 2
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier: 1
+    scripts/blame.py:
+      Paul Gauthier: 1
+    tests/basic/test_commands.py:
+      Paul Gauthier (dev): 74
+    tests/basic/test_editblock.py:
+      Paul Gauthier (dev): 1
+    tests/basic/test_find_or_blocks.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 106
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 32
+    tests/basic/test_main.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 27
+    tests/basic/test_wholefile.py:
+      Paul Gauthier: 8
+  grand_total:
+    Paul Gauthier: 230
+    Paul Gauthier (dev): 485
+    pcamp: 1
+  start_tag: v0.51.0
+  total_lines: 716
+- dev_percentage: 62.36
+  dev_total: 434
+  end_date: '2024-08-27'
+  end_tag: v0.53.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 10
+    dev/coders/base_coder.py:
+      Paul Gauthier: 55
+      Paul Gauthier (dev): 18
+    dev/coders/chat_chunks.py:
+      Paul Gauthier (dev): 9
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 44
+      Paul Gauthier (dev): 6
+    dev/commands.py:
+      Paul Gauthier: 18
+    dev/history.py:
+      Paul Gauthier (dev): 3
+    dev/io.py:
+      Paul Gauthier: 44
+      Paul Gauthier (dev): 22
+    dev/main.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 9
+    dev/models.py:
+      Paul Gauthier: 50
+      Paul Gauthier (dev): 21
+    dev/repo.py:
+      Paul Gauthier (dev): 3
+    dev/repomap.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 1
+    dev/sendchat.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 11
+    dev/utils.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 9
+    dev/versioncheck.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 10
+    scripts/versionbump.py:
+      Paul Gauthier: 1
+    tests/basic/test_commands.py:
+      Paul Gauthier: 6
+    tests/basic/test_editblock.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 27
+    tests/basic/test_io.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 44
+    tests/basic/test_main.py:
+      Paul Gauthier: 2
+    tests/basic/test_models.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 42
+    tests/basic/test_repo.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 8
+    tests/basic/test_repomap.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 63
+    tests/fixtures/sample-code-base/sample.js:
+      Paul Gauthier (dev): 50
+    tests/fixtures/sample-code-base/sample.py:
+      Paul Gauthier (dev): 68
+  grand_total:
+    Paul Gauthier: 262
+    Paul Gauthier (dev): 434
+  start_tag: v0.52.0
+  total_lines: 696
+- dev_percentage: 67.4
+  dev_total: 184
+  end_date: '2024-08-28'
+  end_tag: v0.54.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier (dev): 1
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier (dev): 1
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier (dev): 1
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 10
+    dev/coders/base_coder.py:
+      Paul Gauthier: 25
+      Paul Gauthier (dev): 12
+    dev/commands.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 4
+    dev/io.py:
+      Paul Gauthier: 28
+    dev/main.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 4
+    dev/models.py:
+      Paul Gauthier (dev): 7
+    dev/run_cmd.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 66
+    dev/utils.py:
+      Paul Gauthier (dev): 14
+    dev/versioncheck.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 9
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    tests/basic/test_coder.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 43
+    tests/basic/test_io.py:
+      Paul Gauthier: 4
+    tests/basic/test_main.py:
+      Antti Kaihola: 4
+      Paul Gauthier (dev): 12
+    tests/scrape/test_scrape.py:
+      Paul Gauthier: 1
+  grand_total:
+    Antti Kaihola: 4
+    Paul Gauthier: 85
+    Paul Gauthier (dev): 184
+  start_tag: v0.53.0
+  total_lines: 273
+- dev_percentage: 52.82
+  dev_total: 759
+  end_date: '2024-09-04'
+  end_tag: v0.55.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 2
+    dev/args.py:
+      Paul Gauthier (dev): 7
+    dev/coders/base_coder.py:
+      Paul Gauthier: 62
+      Paul Gauthier (dev): 39
+    dev/coders/editblock_coder.py:
+      Nikolay Sedelnikov: 8
+    dev/coders/editblock_func_coder.py:
+      Antti Kaihola: 2
+    dev/coders/search_replace.py:
+      Paul Gauthier: 2
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 16
+    dev/commands.py:
+      Antti Kaihola: 7
+      Paul Gauthier: 74
+      Paul Gauthier (dev): 25
+    dev/format_settings.py:
+      Paul Gauthier (dev): 2
+    dev/gui.py:
+      Paul Gauthier: 4
+    dev/io.py:
+      Paul Gauthier: 56
+      Paul Gauthier (dev): 11
+    dev/linter.py:
+      Paul Gauthier: 5
+    dev/llm.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 86
+      Paul Gauthier (dev): 22
+    dev/models.py:
+      Paul Gauthier: 24
+      Paul Gauthier (dev): 2
+    dev/repo.py:
+      Paul Gauthier: 85
+    dev/repomap.py:
+      Paul Gauthier: 32
+      Paul Gauthier (dev): 4
+    dev/report.py:
+      Paul Gauthier: 77
+      Paul Gauthier (dev): 120
+    dev/run_cmd.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 24
+    dev/scrape.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 8
+    dev/special.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 197
+    dev/urls.py:
+      Paul Gauthier (dev): 1
+    dev/utils.py:
+      Paul Gauthier: 31
+      Paul Gauthier (dev): 29
+    dev/versioncheck.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 6
+    dev/voice.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 9
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    scripts/versionbump.py:
+      Paul Gauthier: 7
+    tests/basic/test_coder.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 96
+    tests/basic/test_editblock.py:
+      Antti Kaihola: 3
+      Nikolay Sedelnikov: 23
+    tests/basic/test_io.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 14
+    tests/basic/test_main.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 10
+    tests/basic/test_models.py:
+      Paul Gauthier (dev): 4
+    tests/basic/test_repomap.py:
+      Paul Gauthier (dev): 31
+    tests/basic/test_run_cmd.py:
+      Paul Gauthier (dev): 11
+    tests/basic/test_special.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 74
+    tests/scrape/test_scrape.py:
+      Paul Gauthier (dev): 11
+  grand_total:
+    Antti Kaihola: 12
+    Nikolay Sedelnikov: 31
+    Paul Gauthier: 635
+    Paul Gauthier (dev): 759
+  start_tag: v0.54.0
+  total_lines: 1437
+- dev_percentage: 56.23
+  dev_total: 149
+  end_date: '2024-09-09'
+  end_tag: v0.56.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 10
+    dev/commands.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 6
+    dev/io.py:
+      Paul Gauthier: 5
+    dev/linter.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 4
+      fry69: 9
+    dev/main.py:
+      Paul Gauthier: 32
+      Paul Gauthier (dev): 49
+    dev/models.py:
+      Paul Gauthier: 2
+      fry69: 3
+    dev/repo.py:
+      Paul Gauthier: 14
+    dev/repomap.py:
+      Paul Gauthier: 13
+    dev/report.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 20
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier: 1
+    tests/basic/test_linter.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 51
+    tests/basic/test_main.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 3
+  grand_total:
+    Paul Gauthier: 104
+    Paul Gauthier (dev): 149
+    fry69: 12
+  start_tag: v0.55.0
+  total_lines: 265
+- dev_percentage: 70.27
+  dev_total: 390
+  end_date: '2024-09-21'
+  end_tag: v0.57.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args_formatter.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 1
+    dev/coders/base_coder.py:
+      Krazer: 1
+      Paul Gauthier: 14
+      Paul Gauthier (dev): 2
+    dev/coders/chat_chunks.py:
+      Paul Gauthier: 4
+    dev/coders/editblock_coder.py:
+      Paul Gauthier (dev): 27
+    dev/commands.py:
+      Krazer: 3
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 34
+    dev/io.py:
+      Krazer: 23
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 42
+    dev/main.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 8
+    dev/models.py:
+      Jay Alammar: 1
+      Jay Alammar (dev): 13
+      Paul Gauthier: 48
+      Paul Gauthier (dev): 30
+    dev/repo.py:
+      Paul Gauthier: 3
+    dev/run_cmd.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 33
+    dev/sendchat.py:
+      Paul Gauthier: 3
+    dev/utils.py:
+      Paul Gauthier: 2
+    dev/website/docs/leaderboards/index.md:
+      Anjor Kanekar: 1
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 12
+    benchmark/benchmark.py:
+      Paul Gauthier: 4
+    scripts/issues.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 123
+    scripts/versionbump.py:
+      Paul Gauthier (dev): 8
+    tests/basic/test_coder.py:
+      Paul Gauthier: 1
+    tests/basic/test_editblock.py:
+      Christian Clauss: 2
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 37
+    tests/basic/test_main.py:
+      Paul Gauthier: 18
+      Paul Gauthier (dev): 20
+  grand_total:
+    Anjor Kanekar: 1
+    Christian Clauss: 2
+    Jay Alammar: 1
+    Jay Alammar (dev): 13
+    Krazer: 27
+    Paul Gauthier: 134
+    Paul Gauthier (dev): 377
+  start_tag: v0.56.0
+  total_lines: 555
+- dev_percentage: 44.68
+  dev_total: 600
+  end_date: '2024-09-29'
+  end_tag: v0.58.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 5
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Mike Bailey: 7
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 51
+      Stein Martin Hustad: 17
+      fry69: 2
+    dev/coders/__init__.py:
+      Paul Gauthier: 6
+    dev/coders/architect_coder.py:
+      Paul Gauthier: 40
+      Paul Gauthier (dev): 3
+    dev/coders/base_coder.py:
+      Paul Gauthier: 32
+      Paul Gauthier (dev): 4
+    dev/coders/editor_editblock_coder.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 1
+    dev/coders/editor_whole_coder.py:
+      Paul Gauthier: 7
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 2
+    dev/commands.py:
+      Jonathan Ellis: 1
+      Mike Bailey: 1
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 77
+      fry69: 2
+    dev/help.py:
+      Paul Gauthier: 27
+      Paul Gauthier (dev): 7
+    dev/history.py:
+      Paul Gauthier: 1
+    dev/io.py:
+      Paul Gauthier: 38
+      Paul Gauthier (dev): 62
+      Stein Martin Hustad: 5
+      fry69: 9
+    dev/linter.py:
+      Paul Gauthier: 5
+    dev/main.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 6
+      Stein Martin Hustad: 4
+      fry69: 1
+      rti: 1
+    dev/models.py:
+      Paul Gauthier: 58
+      Paul Gauthier (dev): 79
+    dev/repo.py:
+      Paul Gauthier: 16
+      Paul Gauthier (dev): 2
+    dev/repomap.py:
+      Paul Gauthier: 5
+    dev/scrape.py:
+      Paul Gauthier (dev): 3
+    dev/sendchat.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 5
+    dev/utils.py:
+      Paul Gauthier: 4
+    dev/versioncheck.py:
+      Paul Gauthier: 2
+    dev/voice.py:
+      Mike Bailey: 17
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 6
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 152
+    benchmark/benchmark.py:
+      Paul Gauthier: 25
+      Paul Gauthier (dev): 29
+      fry69: 3
+    scripts/issues.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 43
+    scripts/update-docs.sh:
+      Paul Gauthier: 1
+    scripts/yank-old-versions.py:
+      Paul Gauthier (dev): 51
+    tests/basic/test_commands.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 82
+    tests/basic/test_io.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 84
+    tests/basic/test_main.py:
+      Paul Gauthier: 2
+    tests/basic/test_models.py:
+      Paul Gauthier: 4
+    tests/basic/test_sanity_check_repo.py:
+      fry69: 179
+    tests/basic/test_wholefile.py:
+      Paul Gauthier: 9
+  grand_total:
+    Jonathan Ellis: 1
+    Mike Bailey: 25
+    Paul Gauthier: 494
+    Paul Gauthier (dev): 600
+    Stein Martin Hustad: 26
+    fry69: 196
+    rti: 1
+  start_tag: v0.57.0
+  total_lines: 1343
+- dev_percentage: 68.72
+  dev_total: 123
+  end_date: '2024-10-04'
+  end_tag: v0.59.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 6
+    dev/args_formatter.py:
+      Paul Gauthier: 4
+    dev/coders/architect_coder.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 6
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 47
+    dev/gui.py:
+      Paul Gauthier: 2
+    dev/main.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 4
+    dev/models.py:
+      Paul Gauthier (dev): 12
+    dev/repomap.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 3
+    dev/urls.py:
+      Paul Gauthier: 2
+    dev/versioncheck.py:
+      Paul Gauthier: 1
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 4
+    scripts/issues.py:
+      Paul Gauthier: 1
+    scripts/update-docs.sh:
+      Paul Gauthier: 2
+    tests/basic/test_commands.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 33
+    tests/basic/test_models.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 18
+    tests/basic/test_sanity_check_repo.py:
+      Paul Gauthier: 1
+    tests/help/test_help.py:
+      Paul Gauthier: 1
+  grand_total:
+    Paul Gauthier: 56
+    Paul Gauthier (dev): 123
+  start_tag: v0.58.0
+  total_lines: 179
+- dev_percentage: 57.2
+  dev_total: 139
+  end_date: '2024-10-22'
+  end_tag: v0.60.0
+  file_counts:
+    .github/workflows/close-stale.yml:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 19
+    .github/workflows/pages.yml:
+      Paul Gauthier: 3
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 1
+      fry69: 2
+    dev/coders/base_coder.py:
+      Paul Gauthier: 2
+    dev/coders/editblock_coder.py:
+      Paul Gauthier (dev): 3
+    dev/commands.py:
+      Paul Gauthier: 1
+    dev/help.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 33
+    dev/io.py:
+      Jonathan Ellis: 10
+      Paul Gauthier: 7
+    dev/main.py:
+      Paul Gauthier: 20
+      Paul Gauthier (dev): 39
+    dev/models.py:
+      Paul Gauthier: 9
+      Sven Grunewaldt: 10
+      fry69: 5
+    dev/resources/__init__.py:
+      Paul Gauthier: 3
+    dev/sendchat.py:
+      Paul Gauthier: 3
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    tests/basic/test_editblock.py:
+      Paul Gauthier: 15
+    tests/basic/test_main.py:
+      Paul Gauthier: 1
+    tests/help/test_help.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 45
+  grand_total:
+    Jonathan Ellis: 10
+    Paul Gauthier: 77
+    Paul Gauthier (dev): 139
+    Sven Grunewaldt: 10
+    fry69: 7
+  start_tag: v0.59.0
+  total_lines: 243
+- dev_percentage: 67.04
+  dev_total: 781
+  end_date: '2024-11-01'
+  end_tag: v0.61.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 75
+      Paul Gauthier (dev): 89
+    dev/args.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 21
+    dev/coders/base_coder.py:
+      Paul Gauthier: 55
+      Paul Gauthier (dev): 43
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 14
+    dev/commands.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 88
+    dev/io.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 32
+    dev/linter.py:
+      Paul Gauthier: 6
+    dev/main.py:
+      Paul Gauthier: 46
+      Paul Gauthier (dev): 12
+    dev/models.py:
+      Paul Gauthier: 22
+      Paul Gauthier (dev): 54
+      kAIto47802: 4
+    dev/repomap.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 54
+    dev/sendchat.py:
+      Paul Gauthier: 23
+      Paul Gauthier (dev): 23
+    dev/urls.py:
+      Paul Gauthier: 2
+    dev/utils.py:
+      Paul Gauthier (dev): 6
+    scripts/issues.py:
+      Paul Gauthier (dev): 13
+    scripts/pip-compile.sh:
+      Paul Gauthier (dev): 13
+    scripts/update-docs.sh:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 5
+    tests/basic/test_analytics.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 99
+    tests/basic/test_commands.py:
+      Konstantin L: 10
+      Paul Gauthier: 80
+      Paul Gauthier (dev): 197
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 6
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 3
+    tests/basic/test_models.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 9
+    tests/basic/test_sanity_check_repo.py:
+      Paul Gauthier (dev): 6
+    tests/basic/test_sendchat.py:
+      Paul Gauthier (dev): 8
+  grand_total:
+    Konstantin L: 10
+    Paul Gauthier: 370
+    Paul Gauthier (dev): 781
+    kAIto47802: 4
+  start_tag: v0.60.0
+  total_lines: 1165
+- dev_percentage: 77.78
+  dev_total: 56
+  end_date: '2024-11-04'
+  end_tag: v0.62.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier (dev): 12
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 6
+    dev/main.py:
+      Paul Gauthier (dev): 4
+    dev/models.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 28
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 12
+  grand_total:
+    Paul Gauthier: 16
+    Paul Gauthier (dev): 56
+  start_tag: v0.61.0
+  total_lines: 72
+- dev_percentage: 55.21
+  dev_total: 350
+  end_date: '2024-11-13'
+  end_tag: v0.63.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/coders/architect_coder.py:
+      Paul Gauthier: 3
+    dev/coders/base_coder.py:
+      Paul Gauthier: 42
+      Paul Gauthier (dev): 1
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 4
+    dev/commands.py:
+      Paul Gauthier: 13
+    dev/exceptions.py:
+      Paul Gauthier: 72
+      Paul Gauthier (dev): 4
+    dev/io.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 23
+    dev/main.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 9
+    dev/models.py:
+      Logan Attwood: 13
+      Paul Gauthier: 37
+      Paul Gauthier (dev): 4
+    dev/repo.py:
+      Paul Gauthier: 7
+    dev/repomap.py:
+      Paul Gauthier: 3
+    dev/sendchat.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 4
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    scripts/issues.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 179
+    tests/basic/test_coder.py:
+      Paul Gauthier: 2
+    tests/basic/test_commands.py:
+      Paul Gauthier (dev): 13
+    tests/basic/test_editblock.py:
+      Paul Gauthier: 41
+    tests/basic/test_exceptions.py:
+      Paul Gauthier (dev): 65
+    tests/basic/test_main.py:
+      Paul Gauthier: 1
+    tests/basic/test_sanity_check_repo.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 2
+    tests/basic/test_sendchat.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 46
+    tests/scrape/test_scrape.py:
+      Paul Gauthier: 1
+  grand_total:
+    Logan Attwood: 13
+    Paul Gauthier: 271
+    Paul Gauthier (dev): 350
+  start_tag: v0.62.0
+  total_lines: 634
+- dev_percentage: 73.55
+  dev_total: 865
+  end_date: '2024-11-21'
+  end_tag: v0.64.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 20
+      Paul Gauthier (dev): 21
+    dev/args.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 9
+    dev/coders/base_coder.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 3
+      caetanominuzzo: 1
+    dev/commands.py:
+      Chad Phillips: 4
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 19
+    dev/editor.py:
+      Chad Phillips: 135
+      Paul Gauthier (dev): 11
+    dev/exceptions.py:
+      Paul Gauthier: 5
+    dev/help_pats.py:
+      Paul Gauthier: 1
+    dev/io.py:
+      Chad Phillips: 9
+      Paul Gauthier (dev): 41
+      mw: 21
+    dev/main.py:
+      Paul Gauthier: 18
+      Paul Gauthier (dev): 35
+    dev/models.py:
+      Paul Gauthier: 31
+      Paul Gauthier (dev): 34
+    dev/repo.py:
+      Paul Gauthier (dev): 5
+    dev/urls.py:
+      Paul Gauthier: 1
+    dev/website/_includes/edit-leaderboard.js:
+      Paul Gauthier (dev): 96
+    dev/website/_includes/quant-chart.js:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 65
+    dev/website/_includes/refactor-leaderboard.js:
+      Paul Gauthier (dev): 89
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 10
+    dev/website/share/index.md:
+      Paul Gauthier (dev): 29
+    benchmark/over_time.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 162
+    scripts/blame.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 2
+    scripts/issues.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 12
+    scripts/versionbump.py:
+      Paul Gauthier: 5
+    tests/basic/test_analytics.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 30
+    tests/basic/test_commands.py:
+      Paul Gauthier (dev): 4
+    tests/basic/test_editor.py:
+      Paul Gauthier (dev): 129
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 5
+    tests/basic/test_models.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 54
+  grand_total:
+    Chad Phillips: 148
+    Paul Gauthier: 141
+    Paul Gauthier (dev): 865
+    caetanominuzzo: 1
+    mw: 21
+  start_tag: v0.63.0
+  total_lines: 1176
+- dev_percentage: 81.19
+  dev_total: 544
+  end_date: '2024-11-26'
+  end_tag: v0.65.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 5
+    dev/args.py:
+      Paul Gauthier (dev): 10
+    dev/coders/base_coder.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 31
+    dev/commands.py:
+      Paul Gauthier: 2
+    dev/io.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 9
+    dev/main.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 19
+    dev/models.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 17
+    dev/queries/tree-sitter-dart-tags.scm:
+      malkoG: 83
+    dev/urls.py:
+      Paul Gauthier (dev): 1
+    dev/website/_includes/quant-chart.js:
+      Paul Gauthier (dev): 76
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier (dev): 10
+    benchmark/docker.sh:
+      Paul Gauthier (dev): 1
+    benchmark/over_time.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 157
+    scripts/update-docs.sh:
+      Paul Gauthier: 1
+    scripts/update-history.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 64
+    tests/basic/test_coder.py:
+      Paul Gauthier (dev): 70
+    tests/basic/test_editor.py:
+      Paul Gauthier (dev): 12
+    tests/basic/test_main.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 19
+    tests/basic/test_models.py:
+      Paul Gauthier (dev): 30
+    tests/basic/test_repomap.py:
+      Paul Gauthier (dev): 13
+  grand_total:
+    Paul Gauthier: 43
+    Paul Gauthier (dev): 544
+    malkoG: 83
+  start_tag: v0.64.0
+  total_lines: 670
+- dev_percentage: 86.17
+  dev_total: 841
+  end_date: '2024-12-01'
+  end_tag: v0.66.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier (dev): 2
+    .github/workflows/docker-release.yml:
+      Paul Gauthier (dev): 2
+    .github/workflows/pages.yml:
+      Paul Gauthier (dev): 3
+    .github/workflows/release.yml:
+      Paul Gauthier (dev): 2
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 8
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier (dev): 4
+    dev/__init__.py:
+      Paul Gauthier: 16
+    dev/analytics.py:
+      Paul Gauthier (dev): 19
+    dev/args.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 6
+      Philippe de Reynal: 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 39
+    dev/commands.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 27
+    dev/io.py:
+      Paul Gauthier (dev): 17
+    dev/linter.py:
+      Paul Gauthier (dev): 2
+    dev/main.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 46
+    dev/models.py:
+      Paul Gauthier: 7
+    dev/run_cmd.py:
+      Paul Gauthier (dev): 8
+    dev/utils.py:
+      Paul Gauthier: 1
+    dev/voice.py:
+      Philippe de Reynal: 24
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier (dev): 38
+    scripts/blame.py:
+      Paul Gauthier (dev): 26
+    scripts/issues.py:
+      Paul Gauthier: 3
+    scripts/update-history.py:
+      Paul Gauthier (dev): 58
+    tests/basic/test_coder.py:
+      Paul Gauthier: 4
+    tests/basic/test_commands.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 64
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 4
+    tests/basic/test_models.py:
+      Paul Gauthier: 2
+    tests/basic/test_repomap.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 45
+    tests/basic/test_voice.py:
+      Paul Gauthier (dev): 103
+    tests/browser/test_browser.py:
+      Paul Gauthier: 1
+    tests/fixtures/languages/c/test.c:
+      Paul Gauthier (dev): 6
+    tests/fixtures/languages/cpp/test.cpp:
+      Paul Gauthier (dev): 6
+    tests/fixtures/languages/csharp/test.cs:
+      Paul Gauthier (dev): 39
+    tests/fixtures/languages/elisp/test.el:
+      Paul Gauthier (dev): 25
+    tests/fixtures/languages/elixir/test.ex:
+      Paul Gauthier (dev): 5
+    tests/fixtures/languages/elm/test.elm:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 37
+    tests/fixtures/languages/go/test.go:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 41
+    tests/fixtures/languages/java/test.java:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 14
+    tests/fixtures/languages/javascript/test.js:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 25
+    tests/fixtures/languages/ocaml/test.ml:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 17
+    tests/fixtures/languages/php/test.php:
+      Paul Gauthier (dev): 5
+    tests/fixtures/languages/python/test.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 26
+    tests/fixtures/languages/ql/test.ql:
+      Paul Gauthier (dev): 3
+    tests/fixtures/languages/ruby/test.rb:
+      Paul Gauthier (dev): 3
+    tests/fixtures/languages/rust/test.rs:
+      Paul Gauthier (dev): 33
+    tests/fixtures/languages/tsx/test.tsx:
+      Paul Gauthier (dev): 30
+    tests/fixtures/languages/typescript/test.ts:
+      Paul Gauthier (dev): 3
+  grand_total:
+    Paul Gauthier: 105
+    Paul Gauthier (dev): 841
+    Philippe de Reynal: 30
+  start_tag: v0.65.0
+  total_lines: 976
+- dev_percentage: 67.86
+  dev_total: 437
+  end_date: '2024-12-06'
+  end_tag: v0.67.0
+  file_counts:
+    .github/workflows/issues.yml:
+      Paul Gauthier (dev): 29
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 7
+    dev/args.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 4
+    dev/coders/base_coder.py:
+      Paul Gauthier: 15
+    dev/commands.py:
+      Paul Gauthier: 11
+    dev/io.py:
+      Paul Gauthier: 28
+      Paul Gauthier (dev): 31
+    dev/llm.py:
+      Paul Gauthier: 5
+    dev/main.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 5
+    dev/models.py:
+      Paul Gauthier: 1
+    dev/run_cmd.py:
+      Paul Gauthier: 1
+    dev/utils.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 22
+    dev/watch.py:
+      Paul Gauthier: 51
+      Paul Gauthier (dev): 221
+    dev/website/_includes/qwq-chart.js:
+      Paul Gauthier: 30
+      Paul Gauthier (dev): 47
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    scripts/blame.py:
+      Paul Gauthier (dev): 26
+    scripts/update-history.py:
+      Paul Gauthier: 5
+    scripts/versionbump.py:
+      Paul Gauthier: 2
+    tests/basic/test_analytics.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 3
+    tests/basic/test_main.py:
+      Paul Gauthier: 1
+    tests/basic/test_models.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 7
+    tests/basic/test_watch.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 34
+    tests/browser/test_browser.py:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 1
+  grand_total:
+    Paul Gauthier: 207
+    Paul Gauthier (dev): 437
+  start_tag: v0.66.0
+  total_lines: 644
+- dev_percentage: 71.57
+  dev_total: 428
+  end_date: '2024-12-10'
+  end_tag: v0.68.0
+  file_counts:
+    .github/workflows/pages.yml:
+      Paul Gauthier (dev): 1
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 2
+    dev/args.py:
+      Paul Gauthier: 30
+      Paul Gauthier (dev): 15
+    dev/coders/base_coder.py:
+      Paul Gauthier: 12
+      Paul Gauthier (dev): 10
+    dev/coders/editor_editblock_coder.py:
+      Paul Gauthier: 1
+    dev/coders/editor_whole_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 24
+      Paul Gauthier (dev): 25
+    dev/copypaste.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 68
+    dev/exceptions.py:
+      Paul Gauthier: 9
+    dev/history.py:
+      Paul Gauthier (dev): 1
+    dev/io.py:
+      Paul Gauthier: 13
+    dev/main.py:
+      Paul Gauthier: 17
+      Paul Gauthier (dev): 29
+    dev/models.py:
+      Paul Gauthier: 15
+    dev/repo.py:
+      Paul Gauthier (dev): 1
+    dev/run_cmd.py:
+      Paul Gauthier: 1
+    dev/sendchat.py:
+      Paul Gauthier (dev): 4
+    dev/utils.py:
+      Paul Gauthier: 1
+    dev/voice.py:
+      Paul Gauthier: 9
+    dev/watch.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 35
+    dev/website/_includes/edit-leaderboard.js:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 90
+    dev/website/_includes/head_custom.html:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 53
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 2
+    scripts/blame.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 17
+    scripts/pip-compile.sh:
+      Paul Gauthier: 2
+    tests/basic/test_commands.py:
+      Paul Gauthier (dev): 24
+    tests/basic/test_history.py:
+      Paul Gauthier (dev): 3
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 46
+    tests/basic/test_repo.py:
+      Paul Gauthier (dev): 3
+    tests/basic/test_sendchat.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 1
+    tests/basic/test_watch.py:
+      Paul Gauthier: 1
+  grand_total:
+    Paul Gauthier: 170
+    Paul Gauthier (dev): 428
+  start_tag: v0.67.0
+  total_lines: 598
+- dev_percentage: 67.87
+  dev_total: 207
+  end_date: '2024-12-13'
+  end_tag: v0.69.0
+  file_counts:
+    .github/workflows/pages.yml:
+      Paul Gauthier: 2
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 2
+    dev/args.py:
+      Mir Adnan ALI: 3
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      JeongJuhyeon: 1
+      Mir Adnan ALI: 3
+    dev/commands.py:
+      Mir Adnan ALI: 4
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 3
+    dev/io.py:
+      Mir Adnan ALI: 37
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 3
+    dev/main.py:
+      Mir Adnan ALI: 1
+    dev/models.py:
+      Paul Gauthier: 7
+    dev/watch.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 47
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 1
+    benchmark/benchmark.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 7
+    scripts/blame.py:
+      Paul Gauthier (dev): 1
+    scripts/issues.py:
+      Paul Gauthier (dev): 58
+    scripts/update-history.py:
+      Paul Gauthier: 3
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 20
+    tests/basic/test_watch.py:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 68
+  grand_total:
+    JeongJuhyeon: 1
+    Mir Adnan ALI: 48
+    Paul Gauthier: 49
+    Paul Gauthier (dev): 207
+  start_tag: v0.68.0
+  total_lines: 305
+- dev_percentage: 74.22
+  dev_total: 875
+  end_date: '2024-12-26'
+  end_tag: v0.70.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/analytics.py:
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 41
+    dev/args.py:
+      Evan Johnson: 2
+    dev/coders/search_replace.py:
+      Paul Gauthier: 5
+    dev/commands.py:
+      Paul Gauthier (dev): 41
+    dev/help_pats.py:
+      Paul Gauthier: 3
+    dev/io.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 9
+    dev/main.py:
+      Paul Gauthier: 15
+      Paul Gauthier (dev): 5
+      apaz-cli: 3
+      mdk: 6
+    dev/models.py:
+      Paul Gauthier: 29
+    dev/repo.py:
+      Paul Gauthier: 14
+    dev/utils.py:
+      Paul Gauthier: 2
+    dev/watch.py:
+      Paul Gauthier: 13
+    dev/website/_includes/head_custom.html:
+      Paul Gauthier (dev): 4
+    dev/website/_includes/leaderboard.js:
+      Paul Gauthier (dev): 14
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 28
+      Paul Gauthier (dev): 2
+    benchmark/Dockerfile:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 43
+    benchmark/benchmark.py:
+      Paul Gauthier: 69
+      Paul Gauthier (dev): 153
+    benchmark/clone-exercism.sh:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 18
+    benchmark/cpp-test.sh:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 1
+    benchmark/docker.sh:
+      Paul Gauthier (dev): 4
+    benchmark/install-docker-ubuntu.sh:
+      Paul Gauthier (dev): 63
+    benchmark/npm-test.sh:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 3
+    benchmark/problem_stats.py:
+      Paul Gauthier: 35
+      Paul Gauthier (dev): 318
+    benchmark/rsync.sh:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 26
+    scripts/blame.py:
+      Paul Gauthier (dev): 6
+    scripts/my_models.py:
+      Paul Gauthier (dev): 95
+    scripts/update-blame.sh:
+      Paul Gauthier (dev): 3
+    scripts/update-docs.sh:
+      Paul Gauthier: 1
+    tests/basic/test_analytics.py:
+      Paul Gauthier (dev): 19
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 7
+    tests/basic/test_sanity_check_repo.py:
+      mdk: 28
+  grand_total:
+    Evan Johnson: 2
+    Paul Gauthier: 265
+    Paul Gauthier (dev): 875
+    apaz-cli: 3
+    mdk: 34
+  start_tag: v0.69.0
+  total_lines: 1179
+- dev_percentage: 60.36
+  dev_total: 236
+  end_date: '2025-01-10'
+  end_tag: v0.71.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 2
+    dev/coders/base_coder.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 13
+    dev/commands.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 22
+    dev/io.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 16
+    dev/linter.py:
+      Aaron Weisberg: 5
+    dev/main.py:
+      Paul Gauthier: 7
+      Paul Gauthier (dev): 13
+      apaz-cli: 18
+    dev/mdstream.py:
+      Paul Gauthier: 38
+      Paul Gauthier (dev): 58
+    dev/models.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 2
+    dev/repo.py:
+      Krazer: 10
+      Paul Gauthier: 5
+    dev/run_cmd.py:
+      Aaron Weisberg: 2
+    dev/utils.py:
+      Paul Gauthier: 9
+    dev/voice.py:
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 13
+    dev/watch.py:
+      Paul Gauthier: 1
+    benchmark/Dockerfile:
+      Josh Vera: 1
+      Paul Maunders: 12
+    benchmark/benchmark.py:
+      Nimesh Ghelani: 1
+      Paul Gauthier: 6
+      Paul Gauthier (dev): 30
+    benchmark/problem_stats.py:
+      Paul Gauthier (dev): 5
+    docker/Dockerfile:
+      Paul Gauthier (dev): 32
+    scripts/update-history.py:
+      Paul Gauthier (dev): 1
+    tests/basic/test_commands.py:
+      Paul Gauthier: 2
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 6
+    tests/basic/test_linter.py:
+      Aaron Weisberg: 2
+    tests/basic/test_models.py:
+      Paul Gauthier (dev): 25
+  grand_total:
+    Aaron Weisberg: 9
+    Josh Vera: 1
+    Krazer: 10
+    Nimesh Ghelani: 1
+    Paul Gauthier: 104
+    Paul Gauthier (dev): 236
+    Paul Maunders: 12
+    apaz-cli: 18
+  start_tag: v0.70.0
+  total_lines: 391
+- dev_percentage: 48.76
+  dev_total: 138
+  end_date: '2025-01-20'
+  end_tag: v0.72.0
+  file_counts:
+    .github/workflows/docker-build-test.yml:
+      Paul Gauthier (dev): 38
+    .github/workflows/pages.yml:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 1
+    .github/workflows/ubuntu-tests.yml:
+      Paul Gauthier (dev): 8
+    .github/workflows/windows-tests.yml:
+      Paul Gauthier (dev): 8
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Titusz Pan: 6
+    dev/coders/base_coder.py:
+      Paul Gauthier: 11
+    dev/coders/single_wholefile_func_coder.py:
+      Paul Gauthier: 1
+    dev/coders/wholefile_func_coder.py:
+      Paul Gauthier: 1
+    dev/commands.py:
+      Paul Gauthier: 3
+    dev/history.py:
+      Paul Gauthier: 7
+    dev/io.py:
+      Paul Gauthier (dev): 14
+      Titusz Pan: 2
+    dev/main.py:
+      Titusz Pan: 1
+    dev/models.py:
+      Paul Gauthier: 16
+    dev/queries/tree-sitter-kotlin-tags.scm:
+      Paul Walker: 27
+    dev/repomap.py:
+      Paul Gauthier (dev): 2
+    dev/sendchat.py:
+      Paul Gauthier: 9
+      Paul Gauthier (dev): 22
+    dev/utils.py:
+      Paul Gauthier: 1
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 2
+    benchmark/benchmark.py:
+      Paul Gauthier: 9
+    benchmark/rsync.sh:
+      Paul Gauthier: 21
+    docker/Dockerfile:
+      Paul Gauthier: 2
+      Paul Gauthier (dev): 6
+    scripts/my_models.py:
+      Paul Gauthier: 3
+    scripts/update-docs.sh:
+      Paul Gauthier: 2
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 39
+    tests/basic/test_repomap.py:
+      Paul Walker: 1
+    tests/fixtures/languages/kotlin/test.kt:
+      Paul Walker: 16
+  grand_total:
+    Paul Gauthier: 92
+    Paul Gauthier (dev): 138
+    Paul Walker: 44
+    Titusz Pan: 9
+  start_tag: v0.71.0
+  total_lines: 283
+- dev_percentage: 69.44
+  dev_total: 284
+  end_date: '2025-01-31'
+  end_tag: v0.73.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 2
+    dev/coders/base_coder.py:
+      Paul Gauthier: 37
+      Paul Gauthier (dev): 26
+    dev/commands.py:
+      xqyz: 1
+    dev/io.py:
+      Paul Gauthier: 7
+    dev/main.py:
+      Paul Gauthier: 13
+      Paul Gauthier (dev): 15
+    dev/models.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 33
+    dev/sendchat.py:
+      Mir Adnan ALI: 28
+      Paul Gauthier: 11
+      Paul Gauthier (dev): 6
+    dev/urls.py:
+      Paul Gauthier: 1
+    dev/website/_includes/leaderboard.js:
+      Paul Gauthier (dev): 1
+    dev/website/docs/leaderboards/index.md:
+      Paul Gauthier: 3
+      Paul Gauthier (dev): 2
+    benchmark/benchmark.py:
+      Paul Gauthier (dev): 21
+    benchmark/rsync.sh:
+      Paul Gauthier: 2
+    tests/basic/test_coder.py:
+      Paul Gauthier: 10
+      Paul Gauthier (dev): 39
+    tests/basic/test_main.py:
+      Paul Gauthier (dev): 62
+    tests/basic/test_sendchat.py:
+      Paul Gauthier (dev): 77
+  grand_total:
+    Mir Adnan ALI: 28
+    Paul Gauthier: 96
+    Paul Gauthier (dev): 284
+    xqyz: 1
+  start_tag: v0.72.0
+  total_lines: 409
+- dev_percentage: 77.14
+  dev_total: 604
+  end_date: '2025-02-06'
+  end_tag: v0.74.0
+  file_counts:
+    dev/__init__.py:
+      Paul Gauthier: 1
+    dev/args.py:
+      Paul Gauthier: 1
+    dev/coders/base_coder.py:
+      Paul Gauthier: 24
+      Paul Gauthier (dev): 9
+    dev/coders/editblock_coder.py:
+      Paul Gauthier: 5
+    dev/coders/wholefile_coder.py:
+      Paul Gauthier: 2
+    dev/commands.py:
+      Paul Gauthier: 1
+    dev/exceptions.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 6
+    dev/history.py:
+      Paul Gauthier (dev): 1
+    dev/io.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 18
+    dev/llm.py:
+      Paul Gauthier: 3
+    dev/main.py:
+      Paul Gauthier: 21
+      Paul Gauthier (dev): 25
+    dev/models.py:
+      Paul Gauthier: 83
+      Paul Gauthier (dev): 77
+    dev/repo.py:
+      Paul Gauthier: 1
+      Paul Gauthier (dev): 2
+      "Viktor Sz\xE9pe": 3
+    dev/watch.py:
+      Paul Gauthier (dev): 45
+    benchmark/docker.sh:
+      Paul Gauthier: 2
+    docker/Dockerfile:
+      Paul Gauthier: 5
+      Paul Gauthier (dev): 4
+    tests/basic/test_editblock.py:
+      Paul Gauthier: 7
+    tests/basic/test_history.py:
+      Paul Gauthier (dev): 13
+    tests/basic/test_io.py:
+      Paul Gauthier (dev): 46
+    tests/basic/test_main.py:
+      Paul Gauthier: 8
+      Paul Gauthier (dev): 1
+    tests/basic/test_models.py:
+      Paul Gauthier (dev): 297
+    tests/basic/test_repo.py:
+      Paul Gauthier (dev): 11
+    tests/basic/test_sendchat.py:
+      Paul Gauthier (dev): 7
+    tests/basic/test_watch.py:
+      Paul Gauthier: 4
+      Paul Gauthier (dev): 42
+  grand_total:
+    Paul Gauthier: 176
+    Paul Gauthier (dev): 604
+    "Viktor Sz\xE9pe": 3
+  start_tag: v0.73.0
+  total_lines: 783

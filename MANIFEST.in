@@ -1,0 +1,20 @@
+# This needs to sync with dev/help_pats.py
+
+global-exclude .DS_Store
+
+recursive-exclude dev/website/examples *
+recursive-exclude dev/website/_posts *
+
+exclude dev/website/HISTORY.md
+exclude dev/website/docs/benchmarks*.md
+exclude dev/website/docs/ctags.md
+exclude dev/website/docs/unified-diffs.md
+
+exclude dev/website/install.ps1
+exclude dev/website/install.sh
+
+recursive-exclude dev/website/docs/leaderboards *
+recursive-exclude dev/website/assets *
+recursive-exclude dev/website *.js
+recursive-exclude dev/website *.html
+recursive-exclude dev/website *.yml
