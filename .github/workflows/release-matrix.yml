@@ -1,0 +1,42 @@
+name: Release Matrix (CLI)
+
+# Cross-platform binary builds via self-hosted runner pools.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target.id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - id: macos-arm64
+            runner: hanzoai-macos-arm64
+          - id: linux-amd64
+            runner: hanzoai-linux-amd64
+          - id: linux-arm64
+            runner: hanzoai-linux-arm64
+          - id: windows-amd64
+            runner: hanzoai-windows-amd64
+    runs-on: ${{ matrix.target.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show runner
+        run: echo "Building on ${{ matrix.target.runner }}"
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: name = "hanzo-cli"-${{ matrix.target.id }}
+          path: target/release/name = "hanzo-cli"*
+          if-no-files-found: warn
