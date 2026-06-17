@@ -1,4 +1,4 @@
-# LLM.md - Hanzo Cli
+# Hanzo Cli
 
 ## Overview
 Hanzo AI CLI - Container runtime and development tools
