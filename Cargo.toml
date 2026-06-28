@@ -30,6 +30,13 @@ tempfile = "3.10"
 subprocess = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 
+# Cloud auth (HIP-0111 OIDC PKCE S256).
+sha2 = "0.10"                                              # PKCE S256 challenge
+base64 = "0.22"                                            # base64url (no pad)
+rand = "0.8"                                               # OsRng for PKCE verifier + state
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }  # OS keychain — tokens NEVER hit disk
+webbrowser = "1"                                           # open the IAM authorize URL
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
