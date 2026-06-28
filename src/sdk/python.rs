@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::process::Command;
 use colored::*;
 
-use crate::{AgentCommands, AuthCommands};
+use crate::AgentCommands;
 
 pub async fn run_agent_command(command: AgentCommands) -> Result<()> {
     // Convert to owned strings to avoid lifetime issues
@@ -19,31 +19,6 @@ pub async fn run_agent_command(command: AgentCommands) -> Result<()> {
         AgentCommands::Run { name, task } => {
             vec!["agent".to_string(), "run".to_string(), name, task]
         }
-    };
-
-    // Convert Vec<String> to Vec<&str> for the function call
-    let args_refs: Vec<&str> = python_args.iter().map(|s| s.as_str()).collect();
-    run_python_sdk(args_refs).await
-}
-
-pub async fn run_auth_command(command: AuthCommands) -> Result<()> {
-    // Convert to owned strings to avoid lifetime issues
-    let python_args: Vec<String> = match command {
-        AuthCommands::Login { email, api_key } => {
-            let mut args = vec!["auth".to_string(), "login".to_string()];
-            if let Some(e) = email {
-                args.push("--email".to_string());
-                args.push(e);
-            }
-            if let Some(k) = api_key {
-                args.push("--api-key".to_string());
-                args.push(k);
-            }
-            args
-        }
-        AuthCommands::Logout => vec!["auth".to_string(), "logout".to_string()],
-        AuthCommands::Whoami => vec!["auth".to_string(), "whoami".to_string()],
-        AuthCommands::Status => vec!["auth".to_string(), "status".to_string()],
     };
 
     // Convert Vec<String> to Vec<&str> for the function call

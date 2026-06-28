@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod commands;
 mod config;
+mod iam;
 mod sdk;
 
 #[derive(Parser)]
@@ -54,10 +55,25 @@ enum Commands {
         command: AgentCommands,
     },
 
-    /// Authentication and authorization (Python SDK)
-    Auth {
-        #[command(subcommand)]
-        command: AuthCommands,
+    /// Sign in to Hanzo Cloud (IAM OIDC, PKCE S256)
+    Login {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+    },
+
+    /// Show the currently signed-in identity
+    Whoami {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+    },
+
+    /// Sign out and remove stored credentials
+    Logout {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
     },
 
     /// Build project
@@ -131,23 +147,6 @@ enum AgentCommands {
     },
 }
 
-#[derive(Subcommand)]
-enum AuthCommands {
-    /// Login to Hanzo
-    Login {
-        #[arg(long)]
-        email: Option<String>,
-        #[arg(long)]
-        api_key: Option<String>,
-    },
-    /// Logout
-    Logout,
-    /// Show current user
-    Whoami,
-    /// Check auth status
-    Status,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -178,8 +177,14 @@ async fn main() -> Result<()> {
         Commands::Agent { command } => {
             sdk::python::run_agent_command(command).await?;
         }
-        Commands::Auth { command } => {
-            sdk::python::run_auth_command(command).await?;
+        Commands::Login { brand } => {
+            iam::login::login(&brand).await?;
+        }
+        Commands::Whoami { brand } => {
+            iam::login::whoami(&brand).await?;
+        }
+        Commands::Logout { brand } => {
+            iam::login::logout(&brand).await?;
         }
         Commands::Build { target, release } => {
             commands::build::run(target, release).await?;
