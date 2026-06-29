@@ -1,3 +1,5 @@
+<p align="center"><img src=".github/hero.svg" alt="cli" width="880"></p>
+
 # @hanzo/cli
 
 The official Hanzo AI CLI for container management and development tools.
