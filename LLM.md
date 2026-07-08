@@ -35,9 +35,9 @@ and the node's `hanzo-mining` `NetworkType`:
 | name    | network_id / chain_id | rpc                                  | api            |
 |---------|-----------------------|--------------------------------------|----------------|
 | mainnet | 36963                 | https://rpc.hanzo.network            | api.hanzo.ai   |
-| testnet | 36964                 | https://rpc.hanzo-test.network       | api.hanzo.ai   |
-| devnet  | 36965                 | https://rpc.hanzo-dev.network        | api.hanzo.ai   |
-| local   | 31337                 | http://localhost:9650/ext/bc/C/rpc   | localhost:3690 |
+| testnet | 36962                 | https://rpc.testnet.hanzo.network    | api.hanzo.ai   |
+| devnet  | 36964                 | https://rpc.devnet.hanzo.network     | api.hanzo.ai   |
+| local   | 1337                  | http://localhost:9630/v1/bc/C/rpc    | localhost:3690 |
 
 `network add` defaults `chain_id` to `network_id` (sovereign). Selection + custom
 networks persist to `~/.config/hanzo/config.toml` (`config.rs`, non-secret only).

@@ -3,9 +3,9 @@
 //! Built-in networks mirror the console selector (mainnet/testnet/devnet/local)
 //! and the fabric truth in `~/work/hanzo/node` (hanzo-mining `NetworkType`):
 //! Hanzo is a sovereign L1, so `network_id == chain_id`. Chain IDs and RPC hosts
-//! come from the node (mainnet 36963 @ rpc.hanzo.network, testnet 36964 @
-//! rpc.hanzo-test.network); devnet extends the 3696x sequence; local is the
-//! luxd-based node (chain 31337 @ /ext/bc/C/rpc). Custom/sovereign networks are
+//! come from genesis (lux/genesis/configs/hanzo-*): mainnet 36963 @ rpc.hanzo.network,
+//! testnet 36962 @ rpc.testnet.hanzo.network, devnet 36964 @ rpc.devnet.hanzo.network;
+//! local is the 1337 localnet convention @ localhost:9630. Custom/sovereign networks are
 //! added with `network add` and persisted in config.
 
 use crate::config::{Config, StoredNetwork};
@@ -30,27 +30,27 @@ pub fn builtins() -> Vec<StoredNetwork> {
         StoredNetwork {
             name: "testnet".into(),
             label: "Hanzo Testnet".into(),
-            network_id: 36964,
-            chain_id: 36964,
-            rpc: "https://rpc.hanzo-test.network".into(),
+            network_id: 36962,
+            chain_id: 36962,
+            rpc: "https://rpc.testnet.hanzo.network".into(),
             api: "https://api.hanzo.ai".into(),
-            explorer: Some("https://explorer.hanzo-test.network".into()),
+            explorer: Some("https://explorer.testnet.hanzo.network".into()),
         },
         StoredNetwork {
             name: "devnet".into(),
             label: "Hanzo Devnet".into(),
-            network_id: 36965,
-            chain_id: 36965,
-            rpc: "https://rpc.hanzo-dev.network".into(),
+            network_id: 36964,
+            chain_id: 36964,
+            rpc: "https://rpc.devnet.hanzo.network".into(),
             api: "https://api.hanzo.ai".into(),
-            explorer: Some("https://explorer.hanzo-dev.network".into()),
+            explorer: Some("https://explorer.devnet.hanzo.network".into()),
         },
         StoredNetwork {
             name: "local".into(),
             label: "Hanzo Local".into(),
-            network_id: 31337,
-            chain_id: 31337,
-            rpc: "http://localhost:9650/ext/bc/C/rpc".into(),
+            network_id: 1337,
+            chain_id: 1337,
+            rpc: "http://localhost:9630/v1/bc/C/rpc".into(),
             api: "http://localhost:3690".into(),
             explorer: None,
         },
