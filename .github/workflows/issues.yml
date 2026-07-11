@@ -6,7 +6,7 @@ on:
 
 jobs:
   process-issues:
-    runs-on: ubuntu-latest
+    runs-on: hanzo-build-linux-amd64
     permissions:
       issues: write  # Required to modify issues
     
