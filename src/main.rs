@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 
+mod auth;
 mod commands;
 mod config;
 mod sdk;
@@ -276,7 +277,7 @@ async fn main() -> Result<()> {
             sdk::python::run_agent_command(command).await?;
         }
         Commands::Auth { command } => {
-            sdk::python::run_auth_command(command).await?;
+            auth::run(command).await?;
         }
         Commands::Build { target, release } => {
             commands::build::run(target, release).await?;
