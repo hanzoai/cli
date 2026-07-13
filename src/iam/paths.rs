@@ -12,6 +12,8 @@
 
 /// Authorization endpoint (RFC 6749 §3.1).
 pub const AUTHORIZE: &str = "/v1/iam/oauth/authorize";
+/// Device authorization endpoint (RFC 8628 §3.1).
+pub const DEVICE: &str = "/v1/iam/oauth/device";
 /// Token endpoint (RFC 6749 §3.2).
 pub const TOKEN: &str = "/v1/iam/oauth/token";
 /// UserInfo endpoint (OIDC Core §5.3).
