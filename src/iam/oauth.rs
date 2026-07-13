@@ -21,6 +21,11 @@ pub const CLIENT_ID: &str = "hanzo-cli";
 /// OIDC scopes — identity only.
 pub const SCOPE: &str = "openid profile email";
 
+/// Error message returned by [`login`] when no browser could be launched, so
+/// the caller can fall back to the device flow instead of hanging on the
+/// loopback capture. A stable sentinel — matched by the login orchestrator.
+pub const BROWSER_OPEN_FAILED: &str = "no browser could be opened for sign-in";
+
 /// The subset of OIDC UserInfo (§5.3) the CLI displays.
 #[derive(Debug, Deserialize)]
 pub struct UserInfo {
@@ -57,7 +62,11 @@ pub async fn login(brand: &str) -> Result<TokenSet> {
 
     println!("Opening your browser to sign in to {brand}...");
     println!("If it does not open, visit:\n  {authorize_url}\n");
-    let _ = webbrowser::open(authorize_url.as_str());
+    // If the browser cannot be launched, bail BEFORE blocking on the loopback
+    // capture so the caller can fall back to the device flow.
+    if webbrowser::open(authorize_url.as_str()).is_err() {
+        bail!("{BROWSER_OPEN_FAILED}");
+    }
 
     let cb = capture_callback(&listener).await?;
     if cb.state.as_deref() != Some(state.as_str()) {
