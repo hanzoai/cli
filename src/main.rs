@@ -60,6 +60,10 @@ enum Commands {
         /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
+
+        /// Force the RFC 8628 device flow (link + QR + code) instead of the browser
+        #[arg(long)]
+        device: bool,
     },
 
     /// Show the currently signed-in identity
@@ -327,8 +331,8 @@ async fn main() -> Result<()> {
         Commands::Agent { command } => {
             sdk::python::run_agent_command(command).await?;
         }
-        Commands::Login { brand } => {
-            iam::login::login(&brand).await?;
+        Commands::Login { brand, device } => {
+            iam::login::login(&brand, device).await?;
         }
         Commands::Whoami { brand } => {
             iam::login::whoami(&brand).await?;
