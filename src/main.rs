@@ -55,6 +55,48 @@ enum Commands {
         command: AgentCommands,
     },
 
+    /// Session-aware coding: wrap Claude Code or `dev`, attach Hanzo MCP + auth,
+    /// route usage through api.hanzo.ai, and (opt-in) stream the session live to
+    /// Hanzo cloud. A trailing `[task]` runs headless; omit it for interactive.
+    Code {
+        /// Coding backend: claude | dev
+        #[arg(long, default_value = "claude")]
+        backend: String,
+
+        /// Stream this session to Hanzo cloud (mission-control). Opt-in.
+        #[arg(long)]
+        link: bool,
+
+        /// Never stream to cloud, even if `code.link = true` is persisted.
+        #[arg(long)]
+        no_link: bool,
+
+        /// Do not route model calls through api.hanzo.ai (use the backend's own
+        /// model account instead of the metered Hanzo gateway).
+        #[arg(long)]
+        no_route: bool,
+
+        /// Do not attach the Hanzo MCP toolset.
+        #[arg(long)]
+        no_mcp: bool,
+
+        /// Resume a prior linked session by its cloud session id.
+        #[arg(long, value_name = "SESSION_ID")]
+        resume: Option<String>,
+
+        /// Brand / tenant for auth: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+
+        /// Task to run headless. If omitted, launches an interactive session.
+        task: Option<String>,
+
+        /// Extra args passed verbatim to the backend (after `--`). Use this to
+        /// set the backend's own sandbox/permission flags — never widened by us.
+        #[arg(last = true, allow_hyphen_values = true)]
+        passthrough: Vec<String>,
+    },
+
     /// Sign in to Hanzo Cloud (IAM OIDC, PKCE S256)
     Login {
         /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
@@ -326,6 +368,33 @@ async fn main() -> Result<()> {
         }
         Commands::Agent { command } => {
             sdk::python::run_agent_command(command).await?;
+        }
+        Commands::Code {
+            backend,
+            link,
+            no_link,
+            no_route,
+            no_mcp,
+            resume,
+            brand,
+            task,
+            passthrough,
+        } => {
+            commands::code::run(
+                &config,
+                commands::code::Options {
+                    backend,
+                    link,
+                    no_link,
+                    route: !no_route,
+                    mcp: !no_mcp,
+                    resume,
+                    brand,
+                    task,
+                    passthrough,
+                },
+            )
+            .await?;
         }
         Commands::Login { brand } => {
             iam::login::login(&brand).await?;
