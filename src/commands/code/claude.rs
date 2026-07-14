@@ -1,8 +1,11 @@
 //! The Claude Code backend.
 //!
 //! Headless runs stream JSONL via `-p … --output-format stream-json --verbose`;
-//! MCP is layered with `--mcp-config` (project `.mcp.json` preserved, Hanzo's
-//! server added on top); model calls route through the Hanzo gateway via
+//! MCP is layered with `--mcp-config` (Hanzo's server added on top, the repo's
+//! own `.mcp.json` only under `--trust-project`); settings come from the USER
+//! scope only (`--setting-sources user`) unless the repo is trusted, so a
+//! hostile repo's `.claude/settings*.json` hooks / statusLine / plugins never
+//! auto-run against our env; model calls route through the Hanzo gateway via
 //! `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (Bearer). We NEVER pass
 //! `--dangerously-skip-permissions` or a permission mode — the user's own
 //! sandbox governs; extra flags arrive only through explicit passthrough.
@@ -50,15 +53,32 @@ impl Backend for Claude {
             cmd.arg("--session-id").arg(sid);
         }
 
+        // Settings come from the USER scope only by default. Claude otherwise
+        // auto-loads the repository's own `<cwd>/.claude/settings.json` and
+        // `settings.local.json`, and in headless `-p` mode the workspace-trust
+        // dialog is skipped — so a hostile repo's `SessionStart`/`UserPromptSubmit`
+        // hook (or a `statusLine` command, or a project plugin) would auto-run a
+        // shell command that inherits this process's env, where the model routing
+        // bearer lives (`ANTHROPIC_AUTH_TOKEN` below). `--strict-mcp-config` scopes
+        // only MCP, NOT settings, so `--setting-sources user` is the control that
+        // stops repo settings/hooks/statusLine/plugins from loading. The repo's
+        // project + local settings apply ONLY under the explicit `--trust-project`
+        // opt-in — the SAME trust boundary that loads its `.mcp.json`.
+        if spec.trust_project {
+            cmd.args(["--setting-sources", "user,project,local"]);
+        } else {
+            cmd.args(["--setting-sources", "user"]);
+        }
+
         // MCP is EXPLICIT. `--strict-mcp-config` makes Claude use ONLY the
         // servers we pass here and ignore every auto-discovered source — most
         // importantly the repository's own `<cwd>/.mcp.json`. Model calls route
         // with the session's key on this process's env, and any stdio MCP server
         // inherits that env, so an untrusted repo must never get to declare one.
         // The Hanzo toolset is layered by default; the repo's own `.mcp.json` is
-        // loaded ONLY when the user explicitly trusts it with `--project-mcp`.
+        // loaded ONLY when the user explicitly trusts it with `--trust-project`.
         cmd.arg("--strict-mcp-config");
-        if spec.project_mcp {
+        if spec.trust_project {
             let project_cfg = spec.cwd.join(".mcp.json");
             if project_cfg.is_file() {
                 cmd.arg("--mcp-config").arg(&project_cfg);
@@ -255,7 +275,7 @@ mod tests {
             mcp: Some(McpAttach { program: "hanzo-mcp".into(), args: vec!["--project-dir".into(), "/tmp/proj".into()] }),
             structured: true,
             preset_session: None,
-            project_mcp: false,
+            trust_project: false,
             resume: None,
             passthrough: vec![],
         }
@@ -453,17 +473,18 @@ mod tests {
         assert!(mcp_config_paths(&args).is_empty(), "no config layered when --no-mcp and repo untrusted");
     }
 
-    /// Explicit trust (`--project-mcp`) DOES load the repo's own `.mcp.json`,
-    /// alongside strict mode and the Hanzo server.
+    /// Explicit trust (`--trust-project`) DOES load the repo's own `.mcp.json`,
+    /// alongside strict mode and the Hanzo server — AND widens `--setting-sources`
+    /// to include the repo's project/local settings.
     #[test]
-    fn project_mcp_opt_in_loads_the_repo_config_explicitly() {
+    fn trust_project_opt_in_loads_the_repo_config_and_widens_settings() {
         let dir = tempfile::tempdir().unwrap();
         let repo_cfg = dir.path().join(".mcp.json");
         std::fs::write(&repo_cfg, r#"{"mcpServers":{}}"#).unwrap();
 
         let mut s = spec(Mode::Headless);
         s.cwd = dir.path().to_path_buf();
-        s.project_mcp = true;
+        s.trust_project = true;
         let l = Claude.build(&s).unwrap();
         let args = argv(&l);
 
@@ -471,7 +492,42 @@ mod tests {
         let cfgs = mcp_config_paths(&args);
         assert!(
             cfgs.iter().any(|p| Path::new(p) == repo_cfg),
-            "--project-mcp must load the repo .mcp.json: {cfgs:?}"
+            "--trust-project must load the repo .mcp.json: {cfgs:?}"
         );
+        assert_eq!(
+            setting_sources(&args).as_deref(),
+            Some("user,project,local"),
+            "trusting the repo widens setting-sources to load its settings/hooks"
+        );
+    }
+
+    /// The value passed to `--setting-sources`, if present.
+    fn setting_sources(args: &[String]) -> Option<String> {
+        args.iter()
+            .position(|a| a == "--setting-sources")
+            .and_then(|i| args.get(i + 1).cloned())
+    }
+
+    /// HIGH-1 (reopened): a hostile repo's `.claude/settings.json` can declare a
+    /// `SessionStart` hook (or `statusLine` / project plugin) that auto-runs a
+    /// shell command inheriting our env — where the routing bearer lives. In the
+    /// default headless `-p` path the trust dialog is skipped, so those repo
+    /// settings would load and the hook would fire. `--strict-mcp-config` scopes
+    /// only MCP; `--setting-sources user` is what stops repo settings from
+    /// loading at all. By default we must pass exactly `user` — never `project`
+    /// or `local`.
+    #[test]
+    fn default_settings_sources_is_user_only_so_repo_hooks_never_load() {
+        let s = spec(Mode::Headless);
+        let l = Claude.build(&s).unwrap();
+        let args = argv(&l);
+        assert_eq!(
+            setting_sources(&args).as_deref(),
+            Some("user"),
+            "default must be --setting-sources user (repo project/local settings ignored)"
+        );
+        // Belt and suspenders: the raw argv must not slip in project/local.
+        let joined = args.join(" ");
+        assert!(!joined.contains("user,project"), "must not widen sources by default: {joined}");
     }
 }
