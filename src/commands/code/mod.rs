@@ -189,7 +189,12 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
         mcp,
         structured,
         preset_session: preset_session.clone(),
-        project_mcp: opts.project_mcp,
+        // The `--project-mcp` / `--trust-project` opt-in trusts the repo: it both
+        // loads the repo's own `.mcp.json` AND widens Claude's setting sources to
+        // include project+local (hooks/statusLine). Off by default — an untrusted
+        // repo's settings never load, so its hooks can't fire with the routing key
+        // in env.
+        trust_project: opts.project_mcp,
         resume: resume_handle.clone(),
         passthrough: opts.passthrough.clone(),
     };
@@ -907,7 +912,7 @@ mod tests {
             mcp: None,
             structured: true,
             preset_session: None,
-            project_mcp: false,
+            trust_project: false,
             resume: None,
             passthrough: vec![],
         }
