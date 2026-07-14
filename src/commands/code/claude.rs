@@ -1,0 +1,380 @@
+//! The Claude Code backend.
+//!
+//! Headless runs stream JSONL via `-p … --output-format stream-json --verbose`;
+//! MCP is layered with `--mcp-config` (project `.mcp.json` preserved, Hanzo's
+//! server added on top); model calls route through the Hanzo gateway via
+//! `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (Bearer). We NEVER pass
+//! `--dangerously-skip-permissions` or a permission mode — the user's own
+//! sandbox governs; extra flags arrive only through explicit passthrough.
+
+use anyhow::{Context, Result};
+use serde_json::{json, Value};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use super::backend::{Backend, Launch, Mode, Spec};
+use super::event::{Mapped, Usage};
+
+pub struct Claude;
+
+impl Backend for Claude {
+    fn label(&self) -> &'static str {
+        "claude"
+    }
+
+    fn version(&self) -> Option<String> {
+        super::backend::backend_version("claude")
+    }
+
+    fn build(&self, spec: &Spec) -> Result<Launch> {
+        let mut cmd = tokio::process::Command::new("claude");
+        cmd.current_dir(&spec.cwd);
+        let mut cleanup = Vec::new();
+
+        // Task (headless). The structured stream is requested ONLY when we stream
+        // to cloud; otherwise the run keeps Claude's native output untouched.
+        if spec.mode == Mode::Headless {
+            let task = spec.task.as_deref().unwrap_or_default();
+            cmd.arg("-p").arg(task);
+            if spec.structured {
+                cmd.args(["--output-format", "stream-json", "--verbose"]);
+            }
+        }
+
+        // Native resume against the backend's own session id, else optionally
+        // pre-set the session id so a linked interactive run can tail its
+        // transcript. `--resume` and `--session-id` are mutually exclusive.
+        if let Some(sid) = &spec.resume {
+            cmd.arg("--resume").arg(sid);
+        } else if let Some(sid) = &spec.preset_session {
+            cmd.arg("--session-id").arg(sid);
+        }
+
+        // MCP: preserve the project's own servers, add Hanzo's on top.
+        if let Some(mcp) = &spec.mcp {
+            let project_cfg = spec.cwd.join(".mcp.json");
+            if project_cfg.is_file() {
+                cmd.arg("--mcp-config").arg(&project_cfg);
+            }
+            let mut file = tempfile::Builder::new()
+                .prefix("hanzo-mcp-")
+                .suffix(".json")
+                .tempfile()
+                .context("creating mcp-config temp file")?;
+            file.write_all(mcp_config(mcp).as_bytes())
+                .context("writing mcp-config")?;
+            let path = file.into_temp_path();
+            cmd.arg("--mcp-config").arg(&*path);
+            cleanup.push(path);
+        }
+
+        // Route model calls through the Hanzo gateway (Bearer via env, not argv).
+        if let Some(r) = &spec.routing {
+            cmd.env("ANTHROPIC_BASE_URL", r.api.trim_end_matches('/'));
+            cmd.env("ANTHROPIC_AUTH_TOKEN", &r.token);
+        }
+
+        cmd.args(&spec.passthrough);
+        Ok(Launch { command: cmd, cleanup })
+    }
+
+    fn parse(&self, line: &str) -> Vec<Mapped> {
+        let line = line.trim();
+        if line.is_empty() {
+            return Vec::new();
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return Vec::new();
+        };
+        match v.get("type").and_then(Value::as_str) {
+            Some("system") => system_event(&v),
+            // Complete-message objects (stream-json) AND transcript entries share
+            // this shape, so one branch serves headless stdout and interactive tail.
+            Some("assistant") => role_message("assistant", &v),
+            Some("user") => role_message("user", &v),
+            Some("result") => result_event(&v),
+            _ => Vec::new(),
+        }
+    }
+
+    fn transcript_path(&self, cwd: &Path, backend_session_id: &str) -> Option<PathBuf> {
+        // Claude Code stores transcripts at
+        // ~/.claude/projects/<cwd-with-slashes-as-dashes>/<session-id>.jsonl.
+        let home = dirs::home_dir()?;
+        let slug: String = cwd
+            .display()
+            .to_string()
+            .chars()
+            .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+            .collect();
+        Some(
+            home.join(".claude")
+                .join("projects")
+                .join(slug)
+                .join(format!("{backend_session_id}.jsonl")),
+        )
+    }
+}
+
+/// The `--mcp-config` document adding Hanzo's stdio server (Claude requires an
+/// explicit `type`).
+fn mcp_config(mcp: &super::backend::McpAttach) -> String {
+    json!({
+        "mcpServers": {
+            "hanzo": {
+                "type": "stdio",
+                "command": mcp.program,
+                "args": mcp.args,
+                "env": {},
+            }
+        }
+    })
+    .to_string()
+}
+
+fn system_event(v: &Value) -> Vec<Mapped> {
+    if v.get("subtype").and_then(Value::as_str) != Some("init") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if let Some(sid) = v.get("session_id").and_then(Value::as_str) {
+        out.push(Mapped::BackendSession(sid.to_string()));
+    }
+    if let Some(model) = v.get("model").and_then(Value::as_str) {
+        out.push(Mapped::note("session-start", format!("model {model}")));
+    }
+    out
+}
+
+/// Map an assistant/user message's content blocks. `Task` tool uses become
+/// spawn events (subagent flow); everything else is a tool call or a message.
+fn role_message(role: &str, v: &Value) -> Vec<Mapped> {
+    let content = v.pointer("/message/content");
+    let mut out = Vec::new();
+    match content {
+        Some(Value::Array(blocks)) => {
+            for b in blocks {
+                match b.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(t) = b.get("text").and_then(Value::as_str) {
+                            if !t.trim().is_empty() {
+                                out.push(Mapped::message(role, t));
+                            }
+                        }
+                    }
+                    Some("tool_use") => {
+                        let name = b.get("name").and_then(Value::as_str).unwrap_or("tool");
+                        let input = b.get("input").cloned().unwrap_or(Value::Null);
+                        let id = b.get("id").and_then(Value::as_str);
+                        if name == "Task" {
+                            out.push(Mapped::spawn(name, input));
+                        } else {
+                            out.push(Mapped::tool_call(name, input, id));
+                        }
+                    }
+                    Some("tool_result") => {
+                        let id = b.get("tool_use_id").and_then(Value::as_str);
+                        let is_error = b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+                        out.push(Mapped::tool_result(id, stringify_content(b.get("content")), is_error));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Some(Value::String(s)) => {
+            if !s.trim().is_empty() {
+                out.push(Mapped::message(role, s.clone()));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+fn result_event(v: &Value) -> Vec<Mapped> {
+    let mut out = Vec::new();
+    let u = v.get("usage");
+    let usage = Usage {
+        input_tokens: u.and_then(|u| u.get("input_tokens")).and_then(Value::as_u64),
+        output_tokens: u.and_then(|u| u.get("output_tokens")).and_then(Value::as_u64),
+        cache_read_tokens: u
+            .and_then(|u| u.get("cache_read_input_tokens"))
+            .and_then(Value::as_u64),
+        cache_write_tokens: u
+            .and_then(|u| u.get("cache_creation_input_tokens"))
+            .and_then(Value::as_u64),
+        total_cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
+        num_turns: v.get("num_turns").and_then(Value::as_u64),
+        duration_ms: v.get("duration_ms").and_then(Value::as_u64),
+    };
+    if !usage.is_empty() {
+        out.push(Mapped::Usage(usage));
+    }
+    let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+    let ok = v.get("subtype").and_then(Value::as_str) == Some("success") && !is_error;
+    let summary = v.get("result").and_then(Value::as_str).map(|s| s.to_string());
+    out.push(Mapped::Terminal { ok, summary });
+    out
+}
+
+/// A tool_result's `content` may be a string or an array of blocks; render a
+/// compact string either way.
+fn stringify_content(c: Option<&Value>) -> String {
+    match c {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|it| it.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::code::backend::{McpAttach, Routing};
+    use crate::commands::code::event::Kind;
+    use std::path::PathBuf;
+
+    fn spec(mode: Mode) -> Spec {
+        Spec {
+            mode,
+            task: Some("do it".into()),
+            cwd: PathBuf::from("/tmp/proj"),
+            routing: Some(Routing { api: "https://api.hanzo.ai".into(), token: "JWT".into() }),
+            mcp: Some(McpAttach { program: "hanzo-mcp".into(), args: vec!["--project-dir".into(), "/tmp/proj".into()] }),
+            structured: true,
+            preset_session: None,
+            resume: None,
+            passthrough: vec![],
+        }
+    }
+
+    fn argv(launch: &Launch) -> Vec<String> {
+        let std: &std::process::Command = launch.command.as_std();
+        std.get_args().map(|a| a.to_string_lossy().to_string()).collect()
+    }
+
+    #[test]
+    fn headless_argv_streams_json_and_routes_via_env_bearer() {
+        let l = Claude.build(&spec(Mode::Headless)).unwrap();
+        let args = argv(&l);
+        assert_eq!(args[0], "-p");
+        assert_eq!(args[1], "do it");
+        assert!(args.windows(2).any(|w| w == ["--output-format", "stream-json"]));
+        assert!(args.iter().any(|a| a == "--verbose"));
+        // Never widen the sandbox.
+        assert!(!args.iter().any(|a| a == "--dangerously-skip-permissions"));
+        assert!(!args.iter().any(|a| a == "--permission-mode"));
+        // MCP layered on; a temp config file exists and outlives the child.
+        assert!(args.iter().any(|a| a == "--mcp-config"));
+        assert_eq!(l.cleanup.len(), 1);
+        // Token rides in env, NOT argv.
+        let std = l.command.as_std();
+        let env: std::collections::HashMap<_, _> = std
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string())))
+            .collect();
+        assert_eq!(env.get("ANTHROPIC_BASE_URL").map(String::as_str), Some("https://api.hanzo.ai"));
+        assert_eq!(env.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str), Some("JWT"));
+        assert!(!args.iter().any(|a| a.contains("JWT")), "token must not be in argv");
+    }
+
+    #[test]
+    fn interactive_argv_has_no_print_or_stream_flags() {
+        let mut s = spec(Mode::Interactive);
+        s.task = None;
+        let l = Claude.build(&s).unwrap();
+        let args = argv(&l);
+        assert!(!args.iter().any(|a| a == "-p"));
+        assert!(!args.iter().any(|a| a == "--output-format"));
+    }
+
+    #[test]
+    fn unstructured_headless_keeps_native_output_no_stream_json() {
+        let mut s = spec(Mode::Headless);
+        s.structured = false;
+        let l = Claude.build(&s).unwrap();
+        let args = argv(&l);
+        assert!(args.iter().any(|a| a == "-p"));
+        assert!(!args.iter().any(|a| a == "--output-format"));
+    }
+
+    #[test]
+    fn preset_session_id_enables_interactive_transcript_tail() {
+        let mut s = spec(Mode::Interactive);
+        s.task = None;
+        s.preset_session = Some("uuid-1".into());
+        let l = Claude.build(&s).unwrap();
+        let args = argv(&l);
+        assert!(args.windows(2).any(|w| w == ["--session-id", "uuid-1"]));
+    }
+
+    #[test]
+    fn resume_adds_native_flag() {
+        let mut s = spec(Mode::Headless);
+        s.resume = Some("claude-sid-1".into());
+        let l = Claude.build(&s).unwrap();
+        let args = argv(&l);
+        assert!(args.windows(2).any(|w| w == ["--resume", "claude-sid-1"]));
+    }
+
+    #[test]
+    fn parse_init_yields_backend_session_id() {
+        let line = r#"{"type":"system","subtype":"init","session_id":"sid-abc","model":"claude-opus"}"#;
+        let out = Claude.parse(line);
+        assert!(out.iter().any(|m| matches!(m, Mapped::BackendSession(s) if s == "sid-abc")));
+    }
+
+    #[test]
+    fn parse_assistant_text_and_tool_use() {
+        let line = r#"{"type":"assistant","message":{"content":[
+            {"type":"text","text":"hello"},
+            {"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}
+        ]}}"#;
+        let out = Claude.parse(line);
+        assert!(matches!(&out[0], Mapped::Event{kind:Kind::Message, payload} if payload["text"]=="hello"));
+        assert!(matches!(&out[1], Mapped::Event{kind:Kind::ToolCall, payload} if payload["name"]=="Bash"));
+    }
+
+    #[test]
+    fn parse_task_tool_use_becomes_spawn() {
+        let line = r#"{"type":"assistant","message":{"content":[
+            {"type":"tool_use","id":"t","name":"Task","input":{"prompt":"sub"}}
+        ]}}"#;
+        let out = Claude.parse(line);
+        assert!(matches!(&out[0], Mapped::Event{kind:Kind::Spawn, ..}));
+    }
+
+    #[test]
+    fn parse_result_yields_usage_and_terminal() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,
+            "total_cost_usd":0.42,"num_turns":3,"duration_ms":1500,
+            "usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10},
+            "result":"done"}"#;
+        let out = Claude.parse(line);
+        let usage = out.iter().find_map(|m| if let Mapped::Usage(u)=m {Some(u.clone())} else {None}).unwrap();
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(50));
+        assert_eq!(usage.total_cost_usd, Some(0.42));
+        assert!(matches!(out.last().unwrap(), Mapped::Terminal{ok:true, ..}));
+    }
+
+    #[test]
+    fn parse_error_result_is_not_ok() {
+        let line = r#"{"type":"result","subtype":"error_during_execution","is_error":true}"#;
+        assert!(matches!(Claude.parse(line).last().unwrap(), Mapped::Terminal{ok:false, ..}));
+    }
+
+    #[test]
+    fn transcript_path_uses_dash_slug() {
+        let p = Claude
+            .transcript_path(&PathBuf::from("/home/z/proj"), "sid-1")
+            .unwrap();
+        let s = p.display().to_string();
+        assert!(s.ends_with("/.claude/projects/-home-z-proj/sid-1.jsonl"), "got {s}");
+    }
+}
