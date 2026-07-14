@@ -25,9 +25,22 @@ pub struct Config {
     #[serde(default)]
     pub wallet: WalletState,
 
+    /// `hanzo code` defaults (the opt-in cloud-link setting).
+    #[serde(default)]
+    pub code: CodeState,
+
     /// Path this config was loaded from; where `save` writes back. Not persisted.
     #[serde(skip)]
     path: PathBuf,
+}
+
+/// Persisted defaults for `hanzo code`. NON-SECRET.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CodeState {
+    /// Opt-in: stream local coding sessions to Hanzo cloud (mission-control).
+    /// Off by default; a `--link`/`--no-link` flag overrides per-invocation.
+    #[serde(default)]
+    pub link: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +161,7 @@ impl Default for Config {
             sdk_paths: SdkPaths::default(),
             network: NetworkState::default(),
             wallet: WalletState::default(),
+            code: CodeState::default(),
             path: PathBuf::new(),
         }
     }
