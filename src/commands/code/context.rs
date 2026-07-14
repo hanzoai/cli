@@ -30,6 +30,11 @@ impl Repo {
     pub fn is_empty(&self) -> bool {
         *self == Repo::default()
     }
+
+    /// Best-effort git identity of `cwd` (empty when it is not a repo).
+    pub fn capture(cwd: &Path) -> Repo {
+        git_repo(cwd)
+    }
 }
 
 /// The "where it runs" snapshot shown per session in mission-control. Contains
@@ -116,7 +121,19 @@ fn hostname() -> String {
 /// Best-effort git context for `cwd`. A non-repo yields an empty [`Repo`].
 fn git_repo(cwd: &Path) -> Repo {
     let git = |args: &[&str]| -> Option<String> {
-        let out = Command::new("git").arg("-C").arg(cwd).args(args).output().ok()?;
+        // `git -C <cwd>` reads config from a possibly-untrusted working tree.
+        // Neutralize the system/global gitconfig (a planted `core.fsmonitor`,
+        // pager, alias or `include.path` there could otherwise run a command)
+        // and never let git block on a credential/terminal prompt.
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .ok()?;
         if !out.status.success() {
             return None;
         }

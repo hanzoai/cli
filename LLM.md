@@ -26,8 +26,8 @@ cargo clippy --bin hanzo
   (default node URL = the active network's `api`).
 - `deploy` — targets the active network; the active wallet signs (auto-provisions
   one if none, on a real deploy).
-- `code [--backend claude|dev] [--link] [--resume <id>] [task]` — wrap a local
-  coding agent as a session-aware, portable, trackable object (below).
+- `code [--backend claude|dev] [--link] [--project-mcp] [--resume <id>] [task]` —
+  wrap a local coding agent as a session-aware, portable, trackable object (below).
 - `agent`, `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
 
 ## `hanzo code` (`src/commands/code/`) — session-aware coding wrapper
@@ -45,16 +45,29 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   reach cloud. Headless (`[task]`) = stdout stream-json parsed+forwarded+mirrored;
   interactive = native TTY + (Claude) transcript tail at
   `~/.claude/projects/<slug>/<sid>.jsonl`.
-- **Hanzo MCP attached.** `resolve_mcp` → `hanzo-mcp` (or `uvx hanzo-mcp`)
-  `--project-dir <cwd>`. Claude via `--mcp-config` (project `.mcp.json`
-  preserved, Hanzo layered on); `dev` via additive `-c mcp_servers.hanzo.*`
-  overrides (never repoints `CODEX_HOME`, so the user's config/login is intact).
-  Missing server warns, never blocks.
+- **Hanzo MCP attached — repo `.mcp.json` is trust-gated.** `resolve_mcp` →
+  `hanzo-mcp` (or `uvx hanzo-mcp`) `--project-dir <cwd>`. Claude via
+  `--mcp-config` + `--strict-mcp-config`, so Claude uses ONLY the servers we pass
+  and ignores every auto-discovered source — most importantly the repository's
+  own `<cwd>/.mcp.json`. A repo is untrusted, and any stdio MCP server it declared
+  would inherit this process's env (which carries the model routing key), so it
+  must never load by default. The Hanzo toolset is layered by default; the repo's
+  own `.mcp.json` is loaded ONLY with the explicit `--project-mcp` opt-in. `dev`
+  never reads a repo-local MCP config (its servers come from `CODEX_HOME` +
+  installed plugins), so it has no such vector; we attach Hanzo additively via
+  `-c mcp_servers.hanzo.*` (never repoints `CODEX_HOME`, so the user's
+  config/login is intact). Missing server warns, never blocks.
 - **hanzo.id auth + universal usage.** Signed-in runs route model calls through
   the gateway so tokens/cost meter into cloud_usage/o11y: Claude via
   `ANTHROPIC_BASE_URL`+`ANTHROPIC_AUTH_TOKEN`; `dev` via native `hanzo` provider
   + `HANZO_USER_KEY` (custom provider `-c` for non-default network api). Token
-  rides in env, NEVER argv/logs. `--no-route` opts out.
+  rides in env, NEVER argv/logs. `--no-route` opts out. The routing token is the
+  hanzo.id bearer (the gateway accepts it for inference); it is exposed only to
+  the model CLI and the Hanzo MCP server (the repo `.mcp.json` trust-gate keeps
+  it away from repo-declared servers). A per-session, model-scoped, short-TTL key
+  would shrink that blast radius further — that needs a cloud token-exchange
+  endpoint (no such mint exists today; `POST /v1/iam/keys` only rotates the
+  user's one org-wide `hk-` key) and is a tracked cloud follow-on, not a CLI one.
 - **Portable/resumable.** On register we emit a no-secret `status` context event
   (machine-id/host/os/arch/cwd/repo+ref/backend+version; git remote credentials
   scrubbed — `context.rs`). The backend's own resume handle + transcript pointer

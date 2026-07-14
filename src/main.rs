@@ -80,6 +80,12 @@ enum Commands {
         #[arg(long)]
         no_mcp: bool,
 
+        /// Also load the repository's own `.mcp.json` MCP servers. Off by
+        /// default: a repo is untrusted and any server it declares would run
+        /// with your session's model key — only pass this for repos you trust.
+        #[arg(long)]
+        project_mcp: bool,
+
         /// Resume a prior linked session by its cloud session id.
         #[arg(long, value_name = "SESSION_ID")]
         resume: Option<String>,
@@ -375,6 +381,7 @@ async fn main() -> Result<()> {
             no_link,
             no_route,
             no_mcp,
+            project_mcp,
             resume,
             brand,
             task,
@@ -388,6 +395,7 @@ async fn main() -> Result<()> {
                     no_link,
                     route: !no_route,
                     mcp: !no_mcp,
+                    project_mcp,
                     resume,
                     brand,
                     task,
