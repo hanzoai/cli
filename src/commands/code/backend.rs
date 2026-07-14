@@ -70,6 +70,12 @@ pub struct Spec {
     /// Pre-set the backend's session id (Claude `--session-id`) so a linked
     /// interactive run can locate its transcript to tail. Ignored on resume.
     pub preset_session: Option<String>,
+    /// Load the repository's OWN `.mcp.json` MCP servers. Off by default: a repo
+    /// is untrusted, and any MCP server it declares would inherit this process's
+    /// model key. Only set when the user explicitly trusts the repo
+    /// (`--project-mcp`). Backends that never read a repo-local MCP config
+    /// (e.g. `dev`) ignore this.
+    pub project_mcp: bool,
     /// The backend's OWN session id to resume, if this is a `--resume` run.
     pub resume: Option<String>,
     /// Extra args forwarded verbatim to the backend (never widened by us).
