@@ -51,6 +51,7 @@ pub struct Options {
     pub no_link: bool,
     pub route: bool,
     pub mcp: bool,
+    pub project_mcp: bool,
     pub resume: Option<String>,
     pub brand: String,
     pub task: Option<String>,
@@ -80,9 +81,7 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
 
     let mut do_link = effective_link(opts.link, opts.no_link, cfg.code.link);
     if do_link && bearer.is_none() {
-        warn(&format!(
-            "not signed in — run `hanzo login` to link this session. Continuing locally (no cloud stream)."
-        ));
+        warn("not signed in — run `hanzo login` to link this session. Continuing locally (no cloud stream).");
         do_link = false;
     }
 
@@ -95,8 +94,24 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
                 )
             })?;
             let cwd = PathBuf::from(&rec.cwd);
-            if !cwd.exists() {
-                warn(&format!("recorded working dir {} no longer exists", rec.cwd));
+            // Fail closed: resuming a backend in a directory that has vanished
+            // (or was replaced by a file) would run it somewhere unintended.
+            if !cwd.is_dir() {
+                return Err(anyhow!(
+                    "recorded working dir {} no longer exists — resume runs where the session was created",
+                    rec.cwd
+                ));
+            }
+            // Confirm the working tree is still the SAME project. A path can be
+            // reused by a different checkout; surface that before relaunching.
+            if !rec.repo.is_empty() {
+                let now = context::Repo::capture(&cwd);
+                if now.root != rec.repo.root || now.remote != rec.repo.remote {
+                    warn(&format!(
+                        "working dir {} is a different repository than when session {id} was recorded — resuming anyway",
+                        rec.cwd
+                    ));
+                }
             }
             (cwd, Some(rec.backend_session_id.clone()), Some(id.clone()))
         }
@@ -174,6 +189,7 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
         mcp,
         structured,
         preset_session: preset_session.clone(),
+        project_mcp: opts.project_mcp,
         resume: resume_handle.clone(),
         passthrough: opts.passthrough.clone(),
     };
@@ -295,17 +311,72 @@ impl Sink {
     }
 }
 
+/// The largest single pre-parse line we will buffer. Cloud caps an event payload
+/// at 48 KiB (`event::PAYLOAD_BUDGET`), so any legitimate stream/transcript line
+/// is far smaller; a line beyond this is garbage or hostile and is dropped rather
+/// than accumulated, so a backend (or MCP output it relays) can never OOM the
+/// wrapper with one unbounded, newline-free line.
+const MAX_LINE: usize = 1024 * 1024;
+
+/// The most transcript we ingest per poll while tailing, so a single large
+/// append is spread across polls instead of being read into memory whole.
+const MAX_TAIL_CHUNK: u64 = 8 * 1024 * 1024;
+
+/// Read the next newline-delimited line from `reader`, bounded to `cap` bytes.
+/// A line longer than `cap` is discarded — its bytes are still consumed through
+/// the terminating newline so the stream stays aligned — and reading resumes at
+/// the next line. `Ok(None)` signals EOF. Memory is bounded by `cap` (plus one
+/// buffered chunk) regardless of adversarial input.
+async fn next_bounded_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    cap: usize,
+) -> std::io::Result<Option<String>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut overflow = false; // this line already passed `cap`; skip to newline
+    loop {
+        let chunk = reader.fill_buf().await?;
+        if chunk.is_empty() {
+            // EOF: yield a final unterminated line only if it fit within `cap`.
+            return Ok((!buf.is_empty()).then(|| String::from_utf8_lossy(&buf).into_owned()));
+        }
+        match chunk.iter().position(|&b| b == b'\n') {
+            Some(i) => {
+                if !overflow {
+                    buf.extend_from_slice(&chunk[..i]);
+                }
+                reader.consume(i + 1);
+                if overflow {
+                    overflow = false;
+                    buf.clear(); // dropped the over-long line; start the next one
+                    continue;
+                }
+                return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+            }
+            None => {
+                let n = chunk.len();
+                if !overflow {
+                    buf.extend_from_slice(chunk);
+                    if buf.len() > cap {
+                        overflow = true;
+                        buf.clear(); // release memory; keep skipping to '\n'
+                    }
+                }
+                reader.consume(n);
+            }
+        }
+    }
+}
+
 /// Drive a backend's structured line stream through parse → forward/render.
 pub(crate) async fn run_stream<R: AsyncBufRead + Unpin>(
     backend: &dyn Backend,
-    reader: R,
+    mut reader: R,
     client: Option<SessionClient>,
     session_id: Option<String>,
     render: bool,
 ) -> Result<Outcome> {
     let mut sink = Sink { client, session_id, render, out: Outcome::default() };
-    let mut lines = reader.lines();
-    while let Some(line) = lines.next_line().await.context("reading backend stream")? {
+    while let Some(line) = next_bounded_line(&mut reader, MAX_LINE).await.context("reading backend stream")? {
         for m in backend.parse(&line) {
             sink.handle(m).await;
         }
@@ -427,24 +498,31 @@ async fn run_interactive(
 /// TUI is never disturbed.
 async fn tail_transcript(path: PathBuf, client: SessionClient, session_id: String, stop: Arc<AtomicBool>) {
     let mut pos: u64 = 0;
-    let mut buf = String::new();
+    let mut buf: Vec<u8> = Vec::new();
     loop {
         if let Ok(mut f) = tokio::fs::File::open(&path).await {
             let len = f.metadata().await.map(|m| m.len()).unwrap_or(0);
-            if len > pos {
-                if f.seek(std::io::SeekFrom::Start(pos)).await.is_ok() {
-                    let mut chunk = String::new();
-                    if f.read_to_string(&mut chunk).await.is_ok() {
-                        pos = len;
-                        buf.push_str(&chunk);
-                        while let Some(nl) = buf.find('\n') {
-                            let line: String = buf.drain(..=nl).collect();
-                            for m in claude::Claude.parse(line.trim_end()) {
-                                if let Mapped::Event { kind, payload } = m {
-                                    let _ = client.event(&session_id, kind, payload).await;
-                                }
+            if len > pos && f.seek(std::io::SeekFrom::Start(pos)).await.is_ok() {
+                // Read a bounded slice per poll so a huge single append can't be
+                // slurped whole; advance `pos` by what we actually read.
+                let want = (len - pos).min(MAX_TAIL_CHUNK);
+                let mut chunk: Vec<u8> = Vec::new();
+                if (&mut f).take(want).read_to_end(&mut chunk).await.is_ok() {
+                    pos += chunk.len() as u64;
+                    buf.extend_from_slice(&chunk);
+                    while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = buf.drain(..=nl).collect();
+                        let text = String::from_utf8_lossy(&line[..line.len() - 1]);
+                        for m in claude::Claude.parse(text.trim_end()) {
+                            if let Mapped::Event { kind, payload } = m {
+                                let _ = client.event(&session_id, kind, payload).await;
                             }
                         }
+                    }
+                    // Drop an over-long, newline-free line so a hostile or corrupt
+                    // transcript can't grow the buffer without bound.
+                    if buf.len() > MAX_LINE {
+                        buf.clear();
                     }
                 }
             }
@@ -475,22 +553,44 @@ fn banner(
         cwd.display().to_string().dimmed(),
         opts.resume.as_deref().map(|_| "resume").unwrap_or("start").dimmed(),
     );
-    let route_line = if routing {
-        format!("routing: {} (usage metered to your org)", api.trim_start_matches("https://"))
-            .green()
-            .to_string()
-    } else if !opts.route {
-        "routing: off (--no-route; using the backend's own model account)".dimmed().to_string()
-    } else if !signed_in {
-        "routing: off (sign in with `hanzo login` to meter usage universally)".dimmed().to_string()
-    } else {
-        "routing: off".dimmed().to_string()
-    };
+    let (route_line, stream_line) = status_lines(opts, api, routing, signed_in, session);
+    let route_line = if routing { route_line.green() } else { route_line.dimmed() };
+    let stream_line = if session.is_some() { stream_line.green() } else { stream_line.dimmed() };
     println!("  {route_line}");
-    match session {
-        Some(id) => println!("  {}", format!("link: on → {id}").green()),
-        None => println!("  {}", "link: off (local only; pass --link to stream to Hanzo cloud)".dimmed()),
-    }
+    println!("  {stream_line}");
+}
+
+/// The two status lines — model-routing and session-stream — as PLAIN text.
+/// Kept separate from `banner` (which colors + prints) so the wording is
+/// unit-testable and stays honest.
+///
+/// The two are INDEPENDENT: routing decides where prompts + code + tool output
+/// go for inference (`api.hanzo.ai` when on), streaming decides whether the
+/// session is mirrored to mission-control. "off" on one says nothing about the
+/// other — so an unlinked run must never imply "local only" while routing still
+/// ships code to the gateway.
+fn status_lines(
+    opts: &Options,
+    api: &str,
+    routing: bool,
+    signed_in: bool,
+    session: Option<&str>,
+) -> (String, String) {
+    let host = api.trim_start_matches("https://").trim_start_matches("http://");
+    let route = if routing {
+        format!("model routing: on → {host} (prompts + code go here; usage metered to your org)")
+    } else if !opts.route {
+        "model routing: off (--no-route; the backend's own model account, code stays with your provider)".to_string()
+    } else if !signed_in {
+        "model routing: off (sign in with `hanzo login` to route + meter model calls)".to_string()
+    } else {
+        "model routing: off".to_string()
+    };
+    let stream = match session {
+        Some(id) => format!("session stream: on → {id} (live in Hanzo mission-control)"),
+        None => "session stream: off (this session is not mirrored to cloud; pass --link to stream it)".to_string(),
+    };
+    (route, stream)
 }
 
 fn report_link(id: &str) {
@@ -807,6 +907,7 @@ mod tests {
             mcp: None,
             structured: true,
             preset_session: None,
+            project_mcp: false,
             resume: None,
             passthrough: vec![],
         }
@@ -837,6 +938,79 @@ mod tests {
             .collect();
         assert!(kinds.contains(&"message".to_string()));
         assert!(kinds.contains(&"tool-call".to_string()));
+    }
+
+    #[test]
+    fn banner_separates_model_routing_from_session_stream() {
+        let opts = Options {
+            backend: "claude".into(),
+            link: false,
+            no_link: true,
+            route: true,
+            mcp: true,
+            project_mcp: false,
+            resume: None,
+            brand: "hanzo".into(),
+            task: None,
+            passthrough: vec![],
+        };
+        // Routing ON, stream OFF — the exact case LOW-1 flagged: --no-link but
+        // model calls still ship code to the gateway.
+        let (route, stream) = status_lines(&opts, "https://api.hanzo.ai", true, true, None);
+        assert!(route.contains("model routing: on"), "got: {route}");
+        assert!(route.contains("api.hanzo.ai"));
+        assert!(route.contains("prompts + code"));
+        assert!(stream.contains("session stream: off"), "got: {stream}");
+        // Must NOT claim the run is "local only" while routing is on.
+        assert!(!stream.to_lowercase().contains("local only"));
+        assert!(!route.to_lowercase().contains("local only"));
+
+        // --no-route is explicit and distinct from "off because not signed in".
+        let mut o2 = opts;
+        o2.route = false;
+        let (route2, _) = status_lines(&o2, "https://api.hanzo.ai", false, true, None);
+        assert!(route2.contains("model routing: off"));
+        assert!(route2.contains("--no-route"));
+
+        // Stream ON names the session id and mission-control, not "link".
+        let (_, stream_on) = status_lines(&o2, "https://api.hanzo.ai", false, true, Some("sess_x"));
+        assert!(stream_on.contains("session stream: on"));
+        assert!(stream_on.contains("sess_x"));
+    }
+
+    /// MEDIUM-1: one giant newline-free line must NOT be buffered whole (OOM);
+    /// it is dropped and the stream recovers, still forwarding the next line.
+    #[tokio::test]
+    async fn oversize_line_is_dropped_and_stream_recovers() {
+        let mock = MockCloud::start().await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+        // 3 MiB with no newline (over MAX_LINE = 1 MiB), then a valid event.
+        let mut fixture = "x".repeat(3 * 1024 * 1024);
+        fixture.push('\n');
+        fixture
+            .push_str(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"after"}]}}"#);
+        fixture.push('\n');
+
+        // Feed from a spawned writer over a small duplex so the reader drains as
+        // it goes (a blocking write_all of 3 MiB into a small buffer would hang).
+        let (r, mut w) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            let _ = w.write_all(fixture.as_bytes()).await;
+        });
+        let reader = tokio::io::BufReader::new(r);
+
+        let out = run_stream(&Claude, reader, Some(client), Some("sess_big".into()), false)
+            .await
+            .unwrap();
+        assert!(!out.saw_error);
+        // The valid line AFTER the oversize one was still parsed and forwarded.
+        assert!(
+            mock.requests().iter().any(|r| r.path == "/v1/agents/sessions/sess_big/events"
+                && r.json()["kind"] == "message"
+                && r.json()["payload"]["text"] == "after"),
+            "stream must recover and forward the line after the oversize one"
+        );
     }
 
     #[tokio::test]

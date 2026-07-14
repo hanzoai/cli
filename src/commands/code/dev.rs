@@ -242,6 +242,7 @@ mod tests {
             mcp: Some(McpAttach { program: "hanzo-mcp".into(), args: vec!["--project-dir".into(), "/tmp/proj".into()] }),
             structured: true,
             preset_session: None,
+            project_mcp: false,
             resume: None,
             passthrough: vec![],
         }
