@@ -1,0 +1,22 @@
+{
+  "name": "Dracula",
+  "colors": {
+    "autoAccept": "#50fa7b",
+    "background": "#282a36",
+    "bashBorder": "#6272a4",
+    "border": "#6272a4",
+    "claude": "#bd93f9",
+    "diffAdded": "#1e502d",
+    "diffAddedWord": "#50fa7b",
+    "diffRemoved": "#642828",
+    "diffRemovedWord": "#ff5555",
+    "error": "#ff5555",
+    "permission": "#ffb86c",
+    "planMode": "#8be9fd",
+    "secondaryText": "#6272a4",
+    "success": "#50fa7b",
+    "suggestion": "#8be9fd",
+    "text": "#f8f8f2",
+    "warning": "#ffb86c"
+  }
+}
