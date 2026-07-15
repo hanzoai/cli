@@ -104,7 +104,10 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
 
     // Resume: restore cwd + the backend's own resume handle from the local store.
     let (cwd, resume_handle, resume_from) = match &opts.resume {
-        Some(id) => {
+        Some(raw) => {
+            // Accept the id with or without the `sess_` prefix (the resume line prints
+            // the bare form), so `hanzo --resume <id>` matches either way.
+            let id = &(if raw.starts_with("sess_") { raw.clone() } else { format!("sess_{raw}") });
             let rec = ResumeRecord::load(id)?.ok_or_else(|| {
                 anyhow!(
                     "no local record for session {id} on this machine — resume runs where the session was created"
@@ -650,7 +653,9 @@ fn status_lines(
 }
 
 fn report_link(id: &str) {
-    println!("{}", format!("session {id} recorded — resume with `hanzo code --resume {id}`").dimmed());
+    // One clean line — bare id (no `sess_`), `hanzo` (bare = a coding session).
+    let short = id.strip_prefix("sess_").unwrap_or(id);
+    println!("{}", format!("resume: hanzo --resume {short}").magenta());
 }
 
 fn render_event(kind: Kind, payload: &Value) {
