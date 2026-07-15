@@ -24,7 +24,9 @@ mod claude;
 mod context;
 mod dev;
 mod event;
+mod http;
 mod session;
+mod target;
 #[cfg(test)]
 pub(crate) mod testmock;
 
@@ -72,6 +74,14 @@ pub(crate) fn effective_link(link: bool, no_link: bool, persisted: bool) -> bool
     } else {
         persisted
     }
+}
+
+/// The auth gate for registering this machine as a cloud run-target — the SAME
+/// structural gate as the session link. Link INTENT alone is not enough: without a
+/// bearer nothing is built and nothing reaches cloud, so an unauthenticated run
+/// never registers a target, exactly as it never streams a session.
+pub(crate) fn links_target(do_link: bool, has_bearer: bool) -> bool {
+    do_link && has_bearer
 }
 
 pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
@@ -171,6 +181,25 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
                 // cloud hiccup — degrade to a local (unlinked) run.
                 warn(&format!("could not register session ({e}); continuing locally."));
             }
+        }
+    }
+
+    // Register/refresh this machine as a cloud run-target so mission-control knows
+    // WHICH computer the session runs on and whether it can take more work. DETACHED
+    // and BEST-EFFORT: capability + live-metrics probing and the cloud write happen
+    // off the critical path and can NEVER block or fail the coding session. Gated on
+    // the same structural auth check as the session link (`links_target`) — an
+    // unauthenticated run holds no bearer, spawns nothing here, and reaches cloud not
+    // at all.
+    if links_target(do_link, bearer.is_some()) {
+        if let Some(token) = bearer.clone() {
+            let api = api.clone();
+            let machine_id = snapshot.machine_id.clone();
+            let host = snapshot.host.clone();
+            tokio::spawn(async move {
+                let machine = context::Machine::capture().await;
+                target::sync(&api, &token, &machine_id, &host, &machine).await;
+            });
         }
     }
 
@@ -567,6 +596,11 @@ fn banner(
     let stream_line = if session.is_some() { stream_line.green() } else { stream_line.dimmed() };
     println!("  {route_line}");
     println!("  {stream_line}");
+    // A linked run also registers this machine as a run-target — disclose the new
+    // egress (hardware fingerprint + live load) since we enumerate the other two.
+    if session.is_some() {
+        println!("  {}", "run-target: registered (this machine's hostname, capacity, live load)".green());
+    }
 }
 
 /// The two status lines — model-routing and session-stream — as PLAIN text.
@@ -724,6 +758,16 @@ mod tests {
         // persisted `link = false` is the opt-out.
         assert!(effective_link(false, false, true)); // persisted default (on)
         assert!(!effective_link(false, false, false)); // persisted opt-out
+    }
+
+    /// The run-target register uses the SAME structural auth gate as the session
+    /// link: an unauthenticated run (no bearer) never builds a cloud request, and
+    /// `--no-link` suppresses it even when signed in.
+    #[test]
+    fn unauthenticated_run_registers_no_target() {
+        assert!(!links_target(true, false)); // signed out, link intended -> no target
+        assert!(!links_target(false, true)); // signed in, --no-link -> no target
+        assert!(links_target(true, true)); // signed in + link -> register
     }
 
     /// The privacy property that link-by-default must NOT weaken: with no cloud

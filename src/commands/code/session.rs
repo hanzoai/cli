@@ -6,7 +6,7 @@
 //! never sends (and cannot forge) an org — cross-tenant attribution is refused
 //! at the gateway, not trusted from here. See `cloud/clients/agents/sessions.go`.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -92,20 +92,7 @@ impl SessionClient {
 
     async fn send(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value> {
         let url = format!("{}{}", self.api, path);
-        let mut req = self.http.request(method, &url).bearer_auth(&self.token);
-        if let Some(b) = body {
-            req = req.json(b);
-        }
-        let resp = req.send().await.with_context(|| format!("request {url}"))?;
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
-            bail!("{} -> {}: {}", path, status, text.trim());
-        }
-        if text.is_empty() {
-            return Ok(Value::Null);
-        }
-        serde_json::from_str(&text).with_context(|| format!("parsing {path} response"))
+        super::http::send_json(&self.http, method, &url, &self.token, body).await
     }
 }
 
