@@ -84,6 +84,26 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   / `dev exec resume` / `dev resume`), re-attaching the SAME cloud id when the
   session is still live (running/paused) or forking a new one with `resumedFrom`
   lineage when it's terminal (cloud forbids reopening a terminal session).
+- **Run-target (machine capability + live metrics).** A linked run also registers
+  the MACHINE it runs on so mission-control knows WHICH computer a session is on
+  and whether it can take more work. `context::Machine::capture` reads, best-effort
+  and cross-platform (linux `/proc` + macOS `sysctl`/`vm_stat`, GPUs via
+  `nvidia-smi`/`lspci`/`system_profiler`), a static `Spec` (os/arch/cpus/memory/
+  gpus) and a live `Metrics` sample (loadavg/mem used+free/gpu-util). Every probe
+  runs with a hard 2s deadline and a MINIMAL env (PATH only) — a probe can never
+  hang the session, and NO environment value can influence or leak into the data
+  (the same privacy hard-line as the context snapshot). It is upserted to
+  `POST /v1/agents/targets` (label=host, host=host the upsert key, kind `gpu` when
+  GPUs are present else `laptop`, a derived capacity summary, spec+metrics); the
+  minted id is persisted to `~/.local/share/hanzo/code/targets/<machine>.json` and
+  reused for a cheap `PATCH` heartbeat on the next run (falling back to register if
+  the target is gone / the org changed). The metrics timestamp is server-stamped —
+  the CLI never sends `at`. This is DETACHED and BEST-EFFORT: capture + the cloud
+  write happen off the critical path and can never block or fail the coding
+  session, and it is gated on the SAME structural auth check as the session link
+  (`links_target`), so an unauthenticated run registers no target and reaches cloud
+  not at all. One HTTP seam (`http::send_json`) carries both the session and target
+  clients (bearer only; the org is derived server-side from the JWT `owner`).
 - **Sandbox:** never widened — we never pass `--dangerously-skip-permissions`
   (Claude) or `--yolo`/`--full-auto` (`dev`); the user's mode governs, extra
   flags only via trailing `-- <args>` passthrough.
