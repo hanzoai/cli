@@ -100,6 +100,11 @@ enum Commands {
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
 
+        /// Claude theme to apply (Claude backend only), e.g. `dracula`. Defaults
+        /// to the persisted `code.theme` (dracula). `--theme none` skips theming.
+        #[arg(long)]
+        theme: Option<String>,
+
         /// Task to run headless. If omitted, launches an interactive session.
         task: Option<String>,
 
@@ -371,6 +376,7 @@ fn bare() -> Commands {
         project_mcp: false,
         resume: None,
         brand: iam::paths::DEFAULT_BRAND.to_string(),
+        theme: None,
         task: None,
         passthrough: Vec::new(),
     }
@@ -417,6 +423,7 @@ async fn main() -> Result<()> {
             project_mcp,
             resume,
             brand,
+            theme,
             task,
             passthrough,
         } => {
@@ -431,6 +438,7 @@ async fn main() -> Result<()> {
                     project_mcp,
                     resume,
                     brand,
+                    theme,
                     task,
                     passthrough,
                 },
