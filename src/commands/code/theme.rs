@@ -89,8 +89,16 @@ fn apply_with_tweakcc(name: &str) -> Result<()> {
         }
         std::fs::write(&cfg_path, serde_json::to_string_pretty(&cfg)?)?;
     }
-    // Patch the native binary. `--apply` is idempotent + makes its own backup.
-    let out = run_bounded("npx", &["-y", "tweakcc@latest", "--apply"], Duration::from_secs(300))?;
+    // Patch the native binary with ONLY the `themes` patch. tweakcc's full
+    // `--apply` runs every patch, and the non-theme patches can mis-anchor on a
+    // Claude version tweakcc hasn't pinned yet (e.g. 2.1.211 vs its verified
+    // 2.1.162) and corrupt the binary. `--patches themes` is the one we need and
+    // is version-robust; it is idempotent and makes its own backup.
+    let out = run_bounded(
+        "npx",
+        &["-y", "tweakcc@latest", "--apply", "--patches", "themes"],
+        Duration::from_secs(300),
+    )?;
     if !out {
         anyhow::bail!("tweakcc --apply did not complete");
     }
