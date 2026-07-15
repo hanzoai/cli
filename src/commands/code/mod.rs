@@ -5,8 +5,10 @@
 //!
 //! Three things are wired natively:
 //!   1. Session link + live stream — register on `/v1/agents/sessions`, forward
-//!      the backend's structured events, and mark the terminal status. OPT-IN
-//!      (`--link` or persisted `code.link`); default off.
+//!      the backend's structured events, and mark the terminal status. ON by
+//!      default when signed in (streams the user's OWN session to their OWN org,
+//!      derived server-side from the JWT `owner`); `--no-link`, or a persisted
+//!      `code.link = false`, opts out. Structurally silent when unauthenticated.
 //!   2. Hanzo MCP — attached in-session (Claude `--mcp-config`, `dev` `-c`).
 //!   3. hanzo.id auth + universal usage — model calls route through
 //!      api.hanzo.ai so tokens/cost meter into cloud_usage/o11y regardless of
@@ -59,7 +61,9 @@ pub struct Options {
 }
 
 /// Decide whether to stream to cloud: an explicit `--no-link` always wins, then
-/// `--link`, else the persisted default.
+/// `--link`, else the persisted default (`code.link`, ON by default). This only
+/// decides INTENT — the caller still gates on auth, so an unauthenticated run
+/// never streams regardless of what this returns.
 pub(crate) fn effective_link(link: bool, no_link: bool, persisted: bool) -> bool {
     if no_link {
         false
@@ -710,10 +714,34 @@ mod tests {
 
     #[test]
     fn link_gate_no_link_wins_then_link_then_persisted() {
-        assert!(!effective_link(true, true, true)); // --no-link overrides everything
-        assert!(effective_link(true, false, false)); // --link
-        assert!(effective_link(false, false, true)); // persisted default
-        assert!(!effective_link(false, false, false)); // default off
+        // `--no-link` always wins — over `--link` AND over a persisted `true`
+        // (the new default), so the opt-out is absolute.
+        assert!(!effective_link(true, true, true)); // --no-link beats --link
+        assert!(!effective_link(false, true, true)); // --no-link beats persisted true
+        // `--link` forces on when there is no `--no-link`.
+        assert!(effective_link(true, false, false));
+        // No flags: the persisted default decides — ON by default now, and a
+        // persisted `link = false` is the opt-out.
+        assert!(effective_link(false, false, true)); // persisted default (on)
+        assert!(!effective_link(false, false, false)); // persisted opt-out
+    }
+
+    /// The privacy property that link-by-default must NOT weaken: with no cloud
+    /// client (the state an UNAUTHENTICATED run lands in — `run` sets the client
+    /// to `None` when there is no bearer), the stream reaches cloud with nothing,
+    /// even though a cloud endpoint is live. The gate is structural, not a flag.
+    #[tokio::test]
+    async fn no_auth_means_no_stream_even_with_cloud_live() {
+        let mock = MockCloud::start().await;
+        let fixture = concat!(
+            r#"{"type":"system","subtype":"init","session_id":"sid","model":"m"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"private code"}]}}"#, "\n"
+        );
+        let reader = reader_of(fixture).await;
+        // client == None models the unauthenticated run (no bearer -> no client).
+        let out = run_stream(&Claude, reader, None, None, false).await.unwrap();
+        assert_eq!(out.backend_session.as_deref(), Some("sid")); // parsed locally
+        assert!(mock.requests().is_empty(), "no auth -> nothing reaches cloud");
     }
 
     #[tokio::test]

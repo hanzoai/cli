@@ -15,6 +15,11 @@ pub struct Config {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub default_model: Option<String>,
+
+    /// Local SDK checkout paths. Defaulted like every other section so a sparse
+    /// config (e.g. one that sets only `[code]`) still loads — the whole point of
+    /// link-by-default is that a partial or absent config Just Works.
+    #[serde(default)]
     pub sdk_paths: SdkPaths,
 
     /// Selected + custom networks. Mirrors the console network model.
@@ -25,7 +30,7 @@ pub struct Config {
     #[serde(default)]
     pub wallet: WalletState,
 
-    /// `hanzo code` defaults (the opt-in cloud-link setting).
+    /// `hanzo code` defaults (the cloud-link setting; on by default).
     #[serde(default)]
     pub code: CodeState,
 
@@ -35,12 +40,29 @@ pub struct Config {
 }
 
 /// Persisted defaults for `hanzo code`. NON-SECRET.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `link` streams a coding session to the user's OWN Hanzo cloud — the org is
+/// derived server-side from the JWT `owner` claim, the CLI never sends one. It
+/// is ON by default: a signed-in `hanzo code` links unless the user opts out.
+/// Opt out per-invocation with `--no-link`, or persist the opt-out here with
+/// `link = false`. The default only affects SIGNED-IN users: the privacy gate
+/// in `commands::code::run` is structural and unchanged — an UNAUTHENTICATED run
+/// holds no cloud client and streams nothing regardless of this default.
+///
+/// `#[serde(default)]` on the container fills a missing `link` from this
+/// `Default` (true), so an existing config with no `[code]` table — or a
+/// `[code]` table without `link` — still links; only an explicit `link = false`
+/// persists the opt-out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CodeState {
-    /// Opt-in: stream local coding sessions to Hanzo cloud (mission-control).
-    /// Off by default; a `--link`/`--no-link` flag overrides per-invocation.
-    #[serde(default)]
     pub link: bool,
+}
+
+impl Default for CodeState {
+    fn default() -> Self {
+        Self { link: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,5 +198,61 @@ impl Default for SdkPaths {
             rust: home.join("work/hanzo/sdk/src/rs"),
             typescript: home.join("work/hanzo/sdk/src/js"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Link-by-default: a fresh config links a signed-in `hanzo code`.
+    #[test]
+    fn code_link_defaults_on() {
+        assert!(CodeState::default().link);
+        assert!(Config::default().code.link);
+    }
+
+    /// An existing config with no `[code]` table still links by default — the
+    /// `code` field's `#[serde(default)]` fills it from `CodeState::default()`.
+    #[test]
+    fn absent_code_table_links_by_default() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [sdk_paths]
+            python = "/p"
+            go = "/g"
+            rust = "/r"
+            typescript = "/t"
+            "#,
+        )
+        .expect("config parses");
+        assert!(cfg.code.link);
+    }
+
+    /// A `[code]` table with no `link` key links by default — the container-level
+    /// `#[serde(default)]` fills the missing field from `Default` (true).
+    #[test]
+    fn empty_code_table_links_by_default() {
+        let code: CodeState = toml::from_str("").expect("empty table parses");
+        assert!(code.link);
+    }
+
+    /// A sparse config that sets ONLY `[code]` (no `[sdk_paths]`) must still load
+    /// — every non-secret section defaults. This is the exact shape a link-by-
+    /// default rollout writes.
+    #[test]
+    fn config_with_only_code_section_loads() {
+        let cfg: Config = toml::from_str("[code]\nlink = true\n").expect("sparse config loads");
+        assert!(cfg.code.link);
+        assert_eq!(cfg.sdk_paths.python, SdkPaths::default().python);
+    }
+
+    /// `link = false` is the persisted opt-out and stays off.
+    #[test]
+    fn explicit_link_false_persists_the_opt_out() {
+        let off: CodeState = toml::from_str("link = false").expect("parses");
+        assert!(!off.link);
+        let on: CodeState = toml::from_str("link = true").expect("parses");
+        assert!(on.link);
     }
 }

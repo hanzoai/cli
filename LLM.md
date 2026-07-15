@@ -26,8 +26,11 @@ cargo clippy --bin hanzo
   (default node URL = the active network's `api`).
 - `deploy` — targets the active network; the active wallet signs (auto-provisions
   one if none, on a real deploy).
-- `code [--backend claude|dev] [--link] [--project-mcp] [--resume <id>] [task]` —
-  wrap a local coding agent as a session-aware, portable, trackable object (below).
+- `code [--backend claude|dev] [--no-link] [--project-mcp] [--resume <id>] [task]` —
+  wrap a local coding agent as a session-aware, portable, trackable object; a
+  signed-in run links to your cloud by default, `--no-link` opts out (below).
+- bare `hanzo` (no subcommand) — shorthand for a linked interactive `hanzo code`
+  (link forced on; falls back to a local run when nobody is signed in).
 - `agent`, `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
 
 ## `hanzo code` (`src/commands/code/`) — session-aware coding wrapper
@@ -35,15 +38,19 @@ Wraps Claude Code (`claude`) or `dev` (codex) with three things wired natively,
 plus resumable/portable sessions. ONE trait (`backend::Backend`) both backends
 satisfy; the orchestrator (register → spawn → stream → finalize) is identical.
 
-- **Session link + live stream (opt-in).** `--link` (or persisted `code.link`;
-  default off) registers on `POST /v1/agents/sessions` with the hanzo.id bearer
-  and forwards the backend's structured events, mapped to cloud's closed vocab
+- **Session link + live stream (on by default when signed in).** A signed-in run
+  links unless you opt out with `--no-link` (or a persisted `code.link = false`);
+  it registers on `POST /v1/agents/sessions` with the hanzo.id bearer and forwards
+  the backend's structured events, mapped to cloud's closed vocab
   (`message|tool-call|spawn|log|status|control`; `session.rs`+`event.rs`). The
   gateway derives the org from the JWT `owner` claim — the CLI never sends an org,
-  so cross-tenant attribution is impossible. Privacy gate is STRUCTURAL: unlinked
-  runs don't request the structured stream and hold no client, so nothing can
-  reach cloud. Headless (`[task]`) = stdout stream-json parsed+forwarded+mirrored;
-  interactive = native TTY + (Claude) transcript tail at
+  so a session only ever streams to its OWN org and cross-tenant attribution is
+  impossible. Privacy gate is STRUCTURAL and unchanged by the default: an
+  UNAUTHENTICATED run has no bearer, so it holds no client, doesn't request the
+  structured stream, and nothing can reach cloud — link-by-default therefore only
+  affects users who are signed in and own the cloud their session streams to.
+  Headless (`[task]`) = stdout stream-json parsed+forwarded+mirrored; interactive
+  = native TTY + (Claude) transcript tail at
   `~/.claude/projects/<slug>/<sid>.jsonl`.
 - **Hanzo MCP attached — repo `.mcp.json` is trust-gated.** `resolve_mcp` →
   `hanzo-mcp` (or `uvx hanzo-mcp`) `--project-dir <cwd>`. Claude via
