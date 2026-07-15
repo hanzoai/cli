@@ -614,11 +614,6 @@ fn banner(
     let stream_line = if session.is_some() { stream_line.green() } else { stream_line.dimmed() };
     println!("  {route_line}");
     println!("  {stream_line}");
-    // A linked run also registers this machine as a run-target — disclose the new
-    // egress (hardware fingerprint + live load) since we enumerate the other two.
-    if session.is_some() {
-        println!("  {}", "run-target: registered (this machine's hostname, capacity, live load)".green());
-    }
 }
 
 /// The two status lines — model-routing and session-stream — as PLAIN text.
@@ -648,7 +643,7 @@ fn status_lines(
         "model routing: off".to_string()
     };
     let stream = match session {
-        Some(id) => format!("session stream: on → {id} (live in Hanzo mission-control)"),
+        Some(id) => format!("session stream: on → https://hanzo.bot/session/{id}"),
         None => "session stream: off (this session is not mirrored to cloud; pass --link to stream it)".to_string(),
     };
     (route, stream)
