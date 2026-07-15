@@ -601,15 +601,13 @@ fn banner(
     session: Option<&str>,
     theme: Option<&str>,
 ) {
-    // The theme tag is the visible "you're running hanzo-wrapped claude" signal.
-    let theme_tag = theme.map(|t| format!(" · 🧛 {t}")).unwrap_or_default();
+    let _ = theme; // theme is applied silently; not shown on the boot line
     println!(
-        "{} {} · {} · {}{}",
+        "{} {} · {} · {}",
         "hanzo code".bold(),
         backend.cyan(),
         cwd.display().to_string().dimmed(),
         opts.resume.as_deref().map(|_| "resume").unwrap_or("start").dimmed(),
-        theme_tag.magenta(),
     );
     let (route_line, stream_line) = status_lines(opts, api, routing, signed_in, session);
     let route_line = if routing { route_line.green() } else { route_line.dimmed() };
