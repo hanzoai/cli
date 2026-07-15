@@ -119,6 +119,12 @@ enum Commands {
         /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
+
+        /// Store a hanzo.id bearer token directly instead of the browser flow
+        /// (like `gh auth login --with-token`). Reads the token from stdin when
+        /// given the value `-`, so it never lands in argv or shell history.
+        #[arg(long, value_name = "TOKEN")]
+        token: Option<String>,
     },
 
     /// Show the currently signed-in identity
@@ -445,9 +451,36 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Login { brand } => {
-            iam::login::login(&brand).await?;
-        }
+        Commands::Login { brand, token } => match token {
+            Some(t) => {
+                // Read from stdin when `-` so the token never rides argv/history.
+                let raw = if t == "-" {
+                    use std::io::Read;
+                    let mut s = String::new();
+                    std::io::stdin().read_to_string(&mut s)?;
+                    s
+                } else {
+                    t
+                };
+                let raw = raw.trim();
+                if raw.is_empty() {
+                    anyhow::bail!("no token provided");
+                }
+                iam::token::store(
+                    &brand,
+                    &iam::token::TokenSet {
+                        access_token: raw.to_string(),
+                        token_type: "Bearer".to_string(),
+                        refresh_token: None,
+                        id_token: None,
+                        expires_in: None,
+                        scope: None,
+                    },
+                )?;
+                println!("signed in to {brand} (token stored in the OS keychain)");
+            }
+            None => iam::login::login(&brand).await?,
+        },
         Commands::Whoami { brand } => {
             iam::login::whoami(&brand).await?;
         }
