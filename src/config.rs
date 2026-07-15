@@ -57,15 +57,17 @@ pub struct Config {
 #[serde(default)]
 pub struct CodeState {
     pub link: bool,
-    /// The Claude theme `hanzo code claude` applies by default. "dracula" is the
-    /// Hanzo default (the "vampire" look); "none" disables theming. Overridden
-    /// per-invocation with `--theme`.
+    /// The Claude theme `hanzo code claude` applies by default. "auto" honors the
+    /// user's light/dark preference — Alucard (light Dracula) for a light theme,
+    /// Dracula (dark) otherwise. Or name one ("dracula"/"alucard"); "none" disables.
+    /// Overridden per-invocation with `--theme`. The user's own theme is restored
+    /// when the session ends.
     pub theme: String,
 }
 
 impl Default for CodeState {
     fn default() -> Self {
-        Self { link: true, theme: "dracula".to_string() }
+        Self { link: true, theme: "auto".to_string() }
     }
 }
 
