@@ -40,6 +40,9 @@ struct Config {
     force_status: Option<u16>,
     /// Status string returned by GET /v1/agents/sessions/:id.
     get_status: String,
+    /// When true, GET/PATCH on a target id returns 404 (target gone / other org),
+    /// so the run-target sync's register fallback can be proven.
+    targets_missing: bool,
 }
 
 pub struct MockCloud {
@@ -49,17 +52,23 @@ pub struct MockCloud {
 
 impl MockCloud {
     pub async fn start() -> MockCloud {
-        Self::with(Config { force_status: None, get_status: "paused".into() }).await
+        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: false }).await
     }
 
     /// A mock whose GET returns the given session status (resume tests).
     pub async fn start_get_status(status: &str) -> MockCloud {
-        Self::with(Config { force_status: None, get_status: status.into() }).await
+        Self::with(Config { force_status: None, get_status: status.into(), targets_missing: false }).await
     }
 
     /// A mock that answers every request with `code` (error-path tests).
     pub async fn start_status(code: u16) -> MockCloud {
-        Self::with(Config { force_status: Some(code), get_status: "paused".into() }).await
+        Self::with(Config { force_status: Some(code), get_status: "paused".into(), targets_missing: false }).await
+    }
+
+    /// A mock that 404s a target by id (register still works) — proves the
+    /// run-target sync heartbeat→register fallback.
+    pub async fn start_target_missing() -> MockCloud {
+        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: true }).await
     }
 
     async fn with(cfg: Config) -> MockCloud {
@@ -173,6 +182,24 @@ fn respond(cfg: &Config, method: &str, path: &str) -> (String, String) {
         return (
             "201 Created".into(),
             format!(r#"{{"id":"{id}","rootSessionId":"{id}","status":"running"}}"#),
+        );
+    }
+    // run-target register (upsert-by-host) -> a targetView with an id.
+    if method == "POST" && path == "/v1/agents/targets" {
+        return (
+            "201 Created".into(),
+            r#"{"id":"tgt_mock","label":"evo","kind":"gpu","status":"online","sessions":0,"running":0}"#.to_string(),
+        );
+    }
+    // run-target detail / heartbeat -> 404 when the target is "gone", else echo id.
+    if (method == "PATCH" || method == "GET") && path.starts_with("/v1/agents/targets/") {
+        if cfg.targets_missing {
+            return ("404 Not Found".into(), r#"{"error":"target not found"}"#.to_string());
+        }
+        let id = path.trim_start_matches("/v1/agents/targets/");
+        return (
+            "200 OK".into(),
+            format!(r#"{{"id":"{id}","label":"evo","kind":"gpu","status":"online","sessions":0,"running":0}}"#),
         );
     }
     // GET detail -> configured status
