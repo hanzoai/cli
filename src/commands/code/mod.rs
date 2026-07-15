@@ -209,17 +209,12 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
         }
     }
 
-    // Claude theme (the "vampire" default) — Hanzo owns which theme, tweakcc does
-    // the binary patch. Best-effort: never blocks the launch. `dev` has no themes.
-    let active_theme = if kind == BackendKind::Claude {
-        let t = theme::effective(opts.theme.as_deref(), &cfg.code.theme);
-        if let Some(name) = &t {
-            let _ = theme::ensure(name);
-        }
-        t
-    } else {
-        None
-    };
+    // Claude theme (Dracula dark / Alucard light, auto by the user's preference).
+    // Native — writes ~/.claude/themes + selects it; never patches Claude. The guard
+    // restores the user's own theme when this session ends (any exit path). `dev`
+    // has no Claude themes. Held to end-of-run so plain `claude` keeps its theme.
+    let _theme_guard =
+        (kind == BackendKind::Claude).then(|| theme::apply(opts.theme.as_deref(), &cfg.code.theme));
 
     banner(
         &opts,
@@ -229,7 +224,7 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
         routing.is_some(),
         bearer.is_some(),
         session_id.as_deref(),
-        active_theme.as_deref(),
+        None,
     );
 
     let structured = client.is_some() && session_id.is_some();
