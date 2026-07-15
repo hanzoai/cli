@@ -2,9 +2,12 @@
 //! machine-local resume store.
 //!
 //! PRIVACY (hard line): the snapshot is cwd / repo / ref / host / os / arch /
-//! machine-id ONLY — it is BUILT from explicit fields, never from the process
-//! environment, so no secret or token-bearing env var can leak into it. Git
-//! remote URLs are scrubbed of embedded credentials before they are recorded.
+//! machine-id ONLY. It is built from explicit system sources, never from a
+//! secret- or token-bearing environment variable, so no credential can leak into
+//! it. Machine capability + metrics read only consts + `/proc` + cleared-env probe
+//! stdout (`Machine::capture`); the sole environment read is the hostname fallback
+//! ($HOSTNAME/$COMPUTERNAME when the `hostname` command is absent — a machine name,
+//! never a secret). Git remote URLs are scrubbed of embedded credentials.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -12,6 +15,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 
 /// A repository's identity at snapshot time (all fields optional / best-effort).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -158,7 +162,14 @@ impl Machine {
                 memory: total,
                 gpus,
             },
-            metrics: Metrics { load1, load5, load15, mem_used: used, mem_free: free, gpu_util },
+            metrics: Metrics {
+                load1: finite(load1),
+                load5: finite(load5),
+                load15: finite(load15),
+                mem_used: used,
+                mem_free: free,
+                gpu_util: finite(gpu_util),
+            },
         }
     }
 }
@@ -189,6 +200,11 @@ const MAX_GPUS: usize = 32;
 /// (its child killed on drop) so capability/metrics gathering can NEVER stall the
 /// session that spawned it.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The most probe stdout we read. Any of these tools (nvidia-smi/lspci/vm_stat/
+/// sysctl/system_profiler) emits well under this; a flood past it is truncated so a
+/// hostile PATH binary can never balloon memory.
+const PROBE_STDOUT_CAP: u64 = 256 * 1024;
 
 /// Logical core count (respects cgroup/affinity limits — the real capacity).
 fn cpus() -> u32 {
@@ -275,12 +291,23 @@ async fn probe(program: &str, args: &[&str], timeout: Duration) -> Option<String
     if let Some(path) = std::env::var_os("PATH") {
         cmd.env("PATH", path);
     }
-    let child = cmd.spawn().ok()?;
-    let out = tokio::time::timeout(timeout, child.wait_with_output()).await.ok()?.ok()?;
-    if !out.status.success() {
+    let mut child = cmd.spawn().ok()?;
+    // Read at most PROBE_STDOUT_CAP bytes: a hostile probe that floods stdout can
+    // never balloon memory. The bounded read fills, `out` drops (closing our read
+    // end so a still-writing child gets EPIPE and exits), and a child that ignores
+    // that is reaped when the deadline fires and `kill_on_drop` kills it.
+    let mut buf = Vec::new();
+    let collect = async {
+        if let Some(mut out) = child.stdout.take() {
+            let _ = (&mut out).take(PROBE_STDOUT_CAP).read_to_end(&mut buf).await;
+        }
+        child.wait().await
+    };
+    let status = tokio::time::timeout(timeout, collect).await.ok()?.ok()?;
+    if !status.success() {
         return None;
     }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let s = String::from_utf8_lossy(&buf).trim().to_string();
     (!s.is_empty()).then_some(s)
 }
 
@@ -297,7 +324,7 @@ fn parse_meminfo(s: &str) -> (i64, i64, i64) {
     };
     let total = kib("MemTotal:");
     let avail = kib("MemAvailable:");
-    (nonneg(total), nonneg(total - avail), nonneg(avail))
+    (nonneg(total), nonneg(total.saturating_sub(avail)), nonneg(avail))
 }
 
 /// Parse the 1/5/15-minute load averages from a whitespace-separated string
@@ -326,7 +353,7 @@ fn parse_vm_stat(s: &str) -> (i64, i64) {
             .unwrap_or(0)
     };
     let free = pages("Pages free:").saturating_mul(page);
-    let used = (pages("Pages active:") + pages("Pages wired down:")).saturating_mul(page);
+    let used = pages("Pages active:").saturating_add(pages("Pages wired down:")).saturating_mul(page);
     (nonneg(used), nonneg(free))
 }
 
@@ -507,6 +534,16 @@ fn clamp_model(s: &str) -> String {
 /// Clamp an i64 to be non-negative (a garbage/negative size becomes 0).
 fn nonneg(n: i64) -> i64 {
     n.max(0)
+}
+
+/// A finite, non-negative float for a wire metric. A garbled probe emitting inf/nan
+/// (which serde would turn into JSON `null`, a silent type deviation) becomes 0.
+fn finite(x: f64) -> f64 {
+    if x.is_finite() && x >= 0.0 {
+        x
+    } else {
+        0.0
+    }
 }
 
 /// Resolve a stable, privacy-clean machine id: a random id generated once and
@@ -1043,5 +1080,48 @@ Pages wired down:                     80000.";
         assert_eq!(TargetRecord::load(&machine).unwrap().unwrap(), rec);
         let _ = std::fs::remove_file(target_path(&machine));
         assert!(TargetRecord::load(&machine).unwrap().is_none());
+    }
+
+    // ---- red-hardening: bound the probe, saturate the math, coerce non-finite ----
+
+    #[tokio::test]
+    async fn probe_stdout_is_capped_under_a_flood() {
+        // A probe that floods stdout is truncated to the cap, never buffered whole.
+        let n = 32 * 1024 * 1024usize; // 32 MiB flood
+        let script = format!("head -c {n} /dev/zero | tr '\\0' a");
+        if let Some(s) = probe("sh", &["-c", &script], PROBE_TIMEOUT).await {
+            assert!(
+                s.len() as u64 <= PROBE_STDOUT_CAP,
+                "flood must be capped at {PROBE_STDOUT_CAP}, got {}",
+                s.len()
+            );
+        }
+    }
+
+    #[test]
+    fn parse_meminfo_saturates_instead_of_panicking() {
+        // A faked /proc/meminfo (negative total, max available) must not panic even in
+        // a debug build (overflow-checks on) — saturating_sub keeps used >= 0.
+        let s = "MemTotal:       -1 kB\nMemAvailable:   9223372036854775807 kB\n";
+        let (_total, used, _free) = parse_meminfo(s);
+        assert!(used >= 0);
+    }
+
+    #[test]
+    fn parse_vm_stat_saturates_instead_of_panicking() {
+        let s = "Mach Virtual Memory Statistics: (page size of 4096 bytes)\n\
+                 Pages active:              9223372036854775807.\n\
+                 Pages wired down:          9223372036854775807.\n";
+        let (used, _free) = parse_vm_stat(s);
+        assert!(used >= 0);
+    }
+
+    #[test]
+    fn finite_coerces_nonfinite_and_negative_to_zero() {
+        assert_eq!(finite(f64::NAN), 0.0);
+        assert_eq!(finite(f64::INFINITY), 0.0);
+        assert_eq!(finite(f64::NEG_INFINITY), 0.0);
+        assert_eq!(finite(-1.0), 0.0);
+        assert_eq!(finite(2.5), 2.5);
     }
 }
