@@ -1,15 +1,16 @@
 {
-  "name": "Dracula",
-  "colors": {
+  "name": "dracula",
+  "base": "dark",
+  "overrides": {
     "autoAccept": "#50fa7b",
     "background": "#282a36",
     "bashBorder": "#6272a4",
     "border": "#6272a4",
     "claude": "#bd93f9",
     "diffAdded": "#1e502d",
-    "diffAddedWord": "#50fa7b",
+    "diffAddedWord": "#2d7a45",
     "diffRemoved": "#642828",
-    "diffRemovedWord": "#ff5555",
+    "diffRemovedWord": "#a53535",
     "error": "#ff5555",
     "permission": "#ffb86c",
     "planMode": "#8be9fd",
