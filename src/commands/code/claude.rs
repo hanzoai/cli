@@ -98,9 +98,16 @@ impl Backend for Claude {
         }
 
         // Route model calls through the Hanzo gateway (Bearer via env, not argv).
+        // Make our Bearer the SOLE credential in the child: a stray
+        // `ANTHROPIC_API_KEY` inherited from the shell would otherwise win Claude's
+        // auth precedence — either shadowing the gateway route (falling back to the
+        // user's own login) OR, worse, being sent as `x-api-key` to our
+        // `ANTHROPIC_BASE_URL`, leaking the user's personal Anthropic key to us. We
+        // clear it so `ANTHROPIC_AUTH_TOKEN` (Bearer) is unambiguous.
         if let Some(r) = &spec.routing {
             cmd.env("ANTHROPIC_BASE_URL", r.api.trim_end_matches('/'));
             cmd.env("ANTHROPIC_AUTH_TOKEN", &r.token);
+            cmd.env_remove("ANTHROPIC_API_KEY");
         }
 
         cmd.args(&spec.passthrough);
@@ -309,6 +316,14 @@ mod tests {
         assert_eq!(env.get("ANTHROPIC_BASE_URL").map(String::as_str), Some("https://api.hanzo.ai"));
         assert_eq!(env.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str), Some("JWT"));
         assert!(!args.iter().any(|a| a.contains("JWT")), "token must not be in argv");
+        // A stray ANTHROPIC_API_KEY must be CLEARED in the child when routing, so our
+        // Bearer is the sole credential: never shadowed by the user's own login, and
+        // the user's personal key is never sent to our gateway. `env_remove` surfaces
+        // in get_envs() as a None value for the key.
+        let removed = std
+            .get_envs()
+            .any(|(k, v)| k.to_string_lossy() == "ANTHROPIC_API_KEY" && v.is_none());
+        assert!(removed, "ANTHROPIC_API_KEY must be removed from the routed child env");
     }
 
     #[test]

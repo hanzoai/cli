@@ -1042,6 +1042,7 @@ mod tests {
             resume: None,
             brand: "hanzo".into(),
             task: None,
+            theme: None,
             passthrough: vec![],
         };
         // Routing ON, stream OFF — the exact case LOW-1 flagged: --no-link but
