@@ -27,6 +27,7 @@ mod event;
 mod http;
 mod session;
 mod target;
+mod theme;
 #[cfg(test)]
 pub(crate) mod testmock;
 
@@ -58,6 +59,8 @@ pub struct Options {
     pub project_mcp: bool,
     pub resume: Option<String>,
     pub brand: String,
+    /// Claude theme to apply (None → the persisted `code.theme`; "none" → skip).
+    pub theme: Option<String>,
     pub task: Option<String>,
     pub passthrough: Vec<String>,
 }
@@ -203,6 +206,18 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
         }
     }
 
+    // Claude theme (the "vampire" default) — Hanzo owns which theme, tweakcc does
+    // the binary patch. Best-effort: never blocks the launch. `dev` has no themes.
+    let active_theme = if kind == BackendKind::Claude {
+        let t = theme::effective(opts.theme.as_deref(), &cfg.code.theme);
+        if let Some(name) = &t {
+            let _ = theme::ensure(name);
+        }
+        t
+    } else {
+        None
+    };
+
     banner(
         &opts,
         backend.label(),
@@ -211,6 +226,7 @@ pub async fn run(cfg: &Config, opts: Options) -> Result<()> {
         routing.is_some(),
         bearer.is_some(),
         session_id.as_deref(),
+        active_theme.as_deref(),
     );
 
     let structured = client.is_some() && session_id.is_some();
@@ -583,13 +599,17 @@ fn banner(
     routing: bool,
     signed_in: bool,
     session: Option<&str>,
+    theme: Option<&str>,
 ) {
+    // The theme tag is the visible "you're running hanzo-wrapped claude" signal.
+    let theme_tag = theme.map(|t| format!(" · 🧛 {t}")).unwrap_or_default();
     println!(
-        "{} {} · {} · {}",
+        "{} {} · {} · {}{}",
         "hanzo code".bold(),
         backend.cyan(),
         cwd.display().to_string().dimmed(),
         opts.resume.as_deref().map(|_| "resume").unwrap_or("start").dimmed(),
+        theme_tag.magenta(),
     );
     let (route_line, stream_line) = status_lines(opts, api, routing, signed_in, session);
     let route_line = if routing { route_line.green() } else { route_line.dimmed() };
