@@ -41,8 +41,28 @@ pub fn ensure(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Claude's built-in themes are selected by bare name; a custom theme (a file in
+/// ~/.claude/themes) is selected by the `custom:<name>` ref (Claude's own scheme).
+const BUILTIN: &[&str] = &[
+    "dark",
+    "light",
+    "dark-daltonized",
+    "light-daltonized",
+    "dark-ansi",
+    "light-ansi",
+];
+
+fn theme_ref(name: &str) -> String {
+    if BUILTIN.contains(&name) {
+        name.to_string()
+    } else {
+        format!("custom:{name}")
+    }
+}
+
 /// Select `name` as Claude's active theme in `~/.claude/settings.json`, preserving
-/// every other setting. Best-effort — a missing/garbled file is skipped.
+/// every other setting. A custom theme is written as `custom:<name>` (Claude's own
+/// selection ref). Best-effort — a missing/garbled file is skipped.
 fn set_active(name: &str) {
     let Some(path) = claude_settings() else { return };
     let mut cfg: serde_json::Value = std::fs::read_to_string(&path)
@@ -50,7 +70,7 @@ fn set_active(name: &str) {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| serde_json::json!({}));
     if let Some(obj) = cfg.as_object_mut() {
-        obj.insert("theme".into(), serde_json::Value::String(name.to_string()));
+        obj.insert("theme".into(), serde_json::Value::String(theme_ref(name)));
         if let Ok(s) = serde_json::to_string_pretty(&cfg) {
             let _ = std::fs::write(&path, s);
         }
