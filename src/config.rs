@@ -8,26 +8,14 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use crate::private;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The sidecar files `update` needs next to the config.
-fn lock_path(path: &Path) -> PathBuf {
-    sidecar(path, "lock")
-}
-
-fn tmp_path(path: &Path) -> PathBuf {
-    // The pid keeps two processes from colliding on the temp name. They cannot
-    // actually race (the lock serialises writers), but a crashed run can leave a
-    // stale temp behind and it must not be mistaken for another process's.
-    sidecar(path, &format!("{}.tmp", std::process::id()))
-}
-
-/// `…/config.toml` + `ext` → `…/config.toml.<ext>`, in the SAME directory so the
-/// temp file renames atomically onto the target.
-fn sidecar(path: &Path, ext: &str) -> PathBuf {
+/// The lock `update` takes, beside the config: `…/config.toml.lock`.
+pub(crate) fn lock_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{ext}"));
+    name.push(".lock");
     path.with_file_name(name)
 }
 
@@ -53,8 +41,12 @@ impl Lock {
             .truncate(false)
             .open(&lock)
             .with_context(|| format!("opening config lock {}", lock.display()))?;
-        // Exclusive, and BLOCKING: the critical section is a parse + a rename, so
-        // waiting is bounded by that rather than by any network or keychain I/O.
+        // Exclusive, and BLOCKING. Every writer stalls until this releases, so
+        // the critical section MUST stay a parse + a rename. Nothing that can
+        // block on a human, a network or the OS keychain may run inside it: a
+        // keyring read can open a GUI prompt and wait indefinitely, which would
+        // hang every other `hanzo` process on the box with no explanation. See
+        // `iam::store::switch_in`, which reads the keychain OUTSIDE this lock.
         f.lock()
             .with_context(|| format!("locking config {}", lock.display()))?;
         Ok(Self(f))
@@ -70,10 +62,6 @@ impl Drop for Lock {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    pub default_model: Option<String>,
-
     /// Signed-in identities + the active one per brand. NEVER holds a token.
     #[serde(default)]
     pub auth: AuthState,
@@ -300,36 +288,13 @@ impl Config {
         Ok(out)
     }
 
-    /// Write the whole config so that a reader sees either the old file or the
-    /// new one — never a half-written one.
-    ///
-    /// `fs::write` truncates in place: a crash (or a full disk) mid-write leaves
-    /// TRUNCATED TOML, which `load` then rejects — breaking every command, not
-    /// just the one that crashed. Instead write a temp file in the SAME directory
-    /// (so `rename` stays within one filesystem and is therefore atomic), fsync
-    /// it so the bytes are durable before the swap, then rename over the target.
+    /// Write the whole config atomically, owner-only. See [`crate::private`] —
+    /// the ONE way anything in this CLI writes a file it does not want torn or
+    /// world-readable.
     fn write_atomic(&self, path: &Path) -> Result<()> {
-        use std::io::Write;
-
         let toml = toml::to_string_pretty(self).context("serializing config")?;
-        let tmp = tmp_path(path);
-        // Scoped so the handle is closed before the rename (required on Windows).
-        let write = || -> Result<()> {
-            let mut f = std::fs::File::create(&tmp)
-                .with_context(|| format!("creating {}", tmp.display()))?;
-            f.write_all(toml.as_bytes())?;
-            f.sync_all()?; // durable BEFORE the swap, else the rename can land empty
-            Ok(())
-        };
-        if let Err(e) = write() {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-        if let Err(e) = std::fs::rename(&tmp, path) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e).with_context(|| format!("writing config {}", path.display()));
-        }
-        Ok(())
+        private::write(path, toml.as_bytes())
+            .with_context(|| format!("writing config {}", path.display()))
     }
 
     /// Point this config at a throwaway file so a test that exercises `save`
@@ -344,9 +309,6 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            api_key: None,
-            base_url: Some("https://api.hanzo.ai".to_string()),
-            default_model: Some("claude-3-opus".to_string()),
             auth: AuthState::default(),
             sdk_paths: SdkPaths::default(),
             network: NetworkState::default(),
@@ -496,18 +458,15 @@ mod tests {
         let good = std::fs::read_to_string(&path).unwrap();
         assert!(good.contains("hanzo/z"));
 
-        // A temp file left behind by a crashed run must not be mistaken for the
-        // config, and must not survive the next successful write.
-        let tmp = tmp_path(&path);
-        std::fs::write(&tmp, "this = \"torn").unwrap(); // deliberately invalid TOML
         cfg.update(|c| {
             c.auth.active.insert("lux".to_string(), "lux/z".to_string());
             Ok(())
         })
         .unwrap();
-        assert!(!tmp.exists(), "temp file must be renamed away, not orphaned");
 
-        // The real config is intact and parses — the torn temp never became it.
+        // Both writes landed whole and the file still parses. (The temp file's
+        // own lifecycle — reused, never orphaned — belongs to `private`, which
+        // owns it; asserting it here would only re-test someone else's unit.)
         let back = Config::load(Some(path.clone())).expect("config still parses");
         assert_eq!(back.auth.active.get("hanzo").map(String::as_str), Some("hanzo/z"));
         assert_eq!(back.auth.active.get("lux").map(String::as_str), Some("lux/z"));

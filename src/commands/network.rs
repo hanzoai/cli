@@ -185,8 +185,8 @@ pub fn add(
         api,
         explorer,
     };
-    // Upsert by name.
-    cfg.network.custom.retain(|n| n.name != name);
+    // Upsert by name, against fresh on-disk state (`update` re-reads, so an edit
+    // out here would just be discarded).
     cfg.update(|c| {
         c.network.custom.retain(|x| x.name != net.name);
         c.network.custom.push(net.clone());

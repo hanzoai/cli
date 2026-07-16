@@ -124,9 +124,21 @@ pub(crate) fn add_in(
 
 /// Set the active identity, verifying we actually HOLD its credential.
 ///
-/// Resolution, verification and the commit all happen inside one `update`, i.e.
-/// against fresh on-disk state under the lock — so a concurrent `logout` cannot
-/// leave the pointer aimed at an identity that no longer exists.
+/// The keychain read happens OUTSIDE `cfg.update`, and MUST stay outside.
+/// `update` holds an exclusive cross-process lock across its closure, while a
+/// keyring read can block for as long as a human takes: the OS keychain
+/// auto-locks on idle, and reading it then opens a GUI prompt and waits (the
+/// `keyring` crate sets no timeout). Reading it under the lock would stall EVERY
+/// other `hanzo` process that writes config — including a `hanzo code` whose
+/// migration calls `update` — with no explanation and the prompt in another
+/// window. Switching stays instant and never prompts while holding the lock.
+///
+/// Correctness does not need it in the transaction, because THE KEYCHAIN IS NOT
+/// IN THE TRANSACTION: `token::store` and `token::delete` all run outside the
+/// lock, so an in-lock read would be TOCTOU anyway — a concurrent `logout` can
+/// delete the credential the instant this releases. The real guarantee is the
+/// in-lock re-check of the INDEX below, which catches a concurrent de-index and
+/// fails closed. Hoisting the read preserves every case.
 pub(crate) fn switch_in(
     v: &dyn Vault,
     cfg: &mut Config,
@@ -134,25 +146,34 @@ pub(crate) fn switch_in(
     sel: Option<Selector>,
 ) -> Result<Identity> {
     oauth::server_url(brand)?; // reject unknown brands before touching anything
+    let target = match &sel {
+        Some(s) => resolve_selector(cfg, brand, s)?,
+        None => toggle_target(cfg, brand)?,
+    };
+    // The index is only a pointer; the credential is the thing. Switching onto an
+    // indexed-but-unheld identity would print a billing org we have no token for
+    // and leave every later command saying "not signed in". Never advertise money
+    // we cannot verify — fail closed instead.
+    if token::load(v, brand, &target)?.is_none() {
+        bail!(
+            "{brand} identity {target} is indexed but its credential is not in the keychain \
+             — run `hanzo login{}` to sign in as it again",
+            brand_flag(brand)
+        );
+    }
     cfg.update(|c| {
-        let target = match &sel {
-            Some(s) => resolve_selector(c, brand, s)?,
-            None => toggle_target(c, brand)?,
-        };
-        // The index is only a pointer; the credential is the thing. Switching
-        // onto an indexed-but-unheld identity would print a billing org we have
-        // no token for and leave every later command saying "not signed in".
-        // Never advertise money we cannot verify — fail closed instead.
-        if token::load(v, brand, &target)?.is_none() {
+        // Re-check under the lock against fresh state: a `logout` that de-indexed
+        // this identity between the resolve above and this commit must not leave
+        // the pointer aimed at an identity that no longer exists.
+        if !list(c, brand).contains(&target) {
             bail!(
-                "{brand} identity {target} is indexed but its credential is not in the keychain \
-                 — run `hanzo login{}` to sign in as it again",
-                brand_flag(brand)
+                "no longer signed in to {brand} as {target} — re-run `hanzo switch`"
             );
         }
         set_active(c, brand, &target);
-        Ok(target)
-    })
+        Ok(())
+    })?;
+    Ok(target)
 }
 
 pub(crate) fn active_token_in(
@@ -725,6 +746,120 @@ mod tests {
             "both identities survive; neither writer clobbered the other"
         );
         let _ = std::fs::remove_file(a.effective_path());
+    }
+
+    /// A vault that reports whether the config lock was HELD while it was read.
+    ///
+    /// This is the blind spot every other test here has: `MemVault` returns
+    /// instantly, so a keychain read taken under the config lock looks identical
+    /// to one taken outside it. The real keyring does not return instantly — it
+    /// can open a GUI prompt and wait on a human — and a read under the lock
+    /// stalls every other `hanzo` process that writes config.
+    struct LockProbeVault<'a> {
+        inner: &'a MemVault,
+        lock_file: std::path::PathBuf,
+        lock_was_held: std::cell::Cell<bool>,
+    }
+
+    impl<'a> LockProbeVault<'a> {
+        fn new(inner: &'a MemVault, cfg: &Config) -> Self {
+            Self {
+                inner,
+                lock_file: crate::config::lock_path(&cfg.effective_path()),
+                lock_was_held: std::cell::Cell::new(false),
+            }
+        }
+
+        /// Can an independent handle take the config lock right now? `flock` is
+        /// held per open-file-description, so a separate `open` contends even
+        /// inside one process — exactly as another `hanzo` process would.
+        fn probe(&self) {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&self.lock_file)
+                .unwrap();
+            match f.try_lock() {
+                Ok(()) => {
+                    let _ = f.unlock();
+                }
+                Err(_) => self.lock_was_held.set(true),
+            }
+        }
+    }
+
+    impl Vault for LockProbeVault<'_> {
+        fn get(&self, key: &str) -> Result<Option<String>> {
+            self.probe();
+            self.inner.get(key)
+        }
+        fn set(&self, key: &str, value: &str) -> Result<()> {
+            self.probe();
+            self.inner.set(key, value)
+        }
+        fn remove(&self, key: &str) -> Result<bool> {
+            self.probe();
+            self.inner.remove(key)
+        }
+    }
+
+    /// MED-4: the keychain must NEVER be touched while the config lock is held.
+    ///
+    /// A keyring read can block on a human (auto-locked collection → GUI prompt,
+    /// no timeout). Under the lock that hangs every other `hanzo` process on the
+    /// box. `switch` in particular promised to be instant and prompt-free.
+    #[test]
+    fn no_keychain_access_happens_while_the_config_lock_is_held() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+
+        let probe = LockProbeVault::new(&v, &c);
+        switch_in(&probe, &mut c, "hanzo", sel(ADMIN)).unwrap();
+        assert!(
+            !probe.lock_was_held.get(),
+            "switch read the keychain while holding the config lock — a keyring \
+             prompt would stall every other `hanzo` process on the box"
+        );
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ADMIN);
+
+        // The same must hold for every other keychain-touching operation.
+        let probe = LockProbeVault::new(&v, &c);
+        add_in(&probe, &mut c, "hanzo", &tokens(&jwt("zoo", "z"))).unwrap();
+        assert!(!probe.lock_was_held.get(), "login touched the keychain under the lock");
+
+        let probe = LockProbeVault::new(&v, &c);
+        remove_in(&probe, &mut c, "hanzo", sel("zoo/z")).unwrap();
+        assert!(!probe.lock_was_held.get(), "logout touched the keychain under the lock");
+
+        let probe = LockProbeVault::new(&v, &c);
+        active_token_in(&probe, &mut c, "hanzo").unwrap();
+        assert!(!probe.lock_was_held.get(), "resolve touched the keychain under the lock");
+
+        let probe = LockProbeVault::new(&v, &c);
+        remove_all_in(&probe, &mut c, "hanzo").unwrap();
+        assert!(!probe.lock_was_held.get(), "logout --all touched the keychain under the lock");
+        let _ = std::fs::remove_file(c.effective_path());
+    }
+
+    /// The migration path writes the keychain too — and it is the one on the
+    /// `hanzo code` critical path, so a stall there is worst of all.
+    #[test]
+    fn migration_does_not_touch_the_keychain_under_the_lock() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        v.set("hanzo", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap())
+            .unwrap();
+
+        let probe = LockProbeVault::new(&v, &c);
+        let (id, _) = active_token_in(&probe, &mut c, "hanzo").unwrap().unwrap();
+
+        assert_eq!(id.to_string(), ORG);
+        assert!(
+            !probe.lock_was_held.get(),
+            "migration touched the keychain under the config lock"
+        );
+        let _ = std::fs::remove_file(c.effective_path());
     }
 
     /// LOW-1: never print a billing org for a credential we do not hold.
