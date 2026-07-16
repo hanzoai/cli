@@ -107,6 +107,8 @@ fn derive_local(secret: &str) -> Result<(String, String)> {
 
 // ---- config helpers ------------------------------------------------------
 
+/// Insert-or-replace a wallet in the index. Pure over `cfg` so it can be
+/// re-applied against fresh on-disk state inside a `Config::update`.
 fn upsert(cfg: &mut Config, w: StoredWallet, set_active: bool) {
     let addr = w.address.clone();
     cfg.wallet.wallets.retain(|x| x.address != w.address);
@@ -114,6 +116,14 @@ fn upsert(cfg: &mut Config, w: StoredWallet, set_active: bool) {
     if set_active || cfg.wallet.active.is_none() {
         cfg.wallet.active = Some(addr);
     }
+}
+
+/// `upsert` committed atomically against current on-disk state.
+fn upsert_saved(cfg: &mut Config, w: StoredWallet, set_active: bool) -> Result<()> {
+    cfg.update(|c| {
+        upsert(c, w.clone(), set_active);
+        Ok(())
+    })
 }
 
 /// The active wallet, if one is configured.
@@ -206,8 +216,10 @@ pub async fn create(
         match cloud_provision(cfg, &name, &custody).await {
             Ok(w) => {
                 let addr = w.address.clone();
-                upsert(cfg, w, true);
-                cfg.save()?;
+                cfg.update(|c| {
+                    upsert(c, w.clone(), true);
+                    Ok(())
+                })?;
                 println!("{} created {}-custody wallet {}", "✓".green(), custody, addr.cyan().bold());
                 println!("  {} keys held server-side (KMS/MPC) — never on this machine", "PQ".dimmed());
                 return Ok(());
@@ -223,7 +235,7 @@ pub async fn create(
     let phrase = mnemonic.phrase().to_string();
     let address = address_from_mnemonic(&phrase)?;
     store_secret(&address, &phrase)?;
-    upsert(
+    upsert_saved(
         cfg,
         StoredWallet {
             address: address.clone(),
@@ -233,8 +245,7 @@ pub async fn create(
             network: Some(net.name),
         },
         true,
-    );
-    cfg.save()?;
+    )?;
     println!("{} created local wallet {}", "✓".green(), address.cyan().bold());
     println!("  {} mnemonic stored in the OS keychain — it is NOT printed and NOT on disk", "secret".dimmed());
     Ok(())
@@ -245,7 +256,7 @@ pub async fn import(cfg: &mut Config, secret: String, name: Option<String>) -> R
     let (address, to_store) = derive_local(&secret)?;
     store_secret(&address, &to_store)?;
     let net = network::active(cfg);
-    upsert(
+    upsert_saved(
         cfg,
         StoredWallet {
             address: address.clone(),
@@ -255,8 +266,7 @@ pub async fn import(cfg: &mut Config, secret: String, name: Option<String>) -> R
             network: Some(net.name),
         },
         true,
-    );
-    cfg.save()?;
+    )?;
     println!("{} imported wallet {}", "✓".green(), address.cyan().bold());
     println!("  {} key stored in the OS keychain (never on disk, never printed)", "secret".dimmed());
     Ok(())
@@ -330,8 +340,10 @@ pub fn use_wallet(cfg: &mut Config, address: String) -> Result<()> {
     if !cfg.wallet.wallets.iter().any(|w| w.address == address) {
         bail!("unknown wallet {address}. Run `hanzo wallet list`.");
     }
-    cfg.wallet.active = Some(address.clone());
-    cfg.save()?;
+    cfg.update(|c| {
+        c.wallet.active = Some(address.clone());
+        Ok(())
+    })?;
     println!("{} active wallet {}", "✓".green(), address.cyan().bold());
     Ok(())
 }
