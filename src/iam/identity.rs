@@ -55,8 +55,21 @@ impl Identity {
         let mut parts = access_token.split('.');
         let payload = match (parts.next(), parts.next(), parts.next(), parts.next()) {
             (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => p,
+            // A key is not an identity. An `hk-` gateway key has no derivable
+            // principal, so filing it in an identity-keyed store would mean
+            // FABRICATING one — worse than refusing. Name the alternative rather
+            // than dead-ending: "not a token" tells a CI user nothing about why.
+            //
+            // If a real machine-to-machine caller ever needs `hk-`, the answer is
+            // an env read at the point of use (`HANZO_API_KEY` → the gateway),
+            // NOT an identity in this store. Do not re-litigate this into a
+            // synthetic principal.
             _ => bail!(
-                "not a hanzo.id access token — expected a signed JWT carrying `owner`/`name` claims"
+                "not a hanzo.id access token: the CLI files a credential under the `owner`/`name` \
+                 claims the token itself carries, and this value has none.\n\
+                 An `hk-` gateway API key identifies no principal, so it is not an identity and \
+                 cannot be stored as one.\n\
+                 Run `hanzo login` to sign in as a human identity (it obtains an IAM access token)."
             ),
         };
         // JWT payloads are base64url WITHOUT padding (RFC 7515 §2); tolerate a
