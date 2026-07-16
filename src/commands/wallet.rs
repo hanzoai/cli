@@ -216,10 +216,7 @@ pub async fn create(
         match cloud_provision(cfg, &name, &custody).await {
             Ok(w) => {
                 let addr = w.address.clone();
-                cfg.update(|c| {
-                    upsert(c, w.clone(), true);
-                    Ok(())
-                })?;
+                upsert_saved(cfg, w, true)?;
                 println!("{} created {}-custody wallet {}", "✓".green(), custody, addr.cyan().bold());
                 println!("  {} keys held server-side (KMS/MPC) — never on this machine", "PQ".dimmed());
                 return Ok(());
