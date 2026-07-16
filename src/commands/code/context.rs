@@ -856,6 +856,17 @@ mod tests {
         for bad in ["token", "password", "secret", "authorization", "bearer"] {
             assert!(!blob.contains(bad));
         }
+
+        // The CLI NEVER sends an org: cloud derives it from the JWT `owner`.
+        // `identity` is recorded LOCALLY (to decide cross-org resume honestly)
+        // and must not ride the wire — `resume_payload` is an explicit allowlist,
+        // so this pins that omission as an invariant rather than an accident.
+        // The record here is deliberately `admin/z`, so a leak would show up.
+        assert!(v.get("identity").is_none(), "identity must not reach cloud");
+        assert!(v.get("owner").is_none(), "owner must not reach cloud");
+        for bad in ["identity", "owner", "admin/z", "admin"] {
+            assert!(!blob.contains(bad), "{bad:?} leaked into the wire payload: {blob}");
+        }
     }
 
     #[test]
