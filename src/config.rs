@@ -8,6 +8,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,10 @@ pub struct Config {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub default_model: Option<String>,
+
+    /// Signed-in identities + the active one per brand. NEVER holds a token.
+    #[serde(default)]
+    pub auth: AuthState,
 
     /// Local SDK checkout paths. Defaulted like every other section so a sparse
     /// config (e.g. one that sets only `[code]`) still loads — the whole point of
@@ -37,6 +42,40 @@ pub struct Config {
     /// Path this config was loaded from; where `save` writes back. Not persisted.
     #[serde(skip)]
     path: PathBuf,
+}
+
+/// The non-secret INDEX of signed-in identities. NEVER holds token material —
+/// the tokens themselves are one-per-identity in the OS keychain (`iam::token`),
+/// exactly as wallet key material is. This mirrors `WalletState`: the secret is
+/// in the keychain, the metadata + the active pointer are here.
+///
+/// The index exists because the keychain has no portable enumeration API: it is
+/// what lets `hanzo whoami --all` list identities offline, and what makes an
+/// active identity a persisted, explicit choice rather than a guess.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthState {
+    /// The ACTIVE identity per brand: brand -> "owner/name". Changed ONLY by an
+    /// explicit `hanzo login` / `hanzo switch` — never automatically, never as a
+    /// fallback. See `iam::store`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub active: BTreeMap<String, String>,
+    /// Every identity signed in on this machine (metadata only — never secrets).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<StoredIdentity>,
+}
+
+/// Non-secret identity metadata: which principal, on which brand. The token is
+/// in the OS keychain under `{brand}/{owner}/{name}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredIdentity {
+    /// Brand / tenant this identity was issued by (hanzo | lux | zoo | …).
+    pub brand: String,
+    /// The Casdoor org — ALSO the org the gateway bills and the SuperAdmin
+    /// predicate (`owner == "admin"`). One value, three uses.
+    pub owner: String,
+    /// The Casdoor username.
+    pub name: String,
 }
 
 /// Persisted defaults for `hanzo code`. NON-SECRET.
@@ -178,6 +217,14 @@ impl Config {
         let toml = toml::to_string_pretty(self).context("serializing config")?;
         std::fs::write(&path, toml).with_context(|| format!("writing config {}", path.display()))
     }
+
+    /// Point this config at a throwaway file so a test that exercises `save`
+    /// can never write to the developer's real `~/.config/hanzo/config.toml`
+    /// (an empty `path` falls back to [`Config::default_path`]).
+    #[cfg(test)]
+    pub fn set_path_for_test(&mut self, path: PathBuf) {
+        self.path = path;
+    }
 }
 
 impl Default for Config {
@@ -186,6 +233,7 @@ impl Default for Config {
             api_key: None,
             base_url: Some("https://api.hanzo.ai".to_string()),
             default_model: Some("claude-3-opus".to_string()),
+            auth: AuthState::default(),
             sdk_paths: SdkPaths::default(),
             network: NetworkState::default(),
             wallet: WalletState::default(),
@@ -251,6 +299,57 @@ mod tests {
         let cfg: Config = toml::from_str("[code]\nlink = true\n").expect("sparse config loads");
         assert!(cfg.code.link);
         assert_eq!(cfg.sdk_paths.python, SdkPaths::default().python);
+    }
+
+    /// THE fleet-breaking regression guard: an existing config predating `[auth]`
+    /// must load clean. A missing-field parse error here breaks EVERY command,
+    /// not just auth — every field must stay serde-defaulted.
+    #[test]
+    fn a_config_with_no_auth_table_loads_signed_out() {
+        let cfg: Config = toml::from_str("[code]\nlink = true\n").expect("config predating [auth] loads");
+        assert!(cfg.auth.identities.is_empty());
+        assert!(cfg.auth.active.is_empty());
+    }
+
+    /// A sparse `[auth]` table — present but empty, or carrying only one of its
+    /// two fields — must also load. Both fields default independently.
+    #[test]
+    fn a_sparse_auth_table_loads() {
+        let empty: AuthState = toml::from_str("").expect("empty [auth] parses");
+        assert!(empty.identities.is_empty() && empty.active.is_empty());
+
+        let cfg: Config = toml::from_str(
+            r#"
+            [auth]
+            [auth.active]
+            hanzo = "admin/z"
+            "#,
+        )
+        .expect("[auth] with only `active` parses");
+        assert_eq!(cfg.auth.active.get("hanzo").map(String::as_str), Some("admin/z"));
+        assert!(cfg.auth.identities.is_empty());
+    }
+
+    /// The index round-trips through TOML. A signed-out config writes a bare
+    /// empty `[auth]` table, exactly as `[network]`/`[wallet]` already do — and
+    /// it must read back as "no identities", not as a parse error.
+    #[test]
+    fn auth_index_roundtrips() {
+        let empty = toml::to_string_pretty(&Config::default()).unwrap();
+        let back: Config = toml::from_str(&empty).expect("an empty [auth] table reloads");
+        assert!(back.auth.identities.is_empty() && back.auth.active.is_empty());
+
+        let mut cfg = Config::default();
+        cfg.auth.identities.push(StoredIdentity {
+            brand: "hanzo".to_string(),
+            owner: "admin".to_string(),
+            name: "z".to_string(),
+        });
+        cfg.auth.active.insert("hanzo".to_string(), "admin/z".to_string());
+
+        let back: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).expect("roundtrips");
+        assert_eq!(back.auth.identities, cfg.auth.identities);
+        assert_eq!(back.auth.active, cfg.auth.active);
     }
 
     /// `link = false` is the persisted opt-out and stays off.
