@@ -640,6 +640,13 @@ pub fn scrub_remote(url: &str) -> String {
 pub struct ResumeRecord {
     #[serde(rename = "cloudSessionId")]
     pub cloud_session_id: String,
+    /// The identity (`owner/name`) that created the cloud session, so a resume
+    /// can tell whether the ACTIVE identity may re-attach to it. The cloud
+    /// session is org-scoped server-side; this local note is what lets the CLI
+    /// decide honestly instead of discovering it as a 403. Defaulted (empty =
+    /// unknown provenance) so records written before this field still load.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
     pub backend: String,
     /// The backend's OWN session/thread id — what its native `--resume` needs.
     #[serde(rename = "backendSessionId")]
@@ -832,6 +839,7 @@ mod tests {
     fn resume_payload_shape_has_no_secret_fields() {
         let rec = ResumeRecord {
             cloud_session_id: "sess_1".into(),
+            identity: "admin/z".into(),
             backend: "dev".into(),
             backend_session_id: "thread-uuid".into(),
             cwd: "/w".into(),
@@ -855,6 +863,7 @@ mod tests {
         let id = format!("sess_test_{}", std::process::id());
         let rec = ResumeRecord {
             cloud_session_id: id.clone(),
+            identity: "hanzo/z".into(),
             backend: "claude".into(),
             backend_session_id: "claude-sid".into(),
             cwd: "/tmp".into(),
