@@ -41,17 +41,9 @@ pub fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, T
     active_token_in(&token::keyring(), cfg, brand)
 }
 
-/// Set the active identity for `brand`. Pure index work — deliberately never
-/// touches the keychain, so switching is instant and cannot prompt.
+/// Set the active identity for `brand`.
 pub fn switch(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Identity> {
-    oauth::server_url(brand)?; // reject unknown brands before touching anything
-    let target = match sel {
-        Some(s) => resolve_selector(cfg, brand, &s)?,
-        None => toggle_target(cfg, brand)?,
-    };
-    set_active(cfg, brand, &target);
-    cfg.save()?;
-    Ok(target)
+    switch_in(&token::keyring(), cfg, brand, sel)
 }
 
 /// Remove ONE identity: its keychain entry and its index row.
@@ -117,15 +109,50 @@ pub(crate) fn add_in(
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     let id = Identity::from_access_token(&tokens.access_token)?;
     token::store(v, brand, &id, tokens)?;
-    index(cfg, brand, &id);
-    set_active(cfg, brand, &id); // `hanzo login` IS the explicit user action
-    cfg.save()?;
+    cfg.update(|c| {
+        index(c, brand, &id);
+        set_active(c, brand, &id); // `hanzo login` IS the explicit user action
+        Ok(())
+    })?;
     // An explicit login to this brand supersedes any pre-multi-identity
     // credential filed under the bare brand: the user just re-authenticated, so
     // the old blob is dead weight. This is also the escape hatch that clears a
     // legacy entry whose claims cannot be read — `hanzo login` always works.
     v.remove(token::legacy_key(brand))?;
     Ok(id)
+}
+
+/// Set the active identity, verifying we actually HOLD its credential.
+///
+/// Resolution, verification and the commit all happen inside one `update`, i.e.
+/// against fresh on-disk state under the lock — so a concurrent `logout` cannot
+/// leave the pointer aimed at an identity that no longer exists.
+pub(crate) fn switch_in(
+    v: &dyn Vault,
+    cfg: &mut Config,
+    brand: &str,
+    sel: Option<Selector>,
+) -> Result<Identity> {
+    oauth::server_url(brand)?; // reject unknown brands before touching anything
+    cfg.update(|c| {
+        let target = match &sel {
+            Some(s) => resolve_selector(c, brand, s)?,
+            None => toggle_target(c, brand)?,
+        };
+        // The index is only a pointer; the credential is the thing. Switching
+        // onto an indexed-but-unheld identity would print a billing org we have
+        // no token for and leave every later command saying "not signed in".
+        // Never advertise money we cannot verify — fail closed instead.
+        if token::load(v, brand, &target)?.is_none() {
+            bail!(
+                "{brand} identity {target} is indexed but its credential is not in the keychain \
+                 — run `hanzo login{}` to sign in as it again",
+                brand_flag(brand)
+            );
+        }
+        set_active(c, brand, &target);
+        Ok(target)
+    })
 }
 
 pub(crate) fn active_token_in(
@@ -182,14 +209,23 @@ fn migrate_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Option<Ide
     // old one, so an interrupted migration re-runs cleanly and never loses the
     // only copy of a credential.
     token::store(v, brand, &id, &tokens)?;
-    index(cfg, brand, &id);
-    // Carrying a prior login forward is not a switch. If an identity is already
-    // active, migration must NOT steal the pointer — that would be exactly the
-    // auto-switch this module forbids.
-    if active(cfg, brand).is_none() {
-        set_active(cfg, brand, &id);
-    }
-    cfg.save()?;
+    cfg.update(|c| {
+        index(c, brand, &id);
+        // Carrying a prior login forward is not a switch. If an identity is
+        // already active, migration must NOT steal the pointer — that would be
+        // the auto-switch this module forbids.
+        //
+        // This check runs INSIDE the update, i.e. against fresh on-disk state
+        // under the lock. That is what makes it correct under a race: a migration
+        // that started before a concurrent `hanzo login` finished still sees that
+        // login's pointer here and leaves it alone. Deciding on the caller's
+        // stale snapshot would silently revert the user's explicit choice — on
+        // the real fleet, demoting them off the identity they just picked.
+        if active(c, brand).is_none() {
+            set_active(c, brand, &id);
+        }
+        Ok(())
+    })?;
     v.remove(legacy)?;
     Ok(Some(id))
 }
@@ -201,38 +237,46 @@ pub(crate) fn remove_in(
     sel: Option<Selector>,
 ) -> Result<Identity> {
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
-    let target = match sel {
-        Some(s) => resolve_selector(cfg, brand, &s)?,
-        None => active(cfg, brand).ok_or_else(|| {
-            anyhow!(
-                "no active identity on {brand} — name one:\n{}\n\n  hanzo logout <owner/name>",
-                render(cfg, brand)
-            )
-        })?,
-    };
+    // Resolve + de-index atomically against fresh state, THEN drop the secret.
+    // Index-first is the crash-safe order: the index is the only reference, so an
+    // interrupted logout leaves an unreferenced secret (harmless, and `login`
+    // re-files it) rather than a pointer to a credential that is already gone.
+    let target = cfg.update(|c| {
+        let target = match &sel {
+            Some(s) => resolve_selector(c, brand, s)?,
+            None => active(c, brand).ok_or_else(|| {
+                anyhow!(
+                    "no active identity on {brand} — name one:\n{}\n\n  hanzo logout <owner/name>",
+                    render(c, brand)
+                )
+            })?,
+        };
+        c.auth
+            .identities
+            .retain(|i| !(i.brand == brand && i.owner == target.owner && i.name == target.name));
+        // The pointer must never dangle at a removed identity — and must never
+        // slide onto a surviving one either. Signing out of the active identity
+        // leaves you signed out, not silently signed in as somebody else.
+        if c.auth.active.get(brand).map(String::as_str) == Some(target.to_string().as_str()) {
+            c.auth.active.remove(brand);
+        }
+        Ok(target)
+    })?;
     token::delete(v, brand, &target)?;
-    cfg.auth
-        .identities
-        .retain(|i| !(i.brand == brand && i.owner == target.owner && i.name == target.name));
-    // The pointer must never dangle at a removed identity — and must never slide
-    // onto a surviving one either. Signing out of the active identity leaves you
-    // signed out, not silently signed in as somebody else.
-    if cfg.auth.active.get(brand).map(String::as_str) == Some(target.to_string().as_str()) {
-        cfg.auth.active.remove(brand);
-    }
-    cfg.save()?;
     Ok(target)
 }
 
 pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Vec<Identity>> {
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
-    let ids = list(cfg, brand);
+    let ids = cfg.update(|c| {
+        let ids = list(c, brand);
+        c.auth.identities.retain(|i| i.brand != brand);
+        c.auth.active.remove(brand);
+        Ok(ids)
+    })?;
     for id in &ids {
         token::delete(v, brand, id)?;
     }
-    cfg.auth.identities.retain(|i| i.brand != brand);
-    cfg.auth.active.remove(brand);
-    cfg.save()?;
     // Leave nothing addressable behind, including a pre-multi-identity blob.
     v.remove(token::legacy_key(brand))?;
     Ok(ids)
@@ -388,7 +432,7 @@ mod tests {
         both(&v, &mut c);
         assert_eq!(active(&c, "hanzo").unwrap().owner, "hanzo");
 
-        switch(&mut c, "hanzo", sel(ADMIN)).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
 
         let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ADMIN);
@@ -407,7 +451,7 @@ mod tests {
         both(&v, &mut c);
 
         for want in [ADMIN, ORG, ADMIN] {
-            switch(&mut c, "hanzo", sel(want)).unwrap();
+            switch_in(&v, &mut c, "hanzo", sel(want)).unwrap();
             // The `hanzo code` routing bearer, the wallet's cloud-custody bearer
             // and `whoami` all call exactly this.
             let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
@@ -424,7 +468,7 @@ mod tests {
     fn a_missing_credential_never_falls_back_to_another_identity() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        switch(&mut c, "hanzo", sel(ADMIN)).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
 
         // The active identity's credential vanishes (revoked / keychain wiped).
         v.remove("hanzo/admin/z").unwrap();
@@ -442,7 +486,7 @@ mod tests {
     fn resolving_a_credential_never_moves_the_active_pointer() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        switch(&mut c, "hanzo", sel(ADMIN)).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
         for _ in 0..3 {
             active_token_in(&v, &mut c, "hanzo").unwrap();
             assert_eq!(active(&c, "hanzo").unwrap().to_string(), ADMIN);
@@ -455,7 +499,7 @@ mod tests {
     fn logout_of_the_active_identity_does_not_slide_onto_the_survivor() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        switch(&mut c, "hanzo", sel(ADMIN)).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
 
         remove_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
 
@@ -521,7 +565,7 @@ mod tests {
     fn relogin_as_the_same_identity_updates_in_place() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        switch(&mut c, "hanzo", sel(ADMIN)).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
 
         // A fresh token for an identity we already hold (the ordinary case: the
         // old one expired). Same claims, different token material.
@@ -618,7 +662,7 @@ mod tests {
     fn migration_never_steals_an_active_pointer() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        switch(&mut c, "hanzo", sel(ADMIN)).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
         // A stale legacy blob for the OTHER identity turns up.
         v.set("hanzo", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap())
             .unwrap();
@@ -627,6 +671,78 @@ mod tests {
 
         assert_eq!(id.to_string(), ADMIN, "the user's choice stands");
         assert!(!v.has("hanzo"), "legacy key still consumed");
+    }
+
+    /// RED'S RACE, run for real against one config file on disk.
+    ///
+    /// Interleaving:
+    ///   A: `hanzo code` starts migrating the legacy credential (in flight)
+    ///   B: `hanzo login` explicitly sets active = hanzo/z, and saves
+    ///   A: migration finishes
+    ///
+    /// A must NOT land the user on the legacy identity. On the real fleet the
+    /// legacy key is the ORG owner, so the reachable direction is DEMOTION —
+    /// silently reproducing the deposit-403 incident this branch exists to fix.
+    /// The `active(c).is_none()` check runs inside `update`, against fresh state
+    /// under the lock, so B's explicit choice wins.
+    #[test]
+    fn a_migration_in_flight_cannot_revert_a_concurrent_explicit_login() {
+        let (v, mut a) = (MemVault::new(), cfg());
+        // A and B are two `hanzo` processes over the SAME config file.
+        let mut b = Config::load(Some(a.effective_path())).unwrap();
+
+        // The pre-multi-identity credential A is about to migrate. A has ALREADY
+        // read this blob — it is in flight — which is why B's login below is
+        // staged as its two committed effects (credential + index) rather than
+        // through `add_in`: a real `add_in` also consumes the legacy key, and
+        // that consumption is precisely what has not reached A yet.
+        v.set("hanzo", &serde_json::to_string(&tokens(&jwt("admin", "z"))).unwrap())
+            .unwrap();
+
+        // B logs in explicitly, and COMMITS, while A's migration is in flight.
+        let org = Identity::from_access_token(&jwt("hanzo", "z")).unwrap();
+        token::store(&v, "hanzo", &org, &tokens(&jwt("hanzo", "z"))).unwrap();
+        b.update(|c| {
+            index(c, "hanzo", &org);
+            set_active(c, "hanzo", &org);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(active(&b, "hanzo").unwrap().to_string(), ORG);
+
+        // A finishes. `a` still holds its STALE pre-login snapshot.
+        assert!(active(&a, "hanzo").is_none(), "A's snapshot predates B's login");
+        let (id, _) = active_token_in(&v, &mut a, "hanzo").unwrap().unwrap();
+
+        // B's explicit choice stands, in A's own view and on disk.
+        assert_eq!(id.to_string(), ORG, "migration must not demote the user off their choice");
+        let disk = Config::load(Some(a.effective_path())).unwrap();
+        assert_eq!(active(&disk, "hanzo").unwrap().to_string(), ORG);
+        // ...and B's index row was not erased by A's stale snapshot.
+        assert_eq!(
+            list(&disk, "hanzo").iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+            vec![ADMIN, ORG],
+            "both identities survive; neither writer clobbered the other"
+        );
+        let _ = std::fs::remove_file(a.effective_path());
+    }
+
+    /// LOW-1: never print a billing org for a credential we do not hold.
+    #[test]
+    fn switching_onto_an_indexed_but_unheld_identity_fails_closed() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+
+        // The credential goes away (revoked / keychain wiped) but the index row
+        // remains — exactly the state that made `switch` lie about billing.
+        v.remove("hanzo/admin/z").unwrap();
+
+        let err = switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap_err().to_string();
+        assert!(err.contains("not in the keychain"), "{err}");
+        assert!(err.contains("hanzo login"), "must be actionable: {err}");
+        // A refused switch changes nothing.
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
     }
 
     /// An unidentifiable legacy blob fails CLOSED with an actionable message —
@@ -653,7 +769,7 @@ mod tests {
     fn switch_resolves_a_bare_owner_when_unambiguous() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        assert_eq!(switch(&mut c, "hanzo", sel("admin")).unwrap().to_string(), ADMIN);
+        assert_eq!(switch_in(&v, &mut c, "hanzo", sel("admin")).unwrap().to_string(), ADMIN);
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ADMIN);
     }
 
@@ -663,7 +779,7 @@ mod tests {
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "ops"))).unwrap();
 
-        let err = switch(&mut c, "hanzo", sel("hanzo")).unwrap_err().to_string();
+        let err = switch_in(&v, &mut c, "hanzo", sel("hanzo")).unwrap_err().to_string();
         assert!(err.contains("ambiguous"), "{err}");
         assert!(err.contains("hanzo/ops") && err.contains("hanzo/z"), "{err}");
     }
@@ -674,8 +790,8 @@ mod tests {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
-        assert_eq!(switch(&mut c, "hanzo", None).unwrap().to_string(), ADMIN);
-        assert_eq!(switch(&mut c, "hanzo", None).unwrap().to_string(), ORG);
+        assert_eq!(switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(), ADMIN);
+        assert_eq!(switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(), ORG);
     }
 
     /// Bare `hanzo switch` with more than two is ambiguous: list, do not guess.
@@ -685,7 +801,7 @@ mod tests {
         both(&v, &mut c);
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("zoo", "z"))).unwrap();
 
-        let err = switch(&mut c, "hanzo", None).unwrap_err().to_string();
+        let err = switch_in(&v, &mut c, "hanzo", None).unwrap_err().to_string();
         assert!(err.contains("3 identities"), "{err}");
         assert!(err.contains("hanzo switch <owner/name>"), "{err}");
         // The active identity is untouched by a refused switch.
@@ -696,8 +812,8 @@ mod tests {
     fn switching_to_an_unknown_identity_is_refused_and_changes_nothing() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        assert!(switch(&mut c, "hanzo", sel("nope/x")).is_err());
-        assert!(switch(&mut c, "hanzo", sel("nope")).is_err());
+        assert!(switch_in(&v, &mut c, "hanzo", sel("nope/x")).is_err());
+        assert!(switch_in(&v, &mut c, "hanzo", sel("nope")).is_err());
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
     }
 
@@ -709,7 +825,7 @@ mod tests {
             active_token_in(&v, &mut c, "bogus").map(|_| ()),
             remove_in(&v, &mut c, "bogus", sel(ORG)).map(|_| ()),
             remove_all_in(&v, &mut c, "bogus").map(|_| ()),
-            switch(&mut c, "bogus", sel(ORG)).map(|_| ()),
+            switch_in(&v, &mut c, "bogus", sel(ORG)).map(|_| ()),
         ] {
             assert!(r.is_err(), "unknown brand must be rejected");
         }

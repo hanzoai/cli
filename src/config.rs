@@ -9,7 +9,64 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// The sidecar files `update` needs next to the config.
+fn lock_path(path: &Path) -> PathBuf {
+    sidecar(path, "lock")
+}
+
+fn tmp_path(path: &Path) -> PathBuf {
+    // The pid keeps two processes from colliding on the temp name. They cannot
+    // actually race (the lock serialises writers), but a crashed run can leave a
+    // stale temp behind and it must not be mistaken for another process's.
+    sidecar(path, &format!("{}.tmp", std::process::id()))
+}
+
+/// `…/config.toml` + `ext` → `…/config.toml.<ext>`, in the SAME directory so the
+/// temp file renames atomically onto the target.
+fn sidecar(path: &Path, ext: &str) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{ext}"));
+    path.with_file_name(name)
+}
+
+/// A cross-process exclusive lock guarding read-modify-write of the config.
+///
+/// The lock lives on a SEPARATE `config.toml.lock` file, never on `config.toml`
+/// itself: the atomic write replaces the config's inode, so a lock held on the
+/// old inode would guard nothing once the rename lands.
+///
+/// It is `std::fs::File::lock` — an advisory OS lock (`flock` on unix,
+/// `LockFileEx` on Windows) that the KERNEL releases when the process exits. So a
+/// killed or crashed `hanzo` can never wedge every other invocation behind a
+/// stale lock, which is the failure mode a hand-rolled `O_EXCL` lockfile has.
+struct Lock(std::fs::File);
+
+impl Lock {
+    fn acquire(path: &Path) -> Result<Self> {
+        let lock = lock_path(path);
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock)
+            .with_context(|| format!("opening config lock {}", lock.display()))?;
+        // Exclusive, and BLOCKING: the critical section is a parse + a rename, so
+        // waiting is bounded by that rather than by any network or keychain I/O.
+        f.lock()
+            .with_context(|| format!("locking config {}", lock.display()))?;
+        Ok(Self(f))
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // Closing the handle would release it anyway; explicit is clearer.
+        let _ = self.0.unlock();
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -203,19 +260,76 @@ impl Config {
         Ok(cfg)
     }
 
-    /// Persist the config back to its file, creating the parent directory.
-    pub fn save(&self) -> Result<()> {
-        let path = if self.path.as_os_str().is_empty() {
+    /// The file this config reads/writes.
+    pub(crate) fn effective_path(&self) -> PathBuf {
+        if self.path.as_os_str().is_empty() {
             Self::default_path()
         } else {
             self.path.clone()
-        };
+        }
+    }
+
+    /// Atomically read-modify-write the persisted config. THE one way to change
+    /// it — there is deliberately no bare `save`.
+    ///
+    /// The config file is a shared mutable PLACE: several `hanzo` processes write
+    /// it at once (a `hanzo code` migrating a legacy credential in one terminal
+    /// while you run `hanzo login` in another). A load-mutate-save against a
+    /// stale in-memory snapshot silently reverts the other process's write, and
+    /// for the auth index that means landing on a principal you did not choose —
+    /// the hard invariant broken by a write race rather than a cascade.
+    ///
+    /// So: take the cross-process lock, RE-READ current truth from disk, apply
+    /// the mutation to THAT, write atomically (tmp+rename), release. `f` runs
+    /// against the CURRENT on-disk state, never the caller's snapshot, so it must
+    /// be a function of its inputs rather than of `self`'s prior contents — any
+    /// un-persisted in-memory edit is intentionally discarded. `f` may fail, in
+    /// which case nothing is written. On success `self` IS the persisted state.
+    pub fn update<T>(&mut self, f: impl FnOnce(&mut Config) -> Result<T>) -> Result<T> {
+        let path = self.effective_path();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("creating config dir {}", dir.display()))?;
         }
+
+        let _lock = Lock::acquire(&path)?;
+        let mut fresh = Self::load(Some(path.clone()))?;
+        let out = f(&mut fresh)?;
+        fresh.write_atomic(&path)?;
+        *self = fresh;
+        Ok(out)
+    }
+
+    /// Write the whole config so that a reader sees either the old file or the
+    /// new one — never a half-written one.
+    ///
+    /// `fs::write` truncates in place: a crash (or a full disk) mid-write leaves
+    /// TRUNCATED TOML, which `load` then rejects — breaking every command, not
+    /// just the one that crashed. Instead write a temp file in the SAME directory
+    /// (so `rename` stays within one filesystem and is therefore atomic), fsync
+    /// it so the bytes are durable before the swap, then rename over the target.
+    fn write_atomic(&self, path: &Path) -> Result<()> {
+        use std::io::Write;
+
         let toml = toml::to_string_pretty(self).context("serializing config")?;
-        std::fs::write(&path, toml).with_context(|| format!("writing config {}", path.display()))
+        let tmp = tmp_path(path);
+        // Scoped so the handle is closed before the rename (required on Windows).
+        let write = || -> Result<()> {
+            let mut f = std::fs::File::create(&tmp)
+                .with_context(|| format!("creating {}", tmp.display()))?;
+            f.write_all(toml.as_bytes())?;
+            f.sync_all()?; // durable BEFORE the swap, else the rename can land empty
+            Ok(())
+        };
+        if let Err(e) = write() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e).with_context(|| format!("writing config {}", path.display()));
+        }
+        Ok(())
     }
 
     /// Point this config at a throwaway file so a test that exercises `save`
@@ -350,6 +464,167 @@ mod tests {
         let back: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).expect("roundtrips");
         assert_eq!(back.auth.identities, cfg.auth.identities);
         assert_eq!(back.auth.active, cfg.auth.active);
+    }
+
+    fn tmp_cfg(tag: &str) -> Config {
+        let mut c = Config::default();
+        let p = std::env::temp_dir().join(format!(
+            "hanzo-cfg-{tag}-{}-{:?}.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(lock_path(&p));
+        c.set_path_for_test(p);
+        c
+    }
+
+    /// A crash mid-write must never leave TRUNCATED TOML: `load` would then
+    /// reject it and EVERY command would break, not just the one that crashed.
+    /// `update` writes a temp file and renames, so a reader sees the old file or
+    /// the new one — never a half-written one.
+    #[test]
+    fn a_write_is_atomic_and_never_leaves_a_torn_config() {
+        let mut cfg = tmp_cfg("atomic");
+        let path = cfg.effective_path();
+
+        cfg.update(|c| {
+            c.auth.active.insert("hanzo".to_string(), "hanzo/z".to_string());
+            Ok(())
+        })
+        .unwrap();
+        let good = std::fs::read_to_string(&path).unwrap();
+        assert!(good.contains("hanzo/z"));
+
+        // A temp file left behind by a crashed run must not be mistaken for the
+        // config, and must not survive the next successful write.
+        let tmp = tmp_path(&path);
+        std::fs::write(&tmp, "this = \"torn").unwrap(); // deliberately invalid TOML
+        cfg.update(|c| {
+            c.auth.active.insert("lux".to_string(), "lux/z".to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert!(!tmp.exists(), "temp file must be renamed away, not orphaned");
+
+        // The real config is intact and parses — the torn temp never became it.
+        let back = Config::load(Some(path.clone())).expect("config still parses");
+        assert_eq!(back.auth.active.get("hanzo").map(String::as_str), Some("hanzo/z"));
+        assert_eq!(back.auth.active.get("lux").map(String::as_str), Some("lux/z"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A failing mutation must write NOTHING — `update` is a transaction.
+    #[test]
+    fn a_failed_update_leaves_the_config_untouched() {
+        let mut cfg = tmp_cfg("failed");
+        let path = cfg.effective_path();
+        cfg.update(|c| {
+            c.auth.active.insert("hanzo".to_string(), "hanzo/z".to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        let err = cfg.update(|c| -> Result<()> {
+            c.auth.active.insert("hanzo".to_string(), "admin/z".to_string());
+            anyhow::bail!("mutation refused")
+        });
+        assert!(err.is_err());
+
+        let back = Config::load(Some(path.clone())).unwrap();
+        assert_eq!(
+            back.auth.active.get("hanzo").map(String::as_str),
+            Some("hanzo/z"),
+            "a refused mutation must not be persisted"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `update` re-reads under the lock, so a mutation is applied to CURRENT
+    /// truth rather than to the caller's snapshot — a stale in-memory copy can
+    /// never revert another writer.
+    #[test]
+    fn update_applies_to_current_disk_state_not_a_stale_snapshot() {
+        let mut a = tmp_cfg("stale");
+        let path = a.effective_path();
+        a.update(|c| {
+            c.auth.active.insert("hanzo".to_string(), "hanzo/z".to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        // `b` is a SECOND handle on the same file, holding a stale snapshot
+        // (it never saw the write below).
+        let mut b = Config::load(Some(path.clone())).unwrap();
+        a.update(|c| {
+            c.auth.identities.push(StoredIdentity {
+                brand: "hanzo".to_string(),
+                owner: "admin".to_string(),
+                name: "z".to_string(),
+            });
+            Ok(())
+        })
+        .unwrap();
+
+        // b mutates something else entirely. Its stale snapshot must NOT erase
+        // a's row — the closure runs against fresh state.
+        b.update(|c| {
+            c.network.active = Some("local".to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        let back = Config::load(Some(path.clone())).unwrap();
+        assert_eq!(back.network.active.as_deref(), Some("local"));
+        assert_eq!(back.auth.identities.len(), 1, "the other writer's row survived");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// THE race red proved, run for real against one file from many concurrent
+    /// writers on separate handles.
+    ///
+    /// `flock` is held per open-file-description, so independent `File` handles
+    /// contend even inside one process — each thread here is a faithful stand-in
+    /// for a separate `hanzo` invocation. Every writer appends its own row; if
+    /// the lock or the re-read were missing, writers would clobber each other and
+    /// rows would be lost.
+    #[test]
+    fn concurrent_writers_do_not_lose_each_others_updates() {
+        let base = tmp_cfg("race");
+        let path = base.effective_path();
+        drop(base);
+
+        const WRITERS: usize = 8;
+        std::thread::scope(|s| {
+            for i in 0..WRITERS {
+                let path = path.clone();
+                s.spawn(move || {
+                    let mut cfg = Config::load(Some(path)).unwrap();
+                    cfg.update(|c| {
+                        c.auth.identities.push(StoredIdentity {
+                            brand: "hanzo".to_string(),
+                            owner: format!("org{i}"),
+                            name: "z".to_string(),
+                        });
+                        Ok(())
+                    })
+                    .unwrap();
+                });
+            }
+        });
+
+        let back = Config::load(Some(path.clone())).unwrap();
+        assert_eq!(
+            back.auth.identities.len(),
+            WRITERS,
+            "lost update: got {:?}",
+            back.auth.identities
+        );
+        for i in 0..WRITERS {
+            assert!(back.auth.identities.iter().any(|x| x.owner == format!("org{i}")));
+        }
+        let _ = std::fs::remove_file(&path);
     }
 
     /// `link = false` is the persisted opt-out and stays off.

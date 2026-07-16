@@ -102,19 +102,41 @@ pub(crate) fn links_target(do_link: bool, has_bearer: bool) -> bool {
 /// identity keeps the full local conversation and registers a NEW cloud session,
 /// billed to the now-active identity from turn one.
 ///
-/// `None` ⇒ re-attach to the recorded id. `Some(note)` ⇒ register fresh and SAY
+/// A cloud session id is addressable only from the (identity, cloud) that minted
+/// it, so BOTH must match before we hand the id to `resolve_cloud_session`.
+///
+/// `None` ⇒ re-attach to the recorded id. `Some(reason)` ⇒ register fresh and SAY
 /// so. Returning `None` for the target is also what keeps lineage honest:
-/// `resolve_cloud_session` writes `resumedFrom` only for an id it is handed, so
-/// a cross-org resume writes NO pointer. The new org's record must never
-/// reference a session it cannot resolve; that lineage lives in the LOCAL store,
-/// which is the only place it is true.
-pub(crate) fn cross_org_resume_note(recorded: &str, active: Option<&Identity>) -> Option<String> {
+/// `resolve_cloud_session` writes `resumedFrom` only for an id it is handed, so a
+/// blocked resume writes NO pointer. The new org's record must never reference a
+/// session it cannot resolve; that lineage lives in the LOCAL store, the only
+/// place it is true.
+pub(crate) fn cloud_resume_block(
+    rec_identity: &str,
+    active: Option<&Identity>,
+    rec_api: &str,
+    active_api: &str,
+) -> Option<String> {
     // Unlinked run: nothing reaches cloud, so there is no cloud session to own.
     let active = active?;
-    if recorded == active.to_string() {
+
+    // A session id minted by one cloud means nothing to another: resuming a
+    // prod session after `hanzo network use local` would hand a foreign id to a
+    // different control plane. Same filter as the run-target store (host+api).
+    let (rec_api, active_api) = (rec_api.trim_end_matches('/'), active_api.trim_end_matches('/'));
+    if !rec_api.is_empty() && rec_api != active_api {
+        return Some(format!(
+            "session was created on {rec_api}; you are on {active_api}. A cloud session cannot \
+             move between networks, so your local conversation resumes with full context and a \
+             NEW cloud session is registered on {active_api}, billed to {}.",
+            active.owner
+        ));
+    }
+
+    if rec_identity == active.to_string() {
         return None;
     }
-    Some(match recorded {
+    Some(match rec_identity {
         "" => format!(
             "this session predates identity tracking, so it cannot be matched to {active}. \
              Resuming your local conversation with full context; a NEW cloud session will be \
@@ -186,8 +208,9 @@ pub async fn run(cfg: &mut Config, opts: Options) -> Result<()> {
                 }
             }
             // The LOCAL conversation always resumes. The CLOUD id only carries
-            // when the active identity owns it — see `cross_org_resume_note`.
-            let attach = match cross_org_resume_note(&rec.identity, identity.as_ref()) {
+            // when the active identity, on the active network, owns it — see
+            // `cloud_resume_block`.
+            let attach = match cloud_resume_block(&rec.identity, identity.as_ref(), &rec.api, &api) {
                 None => Some(id.clone()),
                 Some(note) => {
                     warn(&note);
@@ -354,6 +377,14 @@ fn preset_session_of(spec: &Spec) -> Option<String> {
 /// A resume reuses the SAME id when the prior session is still live (running/
 /// paused) — cloud forbids reopening a terminal one — otherwise it forks a new
 /// session that records the id it was `resumedFrom` (lineage).
+///
+/// Lineage is only ever written for a session we VERIFIED: `GET` succeeded, so
+/// the id exists and is ours. Every failure — 403 (another org), 404 (gone), a
+/// 5xx, a timeout, DNS — leaves us unable to say either, so we fail closed and
+/// register with NO `resumedFrom` rather than record a pointer that may dangle
+/// or reference another tenant. The caller's `cloud_resume_block` already
+/// withholds ids it knows are foreign; this is the same rule enforced HERE, so
+/// the guarantee holds for any caller rather than only for today's single one.
 pub(crate) async fn resolve_cloud_session(
     client: &SessionClient,
     agent: &str,
@@ -361,15 +392,28 @@ pub(crate) async fn resolve_cloud_session(
     resume_from: Option<&str>,
 ) -> Result<(String, Option<String>)> {
     if let Some(old) = resume_from {
-        if let Ok(info) = client.get(old).await {
-            if !info.is_terminal() {
-                // Same-id re-attach: move the live session back to running.
+        match client.get(old).await {
+            // Live: same-id re-attach, move it back to running.
+            Ok(info) if !info.is_terminal() => {
                 let _ = client.set_status(old, Status::Running).await;
                 return Ok((old.to_string(), None));
             }
+            // Terminal and VERIFIED ours: cloud forbids reopening it, so fork a
+            // new session and record the lineage we just confirmed.
+            Ok(_) => {
+                let reg = client.register(agent, title).await?;
+                return Ok((reg.id, Some(old.to_string())));
+            }
+            // Unverified. Do not assert a lineage we could not confirm.
+            Err(e) => {
+                warn(&format!(
+                    "could not verify session {old} ({e}); starting a fresh cloud session with no \
+                     resume lineage."
+                ));
+                let reg = client.register(agent, title).await?;
+                return Ok((reg.id, None));
+            }
         }
-        let reg = client.register(agent, title).await?;
-        return Ok((reg.id, Some(old.to_string())));
     }
     let reg = client.register(agent, title).await?;
     Ok((reg.id, None))
@@ -835,8 +879,8 @@ mod tests {
     /// Same identity: the cloud session is ours, re-attach silently.
     #[test]
     fn resume_as_the_same_identity_reattaches_without_a_note() {
-        assert!(cross_org_resume_note("hanzo/z", Some(&id("hanzo/z"))).is_none());
-        assert!(cross_org_resume_note("admin/z", Some(&id("admin/z"))).is_none());
+        assert!(cloud_resume_block("hanzo/z", Some(&id("hanzo/z")), "https://api.hanzo.ai", "https://api.hanzo.ai").is_none());
+        assert!(cloud_resume_block("admin/z", Some(&id("admin/z")), "https://api.hanzo.ai", "https://api.hanzo.ai").is_none());
     }
 
     /// Different org: the cloud session CANNOT move (the gateway refuses it, and
@@ -844,7 +888,7 @@ mod tests {
     /// a new cloud session is registered, and we SAY so — never silently.
     #[test]
     fn resume_across_an_org_boundary_registers_fresh_and_says_so() {
-        let note = cross_org_resume_note("hanzo/z", Some(&id("admin/z"))).expect("must warn");
+        let note = cloud_resume_block("hanzo/z", Some(&id("admin/z")), "https://api.hanzo.ai", "https://api.hanzo.ai").expect("must warn");
         assert!(note.contains("hanzo/z") && note.contains("admin/z"));
         assert!(note.contains("NEW cloud session"), "{note}");
         // Billing is stated plainly — it moves to the active identity's org.
@@ -857,8 +901,8 @@ mod tests {
     /// `hanzo/z` case. `owner` alone decides; a name match must not re-attach.
     #[test]
     fn the_same_username_in_another_org_is_still_cross_org() {
-        assert!(cross_org_resume_note("hanzo/z", Some(&id("admin/z"))).is_some());
-        assert!(cross_org_resume_note("admin/z", Some(&id("hanzo/z"))).is_some());
+        assert!(cloud_resume_block("hanzo/z", Some(&id("admin/z")), "https://api.hanzo.ai", "https://api.hanzo.ai").is_some());
+        assert!(cloud_resume_block("admin/z", Some(&id("hanzo/z")), "https://api.hanzo.ai", "https://api.hanzo.ai").is_some());
     }
 
     /// A record predating identity tracking has unknown provenance. It cannot be
@@ -866,7 +910,7 @@ mod tests {
     /// on the cloud id, keep the local conversation, and explain.
     #[test]
     fn a_record_of_unknown_provenance_does_not_reattach() {
-        let note = cross_org_resume_note("", Some(&id("admin/z"))).expect("must warn");
+        let note = cloud_resume_block("", Some(&id("admin/z")), "https://api.hanzo.ai", "https://api.hanzo.ai").expect("must warn");
         assert!(note.contains("predates identity tracking"), "{note}");
         assert!(note.contains("NEW cloud session"), "{note}");
     }
@@ -875,8 +919,8 @@ mod tests {
     /// to own. No note — there is nothing to tell the user about.
     #[test]
     fn an_unauthenticated_resume_has_no_cloud_session_to_reason_about() {
-        assert!(cross_org_resume_note("hanzo/z", None).is_none());
-        assert!(cross_org_resume_note("", None).is_none());
+        assert!(cloud_resume_block("hanzo/z", None, "https://api.hanzo.ai", "https://api.hanzo.ai").is_none());
+        assert!(cloud_resume_block("", None, "https://api.hanzo.ai", "https://api.hanzo.ai").is_none());
     }
 
     #[test]
@@ -1014,6 +1058,69 @@ mod tests {
         assert_eq!(id, "sess_mock");
         assert_eq!(forked.as_deref(), Some("sess_old"));
         assert!(mock.requests().iter().any(|r| r.method == "POST" && r.path == "/v1/agents/sessions"));
+    }
+
+    /// MED-2: lineage is only written for a session we VERIFIED.
+    ///
+    /// Every `GET` failure — 403 (another org), 404 (gone), 5xx/timeout/DNS —
+    /// leaves us unable to say the id is ours or even real, so we must register
+    /// with NO `resumedFrom` rather than record a pointer that dangles or names
+    /// another tenant. Enforced in the FUNCTION, not just at today's call site.
+    #[tokio::test]
+    async fn an_unverifiable_session_forks_with_no_lineage() {
+        for code in [403u16, 404, 500] {
+            let mock = MockCloud::start_session_get_failing(code).await;
+            let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+            let (id, forked) = resolve_cloud_session(&client, "claude", "t", Some("sess_other_org"))
+                .await
+                .unwrap();
+
+            assert_eq!(id, "sess_mock", "a fresh session is registered ({code})");
+            assert_eq!(
+                forked, None,
+                "must NOT record resumedFrom for an unverified session ({code})"
+            );
+            // And the id we could not verify never reached cloud as lineage.
+            let posted = mock
+                .requests()
+                .iter()
+                .filter(|r| r.method == "POST" && r.path == "/v1/agents/sessions")
+                .map(|r| r.json().to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                !posted.contains("sess_other_org"),
+                "leaked an unverified id into the register body ({code}): {posted}"
+            );
+        }
+    }
+
+    /// A cloud id minted by one control plane means nothing to another, so
+    /// `hanzo network use local` + resume of a prod session must not re-attach.
+    #[test]
+    fn resume_on_a_different_network_does_not_reattach() {
+        let note = cloud_resume_block(
+            "hanzo/z",
+            Some(&id("hanzo/z")),
+            "https://api.hanzo.ai",
+            "http://localhost:3690",
+        )
+        .expect("must warn even though the identity matches");
+        assert!(note.contains("api.hanzo.ai") && note.contains("localhost:3690"), "{note}");
+        assert!(note.contains("NEW cloud session"), "{note}");
+
+        // A trailing slash is not a different network.
+        assert!(cloud_resume_block(
+            "hanzo/z",
+            Some(&id("hanzo/z")),
+            "https://api.hanzo.ai/",
+            "https://api.hanzo.ai"
+        )
+        .is_none());
+
+        // A record predating the api field cannot contradict the active network.
+        assert!(cloud_resume_block("hanzo/z", Some(&id("hanzo/z")), "", "https://api.hanzo.ai").is_none());
     }
 
     #[tokio::test]

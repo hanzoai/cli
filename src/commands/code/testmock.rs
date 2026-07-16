@@ -43,6 +43,9 @@ struct Config {
     /// When true, GET/PATCH on a target id returns 404 (target gone / other org),
     /// so the run-target sync's register fallback can be proven.
     targets_missing: bool,
+    /// If set, GET /v1/agents/sessions/:id returns this status while register
+    /// still succeeds — the shape of a real 403 (another org), 404 (gone) or 5xx.
+    session_get_code: Option<u16>,
 }
 
 pub struct MockCloud {
@@ -52,23 +55,36 @@ pub struct MockCloud {
 
 impl MockCloud {
     pub async fn start() -> MockCloud {
-        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: false }).await
+        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: false, session_get_code: None }).await
     }
 
     /// A mock whose GET returns the given session status (resume tests).
     pub async fn start_get_status(status: &str) -> MockCloud {
-        Self::with(Config { force_status: None, get_status: status.into(), targets_missing: false }).await
+        Self::with(Config { force_status: None, get_status: status.into(), targets_missing: false, session_get_code: None }).await
     }
 
     /// A mock that answers every request with `code` (error-path tests).
     pub async fn start_status(code: u16) -> MockCloud {
-        Self::with(Config { force_status: Some(code), get_status: "paused".into(), targets_missing: false }).await
+        Self::with(Config { force_status: Some(code), get_status: "paused".into(), targets_missing: false, session_get_code: None }).await
     }
 
     /// A mock that 404s a target by id (register still works) — proves the
     /// run-target sync heartbeat→register fallback.
     pub async fn start_target_missing() -> MockCloud {
-        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: true }).await
+        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: true, session_get_code: None }).await
+    }
+
+    /// A mock that fails GET on a session id with `code` while register still
+    /// works: exactly what the CLI sees for another org's session (403), a
+    /// deleted one (404), or a control-plane blip (5xx).
+    pub async fn start_session_get_failing(code: u16) -> MockCloud {
+        Self::with(Config {
+            force_status: None,
+            get_status: "paused".into(),
+            targets_missing: false,
+            session_get_code: Some(code),
+        })
+        .await
     }
 
     async fn with(cfg: Config) -> MockCloud {
@@ -204,6 +220,14 @@ fn respond(cfg: &Config, method: &str, path: &str) -> (String, String) {
     }
     // GET detail -> configured status
     if method == "GET" && path.starts_with("/v1/agents/sessions/") {
+        if let Some(code) = cfg.session_get_code {
+            let line = match code {
+                403 => "403 Forbidden",
+                404 => "404 Not Found",
+                _ => "500 Internal Server Error",
+            };
+            return (line.into(), r#"{"error":"refused"}"#.to_string());
+        }
         let id = path.trim_start_matches("/v1/agents/sessions/");
         return (
             "200 OK".into(),

@@ -149,8 +149,10 @@ pub fn use_network(cfg: &mut Config, name: String) -> Result<()> {
             name
         );
     }
-    cfg.network.active = Some(name.clone());
-    cfg.save()?;
+    cfg.update(|c| {
+        c.network.active = Some(name.clone());
+        Ok(())
+    })?;
     let n = active(cfg);
     println!("{} active network {} ({})", "✓".green(), name.cyan().bold(), n.label);
     Ok(())
@@ -185,11 +187,14 @@ pub fn add(
     };
     // Upsert by name.
     cfg.network.custom.retain(|n| n.name != name);
-    cfg.network.custom.push(net);
-    if set_active {
-        cfg.network.active = Some(name.clone());
-    }
-    cfg.save()?;
+    cfg.update(|c| {
+        c.network.custom.retain(|x| x.name != net.name);
+        c.network.custom.push(net.clone());
+        if set_active {
+            c.network.active = Some(name.clone());
+        }
+        Ok(())
+    })?;
     if network_id == chain_id {
         println!("{} added sovereign network {} (network_id == chain_id == {})", "✓".green(), name.cyan().bold(), chain_id);
     } else {
