@@ -13,7 +13,7 @@
 
 use crate::commands::network;
 use crate::config::{Config, StoredWallet};
-use crate::iam::{paths, token};
+use crate::iam::{paths, store};
 use anyhow::{anyhow, bail, Context, Result};
 use bip32::{DerivationPath, XPrv};
 use bip39::{Language, Mnemonic, MnemonicType, Seed};
@@ -126,10 +126,15 @@ pub fn active(cfg: &Config) -> Option<StoredWallet> {
 
 /// Provision a cloud-custody wallet via `POST /v1/wallets` (KMS/MPC). Keys are
 /// derived + held server-side and never returned — we persist only the address.
-async fn cloud_provision(cfg: &Config, name: &str, custody: &str) -> Result<StoredWallet> {
+///
+/// The wallet belongs to the ACTIVE identity's org: the CLI sends only the
+/// bearer and cloud derives the org from its `owner` claim. Provisioning while
+/// `admin/z` is active therefore creates an `admin`-org wallet, not a `hanzo`
+/// one — which is precisely why the identity must be explicit and switchable.
+async fn cloud_provision(cfg: &mut Config, name: &str, custody: &str) -> Result<StoredWallet> {
     let net = network::active(cfg);
     let api = net.api.trim_end_matches('/');
-    let tok = token::load(paths::DEFAULT_BRAND)?.ok_or_else(|| {
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?.ok_or_else(|| {
         anyhow!("not signed in — run `hanzo login` first (or `hanzo wallet create --local`)")
     })?;
     let client = reqwest::Client::new();
