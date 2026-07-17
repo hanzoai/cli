@@ -92,7 +92,7 @@ impl SessionClient {
 
     async fn send(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value> {
         let url = format!("{}{}", self.api, path);
-        super::http::send_json(&self.http, method, &url, &self.token, body).await
+        crate::http::send_json(&self.http, method, &url, &self.token, body).await
     }
 }
 
