@@ -22,6 +22,7 @@ cargo clippy --bin hanzo
   model (`src/iam/*`, HIP-0111; below).
 - `network list|current|use <name>|add <name> …` — the network model (below).
 - `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
+- `billing balance|deposit` — the prepaid wallet's money (below).
 - `node up|status|join <network>|stop` — run/join hanzo.network with hanzod.
 - `cluster topology|models|route|placement|chat|search` — talk to a hanzo node
   (default node URL = the active network's `api`).
@@ -217,6 +218,37 @@ and the node's `hanzo-mining` `NetworkType`:
 
 `network add` defaults `chain_id` to `network_id` (sovereign). Selection + custom
 networks persist to `~/.config/hanzo/config.toml` (`config.rs`, non-secret only).
+
+## Billing (`src/commands/billing.rs`) — the money the identity model bills
+`balance` reads `GET /v1/billing/balance`; `deposit` posts `POST /v1/billing/deposit`
+(commerce's `api/billing/deposit.go`, mounted at `api.Post("/deposit", mintRequired,
+Deposit)`). Both send ONLY the bearer — the org is the gateway's to derive from the
+JWT `owner`, so there is no org flag and no `X-Org-Id`, and `hanzo switch` moves the
+money for free. Nothing here is generated from cloud's router: cloud registers no
+deposit route (it is commerce's), so this surface is hand-written against the
+commerce handler, which is the source of truth for its shape.
+
+- **Nothing is invented.** `--user` (the beneficiary subject) is REQUIRED, never
+  computed: the rule is server-side `account.Payer` (`org` pool vs `org/name`
+  person, off claims the CLI cannot see), so guessing it would drift from the gate
+  and fund an account the meter never reads. Amounts are `--cents` — the unit the
+  ledger states, so nothing is rounded and no currency exponent is assumed. Money
+  POLICY is server-authoritative too (positive, `COMMERCE_DEPOSIT_MAX_CENTS`), so
+  it is not mirrored here; an unset flag is OMITTED from the body so the server's
+  own default is the only default. A balance that cannot be read FAILS — unknown
+  is not "broke", and a zero is never rendered on the server's behalf.
+- **A 403 is explained, never pre-empted.** The request always goes out: the server
+  is the SOLE grantor (`middleware.PlatformOnly` → `MayMintMoney` — the internal
+  service token, or `IsSuperAdmin()` ⟺ the reserved `admin` org — over the token
+  IT verified). Gating on our own `owner` would invent an authz decision out of an
+  unverified local decode that LABELS STORAGE ONLY, and would refuse callers the
+  server would admit. Only AFTER a refusal do we read the identity, via
+  `store::refusal_hint` — the ONE explainer (pure, over the active identity + the
+  ones we hold), shared by every command that can meet a SuperAdmin gate rather
+  than special-cased here. It names an identity we actually HOLD (`hanzo switch
+  admin/z`), defers to `switch`'s own resolution when several are held, says
+  `hanzo login` when none is, and stays SILENT for a SuperAdmin — whom switching
+  cannot help.
 
 ## Wallet model (`src/commands/wallet.rs`) — two custodies, ZERO plaintext
 - Cloud custody (`kms`/`mpc`, default when signed in): the PQ identity. Keys are
