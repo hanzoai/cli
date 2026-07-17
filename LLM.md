@@ -21,6 +21,7 @@ cargo clippy --bin hanzo
 - `login` / `whoami` / `switch` / `logout` — IAM OIDC PKCE S256 + the identity
   model (`src/iam/*`, HIP-0111; below).
 - `network list|current|use <name>|add <name> …` — the network model (below).
+- `kms list|get|set|rm` — secrets, the only place they live (below).
 - `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
 - `node up|status|join <network>|stop` — run/join hanzo.network with hanzod.
 - `cluster topology|models|route|placement|chat|search` — talk to a hanzo node
@@ -218,6 +219,45 @@ and the node's `hanzo-mining` `NetworkType`:
 `network add` defaults `chain_id` to `network_id` (sovereign). Selection + custom
 networks persist to `~/.config/hanzo/config.toml` (`config.rs`, non-secret only).
 
+## Secrets (`src/commands/kms.rs`) — `hanzo kms`, the local instrument of "KMS or nowhere"
+The core lifecycle against cloud's `/v1/kms/orgs/{org}/secrets`, and NOTHING
+else. `rotate`/version history exist in the standalone luxfi/kms SDK but cloud
+does not mount them, and a verb the server cannot answer is worse than no verb.
+
+- **A value has one way in and one way out.** IN: `set` reads stdin, always —
+  there is no `--value` and no positional value, so no argv, `ps`, shell history
+  or CI log can hold it. That is a property of the GRAMMAR (a value-bearing argv
+  is a parse error), not of the handler's discipline, and a test pins it. Same
+  reason `login --token -` reads stdin. OUT: `get` writes the raw bytes to
+  stdout — no newline, no label — so it pipes byte-exactly. The bytes never
+  differ by where stdout points; a secrets tool you cannot pipe is one you cannot
+  trust, and a TTY guard would be theatre (passed reflexively, and the
+  shoulder-surfer sees the value either way). A value is never logged, never on
+  disk, never in the config; `list` cannot carry one (the server's listing has no
+  value field).
+- **The org is ADDRESSED, never asserted.** These routes name the org in the PATH
+  (unlike the agents plane), so the CLI cannot stay silent about it. It sends the
+  ACTIVE IDENTITY'S OWN `owner` — the claim on the very token it authenticates
+  with, via `iam::store::active_token`, never a user choice (there is no `--org`,
+  and a test pins its absence). The server re-derives the org from the JWT it
+  verifies and 403s any mismatch, so the segment is an address: forging it can
+  only 403 you against yourself. `X-Org-Id` is never sent. `hanzo switch` moves
+  the secret namespace exactly as it moves billing — no new machinery.
+- **ONE address type.** `NAME` or `sub/path/NAME`, identical in every verb (the
+  same split the server makes: last segment = name, rest = sub-path). `list`
+  prints addresses in exactly the form `get` takes, so the two compose:
+  `hanzo kms list | xargs -n1 hanzo kms get`. `.`/`..`/empty segments are refused
+  BEFORE a URL is built — a URL library normalises them away, and `../../evil/…`
+  would silently re-address another org rather than ask what the user typed.
+  Every segment is percent-encoded: the server's only name bans are `/` and
+  control chars, so `X?env=prod` is a LEGAL name and a raw one in a URL would
+  fetch a different secret.
+- **`set --env` is required, reads default to `default`** — mirroring the server
+  exactly rather than papering over it. It refuses to guess on a WRITE because a
+  silent `default` commits to a bucket the env's readers never resolve (the split
+  that once left a live credential stale in prod); a read cannot plant a value,
+  so it keeps the compat default.
+
 ## Wallet model (`src/commands/wallet.rs`) — two custodies, ZERO plaintext
 - Cloud custody (`kms`/`mpc`, default when signed in): the PQ identity. Keys are
   derived + held server-side (`cloud/clients/wallets`, KMS/MPC via `POST
@@ -239,7 +279,11 @@ plane (`--with-cloud`). `stop` SIGTERMs that recorded PID (never a blind pkill).
 - `src/main.rs` — clap command tree + dispatch.
 - `src/config.rs` — persisted, non-secret config (auth index + network + wallet
   state). `Config::update` is the ONLY mutator: locked, re-read, atomic.
-- `src/commands/{network,wallet,node,cluster,deploy}.rs` — the concerns above.
+- `src/http.rs` — the ONE bearer-authenticated JSON call into cloud. Transport
+  only: it knows nothing of the plane it calls, which is why the agents clients
+  (`code`) and the secret store (`kms`) share it without braiding. It sends the
+  bearer and nothing else — never an org header.
+- `src/commands/{network,kms,wallet,node,cluster,deploy}.rs` — the concerns above.
 - `src/iam/*` — IAM OIDC client + the identity store (the keychain pattern wallet
   secrets reuse): `identity.rs` (who a token is, from its own claims), `token.rs`
   (per-identity keychain entries + the `Vault` test seam), `store.rs` (THE one
