@@ -6,5 +6,6 @@ pub mod deploy;
 pub mod ts_proxy;
 pub mod cluster;
 pub mod network;
+pub mod kms;
 pub mod wallet;
 pub mod node;
