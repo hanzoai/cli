@@ -139,7 +139,7 @@ enum Commands {
         /// Supply the credential on stdin instead of interactively: `--token -`
         /// reads a hanzo.id bearer (default provider) or a provider API key
         /// (`--provider openai|anthropic`), so it never lands in argv or history.
-        /// A literal value is refused for a provider key.
+        /// A literal value is refused — for a bearer or a key alike.
         #[arg(long, value_name = "TOKEN")]
         token: Option<String>,
     },
