@@ -187,6 +187,13 @@ enum Commands {
         command: WalletCommands,
     },
 
+    /// Prepaid wallet money — read the balance, mint a deposit. Both bill the
+    /// ACTIVE identity: the org is derived from its token, server-side.
+    Billing {
+        #[command(subcommand)]
+        command: BillingCommands,
+    },
+
     /// Run / join hanzo.network with hanzod (the fabric)
     Node {
         #[command(subcommand)]
@@ -392,6 +399,33 @@ enum WalletCommands {
     Use { address: String },
     /// List known wallets
     List,
+}
+
+#[derive(Subcommand)]
+enum BillingCommands {
+    /// Show the active identity's prepaid balance
+    Balance,
+    /// Credit an account (SuperAdmin / internal service only — the server rules)
+    Deposit {
+        /// Beneficiary: the IAM subject the credit lands on (`org` or `org/name`)
+        #[arg(long)]
+        user: String,
+        /// Amount in CENTS — the unit the ledger states, so nothing is rounded
+        #[arg(long)]
+        cents: i64,
+        /// Currency (server default: usd)
+        #[arg(long)]
+        currency: Option<String>,
+        /// Why — recorded on the ledger row
+        #[arg(long)]
+        notes: Option<String>,
+        /// Ledger tags (the credit's bucket)
+        #[arg(long)]
+        tags: Option<String>,
+        /// Days until the credit expires (server default: never)
+        #[arg(long)]
+        expires_in: Option<u32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -620,6 +654,16 @@ async fn main() -> Result<()> {
                 commands::wallet::use_wallet(&mut config, address)?
             }
             WalletCommands::List => commands::wallet::list(&config)?,
+        },
+        Commands::Billing { command } => match command {
+            BillingCommands::Balance => commands::billing::balance(&mut config).await?,
+            BillingCommands::Deposit { user, cents, currency, notes, tags, expires_in } => {
+                commands::billing::deposit(
+                    &mut config,
+                    commands::billing::Deposit { user, cents, currency, notes, tags, expires_in },
+                )
+                .await?
+            }
         },
         Commands::Node { command } => match command {
             NodeCommands::Up { foreground, with_cloud } => {
