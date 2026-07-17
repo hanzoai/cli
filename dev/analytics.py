@@ -5,7 +5,6 @@ import time
 import uuid
 from pathlib import Path
 
-from mixpanel import MixpanelException
 from insights import Insights as InsightsClient
 
 from dev import __version__
@@ -52,7 +51,6 @@ def is_uuid_in_percentage(uuid_str, percent):
     return uuid_str[:6] <= threshold
 
 
-mixpanel_project_token = "6da9a43058a5d1b9f3353153921fb04d"
 insights_project_api_key = "phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv"
 insights_host = "https://insights.hanzo.ai"
 
@@ -90,7 +88,6 @@ class Analytics:
             self.disable(False)
             return
 
-        # self.mp = Mixpanel(mixpanel_project_token)
         self.ph = InsightsClient(
             project_api_key=insights_project_api_key,
             host=insights_host,
@@ -100,7 +97,6 @@ class Analytics:
         )
 
     def disable(self, permanently):
-        self.mp = None
         self.ph = None
 
         if permanently:
@@ -201,7 +197,7 @@ class Analytics:
         self.ph = None
 
     def event(self, event_name, main_model=None, **kwargs):
-        if not self.mp and not self.ph and not self.logfile:
+        if not self.ph and not self.logfile:
             return
 
         properties = {}
@@ -219,12 +215,6 @@ class Analytics:
                 properties[key] = value
             else:
                 properties[key] = str(value)
-
-        if self.mp:
-            try:
-                self.mp.track(self.user_id, event_name, dict(properties))
-            except MixpanelException:
-                self.mp = None  # Disable mixpanel on connection errors
 
         if self.ph:
             self.ph.capture(self.user_id, event_name, dict(properties))
