@@ -42,7 +42,8 @@ impl Lock {
             .open(&lock)
             .with_context(|| format!("opening config lock {}", lock.display()))?;
         // Exclusive, and BLOCKING. Every writer stalls until this releases, so
-        // the critical section MUST stay a parse + a rename. Nothing that can
+        // the critical section MUST stay bounded: a parse, a write, an fsync and
+        // a rename (the fsync is the real cost). Nothing that can
         // block on a human, a network or the OS keychain may run inside it: a
         // keyring read can open a GUI prompt and wait indefinitely, which would
         // hang every other `hanzo` process on the box with no explanation. See
