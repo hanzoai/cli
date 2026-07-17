@@ -13,7 +13,7 @@
 
 use crate::commands::network;
 use crate::config::{Config, StoredWallet};
-use crate::iam::{paths, token};
+use crate::iam::{paths, store};
 use anyhow::{anyhow, bail, Context, Result};
 use bip32::{DerivationPath, XPrv};
 use bip39::{Language, Mnemonic, MnemonicType, Seed};
@@ -107,6 +107,8 @@ fn derive_local(secret: &str) -> Result<(String, String)> {
 
 // ---- config helpers ------------------------------------------------------
 
+/// Insert-or-replace a wallet in the index. Pure over `cfg` so it can be
+/// re-applied against fresh on-disk state inside a `Config::update`.
 fn upsert(cfg: &mut Config, w: StoredWallet, set_active: bool) {
     let addr = w.address.clone();
     cfg.wallet.wallets.retain(|x| x.address != w.address);
@@ -114,6 +116,14 @@ fn upsert(cfg: &mut Config, w: StoredWallet, set_active: bool) {
     if set_active || cfg.wallet.active.is_none() {
         cfg.wallet.active = Some(addr);
     }
+}
+
+/// `upsert` committed atomically against current on-disk state.
+fn upsert_saved(cfg: &mut Config, w: StoredWallet, set_active: bool) -> Result<()> {
+    cfg.update(|c| {
+        upsert(c, w.clone(), set_active);
+        Ok(())
+    })
 }
 
 /// The active wallet, if one is configured.
@@ -126,10 +136,15 @@ pub fn active(cfg: &Config) -> Option<StoredWallet> {
 
 /// Provision a cloud-custody wallet via `POST /v1/wallets` (KMS/MPC). Keys are
 /// derived + held server-side and never returned — we persist only the address.
-async fn cloud_provision(cfg: &Config, name: &str, custody: &str) -> Result<StoredWallet> {
+///
+/// The wallet belongs to the ACTIVE identity's org: the CLI sends only the
+/// bearer and cloud derives the org from its `owner` claim. Provisioning while
+/// `admin/z` is active therefore creates an `admin`-org wallet, not a `hanzo`
+/// one — which is precisely why the identity must be explicit and switchable.
+async fn cloud_provision(cfg: &mut Config, name: &str, custody: &str) -> Result<StoredWallet> {
     let net = network::active(cfg);
     let api = net.api.trim_end_matches('/');
-    let tok = token::load(paths::DEFAULT_BRAND)?.ok_or_else(|| {
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?.ok_or_else(|| {
         anyhow!("not signed in — run `hanzo login` first (or `hanzo wallet create --local`)")
     })?;
     let client = reqwest::Client::new();
@@ -201,8 +216,7 @@ pub async fn create(
         match cloud_provision(cfg, &name, &custody).await {
             Ok(w) => {
                 let addr = w.address.clone();
-                upsert(cfg, w, true);
-                cfg.save()?;
+                upsert_saved(cfg, w, true)?;
                 println!("{} created {}-custody wallet {}", "✓".green(), custody, addr.cyan().bold());
                 println!("  {} keys held server-side (KMS/MPC) — never on this machine", "PQ".dimmed());
                 return Ok(());
@@ -218,7 +232,7 @@ pub async fn create(
     let phrase = mnemonic.phrase().to_string();
     let address = address_from_mnemonic(&phrase)?;
     store_secret(&address, &phrase)?;
-    upsert(
+    upsert_saved(
         cfg,
         StoredWallet {
             address: address.clone(),
@@ -228,8 +242,7 @@ pub async fn create(
             network: Some(net.name),
         },
         true,
-    );
-    cfg.save()?;
+    )?;
     println!("{} created local wallet {}", "✓".green(), address.cyan().bold());
     println!("  {} mnemonic stored in the OS keychain — it is NOT printed and NOT on disk", "secret".dimmed());
     Ok(())
@@ -240,7 +253,7 @@ pub async fn import(cfg: &mut Config, secret: String, name: Option<String>) -> R
     let (address, to_store) = derive_local(&secret)?;
     store_secret(&address, &to_store)?;
     let net = network::active(cfg);
-    upsert(
+    upsert_saved(
         cfg,
         StoredWallet {
             address: address.clone(),
@@ -250,8 +263,7 @@ pub async fn import(cfg: &mut Config, secret: String, name: Option<String>) -> R
             network: Some(net.name),
         },
         true,
-    );
-    cfg.save()?;
+    )?;
     println!("{} imported wallet {}", "✓".green(), address.cyan().bold());
     println!("  {} key stored in the OS keychain (never on disk, never printed)", "secret".dimmed());
     Ok(())
@@ -325,8 +337,10 @@ pub fn use_wallet(cfg: &mut Config, address: String) -> Result<()> {
     if !cfg.wallet.wallets.iter().any(|w| w.address == address) {
         bail!("unknown wallet {address}. Run `hanzo wallet list`.");
     }
-    cfg.wallet.active = Some(address.clone());
-    cfg.save()?;
+    cfg.update(|c| {
+        c.wallet.active = Some(address.clone());
+        Ok(())
+    })?;
     println!("{} active wallet {}", "✓".green(), address.cyan().bold());
     Ok(())
 }

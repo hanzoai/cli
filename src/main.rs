@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod commands;
 mod config;
+mod private;
 mod iam;
 mod sdk;
 
@@ -127,18 +128,43 @@ enum Commands {
         token: Option<String>,
     },
 
-    /// Show the currently signed-in identity
+    /// Show the active identity (`--all` lists every identity)
     Whoami {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+
+        /// List every identity on this brand, marking the active one
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Switch the active identity (like `gh auth switch`)
+    Switch {
+        /// `owner/name` (e.g. admin/z), or a bare `owner` when unambiguous.
+        /// Omit to toggle when exactly two identities are signed in.
+        #[arg(value_name = "IDENTITY")]
+        identity: Option<String>,
+
         /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
     },
 
-    /// Sign out and remove stored credentials
+    /// Sign out one identity (or `--all` of them) and remove the credential
     Logout {
+        /// `owner/name`, or a bare `owner` when unambiguous. Omit to sign out
+        /// of the ACTIVE identity.
+        #[arg(value_name = "IDENTITY")]
+        identity: Option<String>,
+
         /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
+
+        /// Remove EVERY identity for this brand
+        #[arg(long)]
+        all: bool,
     },
 
     /// Network selection + custom/sovereign networks (mirrors the console)
@@ -434,7 +460,7 @@ async fn main() -> Result<()> {
             passthrough,
         } => {
             commands::code::run(
-                &config,
+                &mut config,
                 commands::code::Options {
                     backend,
                     link,
@@ -466,26 +492,18 @@ async fn main() -> Result<()> {
                 if raw.is_empty() {
                     anyhow::bail!("no token provided");
                 }
-                iam::token::store(
-                    &brand,
-                    &iam::token::TokenSet {
-                        access_token: raw.to_string(),
-                        token_type: "Bearer".to_string(),
-                        refresh_token: None,
-                        id_token: None,
-                        expires_in: None,
-                        scope: None,
-                    },
-                )?;
-                println!("signed in to {brand} (token stored in the OS keychain)");
+                iam::login::login_with_token(&mut config, &brand, raw).await?;
             }
-            None => iam::login::login(&brand).await?,
+            None => iam::login::login(&mut config, &brand).await?,
         },
-        Commands::Whoami { brand } => {
-            iam::login::whoami(&brand).await?;
+        Commands::Whoami { brand, all } => {
+            iam::login::whoami(&mut config, &brand, all).await?;
         }
-        Commands::Logout { brand } => {
-            iam::login::logout(&brand).await?;
+        Commands::Switch { identity, brand } => {
+            iam::login::switch(&mut config, &brand, identity)?;
+        }
+        Commands::Logout { identity, brand, all } => {
+            iam::login::logout(&mut config, &brand, identity, all)?;
         }
         Commands::Network { command } => match command {
             NetworkCommands::List => commands::network::list(&config)?,
