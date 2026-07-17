@@ -189,6 +189,12 @@ cd cli
 cargo build --release
 
 # Install globally
+curl -fsSL https://raw.githubusercontent.com/hanzoai/cli/main/install.sh | sh
+
+# hanzoai/cli is currently PRIVATE, so the installer needs a token until it is public:
+#   GH_TOKEN=... sh install.sh        (or just `gh auth login` first)
+
+# From source instead:
 cargo install --path .
 ```
 
