@@ -1,34 +1,38 @@
 //! `hanzo <product> <resource…> <verb>` — cloud's Go surface as FIRST-CLASS
-//! product commands, generated from the hand-authored OpenAPI specs.
+//! product commands, generated from the hand-authored OpenAPI specs. This is the
+//! ONLY interface to cloud: every capability is a real subcommand — there is no
+//! `hanzo api` verb and no raw-path escape.
 //!
-//! `hanzo api` reaches every `/v1` operation through the one seam; this gives the
-//! enumerable ones real verbs with real `--help`, WITHOUT hand-writing them: a
-//! build-time generator folds each path into a (product, resource nodes, verb,
-//! method, path template, params, typed body fields) coordinate and commits it as
-//! pure DATA (`generated.rs`). At runtime we build a clap tree from that data and
-//! dispatch through the SAME `api::call` seam — so the trust boundary is identical
-//! to `hanzo api`: the ORIGIN comes from `network`, the BEARER from `store`, and
-//! the data contributes only the path template + argument SHAPE. It contains no
-//! host, no URL and no auth (a test fails the build otherwise), so a hostile
-//! snapshot can at worst shape a call to YOUR OWN cloud with YOUR OWN token —
-//! never redirect it.
+//! A build-time generator folds each authored path into a (product, resource
+//! nodes, verb, method, path template, params, typed body fields) coordinate and
+//! commits it as pure DATA (`generated.rs`). At runtime we build a clap tree from
+//! that data and dispatch it through the one authenticated seam below: the ORIGIN
+//! comes from `network`, the BEARER from `store`, and the data contributes only
+//! the path template + argument SHAPE. The data contains no host, no URL and no
+//! auth (a test fails the build otherwise), so a hostile snapshot can at worst
+//! shape a call to YOUR OWN cloud with YOUR OWN token — never redirect it.
 //!
 //! Because the source specs carry real requestBody schemas, a write op with a
 //! schema gets TYPED `--flags` (one per property, with the property's type and
 //! required-ness) and the JSON body is assembled from them — not `--data`. A write
-//! with NO schema (or a freeform body) falls back to `--data '<json>'`; a product
-//! with no authored spec falls through to a `hanzo api`-style passthrough. Nothing
-//! is invented — the fields are exactly the schema's properties.
+//! with NO schema (or a freeform body) falls back to `--data '<json>'`. A product
+//! with no authored spec is simply ABSENT (no passthrough, no `hanzo api` to paper
+//! over it — that gap closes by authoring the spec). Nothing is invented — the
+//! fields are exactly the schema's properties.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Map, Value};
+use std::io::Read;
 
+use crate::commands::network;
 use crate::config::Config;
+use crate::http;
 use crate::iam::{paths, store};
 
 mod generated;
-pub(crate) use generated::{OPS, PASSTHROUGH};
+pub(crate) use generated::OPS;
 
 /// One generated operation — pure DATA derived from the authored spec SHAPE.
 pub struct Op {
@@ -89,37 +93,15 @@ impl Op {
 /// already omits the hand-written products (`kms`/`billing`/`agent`/`deploy`), and
 /// this also skips any name the derive tree already took — so a future spec
 /// addition that collides is auto-excluded rather than clobbering an invariant.
-/// The flagship `code` wrapper is special: its `/v1/code` verbs mount UNDER it,
-/// so `hanzo code "task"` still runs the wrapper and `hanzo code ask|search` hit
-/// cloud.
 pub fn augment(mut cmd: Command) -> Command {
     let taken: std::collections::HashSet<String> =
         cmd.get_subcommands().map(|s| s.get_name().to_string()).collect();
 
-    // Nest the /v1/code verbs under the existing wrapper. clap's `mut_subcommand`
-    // panics on an absent name, so guard on the wrapper actually being present
-    // (it always is in the real tree; a bare test tree may omit it).
-    if taken.contains("code") {
-        let code_leaves: Vec<Command> =
-            OPS.iter().filter(|o| o.product == "code").map(leaf).collect();
-        if !code_leaves.is_empty() {
-            cmd = cmd.mut_subcommand("code", |c| {
-                code_leaves.into_iter().fold(c, |c, l| c.subcommand(l))
-            });
-        }
-    }
-
     for product in product_names() {
-        if product == "code" || taken.contains(product) {
-            continue;
-        }
-        cmd = cmd.subcommand(build_product(product));
-    }
-    for &product in PASSTHROUGH {
         if taken.contains(product) {
             continue;
         }
-        cmd = cmd.subcommand(passthrough(product));
+        cmd = cmd.subcommand(build_product(product));
     }
     cmd
 }
@@ -230,26 +212,6 @@ fn parse_json(s: &str) -> std::result::Result<Value, String> {
     serde_json::from_str(s).map_err(|e| format!("not valid JSON: {e}"))
 }
 
-fn passthrough(product: &'static str) -> Command {
-    Command::new(product)
-        .about(format!("Passthrough to /v1/{product}/* (wildcard product — no fixed verbs)"))
-        .arg(
-            Arg::new("subpath")
-                .value_name("SUBPATH")
-                .help(format!("sub-path under /v1/{product}, e.g. `queues/default`")),
-        )
-        .arg(
-            Arg::new("method")
-                .short('X')
-                .long("method")
-                .default_value("GET")
-                .help("HTTP method: GET|POST|PUT|PATCH|DELETE|HEAD"),
-        )
-        .arg(data_arg())
-        .arg(query_arg())
-        .arg(raw_arg())
-}
-
 fn data_arg() -> Arg {
     Arg::new("data")
         .long("data")
@@ -282,14 +244,6 @@ pub enum Resolved {
         query: Vec<String>,
         raw: bool,
     },
-    Pass {
-        product: &'static str,
-        subpath: Option<String>,
-        method: String,
-        data: Option<String>,
-        query: Vec<String>,
-        raw: bool,
-    },
 }
 
 /// A leaf's request body: assembled from typed flags, read raw from `--data`, or
@@ -300,20 +254,11 @@ pub enum LeafBody {
     None,
 }
 
-/// If `matches` selected a GENERATED product (or a `hanzo code` verb), resolve
-/// it; otherwise `None` so the derive tree handles it. Bare `hanzo code` and
-/// `hanzo code "task"` resolve to `None` — the wrapper, not a cloud verb.
+/// If `matches` selected a GENERATED product, resolve it; otherwise `None` so the
+/// derive tree handles it (a local command, or a truly-bare `hanzo`).
 pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
     let (top, sub) = matches.subcommand()?;
-
-    // A pure catch-all product: forward the sub-path (the &'static name outlives
-    // the borrowed matches, so it can travel into `Resolved`).
-    if let Some(&product) = PASSTHROUGH.iter().find(|&&p| p == top) {
-        return Some(pass(product, sub));
-    }
-    if top == "code" {
-        sub.subcommand()?; // bare/`task` -> None -> the wrapper owns it
-    } else if !is_product(top) {
+    if !is_product(top) {
         return None;
     }
 
@@ -379,17 +324,6 @@ fn typed_body(op: &Op, m: &ArgMatches) -> Value {
     Value::Object(map)
 }
 
-fn pass(product: &'static str, sub: &ArgMatches) -> Resolved {
-    Resolved::Pass {
-        product,
-        subpath: sub.get_one::<String>("subpath").cloned(),
-        method: sub.get_one::<String>("method").cloned().unwrap_or_else(|| "GET".into()),
-        data: sub.get_one::<String>("data").cloned(),
-        query: sub.get_many::<String>("query").map(|v| v.cloned().collect()).unwrap_or_default(),
-        raw: sub.get_flag("raw"),
-    }
-}
-
 fn is_product(name: &str) -> bool {
     OPS.iter().any(|o| o.product == name)
 }
@@ -404,30 +338,21 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
     OPS.iter().find(|o| o.product == product && o.verb == verb && o.nodes == nodes)
 }
 
-/// Bind the resolved call to a concrete request and send it through `api::call`
-/// — the SAME seam `hanzo api` uses. The org scope is filled from the active
-/// identity's `owner` (via the seam), never asked; all other params are the
-/// user's positionals. The bearer + origin are `api::call`'s to resolve.
+/// Bind the resolved call to a concrete request and send it through the one seam.
+/// The org scope is filled from the active identity's `owner` (via the seam),
+/// never asked; all other params are the user's positionals. The bearer + origin
+/// are `call`'s to resolve.
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
-    match resolved {
-        Resolved::Leaf { op, values, body, query, raw } => {
-            let owner = store::active(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
-            let path = fill_path(op.path, owner.as_deref(), &values)?;
-            let method = super::api::parse_method(op.method)?;
-            let body = match body {
-                LeafBody::Typed(v) => Some(v),
-                LeafBody::Data(d) => super::api::read_body(d, &method)?,
-                LeafBody::None => None,
-            };
-            super::api::call(cfg, method, path, body, query, raw).await
-        }
-        Resolved::Pass { product, subpath, method, data, query, raw } => {
-            let method = super::api::parse_method(&method)?;
-            let path = passthrough_path(product, subpath.as_deref())?;
-            let body = super::api::read_body(data, &method)?;
-            super::api::call(cfg, method, path, body, query, raw).await
-        }
-    }
+    let Resolved::Leaf { op, values, body, query, raw } = resolved;
+    let owner = store::active(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
+    let path = fill_path(op.path, owner.as_deref(), &values)?;
+    let method = parse_method(op.method)?;
+    let body = match body {
+        LeafBody::Typed(v) => Some(v),
+        LeafBody::Data(d) => read_body(d, &method)?,
+        LeafBody::None => None,
+    };
+    call(cfg, method, path, body, query, raw).await
 }
 
 /// Fill a `/v1` template: a param preceded by `orgs` is the tenant scope, bound
@@ -460,22 +385,6 @@ fn fill_path(template: &str, owner: Option<&str>, values: &[String]) -> Result<S
     Ok(out)
 }
 
-fn passthrough_path(product: &str, sub: Option<&str>) -> Result<String> {
-    let mut p = format!("/v1/{product}");
-    if let Some(s) = sub {
-        for seg in s.trim_matches('/').split('/').filter(|s| !s.is_empty()) {
-            match seg {
-                "." | ".." => bail!("'{seg}' is not a path segment"),
-                _ => {
-                    p.push('/');
-                    p.push_str(&enc(seg));
-                }
-            }
-        }
-    }
-    Ok(p)
-}
-
 /// Percent-encode one URL path segment: everything outside the RFC 3986
 /// unreserved set becomes `%XX`, so a value with `/`, `?` or `#` addresses the
 /// segment the user meant, never a different route.
@@ -488,6 +397,120 @@ fn enc(s: &str) -> String {
         }
     }
     out
+}
+
+// ---- the ONE authenticated call into cloud (the seam the tree dispatches on) --
+
+/// Resolve WHERE (the active network's origin) and WHO (the active identity's
+/// bearer) through the one identity seam, send the request, print the `data`, and
+/// explain a 403 in identity terms. The org is NEVER a header: where a route names
+/// it in the PATH, the caller has already addressed it (its own `owner`), and the
+/// server re-checks it against the JWT it verifies. `path` is the FINAL
+/// template-filled `/v1/…` — never a fetched spec, never a user-supplied host.
+async fn call(
+    cfg: &mut Config,
+    method: Method,
+    path: String,
+    body: Option<Value>,
+    query: Vec<String>,
+    raw: bool,
+) -> Result<()> {
+    let origin = network::active(cfg).api;
+    let origin = origin.trim_end_matches('/');
+    let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
+        .ok_or_else(|| anyhow!("not signed in — run `hanzo login`"))?;
+    // The identity we would suggest switching to on a 403 (SuperAdmin gate) — the
+    // very identity we authenticate as, so the hint can never name someone else.
+    let held = store::list(cfg, paths::DEFAULT_BRAND);
+    let hint = store::refusal_hint(&id, &held);
+
+    let url = build_url(origin, &path, &query)?;
+    let http_client = Client::new();
+    let (status, resp) =
+        http::send(&http_client, method, &url, &tok.access_token, body.as_ref()).await?;
+
+    if status.is_success() {
+        print_body(&resp, raw);
+        return Ok(());
+    }
+
+    // Non-2xx: surface the SERVER's own body, and — only on a 403 the server
+    // itself returned — the identity-switch hint. The refusal is always the
+    // server's, never a client-side guess; we read our identity only to explain
+    // it, after the fact.
+    let shown = match &resp {
+        Value::Null => String::new(),
+        Value::String(s) => s.trim().to_string(),
+        v => v.to_string(),
+    };
+    if status == StatusCode::FORBIDDEN {
+        if let Some(hint) = hint {
+            anyhow::bail!("{path} -> {status}: {shown}{hint}");
+        }
+    }
+    anyhow::bail!("{path} -> {status}: {shown}");
+}
+
+/// Map an op's method string to a `reqwest::Method`.
+fn parse_method(m: &str) -> Result<Method> {
+    match m {
+        "GET" => Ok(Method::GET),
+        "POST" => Ok(Method::POST),
+        "PUT" => Ok(Method::PUT),
+        "PATCH" => Ok(Method::PATCH),
+        "DELETE" => Ok(Method::DELETE),
+        "HEAD" => Ok(Method::HEAD),
+        other => anyhow::bail!("unsupported method {other:?}"),
+    }
+}
+
+/// `--data` is JSON; `-` reads stdin so a secret in a body never lands in argv,
+/// `ps` or shell history — the same rule as `kms set`. A body on a GET/HEAD is a
+/// named error, not silently sent.
+fn read_body(data: Option<String>, method: &Method) -> Result<Option<Value>> {
+    let Some(d) = data else { return Ok(None) };
+    if matches!(*method, Method::GET | Method::HEAD) {
+        anyhow::bail!("--data is not sent on a {method} — this verb takes no body");
+    }
+    let raw = if d == "-" {
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s).context("reading --data from stdin")?;
+        s
+    } else {
+        d
+    };
+    let value: Value = serde_json::from_str(raw.trim())
+        .context("--data must be valid JSON (use `-` to read a JSON body from stdin)")?;
+    Ok(Some(value))
+}
+
+/// Build the absolute URL, appending any `--query k=v` pairs. Split out so the
+/// join is unit-testable without a network. Values are percent-encoded by
+/// `reqwest::Url`, so a `k=a b&c` cannot forge extra parameters.
+fn build_url(origin: &str, path: &str, query: &[String]) -> Result<String> {
+    let mut url = reqwest::Url::parse(&format!("{origin}{path}"))
+        .with_context(|| format!("building URL {origin}{path}"))?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        for q in query {
+            let (k, v) = q
+                .split_once('=')
+                .ok_or_else(|| anyhow!("--query must be k=v (got {q:?})"))?;
+            pairs.append_pair(k, v);
+        }
+    }
+    Ok(url.to_string())
+}
+
+/// Print the response. The cloud `/v1` envelope is `{status,msg,data}`; by default
+/// we surface `data` (what a caller pipes), and `--raw` prints the whole envelope.
+fn print_body(resp: &Value, raw: bool) {
+    let shown = if raw { resp } else { resp.get("data").unwrap_or(resp) };
+    match shown {
+        Value::Null => {}
+        Value::String(s) => println!("{s}"),
+        v => println!("{}", serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())),
+    }
 }
 
 #[cfg(test)]

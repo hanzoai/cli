@@ -259,46 +259,25 @@ does not mount them, and a verb the server cannot answer is worse than no verb.
   that once left a live credential stale in prod); a read cannot plant a value,
   so it keeps the compat default.
 
-## `hanzo api` (`src/commands/api.rs`) — the whole cloud, reachable
-Cloud serves ~1000 `/v1` operations across ~130 products. The CLI gives the
-common ones first-class verbs (`kms`, `billing`, `wallet`, `network`, …) and
-gives EVERY other one, unchanged, through the same seam: `hanzo api <PATH> [-X
-METHOD] [--data -|<json>] [--query k=v]…`. It is the `gh api` / `kubectl --raw`
-escape hatch, so "the CLI supports all of cloud" is true by construction rather
-than by hand-writing 1000 verbs.
-
-- **The trust boundary is the point.** The ONLY user input is the method, path
-  and body. The ORIGIN comes from `network::active` and the BEARER from
-  `iam::store::active_token` — never from an argument, never from a fetched spec.
-  So a call can only ever reach YOUR active cloud with YOUR active identity's
-  token: a hostile path is at worst a 4xx against your own server, never a token
-  redirect. A full URL and the `/api/` prefix are refused at the value edge; a
-  non-`/v1` path is refused rather than silently sent.
-- **A body has one way in.** `--data -` reads stdin so a secret in a body never
-  lands in argv, `ps` or shell history — the same rule as `kms set` and
-  `login --token -`. A body on a GET/HEAD is a named error, not silently sent.
-- **A 403 is explained, never pre-empted** — same `store::refusal_hint` billing
-  uses: the request always goes out, and only AFTER the server refuses do we read
-  the identity to suggest `hanzo switch admin/z`.
-- Output is the `{status,msg,data}` envelope's `data` by default (pipe-friendly);
-  `--raw` prints the whole envelope. This is the dispatch backbone the generated
-  first-class product tree calls into — one seam, one trust boundary.
-
 ## `hanzo <product> <resource…> <verb>` (`src/commands/product/`) — cloud, as commands
-The ~1000 `/v1` operations `hanzo api` reaches, given first-class verbs with real
-`--help` AND real TYPED flags — WITHOUT hand-writing them. A build-time generator
-folds the hand-authored OpenAPI specs into committed DATA; the runtime builds a
-clap tree from that data and dispatches through the SAME `api::call` seam. `hanzo
-api` is the hidden power-user escape hatch behind it. Currently 2117 coordinates
-across 87 products (658 typed-flag + 219 `--data`-fallback writes), 65 passthrough
-products, 7 `code` verbs.
+The ONLY interface to cloud: every capability is a real subcommand with real
+`--help` AND real TYPED flags — WITHOUT hand-writing them. There is NO `hanzo api`
+verb and no raw-path escape. A build-time generator folds the hand-authored
+OpenAPI specs into committed DATA; the runtime builds a clap tree from that data
+and dispatches it through the one authenticated seam that lives IN THIS MODULE
+(`call` → `http::send`, origin from `network`, bearer from `store`). Currently
+2117 coordinates across 87 products (658 typed-flag + 219 `--data`-fallback writes).
 
 - **Source of truth = the authored specs** (`spec/products.json`, vendored from
-  hanzoai/openapi — 68 per-product OpenAPI 3.1 specs as one JSON). `spec/openapi.json`
-  (the live router shape) is kept ONLY for the product universe: router products
-  with no authored spec become passthroughs, and `/v1/code`'s verbs nest under the
-  `code` wrapper. Both snapshots are committed, so codegen + `--help` are offline
+  hanzoai/openapi — the per-product OpenAPI 3.1 specs as one JSON). It is the ONLY
+  snapshot; the router dump is gone. Committed, so codegen + `--help` are offline
   and invariant to `hanzo network use`; regenerate with `cargo run --bin genproduct`.
+- **A product with no authored spec is ABSENT.** No passthrough, no `hanzo api`
+  fallback to paper over it — an unenumerable/unauthored product simply is not in
+  the CLI, and that gap closes by AUTHORING the spec. `~66` live router products
+  (store, marketing, dataroom, knowledge, sign, sentry, usage, team, tools, …)
+  are therefore absent today — the openapi-repo completion is the work that adds
+  them.
 - **The fold is a TOTAL function over path segments** (`bin/genproduct.rs`).
   Literals → resource groups; params → positionals; terminal segment + method →
   the verb. `GET /p/r`→`list` (collection) / `get`; `GET /p/r/{id}`→`get`; `POST
@@ -318,10 +297,10 @@ products, 7 `code` verbs.
   properties. A typed leaf carries ONLY its body flags (no `--data`/`--query`/`--raw`),
   so a body key named `data`/`query` can never collide with a fixed control (the
   clap id is namespaced `field.<key>`).
-- **Fallback ladder.** requestBody schema → typed flags; a write with NO schema (or
-  a freeform body) → `--data '<json>'` (or `-` from stdin); a product with no
-  authored spec → a `hanzo api`-style passthrough (`hanzo <product> <subpath>
-  [-X] [--data]`). Every product is still a real `hanzo <product>` command.
+- **Fallback ladder (per op).** requestBody schema → typed flags; a write with NO
+  schema (or a freeform body) → `--data '<json>'` (or `-` from stdin); a read →
+  no body. There is no third tier: an unauthored PRODUCT is absent (above), not
+  papered over.
 - **Scope elision.** An `orgs/{org}` pair is the tenant scope: the `{org}` binds
   to the active identity's `owner` (via the seam), never a positional and never a
   flag — no `--org`, exactly as `kms`. (No authored route uses it today — the one
@@ -335,8 +314,13 @@ products, 7 `code` verbs.
 - **Collisions — the local command wins its bare name.** The generator omits the
   hand-written products (`kms`/`billing`/`agent`/`deploy`), and `augment` also
   skips any name the derive tree already took. `agents` (plural) owns `hanzo
-  agents`. `code` is special: its verbs mount UNDER the wrapper, so `hanzo code
-  "task"` still runs Claude and `hanzo code ask|search|index` hit cloud.
+  agents`. `code` is the flagship wrapper and ONLY the wrapper — `/v1/code` is not
+  in the authored specs, so `hanzo code "task"` runs Claude and there are no
+  `code` cloud verbs (they return when a `code` spec is authored).
+- **One seam, in-module.** The authenticated `call` (origin from `network`,
+  bearer from `store`, print `data`, explain a 403 via `store::refusal_hint`)
+  lives in `product/mod.rs`; the seam guard `no_consumer_bypasses_the_active_identity_seam`
+  lists it. `http.rs` stays the transport; `commands/api.rs` is gone.
 
 ## Billing (`src/commands/billing.rs`) — the money the identity model bills
 `balance` reads `GET /v1/billing/balance`; `deposit` posts `POST /v1/billing/deposit`

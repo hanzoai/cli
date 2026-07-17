@@ -194,37 +194,6 @@ enum Commands {
         command: BillingCommands,
     },
 
-    /// Call any cloud `/v1` endpoint with the active identity (like `gh api`).
-    ///
-    /// HIDDEN power-user escape hatch. The face of the CLI is the product tree
-    /// (`hanzo <product> <resource> <verb>`); this stays for the ~19 catch-all
-    /// wildcard products the router cannot enumerate, and for anything new before
-    /// it is modeled — the same role `kubectl --raw` plays. It shares the exact
-    /// dispatch seam the product tree uses, so it is the escape hatch, not a
-    /// second path.
-    #[command(hide = true)]
-    Api {
-        /// The `/v1/…` path (e.g. /v1/kms/orgs/<org>/secrets). No host, no `/api/`.
-        path: String,
-
-        /// HTTP method (like `curl -X`): GET (default) | POST | PUT | PATCH | DELETE | HEAD
-        #[arg(short = 'X', long, default_value = "GET")]
-        method: String,
-
-        /// JSON request body; `-` reads it from stdin so a secret never lands in
-        /// argv or shell history. Not sent on GET/HEAD.
-        #[arg(long, value_name = "JSON")]
-        data: Option<String>,
-
-        /// Append a query parameter, `k=v` (repeatable). Values are encoded.
-        #[arg(long, value_name = "K=V")]
-        query: Vec<String>,
-
-        /// Print the whole `{status,msg,data}` envelope instead of just `data`.
-        #[arg(long)]
-        raw: bool,
-    },
-
     /// Run / join hanzo.network with hanzod (the fabric)
     Node {
         #[command(subcommand)]
@@ -697,9 +666,6 @@ async fn main() -> Result<()> {
             }
             WalletCommands::List => commands::wallet::list(&config)?,
         },
-        Commands::Api { method, path, data, query, raw } => {
-            commands::api::run(&mut config, method, path, data, query, raw).await?;
-        }
         Commands::Billing { command } => match command {
             BillingCommands::Balance => commands::billing::balance(&mut config).await?,
             BillingCommands::Deposit { user, cents, currency, notes, tags, expires_in } => {
@@ -858,19 +824,17 @@ mod tests {
         assert!(commands::product::resolve(&m).is_none());
     }
 
-    /// THE collision test: after mounting `/v1/code`'s verbs under the wrapper,
-    /// `hanzo code "task"` still runs the wrapper (free-text task), while
-    /// `hanzo code search` reaches the cloud verb.
+    /// `code` is the flagship wrapper, and ONLY the wrapper — `/v1/code` is not in
+    /// the authored specs, so it is not a generated product. `hanzo code <word>`
+    /// and `hanzo code "task"` both stay the wrapper (a free-text task), never a
+    /// cloud verb; the augmented tree never claims the `code` name.
     #[test]
-    fn code_keeps_the_wrapper_and_gains_the_cloud_verbs() {
+    fn code_is_the_wrapper_and_never_a_generated_product() {
+        assert!(!commands::product::augment(Cli::command())
+            .get_subcommands()
+            .any(|s| s.get_name() == "code" && s.get_subcommands().any(|v| v.get_name() == "search")));
+
         let merged = commands::product::augment(Cli::command());
-
-        // A cloud verb resolves to the generated leaf.
-        let m = merged.clone().try_get_matches_from(["hanzo", "code", "search"]).unwrap();
-        assert!(commands::product::resolve(&m).is_some(), "`code search` hits cloud");
-
-        // A free-text task is NOT a subcommand — it stays the wrapper, and
-        // reconstructs as `Commands::Code` with that task.
         let m = merged.try_get_matches_from(["hanzo", "code", "fix the bug"]).unwrap();
         assert!(commands::product::resolve(&m).is_none(), "a task stays the wrapper");
         let cli = Cli::from_arg_matches(&m).unwrap();
