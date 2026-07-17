@@ -1,6 +1,14 @@
 name: Release Matrix (CLI)
 
-# Cross-platform binary builds via self-hosted runner pools.
+# A tag is only a release once a binary hangs off it. This workflow is the ONE
+# path from `v*` to installable assets: build per target, then publish every
+# built asset onto the tag's release.
+#
+# A target exists when a runner pool backs its label. `hanzo-build-linux-amd64`
+# is the only pool registered to the hanzoai org, so it is the only row. Adding
+# macOS/arm64/Windows is: provision the pool, add the row. Nothing else changes.
+# A row whose label has no pool queues forever and the tag silently never
+# releases — which is how v1.0.0 and v1.1.0 got tagged with nothing to install.
 
 on:
   workflow_dispatch:
@@ -17,26 +25,47 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - id: macos-arm64
-            runner: hanzoai-macos-arm64
           - id: linux-amd64
-            runner: hanzoai-linux-amd64
-          - id: linux-arm64
-            runner: hanzoai-linux-arm64
-          - id: windows-amd64
-            runner: hanzoai-windows-amd64
+            runner: hanzo-build-linux-amd64
     runs-on: ${{ matrix.target.runner }}
     steps:
       - uses: actions/checkout@v4
-      - name: Show runner
-        run: echo "Building on ${{ matrix.target.runner }}"
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
+      # The tests gate the artifact: an asset nobody tested is not a release.
+      - name: Test
+        run: cargo test --bin hanzo
       - name: Build
-        run: cargo build --release
-      - name: Upload
-        uses: actions/upload-artifact@v4
+        run: cargo build --release --bin hanzo
+      # Name the asset by target so one release holds every platform and a
+      # client selects its own: `hanzo-linux-amd64`, not a bare `hanzo`.
+      - name: Stage asset
+        run: install -m755 target/release/hanzo hanzo-${{ matrix.target.id }}
+      - uses: actions/upload-artifact@v4
         with:
-          name: cli-${{ matrix.target.id }}
-          path: target/release/cli*
-          if-no-files-found: warn
+          name: hanzo-${{ matrix.target.id }}
+          path: hanzo-${{ matrix.target.id }}
+          # Fail loudly. `warn` is what hid a build producing no asset at all:
+          # the path said `cli*`, the binary is `hanzo`, and the job stayed green.
+          if-no-files-found: error
+
+  publish:
+    needs: [build]
+    runs-on: hanzo-build-linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      # Idempotent: re-running a tag replaces its assets instead of dying on
+      # "release already exists". Re-release is an operation, not an error.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/hanzo-* --clobber
+          else
+            gh release create "$TAG" assets/hanzo-* --title "$TAG" --generate-notes
+          fi
