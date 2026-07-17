@@ -220,18 +220,20 @@ fn read_key(token: Option<String>, prompt: &str) -> Result<String> {
     }
 }
 
-/// Resolve a Hanzo IDENTITY token argument: `-` reads stdin, a literal is used
-/// as given (the existing `login --token` back-compat, for a JWT).
+/// Resolve a Hanzo IDENTITY token through the SAME stdin-only discipline as a
+/// provider key ([`secret_source`]): `--token -` (or a pipe) reads stdin; an argv
+/// literal is REFUSED so a JWT never lands in `ps`/shell history. One
+/// credential-input law. The browser flow is the no-`--token` path and never
+/// reaches here, so an explicit `--token` value may ONLY ever be `-`.
 fn read_identity_token(token: String) -> Result<String> {
-    let raw = if token == "-" {
-        read_secret_from(std::io::stdin().lock())?
-    } else {
-        token.trim().to_string()
-    };
-    if raw.is_empty() {
-        bail!("no token provided");
+    match secret_source(Some(&token), stdin_is_tty()) {
+        SecretSource::Stdin => read_secret_from(std::io::stdin().lock()),
+        // `Some(_)` never resolves to `Prompt`; a literal is refused exactly as a key is.
+        SecretSource::Prompt | SecretSource::ArgvRefused => bail!(
+            "a token must never be passed on the command line (it would land in `ps` and shell \
+             history) — pipe it on stdin with `--token -`, or run `hanzo login` for the browser flow"
+        ),
     }
-    Ok(raw)
 }
 
 // ---- login dispatch --------------------------------------------------------
@@ -276,23 +278,45 @@ async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Re
 }
 
 /// Sign in with a provider's OWN key (OpenAI / Anthropic): read it off stdin or a
-/// hidden prompt, file it in the Vault, and mark the provider active.
+/// hidden prompt, file it in the Vault, and mark the provider active. A key whose
+/// own prefix names a DIFFERENT vendor is REFUSED before anything is stored — see
+/// [`refuse_provider_mismatch`].
 async fn provider_key_login(cfg: &mut Config, provider: Provider, token: Option<String>) -> Result<()> {
     let key = read_key(token, &format!("Paste your {} API key", provider.label()))?;
-    // Soft prefix check: store what the user asked for, but flag an obvious mixup.
-    if let Some(detected) = Provider::detect(&key) {
-        if detected != provider {
-            warn(&format!(
-                "that looks like a {} key, not {} — storing it as {} as you asked",
-                detected.label(),
-                provider.label(),
-                provider.label()
-            ));
-        }
-    }
+    refuse_provider_mismatch(provider, &key)?; // fail CLOSED before any store
     provider::set_key(provider, &key)?;
     mark_provider(cfg, provider)?;
     confirm_provider(provider);
+    Ok(())
+}
+
+/// Refuse filing `key` under `provider` when the key's OWN prefix names a
+/// DIFFERENT vendor — fail CLOSED, never warn-and-store.
+///
+/// A key is filed under the provider it authenticates, and `code::route_plan`
+/// routes by that provider label: a coding session sends the stored key, in an
+/// auth header, to THAT vendor's API. So filing an OpenAI `sk-` key under
+/// `--provider anthropic` would later transmit it to api.anthropic.com — leaking a
+/// key to a vendor it was never issued for, and mislabeling it "your Anthropic
+/// key" in the banner. Only a POSITIVE mismatch is refused (`detect` = `Some(other)`
+/// where `other != provider`); an unrecognized prefix (`None`) is allowed through,
+/// since the prefix table is deliberately not exhaustive.
+fn refuse_provider_mismatch(provider: Provider, key: &str) -> Result<()> {
+    if let Some(detected) = Provider::detect(key) {
+        if detected != provider {
+            bail!(
+                "that looks like a {} key, but `--provider {}` was requested. A key is filed under \
+                 the provider it authenticates and a coding session sends it there, so storing a {} \
+                 key as {} would transmit it to the wrong API. Re-run with `--provider {}`, or run \
+                 `hanzo login` and let the key's prefix pick the provider.",
+                detected.label(),
+                provider.slug(),
+                detected.label(),
+                provider.label(),
+                detected.slug(),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -433,9 +457,63 @@ mod tests {
         assert!(read_secret_from(std::io::Cursor::new("")).is_err());
     }
 
+    /// LOW-3: an identity JWT obeys the SAME stdin-only law as a provider key — a
+    /// literal on the command line is REFUSED (it would land in `ps`/shell
+    /// history). The `-` (stdin) path is pinned by `secret_source` above.
     #[test]
-    fn read_identity_token_uses_a_literal_as_given() {
-        assert_eq!(read_identity_token("  header.payload.sig  ".into()).unwrap(), "header.payload.sig");
-        assert!(read_identity_token("   ".into()).is_err());
+    fn read_identity_token_refuses_an_argv_literal() {
+        let err = read_identity_token("header.payload.sig".into()).unwrap_err().to_string();
+        assert!(err.contains("must never be passed on the command line"), "{err}");
+        assert!(read_identity_token("  eyJhbGci.body.sig  ".into()).is_err());
+        // A `--token` value may only ever be `-` (stdin); that decision is the
+        // shared `secret_source` law, already pinned above.
+        assert_eq!(secret_source(Some("-"), true), SecretSource::Stdin);
+    }
+
+    /// MED-1: an OpenAI `sk-` key handed to `--provider anthropic` is REFUSED, and
+    /// because the guard runs BEFORE any store — exactly as `provider_key_login`
+    /// sequences it with `?` — the vault and the provider index stay untouched.
+    #[test]
+    fn a_mismatched_provider_key_is_refused_and_nothing_is_filed() {
+        use crate::iam::token::memvault::MemVault;
+
+        // The guard fails closed with a vendor-named, actionable error.
+        let err = refuse_provider_mismatch(Provider::Anthropic, "sk-proj-OPENAI-KEY")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("OpenAI"), "names the detected vendor: {err}");
+        assert!(err.contains("anthropic"), "names the requested provider: {err}");
+        assert!(err.contains("hanzo login") || err.contains("--provider"), "actionable remedy: {err}");
+
+        // Sequenced as the caller does (`guard?; set_key`), the store never runs,
+        // so the vault stays empty and `auth.provider` is never marked.
+        let v = MemVault::new();
+        let cfg = Config::default();
+        let filed = refuse_provider_mismatch(Provider::Anthropic, "sk-proj-OPENAI-KEY")
+            .and_then(|_| provider::set_key_in(&v, Provider::Anthropic, "sk-proj-OPENAI-KEY"));
+        assert!(filed.is_err(), "the mismatch must short-circuit before the store");
+        assert!(v.keys().is_empty(), "a refused key must never reach the vault: {:?}", v.keys());
+        assert!(provider::key_in(&v, Provider::Anthropic).unwrap().is_none());
+        assert_eq!(cfg.auth.provider, None, "auth.provider must be unchanged on refusal");
+    }
+
+    /// A matching key (or an unrecognized prefix) passes the guard; every KNOWN
+    /// cross-vendor pairing is refused. We only block a POSITIVE mismatch — the
+    /// prefix table is deliberately not exhaustive.
+    #[test]
+    fn refuse_provider_mismatch_blocks_only_a_known_cross_vendor_key() {
+        // Matching prefixes pass.
+        assert!(refuse_provider_mismatch(Provider::Anthropic, "sk-ant-REAL").is_ok());
+        assert!(refuse_provider_mismatch(Provider::OpenAI, "sk-proj-REAL").is_ok());
+        assert!(refuse_provider_mismatch(Provider::OpenAI, "sk-REAL").is_ok());
+        assert!(refuse_provider_mismatch(Provider::Hanzo, "hk-REAL").is_ok());
+        // An unrecognized prefix is NOT a positive mismatch → allowed through.
+        assert!(refuse_provider_mismatch(Provider::Anthropic, "mystery-format-key").is_ok());
+        // Every known cross pairing is refused.
+        assert!(refuse_provider_mismatch(Provider::Anthropic, "hk-x").is_err()); // Hanzo key
+        assert!(refuse_provider_mismatch(Provider::Anthropic, "sk-proj-x").is_err()); // OpenAI key
+        assert!(refuse_provider_mismatch(Provider::OpenAI, "sk-ant-x").is_err()); // Anthropic key
+        assert!(refuse_provider_mismatch(Provider::Hanzo, "sk-ant-x").is_err()); // Anthropic key
+        assert!(refuse_provider_mismatch(Provider::OpenAI, "hk-x").is_err()); // Hanzo key
     }
 }
