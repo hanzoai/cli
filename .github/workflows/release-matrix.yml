@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libssl-dev libdbus-1-dev
+            build-essential pkg-config libssl-dev libdbus-1-dev curl jq
       - uses: dtolnay/rust-toolchain@stable
       # Tests GATE the artifact: an asset nobody tested is not a release. No
       # workflow had ever run cargo here, so 188 tests shipped unproven.
@@ -55,21 +55,44 @@ jobs:
           test -x target/release/hanzo
           tar -czf "hanzo-${{ matrix.target.id }}.tar.gz" -C target/release hanzo
           sha256sum "hanzo-${{ matrix.target.id }}.tar.gz" > "hanzo-${{ matrix.target.id }}.tar.gz.sha256"
-      # Publish STRAIGHT from the build job. actions/upload-artifact round-trips
-      # through artifact storage, whose org quota is exhausted — it failed a
-      # build that had otherwise succeeded. The release is the destination
-      # anyway; the artifact was only ever a courier. Each target uploads its own
-      # assets to the one release, so this still holds when more pools exist.
+      # Publish STRAIGHT from the build job, over the REST API.
+      #
+      # No artifact round-trip: the org's artifact storage quota is exhausted and
+      # it failed a build that had already succeeded. The artifact was only ever a
+      # courier; the release is the destination.
+      #
+      # curl, not `gh`: the ARC image ships no gh CLI (`gh: command not found`
+      # killed the first build that got this far). curl+jq is what the runner
+      # actually has, so the publish step depends on nothing we have to install
+      # beyond what the build already needs.
       - name: Publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "$TAG" hanzo-${{ matrix.target.id }}.tar.gz* \
-              --repo "${GITHUB_REPOSITORY}" --clobber
-          else
-            gh release create "$TAG" hanzo-${{ matrix.target.id }}.tar.gz* \
-              --repo "${GITHUB_REPOSITORY}" --title "$TAG" --generate-notes
+          api="https://api.github.com/repos/$REPO"
+          uploads="https://uploads.github.com/repos/$REPO"
+          auth=(-H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json")
+
+          # Find-or-create: a re-run must upload, not fail on an existing release.
+          id="$(curl -s "${auth[@]}" "$api/releases/tags/$TAG" | jq -r '.id // empty')"
+          if [ -z "$id" ]; then
+            id="$(curl -s -X POST "${auth[@]}" \
+              -d "$(jq -nc --arg t "$TAG" '{tag_name:$t,name:$t,generate_release_notes:true}')" \
+              "$api/releases" | jq -r '.id // empty')"
           fi
+          [ -n "$id" ] || { echo "could not create or find release $TAG"; exit 1; }
+
+          for f in hanzo-${{ matrix.target.id }}.tar.gz hanzo-${{ matrix.target.id }}.tar.gz.sha256; do
+            test -f "$f"
+            # Same name twice would 422; drop the old asset first so re-runs work.
+            old="$(curl -s "${auth[@]}" "$api/releases/$id/assets" | jq -r --arg n "$f" '.[] | select(.name==$n) | .id')"
+            [ -n "$old" ] && curl -s -X DELETE "${auth[@]}" "$api/releases/assets/$old" >/dev/null
+            code="$(curl -s -o /tmp/up.json -w '%{http_code}' -X POST "${auth[@]}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" "$uploads/releases/$id/assets?name=$f")"
+            [ "$code" = "201" ] || { echo "upload $f failed ($code)"; cat /tmp/up.json; exit 1; }
+            echo "uploaded $f"
+          done
