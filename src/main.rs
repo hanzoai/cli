@@ -194,6 +194,29 @@ enum Commands {
         command: BillingCommands,
     },
 
+    /// Call any cloud `/v1` endpoint with the active identity (like `gh api`)
+    Api {
+        /// The `/v1/…` path (e.g. /v1/kms/orgs/<org>/secrets). No host, no `/api/`.
+        path: String,
+
+        /// HTTP method (like `curl -X`): GET (default) | POST | PUT | PATCH | DELETE | HEAD
+        #[arg(short = 'X', long, default_value = "GET")]
+        method: String,
+
+        /// JSON request body; `-` reads it from stdin so a secret never lands in
+        /// argv or shell history. Not sent on GET/HEAD.
+        #[arg(long, value_name = "JSON")]
+        data: Option<String>,
+
+        /// Append a query parameter, `k=v` (repeatable). Values are encoded.
+        #[arg(long, value_name = "K=V")]
+        query: Vec<String>,
+
+        /// Print the whole `{status,msg,data}` envelope instead of just `data`.
+        #[arg(long)]
+        raw: bool,
+    },
+
     /// Run / join hanzo.network with hanzod (the fabric)
     Node {
         #[command(subcommand)]
@@ -655,6 +678,9 @@ async fn main() -> Result<()> {
             }
             WalletCommands::List => commands::wallet::list(&config)?,
         },
+        Commands::Api { method, path, data, query, raw } => {
+            commands::api::run(&mut config, method, path, data, query, raw).await?;
+        }
         Commands::Billing { command } => match command {
             BillingCommands::Balance => commands::billing::balance(&mut config).await?,
             BillingCommands::Deposit { user, cents, currency, notes, tags, expires_in } => {
