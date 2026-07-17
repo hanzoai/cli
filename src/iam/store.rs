@@ -1097,6 +1097,7 @@ mod tests {
             ("commands/wallet.rs", include_str!("../commands/wallet.rs")),
             ("main.rs", include_str!("../main.rs")),
             ("iam/login.rs", include_str!("login.rs")),
+            ("iam/onboarding.rs", include_str!("onboarding.rs")),
         ] {
             for banned in ["token::load", "token::store", "token::delete", "token::keyring"] {
                 assert!(
