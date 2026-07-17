@@ -12,7 +12,7 @@ mod sdk;
 #[derive(Parser)]
 #[command(name = "hanzo")]
 #[command(author = "Hanzo AI")]
-#[command(version = "1.0.0")]
+#[command(version)]  // = CARGO_PKG_VERSION; Cargo.toml is the ONE source
 #[command(about = "Unified CLI for Hanzo AI development tools", long_about = None)]
 struct Cli {
     /// Sets a custom config file
