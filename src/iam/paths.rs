@@ -34,6 +34,16 @@ pub fn server_url_for_brand(brand: &str) -> Option<&'static str> {
 /// The default brand for the `hanzo` CLI.
 pub const DEFAULT_BRAND: &str = "hanzo";
 
+/// The `--brand` suffix to suggest in a message, omitted for the default brand.
+/// One place, so every hint the CLI prints is copy-pasteable.
+pub fn brand_flag(brand: &str) -> String {
+    if brand == DEFAULT_BRAND {
+        String::new()
+    } else {
+        format!(" --brand {brand}")
+    }
+}
+
 /// Strip trailing slashes from a server origin so paths concatenate cleanly.
 pub fn trim_server_url(server_url: &str) -> &str {
     server_url.trim_end_matches('/')
