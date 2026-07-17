@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 
@@ -538,23 +538,34 @@ fn bare() -> Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // ONE tree: the derive command, augmented with the generated first-class
+    // product commands. There is a single parse and a single dispatch — a matched
+    // cloud product goes straight through the same `api` seam, everything else is
+    // a derive command (or the truly-bare `hanzo`).
+    let matches = commands::product::augment(Cli::command()).get_matches();
 
-    // Setup logging
-    let log_level = match cli.verbose {
+    // Setup logging (read the globals off the matches, so both dispatch paths see
+    // the same values).
+    let log_level = match matches.get_count("verbose") {
         0 => "warn",
         1 => "info",
         2 => "debug",
         _ => "trace",
     };
-
     tracing_subscriber::fmt().with_env_filter(log_level).init();
 
     // Load config
-    let mut config = config::Config::load(cli.config)?;
+    let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
+
+    // A matched generated product dispatches first, through the shared seam.
+    if let Some(resolved) = commands::product::resolve(&matches) {
+        commands::product::dispatch(&mut config, resolved).await?;
+        return Ok(());
+    }
 
     // A truly-bare `hanzo` (no subcommand) resolves to a cloud-linked coding
     // session (`bare`); every explicit subcommand routes normally.
+    let cli = Cli::from_arg_matches(&matches)?;
     let command = cli.command.unwrap_or_else(bare);
 
     // Handle commands
@@ -811,6 +822,54 @@ mod tests {
         };
         assert!(!link);
         assert!(!no_link);
+    }
+
+    // ---- the merged tree: derive commands + generated products, one parse -----
+
+    /// The augmented command must build without a clap debug-assert panic — this
+    /// alone catches a duplicate subcommand or a bad arg definition across all 125
+    /// generated products.
+    #[test]
+    fn the_merged_command_tree_is_valid() {
+        commands::product::augment(Cli::command()).debug_assert();
+    }
+
+    /// A generated product resolves through the merged tree; a derive command does
+    /// not (it falls through to the derive dispatch).
+    #[test]
+    fn a_generated_product_resolves_and_a_local_command_does_not() {
+        let merged = commands::product::augment(Cli::command());
+        let m = merged.clone().try_get_matches_from(["hanzo", "agents", "list"]).unwrap();
+        assert!(commands::product::resolve(&m).is_some(), "a cloud product resolves");
+
+        let m = merged.clone().try_get_matches_from(["hanzo", "version"]).unwrap();
+        assert!(commands::product::resolve(&m).is_none(), "a local command is not a product");
+
+        // bare `hanzo` -> no subcommand -> the wrapper, not a product.
+        let m = merged.try_get_matches_from(["hanzo"]).unwrap();
+        assert!(commands::product::resolve(&m).is_none());
+    }
+
+    /// THE collision test: after mounting `/v1/code`'s verbs under the wrapper,
+    /// `hanzo code "task"` still runs the wrapper (free-text task), while
+    /// `hanzo code search` reaches the cloud verb.
+    #[test]
+    fn code_keeps_the_wrapper_and_gains_the_cloud_verbs() {
+        let merged = commands::product::augment(Cli::command());
+
+        // A cloud verb resolves to the generated leaf.
+        let m = merged.clone().try_get_matches_from(["hanzo", "code", "search"]).unwrap();
+        assert!(commands::product::resolve(&m).is_some(), "`code search` hits cloud");
+
+        // A free-text task is NOT a subcommand — it stays the wrapper, and
+        // reconstructs as `Commands::Code` with that task.
+        let m = merged.try_get_matches_from(["hanzo", "code", "fix the bug"]).unwrap();
+        assert!(commands::product::resolve(&m).is_none(), "a task stays the wrapper");
+        let cli = Cli::from_arg_matches(&m).unwrap();
+        let Some(Commands::Code { task, .. }) = cli.command else {
+            panic!("expected the Code wrapper");
+        };
+        assert_eq!(task.as_deref(), Some("fix the bug"));
     }
 
     /// `--help` / `-h` is intercepted by clap, never swallowed by the fallback.

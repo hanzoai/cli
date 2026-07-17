@@ -1094,6 +1094,7 @@ mod tests {
             ("commands/billing.rs", include_str!("../commands/billing.rs")),
             ("commands/code/mod.rs", include_str!("../commands/code/mod.rs")),
             ("commands/kms.rs", include_str!("../commands/kms.rs")),
+            ("commands/product/mod.rs", include_str!("../commands/product/mod.rs")),
             ("commands/wallet.rs", include_str!("../commands/wallet.rs")),
             ("main.rs", include_str!("../main.rs")),
             ("iam/login.rs", include_str!("login.rs")),
