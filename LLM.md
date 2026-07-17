@@ -298,7 +298,8 @@ commerce handler, which is the source of truth for its shape.
   (any word count, `tiny-bip39`) or 0x private key → `m/44'/60'/0'/0/0` →
   Keccak256 EVM address. The secret lives in the OS keychain, never on disk,
   never printed. Config stores only metadata (address, custody, network).
-- Auto-provision: `wallet::ensure` gives you a wallet when a command needs one.
+- No auto-provision: a command takes the ACTIVE wallet or none. Provisioning a
+  signer as a side effect of another command wrote wallets nobody asked for.
 
 ## Node / hanzo.network (`src/commands/node.rs`)
 `node up` resolves an existing hanzod (`HANZO_NODE_BIN`, then `hanzod` on PATH —
