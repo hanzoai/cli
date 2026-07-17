@@ -137,8 +137,9 @@ pub(crate) fn add_in(
 /// IN THE TRANSACTION: `token::store` and `token::delete` all run outside the
 /// lock, so an in-lock read would be TOCTOU anyway — a concurrent `logout` can
 /// delete the credential the instant this releases. The real guarantee is the
-/// in-lock re-check of the INDEX below, which catches a concurrent de-index and
-/// fails closed. Hoisting the read preserves every case.
+/// in-lock re-resolve below, which catches a concurrent change and fails closed.
+/// Hoisting the KEYCHAIN READ preserves every SAFETY case; the resolve itself
+/// still has to happen under the lock, which is why it happens twice.
 pub(crate) fn switch_in(
     v: &dyn Vault,
     cfg: &mut Config,
@@ -162,15 +163,27 @@ pub(crate) fn switch_in(
         );
     }
     cfg.update(|c| {
-        // Re-check under the lock against fresh state: a `logout` that de-indexed
-        // this identity between the resolve above and this commit must not leave
-        // the pointer aimed at an identity that no longer exists.
-        if !list(c, brand).contains(&target) {
+        // Re-RESOLVE under the lock against fresh state, and refuse if it moved.
+        //
+        // A membership check alone would be equivalent to this only for
+        // `Selector::Exact`. For a bare owner or the toggle, membership is not
+        // the only precondition — UNAMBIGUITY is too, and a concurrent login can
+        // change it: `hanzo switch hanzo` would silently pick one where a fresh
+        // resolve refuses as ambiguous. Re-resolving turns that silent divergence
+        // into a fail-closed refusal, subsumes the membership check, and restores
+        // parity with `remove_in`, which already re-resolves under the lock. Both
+        // are pure functions of the index, so this costs nothing.
+        let fresh = match &sel {
+            Some(s) => resolve_selector(c, brand, s)?,
+            None => toggle_target(c, brand)?,
+        };
+        if fresh != target {
             bail!(
-                "no longer signed in to {brand} as {target} — re-run `hanzo switch`"
+                "identities on {brand} changed while switching — verified {target}, now resolves \
+                 to {fresh}. Nothing changed; re-run `hanzo switch`."
             );
         }
-        set_active(c, brand, &target);
+        set_active(c, brand, &fresh);
         Ok(())
     })?;
     Ok(target)
