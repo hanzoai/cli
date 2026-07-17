@@ -28,7 +28,7 @@ use super::token::{self, TokenSet, Vault};
 /// credential under a principal of its choosing. Re-adding an identity that is
 /// already known UPDATES it in place; it never duplicates the index row.
 pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity> {
-    add_in(&token::keyring(), cfg, brand, tokens)
+    add_in(&*token::vault()?, cfg, brand, tokens)
 }
 
 /// Resolve the ACTIVE identity's credential for `brand`.
@@ -38,22 +38,22 @@ pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity>
 /// need to know WHO they are (billing, org-scoped resume) read it from here
 /// rather than re-deriving it somewhere else.
 pub fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, TokenSet)>> {
-    active_token_in(&token::keyring(), cfg, brand)
+    active_token_in(&*token::vault()?, cfg, brand)
 }
 
 /// Set the active identity for `brand`.
 pub fn switch(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Identity> {
-    switch_in(&token::keyring(), cfg, brand, sel)
+    switch_in(&*token::vault()?, cfg, brand, sel)
 }
 
 /// Remove ONE identity: its keychain entry and its index row.
 pub fn remove(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Identity> {
-    remove_in(&token::keyring(), cfg, brand, sel)
+    remove_in(&*token::vault()?, cfg, brand, sel)
 }
 
 /// Remove EVERY identity for `brand` (`hanzo logout --all`).
 pub fn remove_all(cfg: &mut Config, brand: &str) -> Result<Vec<Identity>> {
-    remove_all_in(&token::keyring(), cfg, brand)
+    remove_all_in(&*token::vault()?, cfg, brand)
 }
 
 /// Every identity known for `brand`, in stable display order.

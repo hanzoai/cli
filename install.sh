@@ -47,17 +47,20 @@ get_stdout() { # get_stdout <url>
   fi
 }
 
+# Published targets: linux-{amd64,arm64}, darwin-{amd64,arm64}, windows-amd64.
 os="$(uname -s)"
 arch="$(uname -m)"
+ext=""
 case "$os" in
   Linux)  os=linux ;;
   Darwin) os=darwin ;;
-  *) die "unsupported OS '$os'. Published target: linux-amd64." ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) os=windows; ext=".exe" ;;  # git-bash / msys2
+  *) die "unsupported OS '$os'." ;;
 esac
 case "$arch" in
   x86_64|amd64)  arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
-  *) die "unsupported architecture '$arch'. Published target: linux-amd64." ;;
+  *) die "unsupported architecture '$arch'." ;;
 esac
 target="${os}-${arch}"
 
@@ -98,7 +101,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 printf 'hanzo: %s %s\n' "$TAG" "$target"
 fetch "$asset" "$tmp/$asset" \
-  || die "no published build for $target at $TAG. Published target: linux-amd64."
+  || die "no published build for $target at $TAG."
 fetch "$asset.sha256" "$tmp/$asset.sha256" \
   || die "release $TAG has no checksum for $target — refusing to install unverified"
 
@@ -110,13 +113,13 @@ fetch "$asset.sha256" "$tmp/$asset.sha256" \
   || die "checksum MISMATCH for $asset — refusing to install"
 
 tar -xzf "$tmp/$asset" -C "$tmp"
-[ -x "$tmp/$BIN" ] || die "archive did not contain an executable '$BIN'"
+[ -f "$tmp/$BIN$ext" ] || die "archive did not contain '$BIN$ext'"
 
 mkdir -p "$PREFIX"
-mv "$tmp/$BIN" "$PREFIX/$BIN"
-chmod 755 "$PREFIX/$BIN"
+mv "$tmp/$BIN$ext" "$PREFIX/$BIN$ext"
+chmod 755 "$PREFIX/$BIN$ext"
 
-printf 'hanzo: installed %s\n' "$PREFIX/$BIN"
+printf 'hanzo: installed %s\n' "$PREFIX/$BIN$ext"
 case ":$PATH:" in
   *":$PREFIX:"*) ;;
   *) printf 'hanzo: %s is not on PATH — add it:\n  export PATH="%s:$PATH"\n' "$PREFIX" "$PREFIX" ;;
