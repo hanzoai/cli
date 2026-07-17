@@ -347,17 +347,6 @@ pub fn use_wallet(cfg: &mut Config, address: String) -> Result<()> {
     Ok(())
 }
 
-/// Auto-provision: return the active wallet, creating one if none exists.
-/// "If a wallet has not been selected/configured it will be provided for you."
-pub async fn ensure(cfg: &mut Config) -> Result<StoredWallet> {
-    if let Some(w) = active(cfg) {
-        return Ok(w);
-    }
-    println!("{}", "no wallet configured — provisioning one for you…".dimmed());
-    create(cfg, Some("default".into()), false, "kms".into()).await?;
-    active(cfg).ok_or_else(|| anyhow!("wallet provisioning failed"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
