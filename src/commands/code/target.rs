@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 use super::context::{Machine, Metrics, Spec, TargetRecord};
-use super::http::send_json;
+use crate::http::send_json;
 
 #[derive(Clone)]
 pub struct TargetClient {

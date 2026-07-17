@@ -237,11 +237,56 @@ fn respond(cfg: &Config, method: &str, path: &str) -> (String, String) {
             ),
         );
     }
+    // ---- the KMS secret plane: /v1/kms/orgs/{org}/secrets ------------------
+    // Enough shape to prove the wire contract (org in path, bearer, env in
+    // query, value out of argv); the real store is cloud's.
+    if let Some(rest) = kms_secrets(path) {
+        let (target, query) = match rest.split_once('?') {
+            Some((t, q)) => (t, q),
+            None => (rest, ""),
+        };
+        let env = query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix("env="))
+            .unwrap_or("default")
+            .to_string();
+        if method == "POST" {
+            return ("200 OK".into(), r#"{"stored":true,"name":"mock","env":"prod"}"#.to_string());
+        }
+        if method == "DELETE" {
+            return ("200 OK".into(), r#"{"deleted":true,"name":"mock","env":"prod"}"#.to_string());
+        }
+        if target.is_empty() {
+            // list: metadata only — this response CANNOT carry a value.
+            return (
+                "200 OK".into(),
+                format!(
+                    r#"{{"secrets":[{{"path":"/orgs/hanzo","name":"DB","env":"{env}","version":1}},{{"path":"/orgs/hanzo/ci","name":"TOKEN","env":"{env}","version":2}}],"total":2}}"#
+                ),
+            );
+        }
+        let name = target.rsplit('/').next().unwrap_or(target);
+        return (
+            "200 OK".into(),
+            format!(r#"{{"name":"{name}","env":"{env}","value":"s3cr3t"}}"#),
+        );
+    }
+
     // events -> 201, patch/control -> 200
     if method == "POST" && path.ends_with("/events") {
         return ("201 Created".into(), r#"{"id":"evt_mock"}"#.to_string());
     }
     ("200 OK".into(), "{}".to_string())
+}
+
+/// The `secrets` sub-path (+ query) of a /v1/kms/orgs/{org}/secrets route, or
+/// None when the path is not one. Mirrors the route's own shape so a request
+/// that misses the org segment simply does not match.
+fn kms_secrets(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/v1/kms/orgs/")?;
+    let (_org, rest) = rest.split_once('/')?;
+    let rest = rest.strip_prefix("secrets")?;
+    Some(rest.strip_prefix('/').unwrap_or(rest))
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
