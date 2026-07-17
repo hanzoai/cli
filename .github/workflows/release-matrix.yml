@@ -29,12 +29,17 @@ jobs:
           - id: linux-amd64
             runner: hanzo-build-linux-amd64
             rust: x86_64-unknown-linux-gnu
-          # arm64 CROSS-COMPILES on the amd64 pool: there is no arm64 runner, and
-          # a target that names a pool which does not exist queues forever and
-          # cancels the matrix — which is how v1.0.0/v1.1.0 shipped nothing.
-          - id: linux-arm64
-            runner: hanzo-build-linux-amd64
-            rust: aarch64-unknown-linux-gnu
+          # linux-arm64 is NOT here, and that is deliberate. Cross-compiling it on
+          # the amd64 pool dies in openssl-sys: reqwest links OpenSSL, and arm64
+          # needs arm64 OpenSSL headers, which the cross toolchain alone does not
+          # provide. The three real options are a genuine arm64 runner pool,
+          # vendored OpenSSL, or moving reqwest to rustls (which drops the C
+          # dependency entirely and is probably right — but it changes the TLS
+          # stack, so it is a decision, not a build flag).
+          #
+          # A target that cannot build must be ABSENT, not listed and failing: a
+          # red release is indistinguishable from a broken one, and a pending
+          # target is what wedged the matrix before v1.2.0.
     runs-on: ${{ matrix.target.runner }}
     steps:
       - uses: actions/checkout@v4
