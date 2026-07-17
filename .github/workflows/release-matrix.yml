@@ -48,7 +48,6 @@ jobs:
       - name: Build
         run: cargo build --release --bin hanzo --locked
       - name: Package
-        id: pkg
         run: |
           set -euo pipefail
           # The binary is `hanzo` (Cargo.toml [[bin]]), never `cli` — the old
@@ -56,31 +55,21 @@ jobs:
           test -x target/release/hanzo
           tar -czf "hanzo-${{ matrix.target.id }}.tar.gz" -C target/release hanzo
           sha256sum "hanzo-${{ matrix.target.id }}.tar.gz" > "hanzo-${{ matrix.target.id }}.tar.gz.sha256"
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: hanzo-${{ matrix.target.id }}
-          path: hanzo-${{ matrix.target.id }}.tar.gz*
-          if-no-files-found: error
-
-  publish:
-    needs: build
-    runs-on: hanzo-build-linux-amd64
-    steps:
-      - uses: actions/download-artifact@v4
-        with: { path: dist, merge-multiple: true }
-      - name: Publish the release
+      # Publish STRAIGHT from the build job. actions/upload-artifact round-trips
+      # through artifact storage, whose org quota is exhausted — it failed a
+      # build that had otherwise succeeded. The release is the destination
+      # anyway; the artifact was only ever a courier. Each target uploads its own
+      # assets to the one release, so this still holds when more pools exist.
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          ls -l dist
-          # Idempotent: a re-run must not fail on an existing release.
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "$TAG" hanzo-${{ matrix.target.id }}.tar.gz* \
+              --repo "${GITHUB_REPOSITORY}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" dist/* \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${GITHUB_REF_NAME}" \
-              --generate-notes
+            gh release create "$TAG" hanzo-${{ matrix.target.id }}.tar.gz* \
+              --repo "${GITHUB_REPOSITORY}" --title "$TAG" --generate-notes
           fi
