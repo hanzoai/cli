@@ -13,7 +13,7 @@
 
 use crate::commands::network;
 use crate::config::{Config, StoredWallet};
-use crate::iam::{paths, store};
+use crate::iam::{paths, store, token};
 use anyhow::{anyhow, bail, Context, Result};
 use bip32::{DerivationPath, XPrv};
 use bip39::{Language, Mnemonic, MnemonicType, Seed};
@@ -22,29 +22,30 @@ use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde_json::{json, Value};
 use sha3::{Digest, Keccak256};
 
-/// Keychain service — the SAME namespace IAM tokens use (see `iam::token`).
-const KEYCHAIN_SERVICE: &str = "ai.hanzo.cli";
 /// The canonical EVM account derivation path (BIP-44, coin 60).
 const EVM_PATH: &str = "m/44'/60'/0'/0/0";
 
-// ---- OS keychain (secrets NEVER touch disk) ------------------------------
+// ---- credential store (secrets NEVER touch disk in the clear) -------------
+//
+// Wallet keys ride the SAME portable store as IAM tokens (`iam::token::vault`):
+// the OS keychain where one answers, else an owner-only `0600` file. The key is
+// `wallet:{address}`, disjoint from an identity's `{brand}/{owner}/{name}`, so
+// the two share one store without collision — one credential store, one way in.
 
-fn secret_entry(address: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, &format!("wallet:{address}"))
-        .context("opening OS keychain entry")
+fn secret_key(address: &str) -> String {
+    format!("wallet:{address}")
 }
 
 fn store_secret(address: &str, secret: &str) -> Result<()> {
-    secret_entry(address)?
-        .set_password(secret)
-        .context("writing wallet key to OS keychain")
+    token::vault()?.set(&secret_key(address), secret)
 }
 
-/// True when key material for `address` is present in the keychain.
+/// True when key material for `address` is present in the store.
 pub fn has_secret(address: &str) -> bool {
-    secret_entry(address)
-        .and_then(|e| e.get_password().map_err(Into::into))
-        .is_ok()
+    token::vault()
+        .and_then(|v| v.get(&secret_key(address)))
+        .map(|found| found.is_some())
+        .unwrap_or(false)
 }
 
 // ---- EVM address derivation (local custody only) -------------------------
