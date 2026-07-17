@@ -4,9 +4,13 @@ on:
   push:
     branches: [main, dev, test]
     tags: ['v*.*.*']
+# Caller permissions are a CEILING, not a request: a called workflow cannot hold
+# a token scope the caller lacks. docker-build.yml's jobs declare id-token: write,
+# so omitting it here fails the workflow_call at startup — no jobs, no logs.
 permissions:
   contents: read
   packages: write
+  id-token: write
 jobs:
   docker:
     strategy:
