@@ -259,6 +259,31 @@ does not mount them, and a verb the server cannot answer is worse than no verb.
   that once left a live credential stale in prod); a read cannot plant a value,
   so it keeps the compat default.
 
+## `hanzo api` (`src/commands/api.rs`) — the whole cloud, reachable
+Cloud serves ~1000 `/v1` operations across ~130 products. The CLI gives the
+common ones first-class verbs (`kms`, `billing`, `wallet`, `network`, …) and
+gives EVERY other one, unchanged, through the same seam: `hanzo api <PATH> [-X
+METHOD] [--data -|<json>] [--query k=v]…`. It is the `gh api` / `kubectl --raw`
+escape hatch, so "the CLI supports all of cloud" is true by construction rather
+than by hand-writing 1000 verbs.
+
+- **The trust boundary is the point.** The ONLY user input is the method, path
+  and body. The ORIGIN comes from `network::active` and the BEARER from
+  `iam::store::active_token` — never from an argument, never from a fetched spec.
+  So a call can only ever reach YOUR active cloud with YOUR active identity's
+  token: a hostile path is at worst a 4xx against your own server, never a token
+  redirect. A full URL and the `/api/` prefix are refused at the value edge; a
+  non-`/v1` path is refused rather than silently sent.
+- **A body has one way in.** `--data -` reads stdin so a secret in a body never
+  lands in argv, `ps` or shell history — the same rule as `kms set` and
+  `login --token -`. A body on a GET/HEAD is a named error, not silently sent.
+- **A 403 is explained, never pre-empted** — same `store::refusal_hint` billing
+  uses: the request always goes out, and only AFTER the server refuses do we read
+  the identity to suggest `hanzo switch admin/z`.
+- Output is the `{status,msg,data}` envelope's `data` by default (pipe-friendly);
+  `--raw` prints the whole envelope. This is the dispatch backbone the generated
+  first-class product tree calls into — one seam, one trust boundary.
+
 ## Billing (`src/commands/billing.rs`) — the money the identity model bills
 `balance` reads `GET /v1/billing/balance`; `deposit` posts `POST /v1/billing/deposit`
 (commerce's `api/billing/deposit.go`, mounted at `api.Post("/deposit", mintRequired,

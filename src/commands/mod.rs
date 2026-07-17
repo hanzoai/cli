@@ -1,3 +1,4 @@
+pub mod api;
 pub mod init;
 pub mod billing;
 pub mod code;
