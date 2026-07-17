@@ -1,0 +1,28 @@
+name: Docker
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, dev, test]
+    tags: ['v*.*.*']
+# Caller permissions are a CEILING, not a request: a called workflow cannot hold
+# a token scope the caller lacks. docker-build.yml's jobs declare id-token: write,
+# so omitting it here fails the workflow_call at startup — no jobs, no logs.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+jobs:
+  docker:
+    strategy:
+      matrix:
+        include:
+          - image: ghcr.io/hanzoai/cli
+            target: dev
+          - image: ghcr.io/hanzoai/cli-full
+            target: dev-full
+    uses: hanzoai/.github/.github/workflows/docker-build.yml@main
+    with:
+      image: ${{ matrix.image }}
+      dockerfile: docker/Dockerfile
+      target: ${{ matrix.target }}
+    secrets: inherit
