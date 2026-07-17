@@ -38,17 +38,39 @@ pub async fn run(
     let method = parse_method(&method)?;
     let path = normalize_path(&path)?;
     let body = read_body(data, &method)?;
+    call(cfg, method, path, body, query, raw).await
+}
 
+/// The authenticated dispatch backbone — THE seam `hanzo api` AND the generated
+/// first-class product tree share, so the trust boundary lives in exactly one
+/// place. Resolves WHERE (the active network's origin) and WHO (the active
+/// identity's bearer) through the one identity seam, sends the request, prints
+/// the `data`, and explains a 403 in identity terms. The org is NEVER a header:
+/// where a route names it in the PATH, the caller has already addressed it (its
+/// own `owner`), and the server re-checks it against the JWT it verifies.
+///
+/// `path` is the FINAL `/v1/…` path — literal for `hanzo api`, template-filled
+/// for the generated tree. It is never derived from a fetched spec at runtime:
+/// the origin comes from `network`, the bearer from `store`, and neither can be
+/// smuggled in through the path.
+pub(crate) async fn call(
+    cfg: &mut Config,
+    method: Method,
+    path: String,
+    body: Option<Value>,
+    query: Vec<String>,
+    raw: bool,
+) -> Result<()> {
     let origin = network::active(cfg).api;
     let origin = origin.trim_end_matches('/');
-    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
+    let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo login`"))?;
-    // The identity we would suggest switching to on a 403 (SuperAdmin gate).
+    // The identity we would suggest switching to on a 403 (SuperAdmin gate) — the
+    // very identity we authenticate as, so the hint can never name someone else.
     let held = store::list(cfg, paths::DEFAULT_BRAND);
-    let active = store::active(cfg, paths::DEFAULT_BRAND);
+    let hint = store::refusal_hint(&id, &held);
 
     let url = build_url(origin, &path, &query)?;
-
     let http_client = Client::new();
     let (status, resp) =
         http::send(&http_client, method, &url, &tok.access_token, body.as_ref()).await?;
@@ -58,17 +80,17 @@ pub async fn run(
         return Ok(());
     }
 
-    // Non-2xx: show the server's own body, and — only on a 403 the server itself
-    // returned — the identity-switch hint, exactly as billing does. The refusal
-    // is the SERVER's, never a client-side guess; we read our identity only AFTER
-    // it refuses.
+    // Non-2xx: surface the SERVER's own body, and — only on a 403 the server
+    // itself returned — the identity-switch hint. The refusal is always the
+    // server's, never a client-side guess; we read our identity only to explain
+    // it, after the fact.
     let shown = match &resp {
         Value::Null => String::new(),
         Value::String(s) => s.trim().to_string(),
         v => v.to_string(),
     };
     if status == StatusCode::FORBIDDEN {
-        if let Some(hint) = active.and_then(|a| store::refusal_hint(&a, &held)) {
+        if let Some(hint) = hint {
             bail!("{path} -> {status}: {shown}{hint}");
         }
     }
@@ -76,7 +98,7 @@ pub async fn run(
 }
 
 /// Accept the common HTTP methods, case-insensitively; default is GET.
-fn parse_method(m: &str) -> Result<Method> {
+pub(crate) fn parse_method(m: &str) -> Result<Method> {
     match m.to_ascii_uppercase().as_str() {
         "GET" => Ok(Method::GET),
         "POST" => Ok(Method::POST),
@@ -114,7 +136,7 @@ fn normalize_path(path: &str) -> Result<String> {
 /// `--data` is JSON. `-` reads stdin so a secret in a body never lands in argv,
 /// `ps` or shell history — the same rule as `kms set` and `login --token -`. A
 /// body on a GET/HEAD is a mistake worth naming, not silently sending.
-fn read_body(data: Option<String>, method: &Method) -> Result<Option<Value>> {
+pub(crate) fn read_body(data: Option<String>, method: &Method) -> Result<Option<Value>> {
     let Some(d) = data else { return Ok(None) };
     if matches!(*method, Method::GET | Method::HEAD) {
         bail!("--data is not sent on a {method} — did you mean POST/PUT/PATCH?");
