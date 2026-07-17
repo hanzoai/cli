@@ -31,9 +31,22 @@ jobs:
     runs-on: ${{ matrix.target.runner }}
     steps:
       - uses: actions/checkout@v4
+      # The ARC runner image is bare — no C toolchain at all ("linker `cc` not
+      # found" on the first tag that ever reached a build). reqwest needs
+      # OpenSSL, and keyring's sync-secret-service needs dbus.
+      - name: System dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev libdbus-1-dev
       - uses: dtolnay/rust-toolchain@stable
+      # Tests GATE the artifact: an asset nobody tested is not a release. No
+      # workflow had ever run cargo here, so 188 tests shipped unproven.
+      - name: Test
+        run: cargo test --bin hanzo --locked
       - name: Build
-        run: cargo build --release --bin hanzo
+        run: cargo build --release --bin hanzo --locked
       - name: Package
         id: pkg
         run: |
@@ -62,7 +75,12 @@ jobs:
         run: |
           set -euo pipefail
           ls -l dist
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          # Idempotent: a re-run must not fail on an existing release.
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
