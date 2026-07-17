@@ -29,10 +29,14 @@ pub(crate) fn lock_path(path: &Path) -> PathBuf {
 /// `LockFileEx` on Windows) that the KERNEL releases when the process exits. So a
 /// killed or crashed `hanzo` can never wedge every other invocation behind a
 /// stale lock, which is the failure mode a hand-rolled `O_EXCL` lockfile has.
-struct Lock(std::fs::File);
+///
+/// The credential store (`iam::token::FileVault`) guards its own read-modify-write
+/// with this SAME primitive on its own sidecar lock, so there is exactly one way
+/// the CLI serializes concurrent writers to a shared file.
+pub(crate) struct Lock(std::fs::File);
 
 impl Lock {
-    fn acquire(path: &Path) -> Result<Self> {
+    pub(crate) fn acquire(path: &Path) -> Result<Self> {
         let lock = lock_path(path);
         let f = std::fs::OpenOptions::new()
             .create(true)

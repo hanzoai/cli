@@ -1,15 +1,21 @@
 name: Release Matrix (CLI)
 
-# Cross-platform `hanzo` binaries on OUR runners, published to the GitHub
-# Release for the tag. NO GitHub-hosted builders — every target names a
-# self-hosted scale set.
+# Every `hanzo` platform binary, cross-built from the ONE self-hosted Linux pool
+# (`hanzo-build-linux-amd64`) — NO GitHub-hosted builders. `cargo-zigbuild` uses
+# Zig as the cross-linker, so a single amd64 host emits linux-{amd64,arm64},
+# windows-amd64 and macos-{amd64,arm64} without a per-arch runner pool.
 #
-# Only `hanzo-build-linux-amd64` exists today (14 runners, one scale set). The
-# macos-arm64 / linux-arm64 / windows-amd64 pools are NOT provisioned: naming
-# them here queued the jobs forever and the whole matrix cancelled, which is why
-# v1.0.0 and v1.1.0 tagged but never shipped a binary. Targets are added back as
-# their pools come online — a target with no pool ships nothing and hides that
-# it shipped nothing.
+# What made the matrix build "everywhere" finally possible:
+#   - reqwest on rustls (OpenSSL gone) — no per-arch OpenSSL headers.
+#   - the credential store dropped Linux secret-service (no `libdbus` C dep) and
+#     falls back to an owner-only file; the native keychain is compiled only for
+#     macOS/Windows, whose system frameworks Zig links against directly.
+#   - macOS needs a vendored SDK (Zig ships no macOS frameworks): the apple jobs
+#     fetch a pinned, checksum-verified MacOSX SDK and point `SDKROOT` at it.
+#
+# A target that cannot build must be ABSENT, not listed-and-failing: a red release
+# is indistinguishable from a broken one, and a pending target wedged the matrix
+# before v1.2.0. Every target here produces a real binary from this pool.
 
 on:
   workflow_dispatch:
@@ -19,47 +25,32 @@ on:
 permissions:
   contents: write
 
+env:
+  ZIG_VERSION: '0.13.0'
+  ZIG_SHA256: 'd45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea'
+  ZIGBUILD_VERSION: '0.23.0'
+  MACOS_SDK_URL: 'https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz'
+  MACOS_SDK_SHA256: 'cd4f08a75577145b8f05245a2975f7c81401d75e9535dcffbb879ee1deefcbf4'
+
 jobs:
   build:
     name: ${{ matrix.target.id }}
+    runs-on: hanzo-build-linux-amd64
     strategy:
       fail-fast: false
       matrix:
         target:
-          - id: linux-amd64
-            runner: hanzo-build-linux-amd64
-            rust: x86_64-unknown-linux-gnu
-          # linux-arm64 is NOT here, and that is deliberate. Cross-compiling it on
-          # the amd64 pool dies in openssl-sys: reqwest links OpenSSL, and arm64
-          # needs arm64 OpenSSL headers, which the cross toolchain alone does not
-          # provide. The three real options are a genuine arm64 runner pool,
-          # vendored OpenSSL, or moving reqwest to rustls (which drops the C
-          # dependency entirely and is probably right — but it changes the TLS
-          # stack, so it is a decision, not a build flag).
-          #
-          # A target that cannot build must be ABSENT, not listed and failing: a
-          # red release is indistinguishable from a broken one, and a pending
-          # target is what wedged the matrix before v1.2.0.
-    runs-on: ${{ matrix.target.runner }}
+          - { id: linux-amd64,   rust: x86_64-unknown-linux-gnu,  bin: hanzo,     host: true }
+          - { id: linux-arm64,   rust: aarch64-unknown-linux-gnu, bin: hanzo }
+          - { id: windows-amd64, rust: x86_64-pc-windows-gnu,      bin: hanzo.exe }
+          - { id: darwin-amd64,  rust: x86_64-apple-darwin,        bin: hanzo,     apple: true }
+          - { id: darwin-arm64,  rust: aarch64-apple-darwin,       bin: hanzo,     apple: true }
     steps:
       - uses: actions/checkout@v4
-      # The ARC runner image is bare — no C toolchain at all ("linker `cc` not
-      # found" on the first tag that ever reached a build). reqwest needs
-      # OpenSSL, and keyring's sync-secret-service needs dbus.
-      - name: System dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libssl-dev libdbus-1-dev curl jq
-          if [ "${{ matrix.target.rust }}" = "aarch64-unknown-linux-gnu" ]; then
-            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
-          fi
-      # A tag is a claim about what the binary IS. v1.3.0 shipped a 1.2.0 binary
-      # because nothing checked the tag against the crate — the version test in
-      # rust-tests.yml compares Cargo.toml to --version, which both said 1.2.0
-      # and agreed perfectly while the tag lied. Refuse to publish a mislabeled
-      # release.
+
+      # A tag is a claim about what the binary IS. v1.3.0 once shipped a 1.2.0
+      # binary because nothing checked the tag against the crate. Refuse to
+      # publish a mislabeled release.
       - name: Tag matches the crate
         run: |
           set -euo pipefail
@@ -69,40 +60,71 @@ jobs:
             exit 1
           }
           echo "tag matches crate: v$v"
+
+      # Zig IS the C toolchain now. `build-essential` is only for the host link
+      # (`cargo install`, the host test); OpenSSL and dbus dev packages are GONE
+      # because nothing links them anymore. curl+jq publish; xz extracts Zig+SDK.
+      - name: Toolchain deps
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential curl jq tar xz-utils
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.rust }}
-      # Tests GATE the artifact: an asset nobody tested is not a release. No
-      # workflow had ever run cargo here, so 188 tests shipped unproven.
-      # Tests run on the HOST arch only — a cross-built binary cannot execute here.
-      # An untested asset is still gated: amd64 runs the suite, and arm64 is the
-      # same source through the same compiler.
+
+      - name: Zig (the cross-linker)
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o zig.tar.xz
+          echo "${ZIG_SHA256}  zig.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/zig"
+          tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+      - name: cargo-zigbuild
+        run: cargo install cargo-zigbuild --version "${ZIGBUILD_VERSION}" --locked
+
+      # Zig ships no macOS frameworks (Security/CoreServices/CoreFoundation, which
+      # the native keychain links). Vendor a pinned SDK and point SDKROOT at it.
+      - name: Vendor macOS SDK
+        if: matrix.target.apple
+        run: |
+          set -euo pipefail
+          curl -fsSL "${MACOS_SDK_URL}" -o macsdk.tar.xz
+          echo "${MACOS_SDK_SHA256}  macsdk.tar.xz" | sha256sum -c -
+          tar -xf macsdk.tar.xz -C "$HOME"
+          echo "SDKROOT=$HOME/MacOSX11.3.sdk" >> "$GITHUB_ENV"
+
+      # Tests GATE the artifact. They run on the HOST arch only — a cross-built
+      # binary cannot execute here; the cross targets are the same source through
+      # the same compiler.
       - name: Test
-        if: matrix.target.rust == 'x86_64-unknown-linux-gnu'
+        if: matrix.target.host
         run: cargo test --bin hanzo --locked
+
       - name: Build
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release --bin hanzo --locked --target ${{ matrix.target.rust }}
+        run: cargo zigbuild --release --bin hanzo --locked --target ${{ matrix.target.rust }}
+
       - name: Package
         run: |
           set -euo pipefail
-          # The binary is `hanzo` (Cargo.toml [[bin]]), never `cli` — the old
-          # glob matched nothing and `if-no-files-found: warn` hid it.
-          out="target/${{ matrix.target.rust }}/release/hanzo"
+          out="target/${{ matrix.target.rust }}/release/${{ matrix.target.bin }}"
           test -f "$out"
-          tar -czf "hanzo-${{ matrix.target.id }}.tar.gz" -C "$(dirname "$out")" hanzo
-          sha256sum "hanzo-${{ matrix.target.id }}.tar.gz" > "hanzo-${{ matrix.target.id }}.tar.gz.sha256"
+          asset="hanzo-${{ matrix.target.id }}.tar.gz"
+          tar -czf "$asset" -C "$(dirname "$out")" "${{ matrix.target.bin }}"
+          sha256sum "$asset" > "$asset.sha256"
+          echo "packaged $asset"
+
       # Publish STRAIGHT from the build job, over the REST API.
       #
       # No artifact round-trip: the org's artifact storage quota is exhausted and
-      # it failed a build that had already succeeded. The artifact was only ever a
+      # it failed builds that had already succeeded. The artifact was only ever a
       # courier; the release is the destination.
       #
-      # curl, not `gh`: the ARC image ships no gh CLI (`gh: command not found`
-      # killed the first build that got this far). curl+jq is what the runner
-      # actually has, so the publish step depends on nothing we have to install
-      # beyond what the build already needs.
+      # curl, not `gh`: the ARC image ships no gh CLI. curl+jq is what the runner
+      # actually has, so publish depends on nothing beyond what the build needs.
       - name: Publish
         env:
           TOKEN: ${{ github.token }}
@@ -114,16 +136,21 @@ jobs:
           uploads="https://uploads.github.com/repos/$REPO"
           auth=(-H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json")
 
-          # Find-or-create: a re-run must upload, not fail on an existing release.
+          # Find-or-create: parallel matrix jobs share ONE release, and a re-run
+          # must upload, not fail on an existing release.
           id="$(curl -s "${auth[@]}" "$api/releases/tags/$TAG" | jq -r '.id // empty')"
           if [ -z "$id" ]; then
             id="$(curl -s -X POST "${auth[@]}" \
               -d "$(jq -nc --arg t "$TAG" '{tag_name:$t,name:$t,generate_release_notes:true}')" \
               "$api/releases" | jq -r '.id // empty')"
           fi
+          # A concurrent job may have created it between our GET and POST; re-read.
+          if [ -z "$id" ]; then
+            id="$(curl -s "${auth[@]}" "$api/releases/tags/$TAG" | jq -r '.id // empty')"
+          fi
           [ -n "$id" ] || { echo "could not create or find release $TAG"; exit 1; }
 
-          for f in hanzo-${{ matrix.target.id }}.tar.gz hanzo-${{ matrix.target.id }}.tar.gz.sha256; do
+          for f in "hanzo-${{ matrix.target.id }}.tar.gz" "hanzo-${{ matrix.target.id }}.tar.gz.sha256"; do
             test -f "$f"
             # Same name twice would 422; drop the old asset first so re-runs work.
             old="$(curl -s "${auth[@]}" "$api/releases/$id/assets" | jq -r --arg n "$f" '.[] | select(.name==$n) | .id')"
