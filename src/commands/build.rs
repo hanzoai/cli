@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use colored::*;
 
 pub async fn run(target: Option<String>, release: bool) -> Result<()> {
@@ -13,8 +13,7 @@ pub async fn run(target: Option<String>, release: bool) -> Result<()> {
         println!("  Target: {}", t.green());
     }
     
-    // TODO: Implement actual build logic
-    println!("Build would run here...");
-    
-    Ok(())
+    // Never implemented: no process is spawned, nothing is built. Exiting 0 said
+    // otherwise. Refuse instead of pretending.
+    bail!("`hanzo build` is not implemented — it runs nothing. Use `cargo build` / the project's own build tool.")
 }
