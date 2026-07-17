@@ -1,0 +1,7 @@
+# actionlint knows GitHub's hosted images and nothing else, so every `runs-on:`
+# in this repo reads as "unknown label" and the sanity gate fails on all of them.
+# Our runners are ARC scale sets registered to the hanzoai org; declaring them
+# here is what makes the linter check the labels against reality.
+self-hosted-runner:
+  labels:
+    - hanzo-build-linux-amd64
