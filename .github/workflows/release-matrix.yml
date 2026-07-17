@@ -1,11 +1,20 @@
 name: Release Matrix (CLI)
 
-# Cross-platform binary builds via self-hosted runner pools.
+# Cross-platform `hanzo` binaries on OUR runners, published to the GitHub
+# Release for the tag. NO GitHub-hosted builders — every target names a
+# self-hosted scale set.
+#
+# Only `hanzo-build-linux-amd64` exists today (14 runners, one scale set). The
+# macos-arm64 / linux-arm64 / windows-amd64 pools are NOT provisioned: naming
+# them here queued the jobs forever and the whole matrix cancelled, which is why
+# v1.0.0 and v1.1.0 tagged but never shipped a binary. Targets are added back as
+# their pools come online — a target with no pool ships nothing and hides that
+# it shipped nothing.
 
 on:
   workflow_dispatch:
   push:
-    tags: ['v*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 permissions:
   contents: write
@@ -17,26 +26,43 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - id: macos-arm64
-            runner: hanzoai-macos-arm64
           - id: linux-amd64
-            runner: hanzoai-linux-amd64
-          - id: linux-arm64
-            runner: hanzoai-linux-arm64
-          - id: windows-amd64
-            runner: hanzoai-windows-amd64
+            runner: hanzo-build-linux-amd64
     runs-on: ${{ matrix.target.runner }}
     steps:
       - uses: actions/checkout@v4
-      - name: Show runner
-        run: echo "Building on ${{ matrix.target.runner }}"
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --bin hanzo
+      - name: Package
+        id: pkg
+        run: |
+          set -euo pipefail
+          # The binary is `hanzo` (Cargo.toml [[bin]]), never `cli` — the old
+          # glob matched nothing and `if-no-files-found: warn` hid it.
+          test -x target/release/hanzo
+          tar -czf "hanzo-${{ matrix.target.id }}.tar.gz" -C target/release hanzo
+          sha256sum "hanzo-${{ matrix.target.id }}.tar.gz" > "hanzo-${{ matrix.target.id }}.tar.gz.sha256"
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: cli-${{ matrix.target.id }}
-          path: target/release/cli*
-          if-no-files-found: warn
+          name: hanzo-${{ matrix.target.id }}
+          path: hanzo-${{ matrix.target.id }}.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: hanzo-build-linux-amd64
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
