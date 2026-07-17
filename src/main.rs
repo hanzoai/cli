@@ -697,12 +697,11 @@ async fn main() -> Result<()> {
         }
         Commands::Deploy { env, dry_run } => {
             let net = commands::network::active(&config);
-            // A real deploy needs a signer; auto-provision one if none is set.
-            let wallet = match commands::wallet::active(&config) {
-                Some(w) => Some(w),
-                None if !dry_run => Some(commands::wallet::ensure(&mut config).await?),
-                None => None,
-            };
+            // Only an ACTIVE wallet — never auto-provision here. `deploy` does not
+            // reach the control plane yet, so provisioning a signer for it wrote a
+            // wallet the user never asked for, to sign a deploy that never happened.
+            // Side effects wait until the command can actually do its job.
+            let wallet = commands::wallet::active(&config);
             commands::deploy::run(env, dry_run, net, wallet).await?;
         }
         Commands::Docs { args } => {
