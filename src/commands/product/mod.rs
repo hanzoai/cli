@@ -68,6 +68,9 @@ pub struct Field {
     pub required: bool,
     /// A string enum's allowed values (clap validates); empty otherwise.
     pub choices: &'static [&'static str],
+    /// `true` ⇒ a URL query-string parameter (`?key=…`); `false` ⇒ a requestBody
+    /// property. The flag looks identical; only the destination differs.
+    pub query: bool,
 }
 
 /// The JSON type of a body field — schema `type` mapped to a clap parser.
@@ -103,7 +106,38 @@ pub fn augment(mut cmd: Command) -> Command {
         }
         cmd = cmd.subcommand(build_product(product));
     }
+    // Friendly top-level aliases → a generated coordinate. Curated, explicit; the
+    // alias mounts the SAME generated leaf under a nicer name (no logic dup).
+    for a in ALIASES {
+        if taken.contains(a.name) || is_product(a.name) {
+            continue;
+        }
+        if let Some(op) = alias_op(a.name) {
+            cmd = cmd.subcommand(leaf_named(a.name, op));
+        }
+    }
     cmd
+}
+
+/// A friendly top-level name that maps to a generated (product, nodes, verb).
+struct Alias {
+    name: &'static str,
+    product: &'static str,
+    nodes: &'static [&'static str],
+    verb: &'static str,
+}
+
+/// The curated alias table — small and explicit. Each alias dispatches to the
+/// SAME generated op; there is no duplicated behavior.
+static ALIASES: &[Alias] = &[
+    // `hanzo logs` == `hanzo o11y logs` (tenant-scoped product log stream).
+    Alias { name: "logs", product: "o11y", nodes: &[], verb: "logs" },
+];
+
+/// The generated op an alias targets, if it still exists.
+fn alias_op(name: &str) -> Option<&'static Op> {
+    let a = ALIASES.iter().find(|a| a.name == name)?;
+    OPS.iter().find(|o| o.product == a.product && o.nodes == a.nodes && o.verb == a.verb)
 }
 
 /// Distinct product names in `OPS`, stable order.
@@ -112,8 +146,10 @@ fn product_names() -> Vec<&'static str> {
     OPS.iter().map(|o| o.product).filter(|p| seen.insert(*p)).collect()
 }
 
-/// A trie node: children are subcommands; `leaf` marks a terminal verb. No node
-/// is ever both — the fold is proven free of group/leaf conflicts.
+/// A trie node: `children` are subcommands and `leaf` is a terminal op. A node can
+/// be BOTH — a collection whose name also heads a nested group (`GET /v1/kv` is the
+/// `list` leaf, and `/v1/kv/list/{key}` nests under the same `list` node). That is
+/// a RUNNABLE GROUP: bare it runs the leaf, with a subcommand it descends.
 #[derive(Default)]
 struct Node {
     children: std::collections::BTreeMap<&'static str, Node>,
@@ -133,36 +169,55 @@ fn build_product(product: &'static str) -> Command {
 }
 
 fn to_command(name: &'static str, node: &Node) -> Command {
-    if let Some(op) = node.leaf {
-        return leaf(op);
+    match (node.leaf, node.children.is_empty()) {
+        // Pure leaf — a runnable verb.
+        (Some(op), true) => leaf(op),
+        // Runnable group — its own op runs when NO subcommand is given, and its
+        // args are mutually exclusive with the subcommands (so `kv list push k`
+        // does not demand the collection GET's flags).
+        (Some(op), false) => {
+            let mut c = leaf(op).subcommand_required(false).args_conflicts_with_subcommands(true);
+            for (child, sub) in &node.children {
+                c = c.subcommand(to_command(child, sub));
+            }
+            c
+        }
+        // Pure group — a namespace that requires a subcommand.
+        (None, _) => {
+            let mut c = Command::new(name)
+                .about(format!("`{name}` cloud operations"))
+                .subcommand_required(true)
+                .arg_required_else_help(true);
+            for (child, sub) in &node.children {
+                c = c.subcommand(to_command(child, sub));
+            }
+            c
+        }
     }
-    let mut c = Command::new(name)
-        .about(format!("`{name}` cloud operations"))
-        .subcommand_required(true)
-        .arg_required_else_help(true);
-    for (child, sub) in &node.children {
-        c = c.subcommand(to_command(child, sub));
-    }
-    c
 }
 
-/// A leaf command: positionals for the path params, then EITHER typed body flags
-/// (when the schema is known) OR the raw `--data` escape (when it is not). Typed
-/// leaves carry ONLY their body flags — never `--data`/`--query`/`--raw`, so a
-/// body field named `data`/`query`/`raw` can never collide with a fixed control.
+/// A leaf command under its own verb name.
 fn leaf(op: &'static Op) -> Command {
-    let mut c = Command::new(op.verb).about(format!("{} {}", op.method, op.path));
+    leaf_named(op.verb, op)
+}
+
+/// A leaf command with an explicit NAME (so a friendly alias can reuse a
+/// generated op verbatim): positionals for the path params, one typed flag per
+/// body property + query parameter, and — only for a write with NO body schema —
+/// a raw `--data` escape. A body property named `data`/`raw` cannot collide with
+/// a control, because the clap id is namespaced and `--data` is added only when
+/// no field already claims that long.
+fn leaf_named(name: &'static str, op: &'static Op) -> Command {
+    let mut c = Command::new(name).about(format!("{} {}", op.method, op.path));
     for &p in op.params {
         c = c.arg(Arg::new(p).required(true).help(format!("path parameter {{{p}}}")));
     }
-    if !op.fields.is_empty() {
-        for f in op.fields {
-            c = c.arg(field_arg(f));
-        }
-    } else if op.is_write() {
-        c = c.arg(data_arg()).arg(query_arg()).arg(raw_arg());
-    } else {
-        c = c.arg(query_arg()).arg(raw_arg());
+    for f in op.fields {
+        c = c.arg(field_arg(f));
+    }
+    let has_body = op.fields.iter().any(|f| !f.query);
+    if op.is_write() && !has_body && !op.fields.iter().any(|f| f.flag == "data") {
+        c = c.arg(data_arg());
     }
     c
 }
@@ -218,32 +273,13 @@ fn data_arg() -> Arg {
         .value_name("JSON")
         .help("JSON request body; `-` reads it from stdin so a secret never lands in argv")
 }
-fn query_arg() -> Arg {
-    Arg::new("query")
-        .long("query")
-        .value_name("K=V")
-        .action(ArgAction::Append)
-        .help("Append a query parameter, `k=v` (repeatable). Values are encoded")
-}
-fn raw_arg() -> Arg {
-    Arg::new("raw")
-        .long("raw")
-        .action(ArgAction::SetTrue)
-        .help("Print the whole {status,msg,data} envelope instead of just data")
-}
 
 // ---- resolve a parse into a call, then dispatch through the ONE seam ---------
 
 /// What a matched generated command resolves to. Pure over the clap matches —
 /// no config, no keychain — so it is unit-testable without a network.
 pub enum Resolved {
-    Leaf {
-        op: &'static Op,
-        values: Vec<String>,
-        body: LeafBody,
-        query: Vec<String>,
-        raw: bool,
-    },
+    Leaf { op: &'static Op, values: Vec<String>, body: LeafBody, query: Vec<String> },
 }
 
 /// A leaf's request body: assembled from typed flags, read raw from `--data`, or
@@ -254,14 +290,19 @@ pub enum LeafBody {
     None,
 }
 
-/// If `matches` selected a GENERATED product, resolve it; otherwise `None` so the
-/// derive tree handles it (a local command, or a truly-bare `hanzo`).
+/// If `matches` selected a GENERATED product (or a friendly alias), resolve it;
+/// otherwise `None` so the derive tree handles it (a local command, or bare).
 pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
     let (top, sub) = matches.subcommand()?;
+    // A friendly top-level alias (`logs`) is a leaf reusing a generated op.
+    if let Some(op) = alias_op(top) {
+        return Some(resolve_leaf(op, sub));
+    }
     if !is_product(top) {
         return None;
     }
-
+    // Walk to the deepest matched subcommand. A RUNNABLE GROUP invoked bare stops
+    // here (no sub-subcommand), so `find_op` resolves its own collection op.
     let mut chain: Vec<&str> = vec![top];
     let mut m = sub;
     while let Some((n, mm)) = m.subcommand() {
@@ -269,30 +310,38 @@ pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
         m = mm;
     }
     let op = find_op(&chain)?;
+    Some(resolve_leaf(op, m))
+}
+
+/// Read a leaf op's arguments off its own matches: positionals, then the body
+/// (typed properties, or `--data`, or none) and the typed query string.
+fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
     let values = op
         .params
         .iter()
         .map(|p| m.get_one::<String>(p).cloned().unwrap_or_default())
         .collect();
-    // The three body tiers, resolved once. A typed leaf carries ONLY its body
-    // flags (no `--query`/`--raw`), so those are read only off the other tiers.
-    let (body, query, raw) = if !op.fields.is_empty() {
-        (LeafBody::Typed(typed_body(op, m)), Vec::new(), false)
+    let has_body = op.fields.iter().any(|f| !f.query);
+    let body = if has_body {
+        LeafBody::Typed(typed_body(op, m))
+    } else if op.is_write() {
+        // `--data` exists only when no field already claims the `data` long.
+        let data = (!op.fields.iter().any(|f| f.flag == "data"))
+            .then(|| m.get_one::<String>("data").cloned())
+            .flatten();
+        LeafBody::Data(data)
     } else {
-        let data = op.is_write().then(|| m.get_one::<String>("data").cloned()).flatten();
-        let query = m.get_many::<String>("query").map(|v| v.cloned().collect()).unwrap_or_default();
-        let body = if op.is_write() { LeafBody::Data(data) } else { LeafBody::None };
-        (body, query, m.get_flag("raw"))
+        LeafBody::None
     };
-    Some(Resolved::Leaf { op, values, body, query, raw })
+    Resolved::Leaf { op, values, body, query: typed_query(op, m) }
 }
 
-/// Assemble the JSON body from the typed flags actually provided — nothing else.
+/// Assemble the JSON body from the BODY flags actually provided — nothing else.
 /// An unset optional field is OMITTED (so the server's own default stands), never
 /// sent as null. Each value is encoded at its schema type.
 fn typed_body(op: &Op, m: &ArgMatches) -> Value {
     let mut map = Map::new();
-    for f in op.fields {
+    for f in op.fields.iter().filter(|f| !f.query) {
         match f.ty {
             Ty::Str => {
                 if let Some(v) = m.get_one::<String>(f.id) {
@@ -324,6 +373,25 @@ fn typed_body(op: &Op, m: &ArgMatches) -> Value {
     Value::Object(map)
 }
 
+/// Assemble `key=value` query pairs from the QUERY flags actually provided; each
+/// value is stringified at its type and percent-encoded by `build_url`.
+fn typed_query(op: &Op, m: &ArgMatches) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in op.fields.iter().filter(|f| f.query) {
+        let v: Option<String> = match f.ty {
+            Ty::Str => m.get_one::<String>(f.id).cloned(),
+            Ty::Int => m.get_one::<i64>(f.id).map(|v| v.to_string()),
+            Ty::Num => m.get_one::<f64>(f.id).map(|v| v.to_string()),
+            Ty::Bool => m.get_flag(f.id).then(|| "true".to_string()),
+            Ty::Json => m.get_one::<Value>(f.id).map(|v| v.to_string()),
+        };
+        if let Some(v) = v {
+            out.push(format!("{}={v}", f.key));
+        }
+    }
+    out
+}
+
 fn is_product(name: &str) -> bool {
     OPS.iter().any(|o| o.product == name)
 }
@@ -343,7 +411,7 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 /// never asked; all other params are the user's positionals. The bearer + origin
 /// are `call`'s to resolve.
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
-    let Resolved::Leaf { op, values, body, query, raw } = resolved;
+    let Resolved::Leaf { op, values, body, query } = resolved;
     let owner = store::active(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
     let path = fill_path(op.path, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
@@ -352,7 +420,8 @@ pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
         LeafBody::Data(d) => read_body(d, &method)?,
         LeafBody::None => None,
     };
-    call(cfg, method, path, body, query, raw).await
+    // The `/v1` envelope's `data` is always what we surface (there is no `--raw`).
+    call(cfg, method, path, body, query, false).await
 }
 
 /// Fill a `/v1` template: a param preceded by `orgs` is the tenant scope, bound
