@@ -29,11 +29,26 @@ pub(crate) fn lock_path(path: &Path) -> PathBuf {
 /// `LockFileEx` on Windows) that the KERNEL releases when the process exits. So a
 /// killed or crashed `hanzo` can never wedge every other invocation behind a
 /// stale lock, which is the failure mode a hand-rolled `O_EXCL` lockfile has.
-struct Lock(std::fs::File);
+///
+/// The credential store (`iam::token::FileVault`) guards its own read-modify-write
+/// with this SAME primitive on its own sidecar lock, so there is exactly one way
+/// the CLI serializes concurrent writers to a shared file.
+pub(crate) struct Lock(std::fs::File);
 
 impl Lock {
-    fn acquire(path: &Path) -> Result<Self> {
+    pub(crate) fn acquire(path: &Path) -> Result<Self> {
         let lock = lock_path(path);
+        // The lock file lives beside the thing it guards, and on a brand-new
+        // machine that directory does not exist yet — the FIRST `hanzo login`
+        // (via `FileVault::set`) is the very thing that would create it. Opening
+        // the lock with `create(true)` makes the FILE, never its parent DIRS, so
+        // without this the first write on a fresh install failed with
+        // "No such file or directory". Ensure the directory before we lock, so a
+        // clean `curl | sh` → `hanzo login` just works.
+        if let Some(dir) = lock.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("creating credential store directory {}", dir.display()))?;
+        }
         let f = std::fs::OpenOptions::new()
             .create(true)
             .read(true)
