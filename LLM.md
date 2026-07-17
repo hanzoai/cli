@@ -285,45 +285,58 @@ than by hand-writing 1000 verbs.
   first-class product tree calls into — one seam, one trust boundary.
 
 ## `hanzo <product> <resource…> <verb>` (`src/commands/product/`) — cloud, as commands
-The same ~1000 `/v1` operations `hanzo api` reaches, given first-class verbs with
-real `--help` — WITHOUT hand-writing them. A build-time generator folds the
-router SHAPE into committed DATA; the runtime builds a clap tree from that data
-and dispatches through the SAME `api::call` seam.
+The ~1000 `/v1` operations `hanzo api` reaches, given first-class verbs with real
+`--help` AND real TYPED flags — WITHOUT hand-writing them. A build-time generator
+folds the hand-authored OpenAPI specs into committed DATA; the runtime builds a
+clap tree from that data and dispatches through the SAME `api::call` seam. `hanzo
+api` is the hidden power-user escape hatch behind it. Currently 2117 coordinates
+across 87 products (658 typed-flag + 219 `--data`-fallback writes), 65 passthrough
+products, 7 `code` verbs.
 
+- **Source of truth = the authored specs** (`spec/products.json`, vendored from
+  hanzoai/openapi — 68 per-product OpenAPI 3.1 specs as one JSON). `spec/openapi.json`
+  (the live router shape) is kept ONLY for the product universe: router products
+  with no authored spec become passthroughs, and `/v1/code`'s verbs nest under the
+  `code` wrapper. Both snapshots are committed, so codegen + `--help` are offline
+  and invariant to `hanzo network use`; regenerate with `cargo run --bin genproduct`.
 - **The fold is a TOTAL function over path segments** (`bin/genproduct.rs`).
-  Literals → the resource path (subcommand groups); params → positional args;
-  terminal segment + method → the verb. `GET /p/r`→`list` (when a `/{id}` sibling
-  exists) else the literal names a read; `GET /p/r/{id}`→`get`; `POST /p/r`→
-  `create`; `PATCH|PUT|POST /p/r/{id}`→`update` (collapsed); `DELETE …/{id}`→`rm`;
+  Literals → resource groups; params → positionals; terminal segment + method →
+  the verb. `GET /p/r`→`list` (collection) / `get`; `GET /p/r/{id}`→`get`; `POST
+  /p/r`→`create`; item `PATCH|PUT|POST /p/r/{id}`→`update`; `DELETE …/{id}`→`rm`;
   `POST …/{id}/{action}`→`<action>`. A param names a group ONLY in a param-stack
-  (`{a}/{b}` with no noun between), which is what makes the fold total to depth 8
-  with 0 collisions — 836 coordinates across 125 products.
+  (`{a}/{b}`), and a collection-root write gets a DISTINCT verb (`clear`/`replace`,
+  vs item `rm`/`update`) so it never clashes with the item op; any residual clash
+  becomes `<verb>-all`. Proven 0 collisions.
+- **TYPED flags from the schema.** A write op whose `requestBody` resolves ($ref →
+  component schema, `allOf` merged) to an object gets one `--flag` per property:
+  `string`→`String`, `integer`→`i64`, `number`→`f64`, `boolean`→a flag,
+  `enum`→a validated choice, `array`/`object`/`$ref`→a `--field` taking JSON.
+  Required properties are required flags; an unset optional is OMITTED (the
+  server's default stands), never sent null. The JSON body is assembled from the
+  flags at their schema types. So `hanzo authz check --sub <S> --obj <O> --act <A>`
+  — not `--data`. Nothing is invented — the fields are exactly the schema's
+  properties. A typed leaf carries ONLY its body flags (no `--data`/`--query`/`--raw`),
+  so a body key named `data`/`query` can never collide with a fixed control (the
+  clap id is namespaced `field.<key>`).
+- **Fallback ladder.** requestBody schema → typed flags; a write with NO schema (or
+  a freeform body) → `--data '<json>'` (or `-` from stdin); a product with no
+  authored spec → a `hanzo api`-style passthrough (`hanzo <product> <subpath>
+  [-X] [--data]`). Every product is still a real `hanzo <product>` command.
 - **Scope elision.** An `orgs/{org}` pair is the tenant scope: the `{org}` binds
   to the active identity's `owner` (via the seam), never a positional and never a
-  flag — there is no `--org`, exactly as `kms`. Every other param (including a
-  `{project}`) is an ADDRESS the user provides and the server re-checks against
-  the JWT it verifies; addressing is fail-safe (a wrong one 403s you against
-  yourself), so the CLI never sends an org header.
-- **Shape-only ceiling.** The router-derived spec carries NO request/response
-  schemas, so every write is `--data '<json>'` (or `--data -` from stdin), the
-  same as `hanzo api`. There are no typed body flags because there are no body
-  types to generate. Path params are positionals; that is all the shape yields.
-- **Build-time codegen, committed.** `bin/genproduct` reads the committed
-  snapshot `spec/openapi.json` and emits `product/generated.rs` as pure DATA
-  (product, nodes, verb, method, path template, params) — NO host, NO URL, NO
-  auth (a test fails the build otherwise). Regenerate with
-  `cargo run --bin genproduct`. Never fetched at runtime: `--help` is offline and
-  invariant to `hanzo network use`.
+  flag — no `--org`, exactly as `kms`. (No authored route uses it today — the one
+  that does, `kms`, is hand-written and excluded — but the mechanism is live and
+  tested.) Every other param is an ADDRESS the server re-checks; addressing is
+  fail-safe (a wrong one 403s you against yourself), so the CLI never sends an org.
+- **Trust boundary = the point.** The generated data is DATA (product, nodes, verb,
+  method, path template, params, typed fields) — NO host, NO URL, NO auth (a test
+  fails the build otherwise). The ORIGIN comes from `network`, the BEARER from
+  `store`; the data only shapes a call to YOUR OWN cloud with YOUR OWN token.
 - **Collisions — the local command wins its bare name.** The generator omits the
   hand-written products (`kms`/`billing`/`agent`/`deploy`), and `augment` also
   skips any name the derive tree already took. `agents` (plural) owns `hanzo
-  agents`. `code` is special: its `/v1/code` verbs mount UNDER the wrapper, so
-  `hanzo code "task"` still runs Claude and `hanzo code ask|search|index` hit
-  cloud.
-- **Pure catch-all products** (`/v1/<p>/*` wildcards — base/tasks/o11y-ish) have
-  no enumerable subcommands, so they fall through to a `hanzo api`-style
-  passthrough scoped to the product (`hanzo tasks <subpath> [-X] [--data]`),
-  never a broken empty tree.
+  agents`. `code` is special: its verbs mount UNDER the wrapper, so `hanzo code
+  "task"` still runs Claude and `hanzo code ask|search|index` hit cloud.
 
 ## Billing (`src/commands/billing.rs`) — the money the identity model bills
 `balance` reads `GET /v1/billing/balance`; `deposit` posts `POST /v1/billing/deposit`

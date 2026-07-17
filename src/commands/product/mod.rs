@@ -1,25 +1,28 @@
 //! `hanzo <product> <resource…> <verb>` — cloud's Go surface as FIRST-CLASS
-//! product commands, generated from the router's SHAPE.
+//! product commands, generated from the hand-authored OpenAPI specs.
 //!
-//! Cloud serves ~1000 `/v1` operations across ~130 products. `hanzo api` reaches
-//! every one through the one seam; this gives the enumerable ones real verbs with
-//! real `--help`, WITHOUT hand-writing them: a build-time generator folds each
-//! path into a (product, resource nodes, verb, method, path template, params)
-//! coordinate and commits it as pure DATA (`generated.rs`). At runtime we build a
-//! clap tree from that data and dispatch through the SAME `api::call` seam — so
-//! the trust boundary is identical to `hanzo api`: the ORIGIN comes from
-//! `network`, the BEARER from `store`, and the data contributes only the path
-//! template + which segments are positionals. It contains no host, no URL and no
-//! auth (a test fails the build otherwise), so a hostile snapshot can at worst
-//! shape a call to YOUR OWN cloud with YOUR OWN token — never redirect it.
+//! `hanzo api` reaches every `/v1` operation through the one seam; this gives the
+//! enumerable ones real verbs with real `--help`, WITHOUT hand-writing them: a
+//! build-time generator folds each path into a (product, resource nodes, verb,
+//! method, path template, params, typed body fields) coordinate and commits it as
+//! pure DATA (`generated.rs`). At runtime we build a clap tree from that data and
+//! dispatch through the SAME `api::call` seam — so the trust boundary is identical
+//! to `hanzo api`: the ORIGIN comes from `network`, the BEARER from `store`, and
+//! the data contributes only the path template + argument SHAPE. It contains no
+//! host, no URL and no auth (a test fails the build otherwise), so a hostile
+//! snapshot can at worst shape a call to YOUR OWN cloud with YOUR OWN token —
+//! never redirect it.
 //!
-//! The spec is router-derived and SHAPE-ONLY: it carries no request/response
-//! schemas. So every write is `--data '<json>'` (or `--data -` from stdin),
-//! exactly as `hanzo api`; there are no typed body flags because there are no
-//! body types to generate.
+//! Because the source specs carry real requestBody schemas, a write op with a
+//! schema gets TYPED `--flags` (one per property, with the property's type and
+//! required-ness) and the JSON body is assembled from them — not `--data`. A write
+//! with NO schema (or a freeform body) falls back to `--data '<json>'`; a product
+//! with no authored spec falls through to a `hanzo api`-style passthrough. Nothing
+//! is invented — the fields are exactly the schema's properties.
 
 use anyhow::{anyhow, bail, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use serde_json::{json, Map, Value};
 
 use crate::config::Config;
 use crate::iam::{paths, store};
@@ -27,7 +30,7 @@ use crate::iam::{paths, store};
 mod generated;
 pub(crate) use generated::{OPS, PASSTHROUGH};
 
-/// One generated operation — pure DATA derived from the router SHAPE.
+/// One generated operation — pure DATA derived from the authored spec SHAPE.
 pub struct Op {
     /// First path segment after `/v1/` — the top-level command.
     pub product: &'static str,
@@ -41,6 +44,35 @@ pub struct Op {
     pub path: &'static str,
     /// User positionals, in path order — the tenant-org scope is NOT among them.
     pub params: &'static [&'static str],
+    /// Typed request-body fields from the requestBody schema. Empty ⇒ no typed
+    /// body (a write with no schema uses `--data`; a read has no body).
+    pub fields: &'static [Field],
+}
+
+/// One typed request-body field, from a schema property.
+pub struct Field {
+    /// The JSON property name — the body key sent to cloud.
+    pub key: &'static str,
+    /// The clap arg id — namespaced (`field.<key>`) so it can never collide with a
+    /// path positional or a fixed control, even when a body key is `data`/`id`.
+    pub id: &'static str,
+    /// The kebab-case long flag the user types (`amountCents` → `--amount-cents`).
+    pub flag: &'static str,
+    /// The property's type, which picks the clap parser + the JSON encoding.
+    pub ty: Ty,
+    /// A `required` property is a required flag; else it is omitted when unset.
+    pub required: bool,
+    /// A string enum's allowed values (clap validates); empty otherwise.
+    pub choices: &'static [&'static str],
+}
+
+/// The JSON type of a body field — schema `type` mapped to a clap parser.
+pub enum Ty {
+    Str,
+    Int,
+    Num,
+    Bool,
+    Json,
 }
 
 impl Op {
@@ -132,17 +164,70 @@ fn to_command(name: &'static str, node: &Node) -> Command {
     c
 }
 
-/// A leaf command: positionals for the path params, plus the SHAPE-ONLY write
-/// controls (`--data`/`--query`/`--raw`) shared verbatim with `hanzo api`.
+/// A leaf command: positionals for the path params, then EITHER typed body flags
+/// (when the schema is known) OR the raw `--data` escape (when it is not). Typed
+/// leaves carry ONLY their body flags — never `--data`/`--query`/`--raw`, so a
+/// body field named `data`/`query`/`raw` can never collide with a fixed control.
 fn leaf(op: &'static Op) -> Command {
     let mut c = Command::new(op.verb).about(format!("{} {}", op.method, op.path));
     for &p in op.params {
         c = c.arg(Arg::new(p).required(true).help(format!("path parameter {{{p}}}")));
     }
-    if op.is_write() {
-        c = c.arg(data_arg());
+    if !op.fields.is_empty() {
+        for f in op.fields {
+            c = c.arg(field_arg(f));
+        }
+    } else if op.is_write() {
+        c = c.arg(data_arg()).arg(query_arg()).arg(raw_arg());
+    } else {
+        c = c.arg(query_arg()).arg(raw_arg());
     }
-    c.arg(query_arg()).arg(raw_arg())
+    c
+}
+
+/// A typed body flag from a schema property. The clap parser matches the JSON
+/// type, so the assembled body carries the right type — a number is a number, a
+/// bool a bool — not a stringly-typed `--data` blob.
+fn field_arg(f: &'static Field) -> Arg {
+    // The clap id is namespaced; the value placeholder shows the TYPE, so the id
+    // (`field.act`) never leaks into `--help`.
+    let mut a = Arg::new(f.id).long(f.flag).required(f.required).help(field_help(f));
+    match f.ty {
+        Ty::Int => a = a.value_parser(clap::value_parser!(i64)).value_name("INT"),
+        Ty::Num => a = a.value_parser(clap::value_parser!(f64)).value_name("NUMBER"),
+        Ty::Bool => a = a.action(ArgAction::SetTrue),
+        Ty::Json => a = a.value_parser(parse_json).value_name("JSON"),
+        Ty::Str => a = a.value_name("STRING"),
+    }
+    if !f.choices.is_empty() {
+        a = a.value_parser(clap::builder::PossibleValuesParser::new(f.choices)).value_name("ENUM");
+    }
+    a
+}
+
+/// Type-derived help — DATA, never the spec's prose (which could carry a URL).
+fn field_help(f: &Field) -> String {
+    if !f.choices.is_empty() {
+        return format!("one of: {}", f.choices.join(" | "));
+    }
+    let t = match f.ty {
+        Ty::Str => "string",
+        Ty::Int => "integer",
+        Ty::Num => "number",
+        Ty::Bool => "flag",
+        Ty::Json => "JSON value",
+    };
+    if f.required {
+        format!("{t} (required)")
+    } else {
+        t.to_string()
+    }
+}
+
+/// Parse a `Json`-typed flag's value at the clap layer, so an invalid JSON body
+/// field is a named parse error, not a silent malformed request.
+fn parse_json(s: &str) -> std::result::Result<Value, String> {
+    serde_json::from_str(s).map_err(|e| format!("not valid JSON: {e}"))
 }
 
 fn passthrough(product: &'static str) -> Command {
@@ -193,7 +278,7 @@ pub enum Resolved {
     Leaf {
         op: &'static Op,
         values: Vec<String>,
-        data: Option<String>,
+        body: LeafBody,
         query: Vec<String>,
         raw: bool,
     },
@@ -205,6 +290,14 @@ pub enum Resolved {
         query: Vec<String>,
         raw: bool,
     },
+}
+
+/// A leaf's request body: assembled from typed flags, read raw from `--data`, or
+/// absent (a read). The three tiers of the fallback ladder, resolved once.
+pub enum LeafBody {
+    Typed(Value),
+    Data(Option<String>),
+    None,
 }
 
 /// If `matches` selected a GENERATED product (or a `hanzo code` verb), resolve
@@ -236,14 +329,54 @@ pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
         .iter()
         .map(|p| m.get_one::<String>(p).cloned().unwrap_or_default())
         .collect();
-    Some(Resolved::Leaf {
-        op,
-        values,
-        // `--data` exists only on write leaves — never look it up on a read leaf.
-        data: op.is_write().then(|| m.get_one::<String>("data").cloned()).flatten(),
-        query: m.get_many::<String>("query").map(|v| v.cloned().collect()).unwrap_or_default(),
-        raw: m.get_flag("raw"),
-    })
+    // The three body tiers, resolved once. A typed leaf carries ONLY its body
+    // flags (no `--query`/`--raw`), so those are read only off the other tiers.
+    let (body, query, raw) = if !op.fields.is_empty() {
+        (LeafBody::Typed(typed_body(op, m)), Vec::new(), false)
+    } else {
+        let data = op.is_write().then(|| m.get_one::<String>("data").cloned()).flatten();
+        let query = m.get_many::<String>("query").map(|v| v.cloned().collect()).unwrap_or_default();
+        let body = if op.is_write() { LeafBody::Data(data) } else { LeafBody::None };
+        (body, query, m.get_flag("raw"))
+    };
+    Some(Resolved::Leaf { op, values, body, query, raw })
+}
+
+/// Assemble the JSON body from the typed flags actually provided — nothing else.
+/// An unset optional field is OMITTED (so the server's own default stands), never
+/// sent as null. Each value is encoded at its schema type.
+fn typed_body(op: &Op, m: &ArgMatches) -> Value {
+    let mut map = Map::new();
+    for f in op.fields {
+        match f.ty {
+            Ty::Str => {
+                if let Some(v) = m.get_one::<String>(f.id) {
+                    map.insert(f.key.to_string(), json!(v));
+                }
+            }
+            Ty::Int => {
+                if let Some(v) = m.get_one::<i64>(f.id) {
+                    map.insert(f.key.to_string(), json!(v));
+                }
+            }
+            Ty::Num => {
+                if let Some(v) = m.get_one::<f64>(f.id) {
+                    map.insert(f.key.to_string(), json!(v));
+                }
+            }
+            Ty::Bool => {
+                if m.get_flag(f.id) {
+                    map.insert(f.key.to_string(), json!(true));
+                }
+            }
+            Ty::Json => {
+                if let Some(v) = m.get_one::<Value>(f.id) {
+                    map.insert(f.key.to_string(), v.clone());
+                }
+            }
+        }
+    }
+    Value::Object(map)
 }
 
 fn pass(product: &'static str, sub: &ArgMatches) -> Resolved {
@@ -277,11 +410,15 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 /// user's positionals. The bearer + origin are `api::call`'s to resolve.
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
     match resolved {
-        Resolved::Leaf { op, values, data, query, raw } => {
+        Resolved::Leaf { op, values, body, query, raw } => {
             let owner = store::active(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
             let path = fill_path(op.path, owner.as_deref(), &values)?;
             let method = super::api::parse_method(op.method)?;
-            let body = super::api::read_body(data, &method)?;
+            let body = match body {
+                LeafBody::Typed(v) => Some(v),
+                LeafBody::Data(d) => super::api::read_body(d, &method)?,
+                LeafBody::None => None,
+            };
             super::api::call(cfg, method, path, body, query, raw).await
         }
         Resolved::Pass { product, subpath, method, data, query, raw } => {
