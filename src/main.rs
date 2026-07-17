@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod commands;
 mod config;
+mod http;
 mod private;
 mod iam;
 mod sdk;
@@ -113,6 +114,13 @@ enum Commands {
         /// set the backend's own sandbox/permission flags — never widened by us.
         #[arg(last = true, allow_hyphen_values = true)]
         passthrough: Vec<String>,
+    },
+
+    /// Secrets, in KMS — the only place they live (`list`, `get`, `set`, `rm`).
+    /// Scoped to the active identity's org; `hanzo switch` moves it.
+    Kms {
+        #[command(subcommand)]
+        command: KmsCommands,
     },
 
     /// Sign in to Hanzo Cloud (IAM OIDC, PKCE S256)
@@ -299,6 +307,63 @@ enum NetworkCommands {
     },
 }
 
+/// The secret lifecycle. An address is `NAME` or `sub/path/NAME`, the same in
+/// every verb; `--env` selects the environment.
+///
+/// `set` takes NO value argument — not by default, but structurally: a secret
+/// on the command line would land in `ps`, shell history and CI logs, so the
+/// value can only arrive on stdin. This is why there is no `--value` here, and
+/// why adding one would be a security regression rather than a convenience.
+#[derive(Subcommand)]
+enum KmsCommands {
+    /// List secret addresses (never values) — pipes into `hanzo kms get`
+    List {
+        /// Sub-path to list under, e.g. `ci`. Omit for the org root.
+        #[arg(value_name = "PATH")]
+        path: Option<String>,
+
+        /// Environment to read from
+        #[arg(long, default_value = "default")]
+        env: String,
+    },
+
+    /// Print one secret's raw value to stdout (pipes byte-exactly)
+    Get {
+        /// `NAME` or `sub/path/NAME`
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Environment to read from
+        #[arg(long, default_value = "default")]
+        env: String,
+    },
+
+    /// Store a secret, reading the VALUE FROM STDIN so it never enters argv:
+    /// `printf %s "$V" | hanzo kms set NAME --env prod`
+    Set {
+        /// `NAME` or `sub/path/NAME`
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Environment to write to. REQUIRED, with no default: the server
+        /// refuses to guess, because a silent `default` would commit the write
+        /// to a bucket the env's readers never resolve.
+        #[arg(long)]
+        env: String,
+    },
+
+    /// Delete a secret
+    Rm {
+        /// `NAME` or `sub/path/NAME`
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Environment to delete from
+        #[arg(long, default_value = "default")]
+        env: String,
+    },
+}
+
 #[derive(Subcommand)]
 enum WalletCommands {
     /// Show the active wallet (address, custody, network)
@@ -477,6 +542,18 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Commands::Kms { command } => match command {
+            KmsCommands::List { path, env } => commands::kms::list(&mut config, path, env).await?,
+            KmsCommands::Get { name, env } => commands::kms::get(&mut config, name, env).await?,
+            KmsCommands::Set { name, env } => {
+                // The value can only come from stdin — the same reason
+                // `login --token -` does, and here there is not even a flag to
+                // pass it by instead.
+                let value = commands::kms::read_value(std::io::stdin())?;
+                commands::kms::set(&mut config, name, env, value).await?
+            }
+            KmsCommands::Rm { name, env } => commands::kms::rm(&mut config, name, env).await?,
+        },
         Commands::Login { brand, token } => match token {
             Some(t) => {
                 // Read from stdin when `-` so the token never rides argv/history.
@@ -675,5 +752,71 @@ mod tests {
             .err()
             .expect("`--help` exits via a clap error");
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    // ---- `hanzo kms`: a secret value can never reach argv -------------------
+
+    /// THE invariant of a secrets CLI. Not "we don't put the value in argv" —
+    /// there must be NO WAY to, so that no flag, habit or copied snippet can
+    /// leak it to `ps`, `~/.zsh_history` or a CI log. Every argv shape that
+    /// would carry a value must be a PARSE ERROR, which is a property of the
+    /// grammar rather than of the handler's discipline.
+    #[test]
+    fn a_secret_value_cannot_be_passed_on_the_command_line() {
+        // A positional value: rejected — `Set` has exactly one positional.
+        assert!(
+            Cli::try_parse_from(["hanzo", "kms", "set", "DB_PASSWORD", "--env", "prod", "hunter2"])
+                .is_err(),
+            "a positional value must not parse — it would land in `ps` and history"
+        );
+        // The flags a user would reach for, none of which exist.
+        for flag in ["--value", "--secret", "--data", "--from-literal", "--val"] {
+            assert!(
+                Cli::try_parse_from(["hanzo", "kms", "set", "DB", "--env", "prod", flag, "hunter2"])
+                    .is_err(),
+                "{flag} must not exist: a value-bearing flag is the leak"
+            );
+        }
+        // What DOES parse carries the address and the env — and nothing else.
+        let cli = Cli::try_parse_from(["hanzo", "kms", "set", "ci/DB", "--env", "prod"]).unwrap();
+        match cli.command {
+            Some(Commands::Kms { command: KmsCommands::Set { name, env } }) => {
+                assert_eq!((name.as_str(), env.as_str()), ("ci/DB", "prod"));
+            }
+            _ => panic!("`kms set NAME --env E` must parse to Set"),
+        }
+    }
+
+    /// The server refuses to guess an env on a WRITE (a silent default splits
+    /// the write from the record its readers resolve). The CLI mirrors that
+    /// rather than papering over it — so `set` without `--env` cannot parse.
+    #[test]
+    fn set_refuses_to_guess_an_environment_but_reads_default() {
+        assert!(
+            Cli::try_parse_from(["hanzo", "kms", "set", "DB"]).is_err(),
+            "`set` must require --env: a silent default writes where nobody reads"
+        );
+        // Reads/deletes keep the server's own `default` compat.
+        for verb in ["get", "rm"] {
+            let cli = Cli::try_parse_from(["hanzo", "kms", verb, "DB"]).unwrap();
+            let env = match cli.command {
+                Some(Commands::Kms { command: KmsCommands::Get { env, .. } }) => env,
+                Some(Commands::Kms { command: KmsCommands::Rm { env, .. } }) => env,
+                _ => panic!("`kms {verb} NAME` must parse"),
+            };
+            assert_eq!(env, "default");
+        }
+    }
+
+    /// There is deliberately no `--org`: the org is the active identity's own
+    /// `owner` claim, and a flag would be a way to ask for someone else's.
+    #[test]
+    fn there_is_no_org_flag_on_any_kms_verb() {
+        for verb in ["list", "get", "rm"] {
+            assert!(
+                Cli::try_parse_from(["hanzo", "kms", verb, "DB", "--org", "other"]).is_err(),
+                "`kms {verb} --org` must not exist — switch identity instead"
+            );
+        }
     }
 }
