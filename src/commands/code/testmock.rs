@@ -46,6 +46,23 @@ struct Config {
     /// If set, GET /v1/agents/sessions/:id returns this status while register
     /// still succeeds — the shape of a real 403 (another org), 404 (gone) or 5xx.
     session_get_code: Option<u16>,
+    /// When true, POST /v1/billing/deposit answers commerce's VERBATIM
+    /// PlatformOnly refusal — the deposit-403 incident, reproduced.
+    deposit_refused: bool,
+}
+
+/// The ordinary control plane: everything succeeds. Each constructor below
+/// states ONLY the one thing it varies.
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            force_status: None,
+            get_status: "paused".into(),
+            targets_missing: false,
+            session_get_code: None,
+            deposit_refused: false,
+        }
+    }
 }
 
 pub struct MockCloud {
@@ -55,36 +72,37 @@ pub struct MockCloud {
 
 impl MockCloud {
     pub async fn start() -> MockCloud {
-        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: false, session_get_code: None }).await
+        Self::with(Config::default()).await
     }
 
     /// A mock whose GET returns the given session status (resume tests).
     pub async fn start_get_status(status: &str) -> MockCloud {
-        Self::with(Config { force_status: None, get_status: status.into(), targets_missing: false, session_get_code: None }).await
+        Self::with(Config { get_status: status.into(), ..Config::default() }).await
     }
 
     /// A mock that answers every request with `code` (error-path tests).
     pub async fn start_status(code: u16) -> MockCloud {
-        Self::with(Config { force_status: Some(code), get_status: "paused".into(), targets_missing: false, session_get_code: None }).await
+        Self::with(Config { force_status: Some(code), ..Config::default() }).await
     }
 
     /// A mock that 404s a target by id (register still works) — proves the
     /// run-target sync heartbeat→register fallback.
     pub async fn start_target_missing() -> MockCloud {
-        Self::with(Config { force_status: None, get_status: "paused".into(), targets_missing: true, session_get_code: None }).await
+        Self::with(Config { targets_missing: true, ..Config::default() }).await
     }
 
     /// A mock that fails GET on a session id with `code` while register still
     /// works: exactly what the CLI sees for another org's session (403), a
     /// deleted one (404), or a control-plane blip (5xx).
     pub async fn start_session_get_failing(code: u16) -> MockCloud {
-        Self::with(Config {
-            force_status: None,
-            get_status: "paused".into(),
-            targets_missing: false,
-            session_get_code: Some(code),
-        })
-        .await
+        Self::with(Config { session_get_code: Some(code), ..Config::default() }).await
+    }
+
+    /// A mock that refuses a deposit exactly as commerce's `PlatformOnly` gate
+    /// does for a caller who is neither the internal service token nor a
+    /// SuperAdmin — the incident, on the wire.
+    pub async fn start_deposit_refused() -> MockCloud {
+        Self::with(Config { deposit_refused: true, ..Config::default() }).await
     }
 
     async fn with(cfg: Config) -> MockCloud {
@@ -269,6 +287,32 @@ fn respond(cfg: &Config, method: &str, path: &str) -> (String, String) {
         return (
             "200 OK".into(),
             format!(r#"{{"name":"{name}","env":"{env}","value":"s3cr3t"}}"#),
+        );
+    }
+
+    // ---- the money plane -------------------------------------------------
+    // GET balance -> the {balance,holds,available} CENTS wire cloud answers
+    // (clients/billing/billing.go `balance`; co-resident it carries no currency).
+    if method == "GET" && path.starts_with("/v1/billing/balance") {
+        return (
+            "200 OK".into(),
+            r#"{"balance":125000,"holds":0,"available":125000}"#.to_string(),
+        );
+    }
+    // POST deposit -> commerce's 201 receipt (api/billing/deposit.go), or the
+    // VERBATIM PlatformOnly 403 envelope (middleware/platformonly.go →
+    // util/json/http.Fail, which nests the message under `error`).
+    if method == "POST" && path == "/v1/billing/deposit" {
+        if cfg.deposit_refused {
+            return (
+                "403 Forbidden".into(),
+                r#"{"error":{"type":"api-error","message":"This operation requires platform-administrator or internal-service credentials."}}"#
+                    .to_string(),
+            );
+        }
+        return (
+            "201 Created".into(),
+            r#"{"transactionId":"txn_mock","user":"hanzo","amount":5000,"currency":"usd","type":"deposit","tags":""}"#.to_string(),
         );
     }
 
