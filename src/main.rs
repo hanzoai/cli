@@ -194,7 +194,15 @@ enum Commands {
         command: BillingCommands,
     },
 
-    /// Call any cloud `/v1` endpoint with the active identity (like `gh api`)
+    /// Call any cloud `/v1` endpoint with the active identity (like `gh api`).
+    ///
+    /// HIDDEN power-user escape hatch. The face of the CLI is the product tree
+    /// (`hanzo <product> <resource> <verb>`); this stays for the ~19 catch-all
+    /// wildcard products the router cannot enumerate, and for anything new before
+    /// it is modeled — the same role `kubectl --raw` plays. It shares the exact
+    /// dispatch seam the product tree uses, so it is the escape hatch, not a
+    /// second path.
+    #[command(hide = true)]
     Api {
         /// The `/v1/…` path (e.g. /v1/kms/orgs/<org>/secrets). No host, no `/api/`.
         path: String,
