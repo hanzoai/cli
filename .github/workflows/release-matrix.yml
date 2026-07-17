@@ -55,6 +55,20 @@ jobs:
           if [ "${{ matrix.target.rust }}" = "aarch64-unknown-linux-gnu" ]; then
             sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
           fi
+      # A tag is a claim about what the binary IS. v1.3.0 shipped a 1.2.0 binary
+      # because nothing checked the tag against the crate — the version test in
+      # rust-tests.yml compares Cargo.toml to --version, which both said 1.2.0
+      # and agreed perfectly while the tag lied. Refuse to publish a mislabeled
+      # release.
+      - name: Tag matches the crate
+        run: |
+          set -euo pipefail
+          v="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          [ "v$v" = "${{ github.ref_name }}" ] || {
+            echo "tag ${{ github.ref_name }} but Cargo.toml is $v — the release would be mislabeled"
+            exit 1
+          }
+          echo "tag matches crate: v$v"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.rust }}
