@@ -126,22 +126,28 @@ fn the_org_scope_is_bound_from_owner_never_asked() {
     }
 }
 
-/// No generated leaf anywhere exposes an `--org` (or `--project`) flag — scope is
-/// derived, not chosen. A build of the whole product tree carries no such arg.
+/// The tenant SCOPE (`orgs/{org}`) is never a user-facing argument — it is bound
+/// from `owner`. A NON-scope `org` (a git `{org}` path segment, or the admin
+/// god-view's `org` query parameter for a SuperAdmin) is a legitimate parameter
+/// and is allowed; only the scope pair must never surface as a positional or flag.
 #[test]
-fn no_generated_leaf_has_an_org_flag() {
-    fn walk(c: &Command) {
-        for a in c.get_arguments() {
-            let id = a.get_id().as_str();
-            assert!(id != "org" || a.is_positional(), "an --org flag leaked in");
-            assert_ne!(a.get_long(), Some("org"), "no --org flag on {}", c.get_name());
-        }
-        for s in c.get_subcommands() {
-            walk(s);
+fn the_org_scope_is_never_a_positional_or_flag() {
+    for op in OPS {
+        let segs: Vec<&str> = op.path.split('/').collect();
+        for (i, s) in segs.iter().enumerate() {
+            let scope = s.starts_with('{') && s.ends_with('}') && i > 0 && segs[i - 1] == "orgs";
+            if !scope {
+                continue;
+            }
+            let name = s.trim_start_matches('{').trim_end_matches('}');
+            assert!(!op.params.contains(&name), "scope {name} leaked as a positional: {}", op.path);
+            assert!(
+                !op.fields.iter().any(|f| f.key == name),
+                "scope {name} leaked as a flag: {}",
+                op.path
+            );
         }
     }
-    let cmd = augment(Command::new("hanzo"));
-    walk(&cmd);
 }
 
 // ---- resolve: a parse becomes a call, through the tree -----------------------
@@ -188,17 +194,18 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
 /// unset optional flag is OMITTED (the server's default stands), never sent null.
 #[test]
 fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
-    // Pick a typed op with an Int field, no path params, and NO required fields —
-    // so the only flag we pass is the int, keeping the argv minimal and robust.
+    // Pick a typed op with a BODY int field (not a query param), no path params,
+    // and NO required fields — so the only flag we pass is the int, and the body
+    // holds exactly it.
     let op = OPS
         .iter()
         .find(|o| {
             o.params.is_empty()
-                && o.fields.iter().any(|f| matches!(f.ty, Ty::Int))
+                && o.fields.iter().any(|f| matches!(f.ty, Ty::Int) && !f.query)
                 && o.fields.iter().all(|f| !f.required)
         })
-        .expect("a typed op with an int field and no required fields exists");
-    let int = op.fields.iter().find(|f| matches!(f.ty, Ty::Int)).unwrap();
+        .expect("a typed op with a body int field and no required fields exists");
+    let int = op.fields.iter().find(|f| matches!(f.ty, Ty::Int) && !f.query).unwrap();
 
     let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
     argv.extend(op.nodes.iter().map(|n| n.to_string()));
@@ -211,8 +218,74 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
         panic!("typed leaf");
     };
     assert_eq!(v[int.key], 42, "int flag must serialize as a JSON number");
-    // Only the int we set is present — every other optional field is omitted.
+    // Only the int we set is present — every other optional BODY field is omitted.
     assert_eq!(v.as_object().unwrap().len(), 1, "unset optionals must be omitted: {v}");
+}
+
+/// BUG-1 FIX: a collection GET whose verb also heads a nested group is a RUNNABLE
+/// GROUP — `hanzo kv list` runs `GET /v1/kv`, and `hanzo kv list push <key>`
+/// descends into the datatype. It is NOT a bare group that demands a subcommand.
+#[test]
+fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
+    let m = matches_of(&["hanzo", "kv", "list"]);
+    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("expected a leaf") };
+    assert_eq!(op.path, "/v1/kv");
+    assert_eq!(op.method, "GET");
+
+    // `push` has a required JSON body field; supplying it proves the descent
+    // reaches the datatype op (not the collection GET).
+    let m = matches_of(&["hanzo", "kv", "list", "push", "mykey", "--values", "[1,2]"]);
+    let Some(Resolved::Leaf { op, values, .. }) = resolve(&m) else { panic!("expected a leaf") };
+    assert_eq!(op.path, "/v1/kv/list/{key}/push");
+    assert_eq!(values, vec!["mykey"]);
+}
+
+/// BUG-2 FIX: an `in: query` parameter becomes a TYPED `--flag` that rides the
+/// URL query (not the body), required-ness enforced by clap.
+#[test]
+fn a_query_param_becomes_a_typed_flag_in_the_url() {
+    let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway", "--limit", "50"]);
+    let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&m) else { panic!("leaf") };
+    assert_eq!(op.path, "/v1/o11y/logs");
+    assert!(matches!(body, LeafBody::None), "a GET carries no body");
+    assert!(query.contains(&"product=gateway".to_string()), "{query:?}");
+    assert!(query.contains(&"limit=50".to_string()), "{query:?}");
+    // The required query param is enforced.
+    assert!(augment(Command::new("hanzo"))
+        .try_get_matches_from(["hanzo", "o11y", "logs"])
+        .is_err());
+}
+
+/// A friendly top-level alias dispatches to the SAME generated op (`hanzo logs`
+/// == `hanzo o11y logs`), no duplicated logic.
+#[test]
+fn a_friendly_alias_dispatches_to_the_same_generated_op() {
+    let m = matches_of(&["hanzo", "logs", "--product", "gateway"]);
+    let Some(Resolved::Leaf { op, query, .. }) = resolve(&m) else { panic!("alias leaf") };
+    assert_eq!(op.path, "/v1/o11y/logs");
+    assert!(query.contains(&"product=gateway".to_string()));
+    let m2 = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
+    let Some(Resolved::Leaf { op: op2, .. }) = resolve(&m2) else { panic!() };
+    assert_eq!(op.path, op2.path, "the alias and the product path resolve to one op");
+}
+
+/// CURATION: noise/internal products are denied, singular/plural dupes removed,
+/// and the compute plane is unified as ONE `compute` with machines/gpus absorbed.
+#[test]
+fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
+    for noise in ["console", "download", "upload", "files", "completions", "settings",
+                  "provisioning", "do", "csrf", "indexers", "search-docs"] {
+        assert!(!is_product(noise), "{noise} must be denied as a top-level command");
+    }
+    for plural in ["networks", "clusters", "bots"] {
+        assert!(!is_product(plural), "cloud plural {plural} must be deduped away (local wins)");
+    }
+    assert!(!is_product("machines") && !is_product("gpus"), "absorbed into compute");
+    assert!(is_product("compute"));
+    assert!(
+        OPS.iter().any(|o| o.product == "compute" && o.nodes == ["machines"] && o.verb == "list"),
+        "machines list must be reachable as `compute machines list`"
+    );
 }
 
 /// The deep-nested case the naive case-tables broke on: arbitrary depth resolves

@@ -329,13 +329,34 @@ and dispatches it through the one authenticated seam that lives IN THIS MODULE
   server's default stands), never sent null. The JSON body is assembled from the
   flags at their schema types. So `hanzo authz check --sub <S> --obj <O> --act <A>`
   — not `--data`. Nothing is invented — the fields are exactly the schema's
-  properties. A typed leaf carries ONLY its body flags (no `--data`/`--query`/`--raw`),
-  so a body key named `data`/`query` can never collide with a fixed control (the
-  clap id is namespaced `field.<key>`).
+  properties. The clap id is namespaced (`field.<key>` for body, `query.<key>` for
+  query) so a body key named `data`/`id` never collides with a positional or a
+  control; a name that is BOTH a body property and a query param keeps ONE flag
+  (body wins).
+- **Query parameters are typed flags too.** An op's `parameters` array (resolving
+  `$ref`) contributes an `in: query` flag per parameter, for READS and writes:
+  `hanzo o11y logs --product <slug> [--since-ns N] [--limit N]`. Required query
+  param → required flag (clap enforces it — the old 400 becomes a clean client
+  error); the values ride the URL query, percent-encoded. `in: path` params stay
+  positionals.
+- **Runnable groups.** A collection GET whose verb also heads a nested group is a
+  RUNNABLE GROUP, not a bare namespace: `hanzo kv list` runs `GET /v1/kv`, and
+  `hanzo kv list push <key>` descends into the datatype. Only an ARITY clash
+  (`/v1/mq/objects` vs `/v1/mq/objects/{store}/list`) renames the shallower to
+  `<verb>-all`.
 - **Fallback ladder (per op).** requestBody schema → typed flags; a write with NO
   schema (or a freeform body) → `--data '<json>'` (or `-` from stdin); a read →
   no body. There is no third tier: an unauthored PRODUCT is absent (above), not
   papered over.
+- **Curation (`DENY`/`REMAP`/`ALIASES`).** The raw tree is trimmed to a friendly
+  surface: `genproduct.rs::DENY` drops noise + internal planes (console, download,
+  upload, files, completions, settings, search-docs, indexers, csrf, provisioning,
+  do, …) and the redundant cloud PLURALS (`networks`/`clusters`/`bots` — the LOCAL
+  `network`/`cluster` command and the canonical `bot` own those). `REMAP` absorbs
+  `machines`/`gpus` UNDER one `hanzo compute` as sub-namespaces (a FLAT
+  `compute list` needs the cloud specs reorganized under one `/v1/compute` tag —
+  not faked). `product::ALIASES` mounts a friendly top-level over a generated
+  coordinate — `hanzo logs` == `hanzo o11y logs`, same op, no logic dup.
 - **Scope elision.** An `orgs/{org}` pair is the tenant scope: the `{org}` binds
   to the active identity's `owner` (via the seam), never a positional and never a
   flag — no `--org`, exactly as `kms`. (No authored route uses it today — the one

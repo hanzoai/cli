@@ -3,12 +3,10 @@
 //! changes; the output is checked in, so `hanzo` never fetches a spec at runtime.
 //!
 //! Source of truth: `spec/products.json` — the per-product OpenAPI 3.1 specs
-//! (repo hanzoai/openapi) vendored as one JSON object keyed by product. Unlike a
-//! router dump this carries real requestBody schemas, so a write op becomes TYPED
-//! `--flags`, not `--data '<json>'`. `spec/openapi.json` (the live router shape)
-//! is used only for the product UNIVERSE: router products with no authored spec
-//! fall through to a passthrough command, and `/v1/code`'s verbs nest under the
-//! `hanzo code` wrapper.
+//! (repo hanzoai/openapi) vendored as one JSON object keyed by product. It carries
+//! real requestBody schemas AND typed `parameters`, so a write op becomes TYPED
+//! body `--flags` and a query parameter becomes a TYPED query `--flag`, not
+//! `--data`.
 //!
 //! The fold from path → (product, resource nodes, verb, params) is TOTAL; typed
 //! fields resolve $ref → component schema → property names + types + required.
@@ -23,6 +21,29 @@ use serde_json::Value;
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// Local commands own these bare names; the generated tree never claims them.
 const EXCLUDE: [&str; 4] = ["kms", "billing", "agent", "deploy"];
+/// Curation — products NOT emitted as top-level commands. Reviewed by hand.
+const DENY: &[&str] = &[
+    // Noise: sub-operations, UI/config surfaces, or enumeration artifacts — not
+    // first-class products a person reaches for.
+    "download", "upload", "files", "completions", "console", "settings",
+    "search-docs", "index-docs", "chat-docs", "indexers", "embed-status",
+    "csrf", "openapi.json", "account-bridge", "agent-bindings",
+    // Singular/plural dedupe: the LOCAL hand-written command owns the singular
+    // (`network` = network selection, `cluster` = talk-to-a-node), and `bot` is
+    // the canonical cloud product — so the redundant cloud PLURALS are dropped.
+    "networks", "clusters", "bots",
+    // Internal control planes, not user commands: `provisioning` is the internal
+    // provisioner (you provision via the concrete `hanzo vector|kv|s3 create`),
+    // and `do` is the DigitalOcean PROVIDER backend.
+    "provisioning", "do",
+];
+/// Curation — absorb a product's ops UNDER another command as a sub-namespace, so
+/// the compute plane is ONE `hanzo compute` (machines + gpus + regions/sizes)
+/// instead of three top-levels. `machines`/`gpus` live at their own path prefixes
+/// with a colliding `get`, so a FLAT `compute list` is impossible without
+/// ambiguity — sub-namespacing unifies them losslessly. A flat surface would need
+/// the cloud specs reorganized under one `/v1/compute` tag.
+const REMAP: &[(&str, &str)] = &[("machines", "compute"), ("gpus", "compute")];
 const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 
 fn is_param(s: &str) -> bool {
@@ -175,6 +196,8 @@ struct FieldDef {
     ty: &'static str, // Str|Int|Num|Bool|Json
     required: bool,
     choices: Vec<String>,
+    /// A query-string parameter (goes in the URL), vs a requestBody property.
+    query: bool,
 }
 
 fn deref<'a>(spec: &'a Value, v: &'a Value) -> &'a Value {
@@ -195,6 +218,34 @@ fn deref<'a>(spec: &'a Value, v: &'a Value) -> &'a Value {
 fn body_schema<'a>(spec: &'a Value, op: &'a Value) -> Option<&'a Value> {
     let rb = deref(spec, op.get("requestBody")?);
     rb.get("content")?.get("application/json")?.get("schema")
+}
+
+/// Map a property/parameter schema to a clap type + enum choices. Shared by the
+/// requestBody-property and query-parameter paths — one classification rule.
+fn classify(spec: &Value, pschema: &Value) -> (&'static str, Vec<String>) {
+    let is_ref = pschema.get("$ref").is_some();
+    let d = deref(spec, pschema);
+    let enum_vals: Vec<String> = d
+        .get("enum")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let t = d.get("type").and_then(Value::as_str).unwrap_or("");
+    if is_ref {
+        ("Json", vec![])
+    } else if t == "string" && !enum_vals.is_empty() {
+        ("Str", enum_vals)
+    } else {
+        match t {
+            "string" => ("Str", vec![]),
+            "integer" => ("Int", vec![]),
+            "number" => ("Num", vec![]),
+            "boolean" => ("Bool", vec![]),
+            "array" | "object" => ("Json", vec![]),
+            _ if d.get("properties").is_some() => ("Json", vec![]),
+            _ => ("Str", vec![]),
+        }
+    }
 }
 
 /// Resolve a body schema into typed fields, or an empty vec for a freeform /
@@ -224,33 +275,44 @@ fn fields_of(spec: &Value, schema: &Value) -> Vec<FieldDef> {
     } else {
         collect(s);
     }
+    props
+        .into_iter()
+        .map(|(name, pschema)| {
+            let (ty, choices) = classify(spec, &pschema);
+            let required = required.contains(&name);
+            FieldDef { flag: kebab(&name), key: name, ty, required, choices, query: false }
+        })
+        .collect()
+}
+
+/// Typed flags from an operation's `parameters` array: the `in: query` params
+/// become query `--flags` (`in: path` params are already positionals from the
+/// path template, so they are skipped here). $ref params resolve to their shared
+/// definition. Applies to reads AND writes.
+fn query_fields(spec: &Value, op: &Value) -> Vec<FieldDef> {
+    let Some(params) = op.get("parameters").and_then(Value::as_array) else {
+        return vec![];
+    };
     let mut out = Vec::new();
-    for (name, pschema) in props {
-        let is_ref = pschema.get("$ref").is_some();
-        let d = deref(spec, &pschema);
-        let enum_vals: Vec<String> = d
-            .get("enum")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
-        let t = d.get("type").and_then(Value::as_str).unwrap_or("");
-        let (ty, choices): (&'static str, Vec<String>) = if is_ref {
-            ("Json", vec![])
-        } else if t == "string" && !enum_vals.is_empty() {
-            ("Str", enum_vals)
-        } else {
-            match t {
-                "string" => ("Str", vec![]),
-                "integer" => ("Int", vec![]),
-                "number" => ("Num", vec![]),
-                "boolean" => ("Bool", vec![]),
-                "array" | "object" => ("Json", vec![]),
-                _ if d.get("properties").is_some() => ("Json", vec![]),
-                _ => ("Str", vec![]),
-            }
+    for p in params {
+        let p = deref(spec, p);
+        if p.get("in").and_then(Value::as_str) != Some("query") {
+            continue;
+        }
+        let Some(name) = p.get("name").and_then(Value::as_str) else { continue };
+        let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
+        let (ty, choices) = match p.get("schema") {
+            Some(schema) => classify(spec, schema),
+            None => ("Str", vec![]),
         };
-        let required = required.contains(&name);
-        out.push(FieldDef { flag: kebab(&name), key: name, ty, required, choices });
+        out.push(FieldDef {
+            flag: kebab(name),
+            key: name.to_string(),
+            ty,
+            required,
+            choices,
+            query: true,
+        });
     }
     out
 }
@@ -299,7 +361,7 @@ fn main() {
                 continue;
             }
             let product0 = segs(path)[1];
-            if EXCLUDE.contains(&product0) || is_wild(product0) {
+            if EXCLUDE.contains(&product0) || DENY.contains(&product0) || is_wild(product0) {
                 continue;
             }
             for (m, op) in item.as_object().into_iter().flatten() {
@@ -311,15 +373,30 @@ fn main() {
                     continue; // a path defined in two dirs — first wins
                 }
                 let Some(f) = fold(&method, path, &all) else { continue };
-                let fields = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
+                // Curation remap: absorb a product UNDER another as a sub-namespace
+                // (e.g. `machines list` → `compute machines list`). The PATH is
+                // unchanged — only the command coordinate moves.
+                let (mut product, mut nodes) = (f.product, f.nodes);
+                if let Some((from, target)) = REMAP.iter().find(|(from, _)| *from == product) {
+                    product = target.to_string();
+                    nodes.insert(0, (*from).to_string());
+                }
+                // Typed flags: body properties (writes) + query parameters (all ops).
+                let mut fields = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
                     body_schema(spec, op).map(|s| fields_of(spec, s)).unwrap_or_default()
                 } else {
                     vec![]
                 };
-                let coord = (f.product.clone(), f.nodes.clone(), f.verb.clone());
+                fields.extend(query_fields(spec, op));
+                // One name may appear as BOTH a body property and a query param
+                // (or twice after kebab-casing); a clap long must be unique, so
+                // keep the FIRST (body wins over query).
+                let mut seen_flag: BTreeSet<String> = BTreeSet::new();
+                fields.retain(|f| seen_flag.insert(f.flag.clone()));
+                let coord = (product.clone(), nodes.clone(), f.verb.clone());
                 raw.entry(coord).or_default().push(Op {
-                    product: f.product,
-                    nodes: f.nodes,
+                    product,
+                    nodes,
                     verb: f.verb,
                     method,
                     path: path.clone(),
@@ -330,24 +407,21 @@ fn main() {
         }
     }
 
-    // Collision resolution: a coordinate with >1 arity, or whose verb is also a
-    // child GROUP node here, is ambiguous. The MAX-arity op keeps the verb; the
-    // rest (and the whole set on a group/leaf clash) move to `<verb>-all`. Proven
-    // to leave 0 residual (asserted at collapse).
-    let mut child_map: BTreeMap<(String, Vec<String>), BTreeSet<String>> = BTreeMap::new();
-    for (p, nodes, _verb) in raw.keys() {
-        for i in 0..nodes.len() {
-            child_map.entry((p.clone(), nodes[..i].to_vec())).or_default().insert(nodes[i].clone());
-        }
-    }
-    let is_group = |p: &str, nodes: &[String], verb: &str| -> bool {
-        child_map.get(&(p.to_string(), nodes.to_vec())).is_some_and(|s| s.contains(verb))
-    };
+    // Collision resolution — ARITY only. When two ops fold to the same coordinate
+    // with different positional counts (`GET /v1/mq/objects` vs
+    // `GET /v1/mq/objects/{store}/list`), the MAX-arity op keeps the verb and the
+    // shallower one becomes `<verb>-all`.
+    //
+    // A group/leaf coincidence (a collection-root verb that also names a child
+    // group, e.g. `GET /v1/kv` = `list` while `/v1/kv/list/{key}` nests a `list`
+    // group) is NOT renamed: the op lands as a leaf on the SAME node as the group,
+    // and the runtime makes that node a RUNNABLE GROUP (`hanzo kv list` runs the
+    // collection GET; `hanzo kv list push <key>` runs the datatype). Keeping the
+    // collection GET a runnable leaf is the whole point.
     let mut resolved: BTreeMap<(String, Vec<String>, String), Vec<Op>> = BTreeMap::new();
     for ((p, nodes, verb), ops) in raw {
         let arities: BTreeSet<usize> = ops.iter().map(|o| o.params.len()).collect();
-        let gl = is_group(&p, &nodes, &verb);
-        if arities.len() <= 1 && !gl {
+        if arities.len() <= 1 {
             resolved.entry((p, nodes, verb)).or_default().extend(ops);
             continue;
         }
@@ -355,7 +429,7 @@ fn main() {
         for mut o in ops {
             // Rename the op's OWN verb, not just the map key — the emitted data
             // must carry the disambiguated verb.
-            if !(o.params.len() == maxar && !gl) {
+            if o.params.len() != maxar {
                 o.verb = format!("{verb}-all");
             }
             let coord = (p.clone(), nodes.clone(), o.verb.clone());
@@ -440,14 +514,18 @@ fn emit_op(o: &Op) -> String {
             .fields
             .iter()
             .map(|f| {
+                // The clap id is namespaced by LOCATION so a body property and a
+                // query param of the same name never collide.
+                let id = format!("{}.{}", if f.query { "query" } else { "field" }, f.key);
                 format!(
-                    "Field {{ key: {:?}, id: {:?}, flag: {:?}, ty: Ty::{}, required: {}, choices: {} }}",
+                    "Field {{ key: {:?}, id: {:?}, flag: {:?}, ty: Ty::{}, required: {}, choices: {}, query: {} }}",
                     f.key,
-                    format!("field.{}", f.key),
+                    id,
                     f.flag,
                     f.ty,
                     f.required,
-                    emit_slice(&f.choices)
+                    emit_slice(&f.choices),
+                    f.query
                 )
             })
             .collect();
