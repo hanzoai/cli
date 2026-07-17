@@ -1090,7 +1090,6 @@ mod tests {
         // The consumers, verbatim (`include_str!` is compile-time — these paths
         // are checked by the compiler, so a moved file breaks the build loudly).
         for (name, src) in [
-            ("commands/api.rs", include_str!("../commands/api.rs")),
             ("commands/billing.rs", include_str!("../commands/billing.rs")),
             ("commands/code/mod.rs", include_str!("../commands/code/mod.rs")),
             ("commands/kms.rs", include_str!("../commands/kms.rs")),

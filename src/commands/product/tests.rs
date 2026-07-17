@@ -232,41 +232,18 @@ fn a_deep_nested_leaf_resolves_and_fills_in_order() {
     );
 }
 
-// ---- passthrough: pure catch-all products forward, never emit a broken tree --
+// ---- the whole cloud is subcommands: no `api`, no passthrough ----------------
 
+/// There is NO raw-path escape. `hanzo api` does not exist, and no product falls
+/// through to a passthrough — a matched top-level command is either a generated
+/// product leaf or a local command, never a `<subpath>` forwarder.
 #[test]
-fn a_passthrough_product_forwards_a_subpath() {
-    // A product with no authored spec (router-only) forwards as a passthrough.
-    let p = PASSTHROUGH[0];
-    let m = matches_of(&["hanzo", p, "queues/default", "-X", "POST", "--data", "{}"]);
-    let Some(Resolved::Pass { product, subpath, method, .. }) = resolve(&m) else {
-        panic!("expected a passthrough");
-    };
-    assert_eq!(product, p);
-    assert_eq!(method, "POST");
-    assert_eq!(
-        passthrough_path(product, subpath.as_deref()).unwrap(),
-        format!("/v1/{p}/queues/default")
-    );
-}
-
-#[test]
-fn a_bare_passthrough_hits_the_product_root() {
-    assert_eq!(passthrough_path("tasks", None).unwrap(), "/v1/tasks");
-    assert_eq!(passthrough_path("tasks", Some("")).unwrap(), "/v1/tasks");
-}
-
-#[test]
-fn a_passthrough_refuses_traversal() {
-    assert!(passthrough_path("tasks", Some("../billing/deposit")).is_err());
-    assert!(passthrough_path("tasks", Some("a/./b")).is_err());
-}
-
-#[test]
-fn passthrough_products_are_disjoint_from_generated_products() {
-    for &p in PASSTHROUGH {
-        assert!(!is_product(p), "{p} is both a generated product and a passthrough");
-    }
+fn there_is_no_passthrough_or_raw_path_escape() {
+    let src = include_str!("mod.rs");
+    assert!(!src.contains("Resolved::Pass"), "no passthrough variant may remain");
+    assert!(!src.contains("fn passthrough"), "no passthrough builder may remain");
+    // The dispatcher speaks the seam directly, in-module (no `api` command).
+    assert!(!src.contains("super::api"), "the seam moved in-module; no `api` command remains");
 }
 
 // ---- collisions: a local command always wins its bare name -------------------
@@ -274,9 +251,8 @@ fn passthrough_products_are_disjoint_from_generated_products() {
 /// The hand-written products are omitted from the data outright.
 #[test]
 fn hand_written_products_are_not_generated() {
-    for local in ["agent", "kms", "billing", "deploy"] {
-        assert!(!is_product(local), "{local} must be hand-written, not generated");
-        assert!(!PASSTHROUGH.contains(&local));
+    for local in ["agent", "kms", "billing", "deploy", "code"] {
+        assert!(!is_product(local), "{local} must be hand-written / a wrapper, not generated");
     }
 }
 
@@ -295,40 +271,31 @@ fn augment_never_clobbers_an_existing_command() {
     assert_eq!(merged.get_subcommands().filter(|s| s.get_name() == "world").count(), 1);
 }
 
-// ---- `code`: the wrapper keeps its bare name; verbs mount under it -----------
+// ---- the moved executor: method / body / url helpers -------------------------
 
-/// A stub that mimics the derive `code` command: an optional positional and no
-/// required subcommand, so both `code "task"` and `code <verb>` can parse.
-fn code_base() -> Command {
-    Command::new("hanzo").subcommand(
-        Command::new("code")
-            .arg(clap::Arg::new("task").required(false))
-            .about("WRAPPER"),
-    )
+#[test]
+fn method_maps_from_the_op_string() {
+    assert_eq!(parse_method("GET").unwrap(), reqwest::Method::GET);
+    assert_eq!(parse_method("DELETE").unwrap(), reqwest::Method::DELETE);
+    assert!(parse_method("CONNECT").is_err());
 }
 
 #[test]
-fn a_code_verb_resolves_to_the_generated_leaf() {
-    let m = augment(code_base())
-        .try_get_matches_from(["hanzo", "code", "search"])
-        .expect("parses");
-    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else {
-        panic!("expected a code leaf");
-    };
-    assert_eq!(op.product, "code");
-    assert_eq!(op.verb, "search");
-    assert_eq!(op.path, "/v1/code/search");
+fn a_data_body_on_a_read_is_a_named_error() {
+    use reqwest::Method;
+    assert!(read_body(Some("{}".into()), &Method::GET).is_err());
+    assert!(read_body(Some("{}".into()), &Method::HEAD).is_err());
+    assert!(read_body(Some(r#"{"a":1}"#.into()), &Method::POST).is_ok());
+    assert!(read_body(None, &Method::GET).unwrap().is_none());
+    assert!(read_body(Some("not json".into()), &Method::POST).is_err());
 }
 
 #[test]
-fn bare_code_and_a_task_stay_the_wrapper() {
-    // bare `hanzo code` -> the wrapper (resolve declines).
-    let m = augment(code_base()).try_get_matches_from(["hanzo", "code"]).expect("parses");
-    assert!(resolve(&m).is_none(), "bare code is the wrapper, not a cloud verb");
-
-    // `hanzo code "do a thing"` -> a task for the wrapper (not a subcommand).
-    let m = augment(code_base())
-        .try_get_matches_from(["hanzo", "code", "do a thing"])
-        .expect("parses");
-    assert!(resolve(&m).is_none(), "a free-text task is the wrapper");
+fn query_pairs_are_appended_and_encoded() {
+    let u = build_url("https://x.example", "/v1/agents", &["env=prod".into()]).unwrap();
+    assert!(u.starts_with("https://x.example/v1/agents?") && u.contains("env=prod"));
+    // A value that looks like extra params is encoded, not injected.
+    let u = build_url("https://x.example", "/v1/x", &["q=a b&c=d".into()]).unwrap();
+    assert!(u.contains("q=a+b%26c%3Dd"), "{u}");
+    assert!(build_url("https://x.example", "/v1/x", &["noeq".into()]).is_err());
 }

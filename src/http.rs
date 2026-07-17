@@ -21,8 +21,8 @@ use serde_json::Value;
 /// Send one request with the hanzo.id bearer and an optional JSON body, returning
 /// the raw `(status, parsed-body)`. The status is HANDED BACK, never flattened:
 /// some planes explain a specific status (billing turns a 403 into a switch-
-/// identity hint; `hanzo api` prints the server's body verbatim), so the seam
-/// must not decide for them what a non-2xx means. The body is `Value::Null` for
+/// identity hint; the product tree prints the server's body verbatim), so the
+/// seam must not decide for them what a non-2xx means. The body is `Value::Null`
 /// an empty response, the parsed JSON when it parses, and a JSON string of the
 /// raw text when it does not (an error page is still the caller's to show).
 pub(crate) async fn send<B: Serialize>(

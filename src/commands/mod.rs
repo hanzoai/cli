@@ -1,4 +1,3 @@
-pub mod api;
 pub mod product;
 pub mod init;
 pub mod billing;
