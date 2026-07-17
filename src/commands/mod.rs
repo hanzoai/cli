@@ -1,4 +1,5 @@
 pub mod init;
+pub mod billing;
 pub mod code;
 pub mod dev;
 pub mod build;
