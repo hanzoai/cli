@@ -387,6 +387,29 @@ mod tests {
         (FileVault::at(p.clone()), p)
     }
 
+    /// The fresh-install regression: on a brand-new machine the credential
+    /// store's parent directory does not exist yet, and the FIRST `hanzo login`
+    /// is the write that must create it. `FileVault::set` acquires the lock
+    /// before writing, so the lock's own `create_dir_all` is what makes a clean
+    /// `curl | sh` → `hanzo login` work. This shipped broken in v1.4.0.
+    #[test]
+    fn file_vault_set_creates_a_missing_parent_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "hanzo-fresh-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!dir.exists(), "the store's parent dir must be absent to start");
+
+        let path = dir.join("credentials");
+        let v = FileVault::at(path.clone());
+        // The very first write on a fresh machine — must not fail on a missing dir.
+        v.set("hanzo/hanzo/z", "TOKEN").unwrap();
+        assert_eq!(v.get("hanzo/hanzo/z").unwrap().as_deref(), Some("TOKEN"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn file_vault_roundtrips_get_set_remove() {
         let (v, p) = scratch_vault("roundtrip");
