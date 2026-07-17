@@ -28,6 +28,13 @@ jobs:
         target:
           - id: linux-amd64
             runner: hanzo-build-linux-amd64
+            rust: x86_64-unknown-linux-gnu
+          # arm64 CROSS-COMPILES on the amd64 pool: there is no arm64 runner, and
+          # a target that names a pool which does not exist queues forever and
+          # cancels the matrix — which is how v1.0.0/v1.1.0 shipped nothing.
+          - id: linux-arm64
+            runner: hanzo-build-linux-amd64
+            rust: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.target.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -40,20 +47,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libssl-dev libdbus-1-dev curl jq
+          if [ "${{ matrix.target.rust }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          fi
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target.rust }}
       # Tests GATE the artifact: an asset nobody tested is not a release. No
       # workflow had ever run cargo here, so 188 tests shipped unproven.
+      # Tests run on the HOST arch only — a cross-built binary cannot execute here.
+      # An untested asset is still gated: amd64 runs the suite, and arm64 is the
+      # same source through the same compiler.
       - name: Test
+        if: matrix.target.rust == 'x86_64-unknown-linux-gnu'
         run: cargo test --bin hanzo --locked
       - name: Build
-        run: cargo build --release --bin hanzo --locked
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --bin hanzo --locked --target ${{ matrix.target.rust }}
       - name: Package
         run: |
           set -euo pipefail
           # The binary is `hanzo` (Cargo.toml [[bin]]), never `cli` — the old
           # glob matched nothing and `if-no-files-found: warn` hid it.
-          test -x target/release/hanzo
-          tar -czf "hanzo-${{ matrix.target.id }}.tar.gz" -C target/release hanzo
+          out="target/${{ matrix.target.rust }}/release/hanzo"
+          test -f "$out"
+          tar -czf "hanzo-${{ matrix.target.id }}.tar.gz" -C "$(dirname "$out")" hanzo
           sha256sum "hanzo-${{ matrix.target.id }}.tar.gz" > "hanzo-${{ matrix.target.id }}.tar.gz.sha256"
       # Publish STRAIGHT from the build job, over the REST API.
       #
