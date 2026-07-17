@@ -8,14 +8,49 @@ console + cloud + the fabric: ONE network model, ONE wallet model, ONE way.
 
 ## Tech Stack
 - **Language**: Rust (crate `hanzo-cli`, binary `hanzo`), clap derive, tokio.
-- Secrets: OS keychain via `keyring` (IAM tokens AND wallet keys) — never on disk.
+  TLS is rustls (no OpenSSL); no C dependency links into the shipped binary.
+- Secrets: the PORTABLE credential store (`iam::token::vault`) — IAM tokens AND
+  wallet keys. ONE seam ([`Vault`]), backend chosen at runtime: the native OS
+  keychain on macOS/Windows when it answers, else an owner-only `0600` file
+  (`~/.local/share/hanzo/credentials`). See "Credential store" below.
 
 ## Build & Run
 ```bash
 cargo build            # build gate
-cargo test --bin hanzo # unit tests (incl. wallet derivation vectors)
+cargo test --bin hanzo # unit tests (incl. wallet derivation vectors + FileVault)
 cargo clippy --bin hanzo
 ```
+
+## Credential store (`src/iam/token.rs`) — runs everywhere, one seam
+A credential must be reachable everywhere `hanzo` runs — desktop, container,
+headless server, SSH, CI. So `Vault` (get/set/remove a secret by key) has two
+production backends, chosen once per run by `token::vault()`:
+- **`Keyring`** — native OS keychain. Compiled ONLY on macOS (Keychain) and
+  Windows (Credential Manager), whose system frameworks link with zero C build
+  dependency. Used when a probe shows the backend answers; a headless/locked
+  keychain falls back to the file.
+- **`FileVault`** — an owner-only (`0600`) file, atomic through `crate::private`,
+  the same guarantee `~/.ssh/id_*` and `config.toml` rely on. No native
+  dependency, so it works in a container and cross-compiles to every target. It
+  is the store on Linux (secret-service needs a D-Bus session absent in a
+  container/CI and a C `libdbus` binding that does not cross-compile) and the
+  fallback elsewhere. Concurrent writers serialize on the config's cross-process
+  `Lock` and re-read, so a `set` of one key never drops another.
+
+IAM tokens (`{brand}/{owner}/{name}`) and wallet keys (`wallet:{address}`) share
+ONE store with disjoint key namespaces — one credential store, one way in.
+
+## Multi-platform release (`.github/workflows/release-matrix.yml`)
+`curl hanzo.sh | sh` installs a working `hanzo` on every platform. All five
+targets — linux-{amd64,arm64}, darwin-{amd64,arm64}, windows-amd64 — cross-build
+from the ONE self-hosted Linux pool (`hanzo-build-linux-amd64`) via
+`cargo-zigbuild` (Zig 0.13 as the cross-linker); NO GitHub-hosted runners. macOS
+links against a pinned, checksum-verified vendored MacOSX SDK (`SDKROOT`). Each
+target is tarred as `hanzo-<os>-<arch>.tar.gz` + `.sha256` and published straight
+to the GitHub release over the REST API (the runner has no `gh`, and artifact
+storage is exhausted). A tag-vs-crate guard refuses a mislabeled release.
+`install.sh` resolves the asset from `uname -s`/`-m` and verifies the sha256
+before unpacking.
 
 ## Command surface (`src/main.rs` clap tree → `src/commands/*`, `src/iam/*`)
 - `login` / `whoami` / `switch` / `logout` — IAM OIDC PKCE S256 + the identity
@@ -50,11 +85,11 @@ at once and switches between them; a second login never clobbers the first.
   the token the server verifies; forging `owner` only mislabels the forger's own
   keychain slot. `owner`/`name` are validated (no `/`, no traversal) so a claim
   can never address another identity's slot.
-- **Storage reuses the wallet law**: secret in the OS keychain, metadata in
-  config. Keychain entry = `{brand}/{owner}/{name}` → `TokenSet`, so nothing
+- **Storage reuses the wallet law**: secret in the credential store, metadata in
+  config. Store entry = `{brand}/{owner}/{name}` → `TokenSet`, so nothing
   clobbers (`token.rs`). `config.toml` `[auth]` is the NON-SECRET index —
   the identity list + the active identity per brand — and never holds token
-  material. The index exists because the keychain has no portable enumeration
+  material. The index exists because the store has no portable enumeration
   API; it is what makes listing work offline.
 - **Every config write is a transaction** (`Config::update`, the ONLY mutator —
   there is no bare `save`). The config file is a shared mutable PLACE: several
@@ -321,8 +356,9 @@ commerce handler, which is the source of truth for its shape.
   /v1/wallets`) — the CLI only ever sees the address.
 - Local custody (`--local`, `import`): offline secp256k1 economic key. Mnemonic
   (any word count, `tiny-bip39`) or 0x private key → `m/44'/60'/0'/0/0` →
-  Keccak256 EVM address. The secret lives in the OS keychain, never on disk,
-  never printed. Config stores only metadata (address, custody, network).
+  Keccak256 EVM address. The secret lives in the credential store (keychain or
+  owner-only file, via `token::vault`), never printed. Config stores only
+  metadata (address, custody, network).
 - No auto-provision: a command takes the ACTIVE wallet or none. Provisioning a
   signer as a side effect of another command wrote wallets nobody asked for.
 
@@ -342,7 +378,8 @@ plane (`--with-cloud`). `stop` SIGTERMs that recorded PID (never a blind pkill).
   (`code`) and the secret store (`kms`) share it without braiding. It sends the
   bearer and nothing else — never an org header.
 - `src/commands/{network,kms,wallet,node,cluster,deploy}.rs` — the concerns above.
-- `src/iam/*` — IAM OIDC client + the identity store (the keychain pattern wallet
-  secrets reuse): `identity.rs` (who a token is, from its own claims), `token.rs`
-  (per-identity keychain entries + the `Vault` test seam), `store.rs` (THE one
-  way any command resolves the ACTIVE identity), `login.rs` (the four verbs).
+- `src/iam/*` — IAM OIDC client + the identity store (the credential-store pattern
+  wallet secrets reuse): `identity.rs` (who a token is, from its own claims),
+  `token.rs` (the `Vault` seam + its `Keyring`/`FileVault` backends + the
+  `vault()` resolver + per-identity entries), `store.rs` (THE one way any command
+  resolves the ACTIVE identity), `login.rs` (the four verbs).
