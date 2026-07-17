@@ -18,7 +18,8 @@ cargo clippy --bin hanzo
 ```
 
 ## Command surface (`src/main.rs` clap tree → `src/commands/*`, `src/iam/*`)
-- `login` / `whoami` / `logout` — IAM OIDC PKCE S256 (`src/iam/*`, HIP-0111).
+- `login` / `whoami` / `switch` / `logout` — IAM OIDC PKCE S256 + the identity
+  model (`src/iam/*`, HIP-0111; below).
 - `network list|current|use <name>|add <name> …` — the network model (below).
 - `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
 - `node up|status|join <network>|stop` — run/join hanzo.network with hanzod.
@@ -32,6 +33,75 @@ cargo clippy --bin hanzo
 - bare `hanzo` (no subcommand) — shorthand for a linked interactive `hanzo code`
   (link forced on; falls back to a local run when nobody is signed in).
 - `agent`, `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
+
+## Identity model (`src/iam/*`) — MULTI-identity, like `gh auth switch`
+One human holds many principals: `z@hanzo.ai` is BOTH `admin/z` (SuperAdmin, the
+reserved `admin` org) and `hanzo/z` (org owner). The CLI holds every one of them
+at once and switches between them; a second login never clobbers the first.
+
+- **`Identity` is a VALUE derived from the token's own claims** (`identity.rs`).
+  Casdoor names a principal `owner/name`; `owner` is ALSO the org the gateway
+  bills AND the SuperAdmin predicate (`owner == "admin"`) — one value, three
+  uses. It is decoded from the access token LOCALLY (userinfo carries no
+  `owner`). That decode is unverified and LABELS OUR OWN STORAGE ONLY — it is
+  NEVER an authz decision. SuperAdmin and billing are decided server-side from
+  the token the server verifies; forging `owner` only mislabels the forger's own
+  keychain slot. `owner`/`name` are validated (no `/`, no traversal) so a claim
+  can never address another identity's slot.
+- **Storage reuses the wallet law**: secret in the OS keychain, metadata in
+  config. Keychain entry = `{brand}/{owner}/{name}` → `TokenSet`, so nothing
+  clobbers (`token.rs`). `config.toml` `[auth]` is the NON-SECRET index —
+  the identity list + the active identity per brand — and never holds token
+  material. The index exists because the keychain has no portable enumeration
+  API; it is what makes listing work offline.
+- **Every config write is a transaction** (`Config::update`, the ONLY mutator —
+  there is no bare `save`). The config file is a shared mutable PLACE: several
+  `hanzo` processes write it at once (a `hanzo code` migrating a legacy
+  credential while you `hanzo login` in another terminal). So `update` takes a
+  cross-process lock (`std::fs::File::lock` on a sidecar `config.toml.lock` —
+  never on the config itself, whose inode the write replaces; the kernel drops it
+  on process death, so a crash cannot wedge the fleet), RE-READS current truth,
+  applies the mutation to THAT, and writes tmp+rename+fsync so a reader sees the
+  old file or the new one, never a torn one. Deciding on a stale snapshot would
+  silently revert another process's write — for the auth index that means landing
+  on a principal you did not choose, i.e. the hard invariant broken by a race
+  rather than a cascade. On the real fleet the legacy key is the ORG owner, so
+  the reachable direction was DEMOTION — silently reproducing the deposit-403
+  incident. Hence migration's "only if nothing is active" check runs INSIDE the
+  locked closure.
+- **`store.rs` is THE one way** any command resolves a credential
+  (`active_token`). All six consumers go through it — `login`/`whoami`/`logout`,
+  the `hanzo code` routing bearer, and the cloud-custody wallet — and a test
+  (`no_consumer_bypasses_the_active_identity_seam`) fails the build if a seventh
+  reads the keychain directly. The old bug WAS a per-brand `token::load(brand)`
+  at six call sites.
+- **HARD INVARIANT — the active identity changes ONLY by explicit user action**
+  (`login`, `switch`). No auto-switch, no fallback, no cascade. If the active
+  identity's credential is missing the run is UNAUTHENTICATED; it never quietly
+  becomes another identity you hold. Signing out of the active identity signs you
+  OUT — it never promotes the survivor. Acting as the wrong principal is worse
+  than not acting.
+- **Billing follows identity for FREE.** The CLI never sends an org; the gateway
+  derives it from the JWT `owner`. So `Identity.owner` IS the billing key and
+  `switch` moves billing with zero new machinery — there is deliberately NO
+  org/billing flag.
+- Verbs (flat, no `auth` group): `login` ADDS an identity and makes it active
+  (re-login = idempotent UPDATE, not a duplicate row); `whoami` shows the active
+  one, `--all` lists them (the ONE listing surface — there is no `identities`
+  verb); `switch [owner/name|owner]` selects (verifying we actually HOLD the
+  credential — it never prints a billing org it has not confirmed), bare toggles
+  when exactly two are held and lists when more; `logout [IDENTITY] [--all]` removes one or all.
+  `login --token -` reads stdin so a token never lands in argv or shell history,
+  and requires an identity-bearing JWT. A key is not an identity: an `hk-`
+  gateway key has no derivable principal, so storing it would mean FABRICATING
+  one — it is refused, with an error that names `hanzo login` instead of dead-
+  ending. If a real M2M caller ever needs `hk-`, the answer is an env read at the
+  point of use (`HANZO_API_KEY` → the gateway), NOT an identity in the store.
+- **Migration is forwards-only, one shot.** A legacy bare-`brand` keychain entry
+  is re-filed under `{brand}/{owner}/{name}`, indexed, made active (only if
+  nothing else is — carrying a login forward is not a switch), and the legacy key
+  is DELETED. No dual-read, no compat shim. An unidentifiable legacy blob fails
+  closed; `hanzo login` supersedes and clears it.
 
 ## `hanzo code` (`src/commands/code/`) — session-aware coding wrapper
 Wraps Claude Code (`claude`) or `dev` (codex) with three things wired natively,
@@ -84,6 +154,30 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   / `dev exec resume` / `dev resume`), re-attaching the SAME cloud id when the
   session is still live (running/paused) or forking a new one with `resumedFrom`
   lineage when it's terminal (cloud forbids reopening a terminal session).
+- **Resume is org-scoped — three things are braided, only one crosses.** (1) the
+  backend conversation (`<slug>/<sid>.jsonl`) and (2) the CLI's own store
+  (cloud-id ↔ backend-sid ↔ cwd) are LOCAL and carry across any identity; (3) the
+  cloud session record is ORG-SCOPED server-side (the gateway injects the JWT
+  `owner`), so after `hanzo switch admin/z` a session belonging to `hanzo/z`
+  CANNOT re-attach — `GET /v1/agents/sessions/{id}` refuses it. That refusal is
+  tenant isolation working and is never routed around. So a cross-org resume
+  keeps the FULL local conversation and registers a NEW cloud session billed to
+  the now-active identity from turn one, and SAYS so — never a silent fork, never
+  a mis-bill. The resume record carries the `owner/name` that created it (LOCAL
+  only — the CLI still sends no org, and `resume_payload` is an explicit
+  allowlist that omits it), so the CLI decides this honestly instead of
+  discovering it as a 403. NO `resumedFrom` pointer is written for a session we did not
+  VERIFY: lineage is recorded only when `GET` succeeded (the id exists and is
+  ours). Every failure — 403, 404, 5xx, timeout, DNS — fails closed and registers
+  with no lineage, enforced in `resolve_cloud_session` itself rather than only at
+  its caller. The new org's record must never reference a session it cannot
+  resolve, so that lineage stays in the local store — the only place it is true.
+  The cloud id is also gated on the active NETWORK (`rec.api`): an id minted by
+  one control plane means nothing to another, so `hanzo network use local` +
+  resume of a prod session registers fresh rather than handing over a foreign id
+  (same host+api filter the run-target store already uses).
+  A record of unknown provenance (predating the field) cannot be proven ours and
+  is treated exactly like a cross-org resume.
 - **Run-target (machine capability + live metrics).** A linked run also registers
   the MACHINE it runs on so mission-control knows WHICH computer a session is on
   and whether it can take more work. `context::Machine::capture` reads, best-effort
@@ -143,7 +237,10 @@ plane (`--with-cloud`). `stop` SIGTERMs that recorded PID (never a blind pkill).
 
 ## Key files
 - `src/main.rs` — clap command tree + dispatch.
-- `src/config.rs` — persisted, non-secret config (network + wallet state, `save`).
+- `src/config.rs` — persisted, non-secret config (auth index + network + wallet
+  state). `Config::update` is the ONLY mutator: locked, re-read, atomic.
 - `src/commands/{network,wallet,node,cluster,deploy}.rs` — the concerns above.
-- `src/iam/*` — IAM OIDC client + OS-keychain token store (the keychain pattern
-  wallet secrets reuse).
+- `src/iam/*` — IAM OIDC client + the identity store (the keychain pattern wallet
+  secrets reuse): `identity.rs` (who a token is, from its own claims), `token.rs`
+  (per-identity keychain entries + the `Vault` test seam), `store.rs` (THE one
+  way any command resolves the ACTIVE identity), `login.rs` (the four verbs).

@@ -10,6 +10,7 @@
 //! never a secret). Git remote URLs are scrubbed of embedded credentials.
 
 use anyhow::{Context, Result};
+use crate::private;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -564,7 +565,7 @@ pub fn machine_id() -> String {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = write_private(&path, id.as_bytes());
+    let _ = private::write(&path, id.as_bytes());
     id
 }
 
@@ -640,6 +641,13 @@ pub fn scrub_remote(url: &str) -> String {
 pub struct ResumeRecord {
     #[serde(rename = "cloudSessionId")]
     pub cloud_session_id: String,
+    /// The identity (`owner/name`) that created the cloud session, so a resume
+    /// can tell whether the ACTIVE identity may re-attach to it. The cloud
+    /// session is org-scoped server-side; this local note is what lets the CLI
+    /// decide honestly instead of discovering it as a 403. Defaulted (empty =
+    /// unknown provenance) so records written before this field still load.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
     pub backend: String,
     /// The backend's OWN session/thread id — what its native `--resume` needs.
     #[serde(rename = "backendSessionId")]
@@ -677,7 +685,7 @@ impl ResumeRecord {
             std::fs::create_dir_all(parent).context("creating resume store dir")?;
         }
         let json = serde_json::to_vec_pretty(self).context("serializing resume record")?;
-        write_private(&path, &json).context("writing resume record")
+        private::write(&path, &json).context("writing resume record")
     }
 
     pub fn load(cloud_session_id: &str) -> Result<Option<ResumeRecord>> {
@@ -725,7 +733,7 @@ impl TargetRecord {
             std::fs::create_dir_all(parent).context("creating target store dir")?;
         }
         let json = serde_json::to_vec_pretty(self).context("serializing target record")?;
-        write_private(&path, &json).context("writing target record")
+        private::write(&path, &json).context("writing target record")
     }
 }
 
@@ -755,17 +763,6 @@ fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("hanzo")
-}
-
-/// Write a file with owner-only permissions where the platform supports it.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -832,6 +829,7 @@ mod tests {
     fn resume_payload_shape_has_no_secret_fields() {
         let rec = ResumeRecord {
             cloud_session_id: "sess_1".into(),
+            identity: "admin/z".into(),
             backend: "dev".into(),
             backend_session_id: "thread-uuid".into(),
             cwd: "/w".into(),
@@ -848,6 +846,17 @@ mod tests {
         for bad in ["token", "password", "secret", "authorization", "bearer"] {
             assert!(!blob.contains(bad));
         }
+
+        // The CLI NEVER sends an org: cloud derives it from the JWT `owner`.
+        // `identity` is recorded LOCALLY (to decide cross-org resume honestly)
+        // and must not ride the wire — `resume_payload` is an explicit allowlist,
+        // so this pins that omission as an invariant rather than an accident.
+        // The record here is deliberately `admin/z`, so a leak would show up.
+        assert!(v.get("identity").is_none(), "identity must not reach cloud");
+        assert!(v.get("owner").is_none(), "owner must not reach cloud");
+        for bad in ["identity", "owner", "admin/z", "admin"] {
+            assert!(!blob.contains(bad), "{bad:?} leaked into the wire payload: {blob}");
+        }
     }
 
     #[test]
@@ -855,6 +864,7 @@ mod tests {
         let id = format!("sess_test_{}", std::process::id());
         let rec = ResumeRecord {
             cloud_session_id: id.clone(),
+            identity: "hanzo/z".into(),
             backend: "claude".into(),
             backend_session_id: "claude-sid".into(),
             cwd: "/tmp".into(),
