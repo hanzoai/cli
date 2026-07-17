@@ -24,7 +24,6 @@ mod claude;
 mod context;
 mod dev;
 mod event;
-mod http;
 mod session;
 mod target;
 mod theme;
