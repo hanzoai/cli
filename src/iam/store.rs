@@ -85,6 +85,51 @@ pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
     list(cfg, brand).contains(&id).then_some(id)
 }
 
+/// The reserved org whose membership IS the SuperAdmin predicate, server-side.
+/// Named here ONLY to explain a refusal — never to decide one.
+const ADMIN_ORG: &str = "admin";
+
+/// Explain a server REFUSAL (403) in terms of the identity model — THE one place
+/// any command turns an opaque 403 into the action that fixes it.
+///
+/// PURE, AND ONLY EVER AFTER THE FACT. This decides nothing and gates nothing:
+/// a command calls it only once the SERVER has already refused. The server is
+/// the SOLE grantor — it applies its gate (commerce's `MayMintMoney`: the
+/// internal service token, or `IsSuperAdmin()` ⟺ this org) to the token IT
+/// verified. Our `owner` comes from an unverified local decode that LABELS
+/// STORAGE ONLY (`identity.rs`), so branching on it to decide whether to SEND
+/// would invent an authorization decision out of a value its holder can forge —
+/// and would refuse callers the server would have admitted (an `admin` token is
+/// not the only mint principal). Reading it to EXPLAIN a refusal costs no
+/// authority and closes the loop the deposit-403 incident opened.
+///
+/// Over VALUES, not places (the active identity + the ones we hold), so it is
+/// reachable from any command and testable without a keychain: pair it with
+/// [`active`] and [`list`]. `None` when there is nothing honest to say.
+pub fn refusal_hint(active: &Identity, held: &[Identity]) -> Option<String> {
+    // Already in the reserved org: the server refused a SuperAdmin, so switching
+    // identity is not the remedy and claiming it would be a lie. Say nothing and
+    // let the server's own reason stand alone.
+    if active.owner == ADMIN_ORG {
+        return None;
+    }
+    let admins: Vec<&Identity> = held.iter().filter(|i| i.owner == ADMIN_ORG).collect();
+    let remedy = match admins.as_slice() {
+        // Name only an identity we KNOW we hold — never a guessed `admin/<name>`
+        // that `switch` would then reject.
+        [one] => format!("You also hold {one} — switch to it and retry:\n\n      hanzo switch {one}"),
+        // `switch` resolves a bare owner itself, and lists when it is ambiguous.
+        // Never re-implement that here.
+        [_, ..] => format!(
+            "You hold several `{ADMIN_ORG}` identities — switch to one and retry:\n\n      hanzo switch {ADMIN_ORG}"
+        ),
+        [] => format!("You hold no `{ADMIN_ORG}` identity — sign in as one:\n\n      hanzo login"),
+    };
+    Some(format!(
+        "\n  You are {active}; this needs the reserved `{ADMIN_ORG}` org (SuperAdmin).\n  {remedy}\n"
+    ))
+}
+
 /// Render identities for a human, marking the active one.
 pub fn render(cfg: &Config, brand: &str) -> String {
     let act = active(cfg, brand);
@@ -479,6 +524,50 @@ mod tests {
             assert_eq!(id.to_string(), want);
             assert_eq!(tok.access_token, jwt(&id.owner, &id.name));
         }
+    }
+
+    // ---- explaining a refusal (the deposit-403 loop, closed) ---------------
+
+    fn ident(s: &str) -> Identity {
+        // Derived from claims, as everywhere else — there is no other way.
+        let (owner, name) = s.split_once('/').unwrap();
+        Identity::from_access_token(&jwt(owner, name)).unwrap()
+    }
+
+    /// THE PAYOFF: a 403 while acting as the org owner names the SuperAdmin
+    /// identity we actually hold, and the ONE command that gets there.
+    #[test]
+    fn a_refusal_names_the_superadmin_identity_we_hold_and_the_switch() {
+        let hint = refusal_hint(&ident(ORG), &[ident(ORG), ident(ADMIN)]).unwrap();
+        assert!(hint.contains("You are hanzo/z"), "{hint}");
+        assert!(hint.contains("admin"), "must name the reserved org: {hint}");
+        assert!(hint.contains("hanzo switch admin/z"), "must be actionable: {hint}");
+    }
+
+    /// A SuperAdmin refused is NOT an identity problem: suggesting a switch to
+    /// the org they are already in would be nonsense. Say nothing instead.
+    #[test]
+    fn a_refusal_of_a_superadmin_suggests_nothing() {
+        assert!(refusal_hint(&ident(ADMIN), &[ident(ADMIN), ident(ORG)]).is_none());
+    }
+
+    /// We never suggest switching to an identity we do not hold — `switch` would
+    /// only fail. Name the honest remedy instead.
+    #[test]
+    fn a_refusal_without_any_admin_identity_says_sign_in_not_switch() {
+        let hint = refusal_hint(&ident(ORG), &[ident(ORG)]).unwrap();
+        assert!(hint.contains("hold no `admin` identity"), "{hint}");
+        assert!(hint.contains("hanzo login"), "{hint}");
+        assert!(!hint.contains("hanzo switch"), "must not suggest an impossible switch: {hint}");
+    }
+
+    /// Several SuperAdmin identities: defer to `switch`'s own bare-owner
+    /// resolution + ambiguity listing rather than re-implementing it here.
+    #[test]
+    fn a_refusal_with_several_admin_identities_defers_to_switch() {
+        let hint = refusal_hint(&ident(ORG), &[ident(ADMIN), ident("admin/ops")]).unwrap();
+        assert!(hint.contains("hanzo switch admin\n") || hint.contains("hanzo switch admin"), "{hint}");
+        assert!(hint.contains("several"), "{hint}");
     }
 
     // ---- the hard invariant: active changes ONLY by explicit user action ----
@@ -988,6 +1077,7 @@ mod tests {
         // The consumers, verbatim (`include_str!` is compile-time — these paths
         // are checked by the compiler, so a moved file breaks the build loudly).
         for (name, src) in [
+            ("commands/billing.rs", include_str!("../commands/billing.rs")),
             ("commands/code/mod.rs", include_str!("../commands/code/mod.rs")),
             ("commands/wallet.rs", include_str!("../commands/wallet.rs")),
             ("main.rs", include_str!("../main.rs")),
