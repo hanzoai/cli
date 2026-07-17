@@ -1,13 +1,17 @@
-//! The ONE HTTPS call into the cloud agents control plane.
+//! The ONE HTTPS call into cloud.
 //!
-//! Both the session client (`/v1/agents/sessions`) and the run-target client
-//! (`/v1/agents/targets`) speak through this single seam, so the wire contract —
-//! bearer auth, optional JSON body, and "a non-2xx response is an error, never a
-//! silent success" — lives in exactly one place.
+//! The session client (`/v1/agents/sessions`), the run-target client
+//! (`/v1/agents/targets`) and the secret store (`/v1/kms/...`) all speak through
+//! this single seam, so the wire contract — bearer auth, optional JSON body, and
+//! "a non-2xx response is an error, never a silent success" — lives in exactly
+//! one place. It is transport ONLY: it knows nothing of the plane it is calling,
+//! which is why three unrelated concerns can share it without braiding.
 //!
-//! The org is derived SERVER-SIDE from the JWT `owner` claim: this transport sends
-//! only the bearer, so no caller can send (or forge) an org and cross-tenant
-//! attribution is refused at the gateway, not trusted from here.
+//! It sends the BEARER AND NOTHING ELSE — no org header, ever. Cloud decides the
+//! tenant from the JWT `owner` claim it verifies, so a caller cannot assert (or
+//! forge) one from here. Where a route names the org in its PATH (KMS does), that
+//! segment is the caller's OWN `owner` and the server re-checks it against the
+//! same claim — the value is addressed, never trusted.
 
 use anyhow::{bail, Context, Result};
 use reqwest::{Client, Method};
