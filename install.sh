@@ -52,12 +52,12 @@ arch="$(uname -m)"
 case "$os" in
   Linux)  os=linux ;;
   Darwin) os=darwin ;;
-  *) die "unsupported OS '$os'. Published targets: linux-amd64, linux-arm64." ;;
+  *) die "unsupported OS '$os'. Published target: linux-amd64." ;;
 esac
 case "$arch" in
   x86_64|amd64)  arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
-  *) die "unsupported architecture '$arch'. Published targets: linux-amd64, linux-arm64." ;;
+  *) die "unsupported architecture '$arch'. Published target: linux-amd64." ;;
 esac
 target="${os}-${arch}"
 
@@ -98,7 +98,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 printf 'hanzo: %s %s\n' "$TAG" "$target"
 fetch "$asset" "$tmp/$asset" \
-  || die "no published build for $target at $TAG. Published targets: linux-amd64, linux-arm64."
+  || die "no published build for $target at $TAG. Published target: linux-amd64."
 fetch "$asset.sha256" "$tmp/$asset.sha256" \
   || die "release $TAG has no checksum for $target — refusing to install unverified"
 
