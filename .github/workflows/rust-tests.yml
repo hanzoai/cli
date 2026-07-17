@@ -1,0 +1,37 @@
+name: CLI Tests (Rust)
+
+# The `hanzo` binary is what this repo SHIPS, and until now no workflow ever ran
+# cargo: CI built and released the vestigial `hanzo-dev` Python package instead,
+# so 188 passing tests had never once been proven by CI.
+#
+# OUR runners only (no GitHub-hosted builders).
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: hanzo-build-linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Build
+        run: cargo build --bin hanzo --locked
+      - name: Test
+        run: cargo test --bin hanzo --locked
+      - name: Clippy
+        run: cargo clippy --bin hanzo --all-targets --locked
+      - name: Version is ONE source
+        run: |
+          set -euo pipefail
+          # Cargo.toml is the only version; clap reads CARGO_PKG_VERSION. A
+          # hardcoded clap version silently disagreed with `hanzo version` before.
+          v="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          got="$(./target/debug/hanzo --version | awk '{print $2}')"
+          [ "$v" = "$got" ] || { echo "Cargo.toml=$v but --version=$got"; exit 1; }
+          echo "version ok: $v"
