@@ -174,7 +174,9 @@ async fn cloud_provision(cfg: &mut Config, name: &str, custody: &str) -> Result<
             "accountId": account_id,
             "name": name,
             "custody": custody,
-            "chain": net.chain_id,
+            // Cloud binds `Chain string` (clients/wallets/custody.go): a number
+            // 400s and silently demotes cloud custody to a LOCAL key.
+            "chain": net.chain_id.to_string(),
         }))
         .send()
         .await

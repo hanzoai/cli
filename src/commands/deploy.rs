@@ -1,5 +1,5 @@
 use crate::config::{StoredNetwork, StoredWallet};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use colored::*;
 
 /// Deploy to a Hanzo Cloud environment on the active network. The active wallet
@@ -31,7 +31,17 @@ pub async fn run(
         ),
     }
 
-    println!("{}", "deploy backend: hanzo cloud (control plane)".dimmed());
-
-    Ok(())
+    // This command has never deployed anything: it makes no network call at all.
+    // Exiting 0 told you it worked, which is the worst thing a deploy can do —
+    // you cannot tell a successful deploy from a no-op. Until it drives the real
+    // /v1/deploy control plane (through iam::store::active_token, like every
+    // other product command), it must refuse rather than pretend.
+    if dry_run {
+        return Ok(());
+    }
+    bail!(
+        "`hanzo deploy` is not implemented — it makes no call to the control plane, \
+         and exiting 0 would tell you a deploy happened when none did.\n\
+         Use the platform control plane directly until this drives /v1/deploy."
+    )
 }
