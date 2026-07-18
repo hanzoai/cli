@@ -1,6 +1,7 @@
 pub mod product;
 pub mod init;
 pub mod billing;
+pub mod usage;
 pub mod code;
 pub mod dev;
 pub mod build;
