@@ -12,6 +12,8 @@
 //! - `oauth`       — the interactive flow + userinfo (protocol mechanics, pure-ish).
 //! - `login`       — the `login`/`whoami`/`switch`/`logout` entrypoints (UI + glue).
 //! - `onboarding`  — the fresh-machine greeting + the multi-provider login picker.
+//! - `secret`      — the ONE stdin-secret law (never argv); shared by onboarding
+//!   (keys + identity tokens) and the `kms` secret plane.
 
 pub mod identity;
 pub mod login;
@@ -20,5 +22,6 @@ pub mod onboarding;
 pub mod paths;
 pub mod pkce;
 pub mod provider;
+pub mod secret;
 pub mod store;
 pub mod token;

@@ -103,13 +103,13 @@ fn op_params_are_unique_and_not_reserved() {
 // ---- scope elision: the CLI never asks for (or sends) an org -----------------
 
 /// The tenant scope mechanism: an `orgs/{org}` segment binds to `owner`, never a
-/// positional. The authored surface pins no such route today (the one that does —
-/// `kms` — is hand-written and excluded), so this exercises `fill_path` directly:
-/// the mechanism is correct and ready if a scoped route is authored later.
+/// positional. `kms` is the authored route that uses it (`kms secrets`), and the
+/// loop below pins that no op ever leaks the scope as a positional or flag; this
+/// also exercises `fill_path` directly on the shape.
 #[test]
 fn the_org_scope_is_bound_from_owner_never_asked() {
-    // Template with a scope pair + one ordinary positional (like kms's shape).
-    let t = "/v1/kms/orgs/{org}/secrets/{name}";
+    // Template with a scope pair + one ordinary positional (kms's own shape).
+    let t = "/v1/kms/orgs/{org}/secrets/{secret}";
     // `{org}` is filled from owner; only `{name}` consumes a positional.
     let filled = fill_path(t, Some("acme"), &["DB".to_string()]).unwrap();
     assert_eq!(filled, "/v1/kms/orgs/acme/secrets/DB");
@@ -321,11 +321,95 @@ fn there_is_no_passthrough_or_raw_path_escape() {
 
 // ---- collisions: a local command always wins its bare name -------------------
 
-/// The hand-written products are omitted from the data outright.
+/// The hand-written products are omitted from the data outright. `kms` is NO
+/// LONGER among them — it is generated now (see `kms_is_generated_*`).
 #[test]
 fn hand_written_products_are_not_generated() {
-    for local in ["agent", "kms", "billing", "deploy", "code"] {
+    for local in ["agent", "billing", "deploy", "code"] {
         assert!(!is_product(local), "{local} must be hand-written / a wrapper, not generated");
+    }
+}
+
+/// `kms` is now a GENERATED product, folded to EXACTLY the four routes cloud
+/// mounts (`clients/kms/mount.go`): `secrets {list,get,create,rm}`. Nothing the
+/// server cannot answer is invented — in particular there is NO PATCH/`update`
+/// and NO `rotate` (cloud mounts neither on the org-scoped secrets plane).
+#[test]
+fn kms_is_generated_with_exactly_the_real_cloud_routes() {
+    assert!(is_product("kms"), "kms must be generated now, not hand-written");
+    let mut got: Vec<String> = OPS
+        .iter()
+        .filter(|o| o.product == "kms")
+        .map(|o| format!("{} {:?} {}", o.method, o.nodes, o.verb))
+        .collect();
+    got.sort();
+    let want = vec![
+        r#"DELETE ["secrets"] rm"#.to_string(),
+        r#"GET ["secrets"] get"#.to_string(),
+        r#"GET ["secrets"] list"#.to_string(),
+        r#"POST ["secrets"] create"#.to_string(),
+    ];
+    assert_eq!(got, want, "kms must fold to exactly the 4 real cloud routes");
+    // No unanswerable verb (PATCH/PUT → update/replace) and no rotate.
+    for o in OPS.iter().filter(|o| o.product == "kms") {
+        assert!(o.method != "PATCH" && o.method != "PUT", "cloud mounts no kms write besides POST");
+        assert!(
+            !matches!(o.verb, "update" | "rotate" | "replace" | "clear"),
+            "kms must not surface a verb cloud cannot answer: {}",
+            o.verb
+        );
+    }
+}
+
+/// THE invariant of a secrets CLI, now on the GENERATED path: the `value` is a
+/// stdin-secret (`format: password`), so it has NO flag and NO positional. A
+/// value-bearing argv is a PARSE ERROR — a property of the grammar, not the
+/// handler's discipline — and `resolve` never sees the value (it is injected
+/// from stdin only at dispatch).
+#[test]
+fn kms_secret_value_can_never_reach_argv() {
+    // The `create` op carries a `value` field explicitly marked secret.
+    let create = OPS.iter().find(|o| o.product == "kms" && o.verb == "create").expect("kms create");
+    let value = create.fields.iter().find(|f| f.key == "value").expect("value field");
+    assert!(value.secret, "the value field must be a stdin-secret");
+    assert!(!value.query, "a secret is a body field, never a query param");
+
+    // No flag or positional can carry it: every value-bearing argv is rejected.
+    let base = || augment(Command::new("hanzo"));
+    let leaky: &[&[&str]] = &[
+        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "--value", "hunter2"],
+        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "--secret", "hunter2"],
+        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "hunter2"],
+    ];
+    for argv in leaky {
+        assert!(base().try_get_matches_from(*argv).is_err(), "value-bearing argv must not parse: {argv:?}");
+    }
+
+    // What DOES parse carries only the address + env; the body OMITS the secret
+    // (it is read from stdin at dispatch, never assembled from a flag).
+    let m = matches_of(&["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod"]);
+    let Some(Resolved::Leaf { op, body: LeafBody::Typed(v), .. }) = resolve(&m) else {
+        panic!("typed leaf");
+    };
+    assert_eq!(op.path, "/v1/kms/orgs/{org}/secrets");
+    assert_eq!(v["name"], "DB");
+    assert_eq!(v["env"], "prod");
+    assert!(v.get("value").is_none(), "the secret must NOT be assembled from flags: {v}");
+
+    // `--env` is required on the write (the server refuses to guess a default).
+    assert!(
+        base().try_get_matches_from(["hanzo", "kms", "secrets", "create", "--name", "DB"]).is_err(),
+        "create must require --env"
+    );
+
+    // No `--org` on any kms verb — the org binds to the active identity's owner.
+    let orged: &[&[&str]] = &[
+        &["hanzo", "kms", "secrets", "list", "--org", "other"],
+        &["hanzo", "kms", "secrets", "get", "DB", "--org", "other"],
+        &["hanzo", "kms", "secrets", "rm", "DB", "--org", "other"],
+    ];
+    for argv in orged {
+        assert!(base().try_get_matches_from(*argv).is_err(), "no --org may exist: {argv:?}");
     }
 }
 
