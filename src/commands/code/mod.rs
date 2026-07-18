@@ -24,6 +24,7 @@ mod claude;
 mod context;
 mod dev;
 mod event;
+mod serve;
 mod session;
 mod target;
 mod theme;
@@ -58,6 +59,8 @@ pub struct Options {
     pub route: bool,
     pub mcp: bool,
     pub project_mcp: bool,
+    /// Run this machine as a run-target daemon (claim + execute routed runs).
+    pub serve: bool,
     pub resume: Option<String>,
     pub brand: String,
     /// Claude theme to apply (None → the persisted `code.theme`; "none" → skip).
@@ -270,6 +273,14 @@ pub(crate) fn cloud_resume_block(
 }
 
 pub async fn run(cfg: &mut Config, opts: Options) -> Result<()> {
+    // `--serve`: this machine becomes a run-target daemon — it claims coding runs
+    // routed to it and executes them, streaming each session back exactly like a
+    // local run. It is a distinct long-lived mode, not a one-shot coding session,
+    // so it branches before the wrapper's spawn path.
+    if opts.serve {
+        return serve::run(cfg, &opts).await;
+    }
+
     let kind = BackendKind::parse(&opts.backend)?;
     let backend = resolve(kind);
     let mode = if opts.task.is_some() { Mode::Headless } else { Mode::Interactive };
@@ -1401,6 +1412,7 @@ mod tests {
             route: true,
             mcp: true,
             project_mcp: false,
+            serve: false,
             resume: None,
             brand: "hanzo".into(),
             task: None,
@@ -1448,6 +1460,7 @@ mod tests {
             route: true,
             mcp: true,
             project_mcp: false,
+            serve: false,
             resume: None,
             brand: "hanzo".into(),
             task: None,
