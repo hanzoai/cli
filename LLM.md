@@ -75,7 +75,7 @@ before unpacking.
   (default node URL = the active network's `api`).
 - `deploy` — targets the active network; the active wallet signs (auto-provisions
   one if none, on a real deploy).
-- `code [--backend claude|dev] [--no-link] [--project-mcp] [--resume <id>] [task]` —
+- `code [--backend claude|dev] [--no-link] [--project-mcp] [--model <id>] [--resume <id>] [task]` —
   wrap a local coding agent as a session-aware, portable, trackable object; a
   signed-in run links to your cloud by default, `--no-link` opts out (below).
 - bare `hanzo` (no subcommand) — shorthand for a linked interactive `hanzo code`
@@ -208,7 +208,9 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   Headless (`[task]`) = stdout stream-json parsed+forwarded+mirrored; interactive
   = native TTY + (Claude) transcript tail at
   `~/.claude/projects/<slug>/<sid>.jsonl`.
-- **Hanzo MCP attached — repo `.mcp.json` is trust-gated.** `resolve_mcp` →
+- **Hanzo MCP attached by default — repo `.mcp.json` is trust-gated.** The
+  first-party Hanzo toolset attaches unless `--no-mcp` (flag wins) or
+  `~/.hanzo/settings.json` `mcp: false`. `resolve_mcp` →
   `hanzo-mcp` (or `uvx hanzo-mcp`) `--project-dir <cwd>`. Claude via
   `--mcp-config` + `--strict-mcp-config`, so Claude uses ONLY the servers we pass
   and ignores every auto-discovered source — most importantly the repository's
@@ -231,6 +233,33 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   would shrink that blast radius further — that needs a cloud token-exchange
   endpoint (no such mint exists today; `POST /v1/iam/keys` only rotates the
   user's one org-wide `hk-` key) and is a tracked cloud follow-on, not a CLI one.
+- **The gateway route NAMES the model.** Claude Code's built-in default
+  (`claude-fable-5`) and codex's built-in default are NOT in the gateway catalog,
+  so a routed run that named no model would 400 ("model … is not available"). On
+  the gateway route ONLY we set the model to a valid catalog id — Claude via
+  `ANTHROPIC_MODEL` + `ANTHROPIC_SMALL_FAST_MODEL`, `dev` via `-c model=<id>` (codex
+  has no small/fast model). The default pair is `enso` + `enso-flash`
+  (`enso-ultra` is the flagship, picked with `--model enso-ultra`). Precedence for
+  the main model: `--model` flag, then an exported `ANTHROPIC_MODEL`, then
+  `~/.hanzo/settings.json` `model`, then the built-in `enso`; the small/fast model
+  is `ANTHROPIC_SMALL_FAST_MODEL` → settings `smallFastModel` → `enso-flash`. There
+  is NO client-side allowlist — the gateway is the sole authority on validity, so a
+  bad id 400s with the gateway's own message. The model rides ONLY inside
+  `Routing::Gateway` (`backend.rs`), so it can never leak onto a DIRECT provider
+  route (a zen/enso id would be invalid at api.anthropic.com / api.openai.com);
+  those routes name no model, exactly as before. The mapping lives in ONE place —
+  `code::resolve_model`/`gateway_models` resolve it, the two backends' gateway env
+  assembly consume it.
+- **Native settings home — `~/.hanzo/settings.json` (`settings.rs`).** ONE JSON
+  file configures the coding agent's defaults on a fresh machine, so a new box
+  needs no per-shell `ANTHROPIC_MODEL` export or `~/.claude/settings.json` hack:
+  `model` (default `enso`), `smallFastModel` (default `enso-flash`), `mcp` (default
+  ON). Every key is optional and camelCase; a missing file is CREATED with the
+  defaults (0600, atomic via `crate::private`), a malformed one degrades to the
+  defaults WITHOUT clobbering the user's edit, and each value always yields to an
+  explicit CLI flag / process env. This is the home for the code-agent defaults;
+  the identity/network/wallet index stays in `~/.config/hanzo/config.toml`
+  (`code.link`/`code.theme` remain there — a later cut may consolidate).
 - **Portable/resumable.** On register we emit a no-secret `status` context event
   (machine-id/host/os/arch/cwd/repo+ref/backend+version; git remote credentials
   scrubbed — `context.rs`). The backend's own resume handle + transcript pointer

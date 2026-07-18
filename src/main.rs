@@ -107,6 +107,14 @@ enum Commands {
         #[arg(long)]
         theme: Option<String>,
 
+        /// The gateway model to use, e.g. `enso`, `enso-ultra`, `zen5-coder`. Applies
+        /// on the metered Hanzo gateway route only; a direct provider key names its
+        /// own model. Overrides an exported `ANTHROPIC_MODEL` and `~/.hanzo/settings.json`;
+        /// unset falls back to those, then the built-in default. No client-side
+        /// allowlist — the gateway validates the id.
+        #[arg(long, value_name = "MODEL")]
+        model: Option<String>,
+
         /// Task to run headless. If omitted, launches an interactive session.
         task: Option<String>,
 
@@ -512,6 +520,7 @@ fn bare() -> Commands {
         resume: None,
         brand: iam::paths::DEFAULT_BRAND.to_string(),
         theme: None,
+        model: None,
         task: None,
         passthrough: Vec::new(),
     }
@@ -580,6 +589,7 @@ async fn main() -> Result<()> {
             resume,
             brand,
             theme,
+            model,
             task,
             passthrough,
         } => {
@@ -595,6 +605,7 @@ async fn main() -> Result<()> {
                     resume,
                     brand,
                     theme,
+                    model,
                     task,
                     passthrough,
                 },
