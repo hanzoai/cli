@@ -41,6 +41,17 @@ pub fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, T
     active_token_in(&*token::vault()?, cfg, brand)
 }
 
+/// Resolve the credential for a SPECIFIC held identity — the read-only fan-out
+/// the stacked usage view needs (every identity's OWN balance, read with its OWN
+/// token). This is NOT `active_token`: it never consults, and never moves, the
+/// active pointer, and it never falls back. `None` means we do not hold `id`'s
+/// credential (revoked / keychain wiped) — exactly as `active_token` reports the
+/// active one; it never reaches for another identity's token. `id` must be one we
+/// INDEX, so a caller cannot address an arbitrary keychain slot through it.
+pub fn token_for(cfg: &Config, brand: &str, id: &Identity) -> Result<Option<TokenSet>> {
+    token_for_in(&*token::vault()?, cfg, brand, id)
+}
+
 /// Set the active identity for `brand`.
 pub fn switch(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Identity> {
     switch_in(&*token::vault()?, cfg, brand, sel)
@@ -263,6 +274,38 @@ pub(crate) fn active_token_in(
         );
     }
     Ok(Some((id, tokens)))
+}
+
+pub(crate) fn token_for_in(
+    v: &dyn Vault,
+    cfg: &Config,
+    brand: &str,
+    id: &Identity,
+) -> Result<Option<TokenSet>> {
+    oauth::server_url(brand)?; // reject unknown brands before touching the keychain
+    // Only ever resolve an identity we actually INDEX — the same membership
+    // `active`/`switch`/`remove` use — never an arbitrary slot a caller named.
+    if !list(cfg, brand).contains(id) {
+        return Ok(None);
+    }
+    // NO FALLBACK, NO CASCADE — a missing credential is `None`, not another
+    // identity's token.
+    let Some(tokens) = token::load(v, brand, id)? else {
+        return Ok(None);
+    };
+    // The slot must hold what it CLAIMS to hold — the same fail-closed check as
+    // `active_token_in`, so a hand-edited config or a foreign keychain write can
+    // never make one identity's balance display under another's name.
+    let claimed = Identity::from_access_token(&tokens.access_token)
+        .context("identifying the stored credential")?;
+    if &claimed != id {
+        bail!(
+            "stored credential for {brand} identity {id} actually identifies as {claimed} — \
+             refusing to use it; run `hanzo login{}`",
+            brand_flag(brand)
+        );
+    }
+    Ok(Some(tokens))
 }
 
 /// Forwards-only migration of the pre-multi-identity credential (keyed by the
@@ -537,6 +580,69 @@ mod tests {
             assert_eq!(id.to_string(), want);
             assert_eq!(tok.access_token, jwt(&id.owner, &id.name));
         }
+    }
+
+    // ---- token_for: read-only per-identity resolution (the usage fan-out) ---
+
+    /// `token_for` resolves a HELD identity's OWN token — the NON-active one
+    /// included — which is exactly what the stacked usage view needs, and it
+    /// never moves the active pointer.
+    #[test]
+    fn token_for_resolves_each_held_identitys_own_token() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap(); // hanzo/z active
+
+        // The NON-active identity resolves to ITS OWN token, not the active one's.
+        let admin = ident(ADMIN);
+        assert_eq!(token_for_in(&v, &c, "hanzo", &admin).unwrap().unwrap().access_token, jwt("admin", "z"));
+        // The active identity resolves to its own too.
+        let org = ident(ORG);
+        assert_eq!(token_for_in(&v, &c, "hanzo", &org).unwrap().unwrap().access_token, jwt("hanzo", "z"));
+        // Reading a credential NEVER moves the active pointer.
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
+    }
+
+    /// A missing credential for a held identity is `None` — never a fallback to
+    /// another identity's token (the same hard invariant as `active_token`).
+    #[test]
+    fn token_for_a_missing_credential_is_none_never_a_fallback() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        v.remove("hanzo/admin/z").unwrap(); // admin credential vanishes; index stays
+        assert!(token_for_in(&v, &c, "hanzo", &ident(ADMIN)).unwrap().is_none());
+    }
+
+    /// An identity we do not INDEX resolves to `None` even if a slot exists — a
+    /// caller cannot reach an arbitrary keychain slot through `token_for`.
+    #[test]
+    fn token_for_an_unindexed_identity_is_none() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        // A slot we never indexed, even present in the vault, is not resolvable.
+        v.set("hanzo/admin/z", &serde_json::to_string(&tokens(&jwt("admin", "z"))).unwrap()).unwrap();
+        assert!(token_for_in(&v, &c, "hanzo", &ident(ADMIN)).unwrap().is_none(), "unindexed slot is unreachable");
+    }
+
+    /// A tampered slot fails CLOSED: a credential that self-identifies as someone
+    /// else is refused, so one identity's balance can never display under
+    /// another's name.
+    #[test]
+    fn token_for_a_mismatched_slot_fails_closed() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        // Overwrite admin/z's slot with a token that CLAIMS hanzo/z.
+        v.set("hanzo/admin/z", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap()).unwrap();
+        let err = token_for_in(&v, &c, "hanzo", &ident(ADMIN)).unwrap_err().to_string();
+        assert!(err.contains("identifies as"), "must fail closed: {err}");
+    }
+
+    /// `token_for` rejects an unknown brand before touching the keychain.
+    #[test]
+    fn token_for_refuses_an_unknown_brand() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        assert!(token_for_in(&v, &c, "bogus", &ident(ORG)).is_err());
     }
 
     // ---- explaining a refusal (the deposit-403 loop, closed) ---------------
