@@ -64,6 +64,9 @@ before unpacking.
 - `kms list|get|set|rm` — secrets, the only place they live (below).
 - `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
 - `billing balance|deposit` — the prepaid wallet's money (below).
+- `usage` — every identity (and provider key) you hold, STACKED: each account's
+  own remaining balance / usage-left, read client-side with its own token,
+  disjoint (below).
 - `node up|status|join <network>|stop` — run/join hanzo.network with hanzod.
 - `cluster topology|models|route|placement|chat|search` — talk to a hanzo node
   (default node URL = the active network's `api`).
@@ -451,6 +454,42 @@ commerce handler, which is the source of truth for its shape.
   admin/z`), defers to `switch`'s own resolution when several are held, says
   `hanzo login` when none is, and stays SILENT for a SuperAdmin — whom switching
   cannot help.
+
+## Usage (`src/commands/usage.rs`) — `hanzo usage`, the STACKED per-account view
+One human holds many principals (`hanzo/z`, `admin/z`) and may hold raw provider
+keys too. Their balances are DISJOINT — each ledger is its own, billed to its own
+`owner`, and updates independently — so `usage` is deliberately NOT an aggregate:
+there is no total. It is a STACK, one row per account, each showing THAT account's
+own remaining balance / usage-left, fetched independently with THAT account's own
+token. The money sibling of `whoami --all`.
+
+- **Disjoint all the way down.** Every account is read on its OWN request with its
+  OWN bearer; a failure on one — an expired token (401), a network fault, an
+  unreadable body, OR a corrupt/mismatched keychain slot (its `token_for` errored)
+  — becomes THAT row's `Unavailable`/`NoCredential` state and never aborts the
+  fan-out. One account down never blanks the view. Resolution is disjoint too: a
+  `token_for` error folds into a `Cred::Unreadable` row, never a `?` out of the
+  command. `classify` (response → row state) and `render` (rows → table) are PURE,
+  so this is a test, not a hope.
+- **The wire is the ONE `hanzo billing balance` reads:** `GET /v1/billing/balance`
+  (cloud `clients/billing/billing.go` `balance` → the co-resident finance ledger),
+  answering `{balance, holds, available}` in USD **cents** (`currency.Cents` is
+  whole cents; the finance ledger and commerce both denominate `usd`). `available`
+  is the spendable "usage left"; `balance`/`holds` are surfaced only when they add
+  information. The CLI sends ONLY the bearer — the org is derived server-side from
+  the JWT `owner` — so a row can only ever read its OWN account; there is no
+  `--org`. `hanzo switch` changes nothing here: every held identity shows at once.
+- **Real currency, exactly.** Cents render as `$1,250.00` — integer-only (no float,
+  so no rounding on money); the exponent is known because this wire is always USD.
+  An unreadable balance is UNKNOWN, never a rendered zero (the same rule billing
+  enforces). A raw provider key (OpenAI/Anthropic/`hk-`) is OPAQUE — shown with its
+  label and "provider key", never a fabricated number.
+- **Per-identity resolution is a NEW read-only seam:** `iam::store::token_for`
+  resolves a SPECIFIC held identity's OWN token for the fan-out. It never moves the
+  active pointer, never falls back to another identity, and fails closed on a slot
+  whose stored credential self-identifies as someone else — so one account's
+  balance can never display under another's name. The whole-crate seam-bypass guard
+  covers `usage.rs` automatically (it names no `token::*` door).
 
 ## Wallet model (`src/commands/wallet.rs`) — two custodies, ZERO plaintext
 - Cloud custody (`kms`/`mpc`, default when signed in): the PQ identity. Keys are

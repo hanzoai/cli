@@ -155,6 +155,16 @@ enum Commands {
         all: bool,
     },
 
+    /// Stacked, per-account balances: every identity (and provider key) you
+    /// hold, each showing ITS OWN remaining balance / usage-left, read client-
+    /// side with that account's own token. Disjoint — one account failing never
+    /// blanks the rest — and never an aggregate total.
+    Usage {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+    },
+
     /// Switch the active identity (like `gh auth switch`)
     Switch {
         /// `owner/name` (e.g. admin/z), or a bare `owner` when unambiguous.
@@ -626,6 +636,9 @@ async fn main() -> Result<()> {
         Commands::Whoami { brand, all } => {
             iam::login::whoami(&mut config, &brand, all).await?;
         }
+        Commands::Usage { brand } => {
+            commands::usage::usage(&mut config, &brand).await?;
+        }
         Commands::Switch { identity, brand } => {
             iam::login::switch(&mut config, &brand, identity)?;
         }
@@ -789,6 +802,24 @@ mod tests {
     fn explicit_subcommand_is_unchanged() {
         let cli = Cli::try_parse_from(["hanzo", "version"]).expect("`hanzo version` parses");
         assert!(matches!(cli.command, Some(Commands::Version)));
+    }
+
+    /// `hanzo usage` is a top-level verb (the money sibling of `whoami --all`):
+    /// it defaults the brand, carries no `--org` (the org is the active identity's
+    /// own claim, never a flag), and the generated product tree never shadows it.
+    #[test]
+    fn usage_is_a_top_level_verb_with_no_org_flag() {
+        let cli = Cli::try_parse_from(["hanzo", "usage"]).expect("`hanzo usage` parses");
+        let Some(Commands::Usage { brand }) = cli.command else {
+            panic!("`hanzo usage` must parse to Usage");
+        };
+        assert_eq!(brand, iam::paths::DEFAULT_BRAND);
+        // No `--org`: switch identity to change whose balances you see.
+        assert!(Cli::try_parse_from(["hanzo", "usage", "--org", "other"]).is_err());
+        // The local stacked view wins its bare name — it is not a generated product.
+        let merged = commands::product::augment(Cli::command());
+        let m = merged.try_get_matches_from(["hanzo", "usage"]).unwrap();
+        assert!(commands::product::resolve(&m).is_none(), "`usage` is the local view, not a cloud product");
     }
 
     /// Explicit `hanzo code` (no `--link`) leaves the flag false so the persisted
