@@ -225,6 +225,20 @@ fn respond(cfg: &Config, method: &str, path: &str) -> (String, String) {
             r#"{"id":"tgt_mock","label":"evo","kind":"gpu","status":"online","sessions":0,"running":0}"#.to_string(),
         );
     }
+    // #48 route-work machine surface (POST — the target CRUD arm below is GET/PATCH).
+    if method == "POST" && path.ends_with("/claim-key") {
+        return ("200 OK".into(), r#"{"targetId":"tgt_mock","claimKey":"tgtk_mock"}"#.to_string());
+    }
+    if method == "POST" && path.ends_with("/claim") {
+        // One run to hand out, then the daemon would re-poll (a real server 204s).
+        return (
+            "200 OK".into(),
+            r#"{"sessionId":"sess_routed","repo":"api","branch":"agent/routed","prompt":"do it","cloneUrl":"https://git.test/v1/git/acme/api.git","base":"main","timeoutSeconds":600}"#.to_string(),
+        );
+    }
+    if method == "POST" && path.ends_with("/report") {
+        return ("200 OK".into(), r#"{"delivered":true}"#.to_string());
+    }
     // run-target detail / heartbeat -> 404 when the target is "gone", else echo id.
     if (method == "PATCH" || method == "GET") && path.starts_with("/v1/agents/targets/") {
         if cfg.targets_missing {

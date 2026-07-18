@@ -550,6 +550,29 @@ mod tests {
         assert!(v.get("error").is_none());
     }
 
+    // The ServeClient puts BOTH proofs on the wire — the org bearer AND the
+    // machine claim key — on every claim and report, and never sends an org.
+    #[tokio::test]
+    async fn serve_client_sends_bearer_and_claim_key() {
+        use super::super::testmock::MockCloud;
+        let mock = MockCloud::start().await;
+        let client = ServeClient::new(&mock.base_url(), "BEARER", "tgt_mock", "tgtk_mock").unwrap();
+
+        let run = client.claim().await.unwrap().expect("a run");
+        assert_eq!(run.session_id, "sess_routed");
+        client.report(&run.session_id, &RunReport { ok: true, ..Default::default() }).await.unwrap();
+
+        let reqs = mock.requests();
+        let claim = reqs.iter().find(|r| r.path == "/v1/agents/targets/tgt_mock/claim").expect("claim");
+        assert_eq!(claim.header("authorization").as_deref(), Some("Bearer BEARER"));
+        assert_eq!(claim.header("x-target-key").as_deref(), Some("tgtk_mock"), "the machine capability must ride every claim");
+        assert!(claim.header("x-org-id").is_none(), "the CLI must never send an org");
+
+        let report = reqs.iter().find(|r| r.path.ends_with("/report")).expect("report");
+        assert_eq!(report.header("authorization").as_deref(), Some("Bearer BEARER"));
+        assert_eq!(report.header("x-target-key").as_deref(), Some("tgtk_mock"));
+    }
+
     // A claimed run parses from the cloud claim response shape.
     #[test]
     fn claimed_run_parses_from_wire() {
