@@ -347,7 +347,7 @@ verb and no raw-path escape. A build-time generator folds the hand-authored
 OpenAPI specs into committed DATA; the runtime builds a clap tree from that data
 and dispatches it through the one authenticated seam that lives IN THIS MODULE
 (`call` → `http::send`, origin from `network`, bearer from `store`). Currently
-2117 coordinates across 87 products (658 typed-flag + 219 `--data`-fallback writes).
+2006 coordinates across 70 products (1081 typed-flag + 167 `--data`-fallback writes).
 
 - **Source of truth = the authored specs** (`spec/products.json`, vendored from
   hanzoai/openapi — the per-product OpenAPI 3.1 specs as one JSON). It is the ONLY
@@ -385,6 +385,15 @@ and dispatches it through the one authenticated seam that lives IN THIS MODULE
   param → required flag (clap enforces it — the old 400 becomes a clean client
   error); the values ride the URL query, percent-encoded. `in: path` params stay
   positionals.
+- **Path positionals are single-segment by default; a curated few are MULTI-SEGMENT.**
+  A positional's `/` is `%2F`-escaped so a value can only address the segment the
+  user named, never a different route. A path param that is genuinely a server
+  CATCH-ALL — a KMS secret is `sub/path/name` — is marked in `genproduct.rs::REST_PARAMS`
+  (`(product, param)`), and the runtime (`fill_path` → `enc_path`) keeps its slashes
+  RAW, percent-encoding each segment and refusing `.`/`..`/empty. So a folder secret
+  (`kms secrets create --name x --path p`, then `get p/x` / `rm p/x`) round-trips
+  instead of `%2F`-mangling into a 404. This is knowledge the OpenAPI does not carry,
+  so it lives in the curation table, not the vendored spec.
 - **Runnable groups.** A collection GET whose verb also heads a nested group is a
   RUNNABLE GROUP, not a bare namespace: `hanzo kv list` runs `GET /v1/kv`, and
   `hanzo kv list push <key>` descends into the datatype. Only an ARITY clash
@@ -397,8 +406,11 @@ and dispatches it through the one authenticated seam that lives IN THIS MODULE
 - **Curation (`DENY`/`REMAP`/`ALIASES`).** The raw tree is trimmed to a friendly
   surface: `genproduct.rs::DENY` drops noise + internal planes (console, download,
   upload, files, completions, settings, search-docs, indexers, csrf, provisioning,
-  do, …) and the redundant cloud PLURALS (`networks`/`clusters`/`bots` — the LOCAL
-  `network`/`cluster` command and the canonical `bot` own those). `REMAP` absorbs
+  do, …), the redundant cloud PLURALS (`networks`/`clusters`/`bots` — the LOCAL
+  `network`/`cluster` command and the canonical `bot` own those), and `gateway`
+  (its whole `/v1/gateway/*` subtree is unmounted/404; the real gateway surface is
+  TOP-LEVEL — `/v1/models`, `/v1/chat/completions`, `/v1/embeddings` — already
+  reached as `hanzo models`/`hanzo chat completions`/`hanzo embeddings`). `REMAP` absorbs
   `machines`/`gpus` UNDER one `hanzo compute` as sub-namespaces (a FLAT
   `compute list` needs the cloud specs reorganized under one `/v1/compute` tag —
   not faked). `product::ALIASES` mounts a friendly top-level over a generated
@@ -423,6 +435,14 @@ and dispatches it through the one authenticated seam that lives IN THIS MODULE
   bearer from `store`, print `data`, explain a 403 via `store::refusal_hint`)
   lives in `product/mod.rs`; the seam guard `no_consumer_bypasses_the_active_identity_seam`
   lists it. `http.rs` stays the transport; `commands/api.rs` is gone.
+- **A 2xx is not proof of success.** Some planes (Casdoor/iam) answer a refusal with
+  HTTP 200 and an `{"status":"error","msg":…}` envelope; rendering only `data` then
+  prints nothing and exits 0, swallowing the error. `call` runs `envelope_error` on
+  every 2xx BEFORE printing — an explicit `status:"error"` (any case) or a bare
+  `{"error":…}` with no `data` bails with the server's own message to stderr and a
+  non-zero exit. A genuine success (a success envelope, a delete's null `data`, or a
+  raw non-enveloped body) is untouched. One check in the ONE shared render path, so
+  every generated product benefits. `http.rs` stays envelope-agnostic (transport only).
 
 ## Billing (`src/commands/billing.rs`) — the money the identity model bills
 `balance` reads `GET /v1/billing/balance`; `deposit` posts `POST /v1/billing/deposit`

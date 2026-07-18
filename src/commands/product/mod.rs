@@ -20,7 +20,7 @@
 //! over it — that gap closes by authoring the spec). Nothing is invented — the
 //! fields are exactly the schema's properties.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Map, Value};
@@ -48,6 +48,13 @@ pub struct Op {
     pub path: &'static str,
     /// User positionals, in path order — the tenant-org scope is NOT among them.
     pub params: &'static [&'static str],
+    /// The subset of `params` that address a MULTI-SEGMENT path: a server
+    /// catch-all whose value is a `/`-joined address (e.g. a KMS secret
+    /// `sub/path/name`). Their `/` is STRUCTURAL — each segment is percent-encoded
+    /// but the slashes ride raw, so the route resolves; `.`/`..`/empty segments are
+    /// refused. Empty for the single-segment default, where a `/` in a value is
+    /// `%2F`-escaped so it can never re-address a different route.
+    pub rest: &'static [&'static str],
     /// Typed request-body fields from the requestBody schema. Empty ⇒ no typed
     /// body (a write with no schema uses `--data`; a read has no body).
     pub fields: &'static [Field],
@@ -426,7 +433,7 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
     let Resolved::Leaf { op, values, body, query } = resolved;
     let owner = store::active(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
-    let path = fill_path(op.path, owner.as_deref(), &values)?;
+    let path = fill_path(op.path, op.rest, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
     let body = match body {
         // A typed body may carry a stdin-secret field, read here (the IO layer)
@@ -463,7 +470,12 @@ fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
 /// positional. Values are percent-encoded so a value cannot re-address a
 /// different route — the same rule `kms` uses. This mirrors the generator's
 /// scope predicate; their agreement is pinned by `every_op_fills_to_a_path`.
-fn fill_path(template: &str, owner: Option<&str>, values: &[String]) -> Result<String> {
+fn fill_path(
+    template: &str,
+    rest: &[&str],
+    owner: Option<&str>,
+    values: &[String],
+) -> Result<String> {
     let raw: Vec<&str> = template.split('/').collect();
     let mut out = String::new();
     let mut it = values.iter();
@@ -479,11 +491,37 @@ fn fill_path(template: &str, owner: Option<&str>, values: &[String]) -> Result<S
                     out.push_str(&enc(o));
                 } else {
                     let v = it.next().ok_or_else(|| anyhow!("missing value for {{{name}}}"))?;
-                    out.push_str(&enc(v));
+                    // A MULTI-SEGMENT (catch-all) param keeps its slashes raw so the
+                    // server route resolves; a single-segment one `%2F`-escapes them.
+                    if rest.contains(&name) {
+                        out.push_str(&enc_path(v)?);
+                    } else {
+                        out.push_str(&enc(v));
+                    }
                 }
             }
             None => out.push_str(seg),
         }
+    }
+    Ok(out)
+}
+
+/// Encode a MULTI-SEGMENT path value whose `/` are STRUCTURAL — a server catch-all
+/// (e.g. a KMS secret `sub/path/name`). Each segment is percent-encoded by [`enc`]
+/// and the slashes stay raw, so the value addresses the secret the user named
+/// rather than a `%2F`-mangled one the backend 404s. `.`/`..`/empty segments are
+/// refused BEFORE a URL exists, so a value can never `../../` its way onto another
+/// org's route — the same protection the flat case gets for free from `%2F`.
+fn enc_path(s: &str) -> Result<String> {
+    let mut out = String::with_capacity(s.len());
+    for (i, seg) in s.split('/').enumerate() {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            bail!("invalid path segment {seg:?} in {s:?}");
+        }
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(&enc(seg));
     }
     Ok(out)
 }
@@ -533,6 +571,13 @@ async fn call(
         http::send(&http_client, method, &url, &tok.access_token, body.as_ref()).await?;
 
     if status.is_success() {
+        // A 2xx is NOT proof of success. Some planes (Casdoor/iam) answer an error
+        // with HTTP 200 and an `{"status":"error","msg":…}` envelope; rendering
+        // only `data` then prints nothing and exits 0, silently swallowing the
+        // refusal. Surface the server's own message to stderr with a non-zero exit.
+        if let Some(msg) = envelope_error(&resp) {
+            bail!("{path}: {msg}");
+        }
         print_body(&resp, raw);
         return Ok(());
     }
@@ -603,6 +648,43 @@ fn build_url(origin: &str, path: &str, query: &[String]) -> Result<String> {
         }
     }
     Ok(url.to_string())
+}
+
+/// Read the cloud `/v1` envelope (`{status,msg,data}`) for an error the HTTP status
+/// did not carry. Some planes (Casdoor/iam) answer a refusal with HTTP 200 and
+/// `{"status":"error","msg":"…"}`, so a 2xx is not proof of success. Returns the
+/// server's own message when the body is an ERROR — an explicit `status:"error"`
+/// (any case), or a bare `{"error":"…"}` with no `data` — and `None` otherwise, so
+/// a genuine success (a success envelope, or a raw non-enveloped body) renders
+/// unchanged. It never invents a message and never fires on a success that merely
+/// has a `msg` with null `data`: an explicit non-error `status` wins.
+fn envelope_error(body: &Value) -> Option<String> {
+    let obj = body.as_object()?;
+    let message = || {
+        obj.get("msg")
+            .or_else(|| obj.get("error"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("request failed")
+            .to_string()
+    };
+    match obj.get("status").and_then(Value::as_str) {
+        // An explicit error status is a failure regardless of the HTTP code.
+        Some(s) if s.eq_ignore_ascii_case("error") || s.eq_ignore_ascii_case("failed") => {
+            Some(message())
+        }
+        // Any other explicit status (`ok`/`success`/…) is the server saying success.
+        Some(_) => None,
+        // No envelope status: a bare `{"error":"…"}` carrying no payload is still an
+        // error; a raw body (an array, or an object that IS the data) is not.
+        None => {
+            let has_data = obj.get("data").is_some_and(|d| !d.is_null());
+            let bare_error =
+                obj.get("error").and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty());
+            (bare_error && !has_data).then(message)
+        }
+    }
 }
 
 /// Print the response. The cloud `/v1` envelope is `{status,msg,data}`; by default
