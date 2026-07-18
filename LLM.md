@@ -421,6 +421,43 @@ and dispatches it through the one authenticated seam that lives IN THIS MODULE
   lives in `product/mod.rs`; the seam guard `no_consumer_bypasses_the_active_identity_seam`
   lists it. `http.rs` stays the transport; `commands/api.rs` is gone.
 
+## Connectors + channels (`spec/products.json`) — authored ahead of the server (HIP-0129)
+Two new authored products align the CLI to the Open Cloud blueprint (HIP-0129).
+Neither route family is callable today: `/v1/connectors` is IN FLIGHT
+server-side on branch `feat/connectors`; `/v1/channels` is PLANNED server-side
+(branch `feat/channels` reserved, no transport code yet). The specs are committed FIRST (the authored spec is the CLI's
+source of truth); `cargo run --bin genproduct` is deliberately NOT rerun —
+regenerate when the branches land, or the CLI would surface 404s as commands.
+
+- **`connectors` — custody of per-user BYO provider accounts.** CLI ACQUIRES,
+  cloud CUSTODIES. Folded verbs after regeneration: `list`, `get <id>`,
+  `rm <id>`, `refresh <id>`, `credential <provider>` (intake),
+  `device create <provider>` / `device get <provider> <code>` (device grant).
+  Secrets seal in KMS at `/orgs/{org}/users/{user}/connectors/{provider}/{label}`
+  — verified live before storing, refreshed single-flight with rotation
+  resealing. No route returns secret material; views only.
+- **`connector login <provider>` — PLANNED (CLI-side verb, outside the HIP-0129
+  P1–P15 port backlog — no backlog id; not a port), hand-written** (the orchestration
+  verb, sibling of `hanzo login`): local browser PKCE where the provider flow
+  supports it → `POST /v1/connectors/{provider}/credential`; `--device-code`
+  fallback → `POST /v1/connectors/{provider}/device` + poll `GET …/device/{code}`
+  (ChatGPT/Codex, GitHub Copilot); Anthropic setup-token and the ~40 api-key
+  providers post the SAME credential route with a different `kind`. Acquisition
+  artifacts are posted and DROPPED — the CLI keeps nothing.
+- **`channels` — transport.** `list`, `get <channel>`, `send` (portable envelope;
+  actions are TYPED `command|url|select|approval`, never inferred from raw
+  strings), `inbox`, `pairing list` / `pairing approve <code>` /
+  `pairing rm <code>` (8-char codes, 1h TTL, max 3 pending per account, first
+  approval bootstraps the owner, reusable access groups).
+- **Two grants, never conflated.** `hanzo login` (`src/iam/oauth.rs`, public
+  client `hanzo-cli`, HIP-0111) authenticates the CLI TO cloud — identity,
+  unchanged, resolved ONLY through `store.rs`. The IAM device grant (Go
+  `cli/device.go`; no Rust counterpart yet) stays a CLI-to-cloud LOGIN path for
+  browserless hosts. A connector is neither: it carries the user's EXTERNAL
+  provider credential THROUGH the CLI INTO cloud custody. The first two are who
+  you are; a connector is what you brought. Connector secrets never enter
+  `token::vault` — custody is KMS or nowhere.
+
 ## Billing (`src/commands/billing.rs`) — the money the identity model bills
 `balance` reads `GET /v1/billing/balance`; `deposit` posts `POST /v1/billing/deposit`
 (commerce's `api/billing/deposit.go`, mounted at `api.Post("/deposit", mintRequired,
