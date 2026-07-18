@@ -24,6 +24,13 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 
+    /// Resume a prior linked coding session by its cloud session id. Sugar for
+    /// `hanzo code --resume <id>` on a bare `hanzo` (the form printed after every
+    /// run). NOT global: an explicit subcommand carries its own `--resume`, so
+    /// this applies only to the bare invocation.
+    #[arg(long, value_name = "SESSION_ID")]
+    resume: Option<String>,
+
     /// Optional: a truly-bare `hanzo` (no subcommand) launches a cloud-linked
     /// coding session — see `bare`. `--help`/`-h` and every explicit subcommand
     /// are handled by clap before that fallback ever applies.
@@ -501,7 +508,7 @@ enum ClusterCommands {
 /// repo-trust surface. Safety is unchanged and structural: the auth gate in
 /// `commands::code::run` degrades to a purely local run when nobody is signed
 /// in, so a bare `hanzo` on an unauthenticated machine streams nothing.
-fn bare() -> Commands {
+fn bare(resume: Option<String>) -> Commands {
     Commands::Code {
         backend: "claude".to_string(),
         link: true,
@@ -509,7 +516,7 @@ fn bare() -> Commands {
         no_route: false,
         no_mcp: false,
         project_mcp: false,
-        resume: None,
+        resume,
         brand: iam::paths::DEFAULT_BRAND.to_string(),
         theme: None,
         task: None,
@@ -555,7 +562,9 @@ async fn main() -> Result<()> {
         Some(c) => c,
         None => {
             iam::onboarding::first_run(&mut config, iam::paths::DEFAULT_BRAND).await;
-            bare()
+            // A top-level `--resume` (the form printed after every run) is sugar
+            // for `hanzo code --resume` on the bare invocation.
+            bare(cli.resume)
         }
     };
 
@@ -769,7 +778,7 @@ mod tests {
             resume,
             task,
             ..
-        } = bare()
+        } = bare(None)
         else {
             panic!("bare `hanzo` must resolve to a Code session");
         };
@@ -781,6 +790,33 @@ mod tests {
         assert!(task.is_none(), "no task -> interactive");
         assert!(resume.is_none());
         assert_eq!(backend, "claude");
+    }
+
+    /// `hanzo --resume <id>` (the line printed after every run) parses at the
+    /// top level and carries into the bare coding session — it is sugar for
+    /// `hanzo code --resume <id>`.
+    #[test]
+    fn bare_resume_flag_carries_into_the_session() {
+        let cli = Cli::try_parse_from(["hanzo", "--resume", "abc123"])
+            .expect("`hanzo --resume <id>` parses");
+        assert!(cli.command.is_none(), "no subcommand -> the bare fallback");
+        assert_eq!(cli.resume.as_deref(), Some("abc123"));
+        let Commands::Code { resume, .. } = bare(cli.resume) else {
+            panic!("bare `hanzo` must resolve to a Code session");
+        };
+        assert_eq!(resume.as_deref(), Some("abc123"));
+    }
+
+    /// An explicit `hanzo code --resume <id>` still carries its own `--resume`
+    /// (the subcommand flag), independent of the top-level convenience.
+    #[test]
+    fn explicit_code_resume_still_works() {
+        let cli = Cli::try_parse_from(["hanzo", "code", "--resume", "xyz789"])
+            .expect("`hanzo code --resume <id>` parses");
+        let Some(Commands::Code { resume, .. }) = cli.command else {
+            panic!("expected the Code wrapper");
+        };
+        assert_eq!(resume.as_deref(), Some("xyz789"));
     }
 
     /// An explicit subcommand is unchanged — it never routes through `bare`.
