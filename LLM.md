@@ -64,6 +64,9 @@ before unpacking.
 - `kms list|get|set|rm` — secrets, the only place they live (below).
 - `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
 - `billing balance|deposit` — the prepaid wallet's money (below).
+- `connector add|list|verify|rm --provider cloudflare` — connect an external
+  provider account to your org; the credential is sealed into KMS server-side,
+  `add`'s token is stdin-only (argv refused, the `iam::secret` law) (below).
 - `usage` — every identity (and provider key) you hold, STACKED: each account's
   own remaining balance / usage-left, read client-side with its own token,
   disjoint (below).
@@ -474,6 +477,32 @@ commerce handler, which is the source of truth for its shape.
   admin/z`), defers to `switch`'s own resolution when several are held, says
   `hanzo login` when none is, and stays SILENT for a SuperAdmin — whom switching
   cannot help.
+
+## Connectors (`src/commands/connector.rs`) — `hanzo connector`, external accounts in KMS
+Connect an external provider account (Cloudflare, …) so Hanzo can act on it. This
+is the CLI half of cloud's `/v1/integrations` connector plane (live in prod). Four
+verbs: `add|list|verify|rm --provider <p>`. A connector is per-org DELEGATED
+AUTHORITY whose CREDENTIAL lives in Hanzo KMS server-side — never in the CLI,
+never in argv, never in a log.
+
+- **A credential has exactly one way in.** `add` reads the token from STDIN
+  (`--token -`, or a pipe) or a hidden prompt — a literal `--token <value>` is
+  REFUSED, the SAME law as `kms secrets create` and `login --token -`, shared in
+  `iam::secret::resolve_token` (which composes the pure `secret_source` decision +
+  the trimmed `read_trimmed` reader + the caller's hidden-prompt closure, refusing
+  argv before any network I/O). The token rides the request BODY over TLS with the
+  identity bearer; `list`/`verify`/`rm` carry no credential at all. The non-secret
+  `--account-id` hint is safe on argv and omitted when blank.
+- **The org is derived, never asserted.** `http` sends the bearer AND NOTHING
+  ELSE — cloud derives the tenant from the JWT `owner` it verifies, so `hanzo
+  switch` moves connectors for free (no `--org`, no new machinery). Connect/
+  disconnect is an ORG-ADMIN action the server enforces against the token it
+  verifies. A closed `PROVIDERS` allowlist fails an unknown `--provider` HERE with
+  the supported list, not as an opaque 404 (the server stays the authority).
+- **Verbs → endpoints.** `add` → `POST /v1/integrations/{p}/connect`; `list` →
+  `GET /v1/integrations`; `verify` → `POST …/{p}/verify`; `rm` → `POST
+  …/{p}/disconnect`. A non-2xx is an error, never a silent success (a connect that
+  reports OK while the credential never landed is the worst outcome).
 
 ## Usage (`src/commands/usage.rs`) — `hanzo usage`, the STACKED per-account view
 One human holds many principals (`hanzo/z`, `admin/z`) and may hold raw provider

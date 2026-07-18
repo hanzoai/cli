@@ -16,7 +16,14 @@
 //! `format: password` field gets no flag, and its value is read here at dispatch.
 
 use anyhow::{bail, Context, Result};
-use std::io::Read;
+use std::io::{IsTerminal, Read};
+
+/// Whether stdin is a terminal. When it is NOT (a pipe/redirect), a `--token`-less
+/// command reads the secret from the pipe; when it IS, the command prompts. Split
+/// out so [`secret_source`] stays pure and testable.
+pub fn stdin_is_tty() -> bool {
+    std::io::stdin().is_terminal()
+}
 
 /// Where a login secret may come from, decided from the `--token` flag and
 /// whether stdin is a terminal. PURE — the actual read is the caller's — so the
@@ -76,6 +83,28 @@ pub fn read_trimmed<R: Read>(mut r: R) -> Result<String> {
     Ok(s)
 }
 
+/// Resolve a KEY/token from the `--token` flag, refusing an argv literal OUTRIGHT.
+/// `--token -` (or a pipe) reads stdin (trimmed, like every other key); only an
+/// interactive terminal with no `--token` calls `prompt` for a hidden input. The
+/// flag-driven front door over [`secret_source`] + [`read_trimmed`] — so the
+/// "never argv" law has ONE implementation, shared by `connector add`. It refuses
+/// BEFORE running `prompt`, so a literal never reaches a network call. (`kms`
+/// secret VALUES use the raw [`read_secret`] reader instead — a stored value is
+/// opaque, so it strips one newline rather than trimming.)
+pub fn resolve_token(
+    token: Option<String>,
+    prompt: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    match secret_source(token.as_deref(), stdin_is_tty()) {
+        SecretSource::Stdin => read_trimmed(std::io::stdin().lock()),
+        SecretSource::Prompt => prompt(),
+        SecretSource::ArgvRefused => bail!(
+            "a secret must never be passed on the command line (it would land in `ps` and shell \
+             history) — pipe it on stdin with `--token -`, or run the command interactively"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +150,18 @@ mod tests {
         assert_eq!(read_trimmed(std::io::Cursor::new("hk-abc")).unwrap(), "hk-abc");
         assert!(read_trimmed(std::io::Cursor::new("   \n ")).is_err(), "whitespace-only is empty");
         assert!(read_trimmed(std::io::Cursor::new("")).is_err());
+    }
+
+    /// The flag-driven resolver refuses a literal `--token <value>` BEFORE any
+    /// prompt/network I/O — the argv-never law `connector add` relies on.
+    #[test]
+    fn resolve_token_refuses_an_argv_literal_without_prompting() {
+        let mut prompted = false;
+        let r = resolve_token(Some("literal-secret".to_string()), || {
+            prompted = true;
+            Ok("prompted".to_string())
+        });
+        assert!(r.is_err(), "an argv literal must be refused");
+        assert!(!prompted, "the prompt must not run when a literal is refused");
     }
 }

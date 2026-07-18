@@ -205,6 +205,13 @@ enum Commands {
         command: BillingCommands,
     },
 
+    /// Connect an external provider account (Cloudflare, …) to your org. The
+    /// credential lives in Hanzo KMS server-side; the CLI never holds it.
+    Connector {
+        #[command(subcommand)]
+        command: ConnectorCommands,
+    },
+
     /// Run / join hanzo.network with hanzod (the fabric)
     Node {
         #[command(subcommand)]
@@ -379,6 +386,49 @@ enum BillingCommands {
         /// Days until the credit expires (server default: never)
         #[arg(long)]
         expires_in: Option<u32>,
+    },
+}
+
+/// `hanzo connector` — connect a provider account (Cloudflare, …). The credential
+/// lives in Hanzo KMS server-side; the CLI never holds it. `add` reads the token
+/// from STDIN (`--token -` or a pipe) — a literal is refused, the same law as
+/// `kms secrets create` / `login --token -` (shared in `iam::secret`).
+#[derive(Subcommand)]
+enum ConnectorCommands {
+    /// Connect a provider: verify a scoped credential and seal it into KMS. The
+    /// token comes from STDIN only:
+    /// `printf %s "$CF_TOKEN" | hanzo connector add --provider cloudflare --token -`
+    Add {
+        /// Provider to connect (e.g. cloudflare)
+        #[arg(long)]
+        provider: String,
+
+        /// Non-secret account id hint (e.g. a Cloudflare account id) for when the
+        /// token cannot disclose it. Optional; safe on argv (it is not a secret).
+        #[arg(long)]
+        account_id: Option<String>,
+
+        /// `-` reads the token from stdin (or pipe it). A literal secret is
+        /// REFUSED — it would land in `ps` and shell history.
+        #[arg(long)]
+        token: Option<String>,
+    },
+
+    /// List your org's connectors and their status (never the credential).
+    List,
+
+    /// Re-verify a connected credential against the provider, live.
+    Verify {
+        /// Provider to verify (e.g. cloudflare)
+        #[arg(long)]
+        provider: String,
+    },
+
+    /// Disconnect a provider: delete its KMS credential and forget it.
+    Rm {
+        /// Provider to disconnect (e.g. cloudflare)
+        #[arg(long)]
+        provider: String,
     },
 }
 
@@ -618,6 +668,18 @@ async fn main() -> Result<()> {
                 .await?
             }
         },
+        Commands::Connector { command } => match command {
+            ConnectorCommands::Add { provider, account_id, token } => {
+                commands::connector::add(&mut config, provider, account_id, token).await?
+            }
+            ConnectorCommands::List => commands::connector::list(&mut config).await?,
+            ConnectorCommands::Verify { provider } => {
+                commands::connector::verify(&mut config, provider).await?
+            }
+            ConnectorCommands::Rm { provider } => {
+                commands::connector::rm(&mut config, provider).await?
+            }
+        },
         Commands::Node { command } => match command {
             NodeCommands::Up { foreground, with_cloud } => {
                 commands::node::up(&config, foreground, with_cloud).await?
@@ -817,4 +879,64 @@ mod tests {
     // `hanzo kms` is now a GENERATED product (`kms secrets {list,get,create,rm}`);
     // its "a secret value can never reach argv" and "no --org" invariants are
     // pinned on the generated path in `commands::product::tests`.
+
+    /// The `connector` command surface: the four verbs parse, `--provider` is
+    /// required on the credential verbs, the non-secret `--account-id` hint is
+    /// optional, and there is deliberately NO `--org` (the org is the active
+    /// identity's `owner`). The credential is never an argv LITERAL — that is
+    /// `--token`'s runtime law in `iam::secret` (`-`/pipe reads stdin, a literal
+    /// is refused), pinned there and in `commands::connector`; here `--token -`
+    /// is the stdin sentinel, not the secret.
+    #[test]
+    fn the_connector_surface_parses_its_verbs_and_has_no_org_flag() {
+        // add: `--provider` required; the non-secret `--account-id` and the
+        // stdin sentinel `--token -` are accepted and parse to the right fields.
+        let cli = Cli::try_parse_from([
+            "hanzo", "connector", "add", "--provider", "cloudflare", "--account-id", "acc-1",
+            "--token", "-",
+        ])
+        .expect("`connector add --provider … --account-id … --token -` parses");
+        match cli.command {
+            Some(Commands::Connector {
+                command: ConnectorCommands::Add { provider, account_id, token },
+            }) => {
+                assert_eq!(provider, "cloudflare");
+                assert_eq!(account_id.as_deref(), Some("acc-1"));
+                assert_eq!(token.as_deref(), Some("-"), "`-` is the stdin sentinel, not the secret");
+            }
+            _ => panic!("`connector add` must parse to Add"),
+        }
+        // The hint and the token flag are optional — the bare pipe/prompt path.
+        assert!(
+            Cli::try_parse_from(["hanzo", "connector", "add", "--provider", "cloudflare"]).is_ok(),
+            "`--account-id` and `--token` are optional (pipe/prompt path)"
+        );
+        // `add` requires a provider, and takes no `--org`.
+        assert!(
+            Cli::try_parse_from(["hanzo", "connector", "add", "--token", "-"]).is_err(),
+            "`connector add` must require --provider"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "hanzo", "connector", "add", "--provider", "cloudflare", "--org", "other",
+            ])
+            .is_err(),
+            "`connector add --org` must not exist — the org is the identity's own `owner`"
+        );
+        // list / verify / rm parse; verify & rm require --provider and take no --org.
+        assert!(Cli::try_parse_from(["hanzo", "connector", "list"]).is_ok());
+        for verb in ["verify", "rm"] {
+            assert!(
+                Cli::try_parse_from(["hanzo", "connector", verb, "--provider", "cloudflare"]).is_ok(),
+                "`connector {verb} --provider …` must parse"
+            );
+            assert!(
+                Cli::try_parse_from([
+                    "hanzo", "connector", verb, "--provider", "cloudflare", "--org", "other",
+                ])
+                .is_err(),
+                "`connector {verb} --org` must not exist — switch identity instead"
+            );
+        }
+    }
 }

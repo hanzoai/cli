@@ -13,7 +13,8 @@
 //! - `login`       — the `login`/`whoami`/`switch`/`logout` entrypoints (UI + glue).
 //! - `onboarding`  — the fresh-machine greeting + the multi-provider login picker.
 //! - `secret`      — the ONE stdin-secret law (never argv); shared by onboarding
-//!   (keys + identity tokens) and the `kms` secret plane.
+//!   (keys + identity tokens), the `kms` secret plane, and `connector add`
+//!   (`resolve_token`: `--token -`/pipe/hidden-prompt, argv refused).
 
 pub mod identity;
 pub mod login;
