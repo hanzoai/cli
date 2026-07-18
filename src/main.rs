@@ -94,6 +94,12 @@ enum Commands {
         #[arg(long)]
         project_mcp: bool,
 
+        /// Run THIS machine as a run-target daemon: register it, then claim and
+        /// execute coding runs routed to it from mission-control, streaming each
+        /// session back. The machine-side of `#48` route-work. Requires sign-in.
+        #[arg(long)]
+        serve: bool,
+
         /// Resume a prior linked session by its cloud session id.
         #[arg(long, value_name = "SESSION_ID")]
         resume: Option<String>,
@@ -513,6 +519,7 @@ fn bare() -> Commands {
         no_route: false,
         no_mcp: false,
         project_mcp: false,
+        serve: false,
         resume: None,
         brand: iam::paths::DEFAULT_BRAND.to_string(),
         theme: None,
@@ -581,6 +588,7 @@ async fn main() -> Result<()> {
             no_route,
             no_mcp,
             project_mcp,
+            serve,
             resume,
             brand,
             theme,
@@ -596,6 +604,7 @@ async fn main() -> Result<()> {
                     route: !no_route,
                     mcp: !no_mcp,
                     project_mcp,
+                    serve,
                     resume,
                     brand,
                     theme,
