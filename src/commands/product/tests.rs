@@ -46,12 +46,19 @@ fn every_op_fills_to_a_path() {
             op.path
         );
         let values: Vec<String> = op.params.iter().map(|p| format!("v-{p}")).collect();
-        let filled = fill_path(op.path, Some("acme"), &values).expect("fills");
+        let filled = fill_path(op.path, op.rest, Some("acme"), &values).expect("fills");
         assert!(!filled.contains('{') && !filled.contains('}'), "unfilled: {filled}");
+        // `rest` is a subset of `params` (never names the tenant scope).
+        for r in op.rest {
+            assert!(op.params.contains(r), "rest {r} must be a positional: {}", op.path);
+        }
         if scope > 0 {
             assert!(filled.contains("/orgs/acme"), "scope must bind owner: {filled}");
             // ...and a signed-out caller is refused rather than sending a blank org.
-            assert!(fill_path(op.path, None, &values).is_err(), "signed-out scope must refuse");
+            assert!(
+                fill_path(op.path, op.rest, None, &values).is_err(),
+                "signed-out scope must refuse"
+            );
         }
     }
 }
@@ -110,11 +117,12 @@ fn op_params_are_unique_and_not_reserved() {
 fn the_org_scope_is_bound_from_owner_never_asked() {
     // Template with a scope pair + one ordinary positional (kms's own shape).
     let t = "/v1/kms/orgs/{org}/secrets/{secret}";
-    // `{org}` is filled from owner; only `{name}` consumes a positional.
-    let filled = fill_path(t, Some("acme"), &["DB".to_string()]).unwrap();
+    // `{org}` is filled from owner; only `{secret}` consumes a positional (and it
+    // is the real multi-segment param, so pass its `rest` marker).
+    let filled = fill_path(t, &["secret"], Some("acme"), &["DB".to_string()]).unwrap();
     assert_eq!(filled, "/v1/kms/orgs/acme/secrets/DB");
     // Signed out with a scope present → refuse rather than send a blank org.
-    assert!(fill_path(t, None, &["DB".to_string()]).is_err());
+    assert!(fill_path(t, &["secret"], None, &["DB".to_string()]).is_err());
     // No authored op leaks the org as a positional or a flag.
     for op in OPS {
         assert!(!op.params.contains(&"org") || scope_count(op.path) == 0);
@@ -165,7 +173,10 @@ fn a_simple_leaf_resolves_and_fills() {
     assert_eq!(op.path, "/v1/agents/sessions/{id}");
     assert_eq!(op.method, "GET");
     assert_eq!(values, vec!["sess_1"]);
-    assert_eq!(fill_path(op.path, Some("acme"), &values).unwrap(), "/v1/agents/sessions/sess_1");
+    assert_eq!(
+        fill_path(op.path, op.rest, Some("acme"), &values).unwrap(),
+        "/v1/agents/sessions/sess_1"
+    );
 }
 
 /// THE headline: a write op with an authored schema takes TYPED flags, and the
@@ -274,9 +285,20 @@ fn a_friendly_alias_dispatches_to_the_same_generated_op() {
 #[test]
 fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
     for noise in ["console", "download", "upload", "files", "completions", "settings",
-                  "provisioning", "do", "csrf", "indexers", "search-docs"] {
+                  "provisioning", "do", "csrf", "indexers", "search-docs", "gateway"] {
         assert!(!is_product(noise), "{noise} must be denied as a top-level command");
     }
+    // `gateway` is dropped because its whole `/v1/gateway/*` subtree is unmounted
+    // (404 live); no op may carry a `/v1/gateway/` path.
+    assert!(
+        !OPS.iter().any(|o| o.path.starts_with("/v1/gateway/")),
+        "no op may target the unmounted /v1/gateway/* subtree"
+    );
+    // The real gateway surface stays reachable at its TOP-LEVEL served paths.
+    assert!(
+        OPS.iter().any(|o| o.path == "/v1/models" && o.verb == "list"),
+        "`hanzo models list` (GET /v1/models) must remain"
+    );
     for plural in ["networks", "clusters", "bots"] {
         assert!(!is_product(plural), "cloud plural {plural} must be deduped away (local wins)");
     }
@@ -300,7 +322,7 @@ fn a_deep_nested_leaf_resolves_and_fills_in_order() {
     assert_eq!(op.path, "/v1/commerce/store/{storeid}/listing/{key}");
     assert_eq!(values, vec!["store_1", "sku_9"]);
     assert_eq!(
-        fill_path(op.path, Some("acme"), &values).unwrap(),
+        fill_path(op.path, op.rest, Some("acme"), &values).unwrap(),
         "/v1/commerce/store/store_1/listing/sku_9"
     );
 }
@@ -455,4 +477,96 @@ fn query_pairs_are_appended_and_encoded() {
     let u = build_url("https://x.example", "/v1/x", &["q=a b&c=d".into()]).unwrap();
     assert!(u.contains("q=a+b%26c%3Dd"), "{u}");
     assert!(build_url("https://x.example", "/v1/x", &["noeq".into()]).is_err());
+}
+
+// ---- KMS folder secrets: a multi-segment path fills to RAW slashes ------------
+
+/// The write-only-folder-secret bug: `get`/`rm` percent-encoded the `/` in a
+/// folder-scoped address (`prod/db → prod%2Fdb`) → the server 404'd. Their
+/// `{secret}` is now marked MULTI-SEGMENT, so the slashes ride raw and the catch-
+/// all resolves. A FLAT name is unchanged, every segment is still encoded, and
+/// `.`/`..`/empty are refused before a URL exists — so `create --path p` then
+/// `get p/x` / `rm p/x` round-trips while `..` can never re-address another org.
+#[test]
+fn kms_folder_secret_path_round_trips_with_raw_slashes() {
+    for verb in ["get", "rm"] {
+        let op = OPS
+            .iter()
+            .find(|o| o.product == "kms" && o.verb == verb)
+            .unwrap_or_else(|| panic!("kms {verb}"));
+        assert_eq!(op.rest, &["secret"], "kms {verb} must mark {{secret}} multi-segment");
+
+        // A folder-scoped address keeps its slashes RAW (server: last seg = name).
+        let filled =
+            fill_path(op.path, op.rest, Some("acme"), &["prod/db/password".into()]).unwrap();
+        assert_eq!(filled, "/v1/kms/orgs/acme/secrets/prod/db/password");
+
+        // A FLAT name (already working) is untouched — one segment, no slash.
+        let flat = fill_path(op.path, op.rest, Some("acme"), &["DB".into()]).unwrap();
+        assert_eq!(flat, "/v1/kms/orgs/acme/secrets/DB");
+
+        // Each segment is STILL percent-encoded: a space/`?` cannot re-address.
+        let enc = fill_path(op.path, op.rest, Some("acme"), &["a b/x?y".into()]).unwrap();
+        assert_eq!(enc, "/v1/kms/orgs/acme/secrets/a%20b/x%3Fy");
+
+        // Traversal / empty segments are refused BEFORE a URL is built.
+        for evil in ["../../evil/k", "a/../b", "a//b", "/leading", "trailing/", "."] {
+            assert!(
+                fill_path(op.path, op.rest, Some("acme"), &[evil.into()]).is_err(),
+                "kms {verb} must refuse {evil:?}"
+            );
+        }
+    }
+
+    // A single-segment param (the default) still `%2F`-escapes a slash, so a value
+    // can never split into extra segments and re-address a different route.
+    let single =
+        fill_path("/v1/agents/sessions/{id}", &[], Some("acme"), &["a/b".into()]).unwrap();
+    assert_eq!(single, "/v1/agents/sessions/a%2Fb");
+}
+
+// ---- a 2xx with an error envelope is a failure, never a silent success --------
+
+/// The silent-swallow bug: some planes (Casdoor/iam) answer a refusal with HTTP
+/// 200 and `{"status":"error","msg":…}`. `envelope_error` reads that as a failure
+/// carrying the server's message (so `call` exits non-zero to stderr), while a
+/// genuine success — a success envelope, a delete's null `data`, or a raw body —
+/// stays `None` and renders exactly as before.
+#[test]
+fn a_2xx_error_envelope_is_surfaced_not_swallowed() {
+    use serde_json::json;
+
+    // The Casdoor/iam shape: HTTP 200 body, but the envelope says error.
+    assert_eq!(
+        envelope_error(&json!({"status": "error", "msg": "Unauthorized operation"})).as_deref(),
+        Some("Unauthorized operation")
+    );
+    // Case-insensitive status; a `data:null` alongside the error is still an error.
+    assert_eq!(
+        envelope_error(&json!({"status": "Error", "msg": "nope", "data": null})).as_deref(),
+        Some("nope")
+    );
+    // A `failed` status with `error` (no `msg`) uses `error` as the message.
+    assert_eq!(
+        envelope_error(&json!({"status": "failed", "error": "boom"})).as_deref(),
+        Some("boom")
+    );
+    // An error status with no message still fails (generic) — never silent.
+    assert!(envelope_error(&json!({"status": "error"})).is_some());
+    // A bare `{"error":…}` with no data is an error.
+    assert_eq!(envelope_error(&json!({"error": "bad request"})).as_deref(), Some("bad request"));
+
+    // GENUINE SUCCESS is untouched (None → renders normally):
+    assert!(envelope_error(&json!({"status": "ok", "data": {"id": 1}})).is_none());
+    // A success carrying a `msg` and a null `data` (e.g. a delete) is NOT an error
+    // — the explicit non-error status wins.
+    assert!(envelope_error(&json!({"status": "ok", "msg": "deleted", "data": null})).is_none());
+    // A raw non-enveloped body (an array, or an object that IS the data) succeeds.
+    assert!(envelope_error(&json!([1, 2, 3])).is_none());
+    assert!(envelope_error(&json!({"id": 1, "name": "x"})).is_none());
+    // An `error` string but real data present is not treated as a failure.
+    assert!(envelope_error(&json!({"error": "warn", "data": {"ok": true}})).is_none());
+    // Null / non-object bodies never error here.
+    assert!(envelope_error(&serde_json::Value::Null).is_none());
+    assert!(envelope_error(&json!("plain string")).is_none());
 }

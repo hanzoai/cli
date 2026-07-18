@@ -36,6 +36,13 @@ const DENY: &[&str] = &[
     // provisioner (you provision via the concrete `hanzo vector|kv|s3 create`),
     // and `do` is the DigitalOcean PROVIDER backend.
     "provisioning", "do",
+    // `gateway` is aspirational: the whole `/v1/gateway/*` subtree is unmounted
+    // (404 live). The real gateway surface is TOP-LEVEL — `/v1/models`,
+    // `/v1/chat/completions`, `/v1/embeddings` — already reached as `hanzo models`,
+    // `hanzo chat completions`, `hanzo embeddings`. Shipping a command group the
+    // server cannot answer is worse than no verb, so it is dropped until the
+    // openapi authors the routes that are actually served.
+    "gateway",
 ];
 /// Curation — absorb a product's ops UNDER another command as a sub-namespace, so
 /// the compute plane is ONE `hanzo compute` (machines + gpus + regions/sizes)
@@ -44,6 +51,14 @@ const DENY: &[&str] = &[
 /// ambiguity — sub-namespacing unifies them losslessly. A flat surface would need
 /// the cloud specs reorganized under one `/v1/compute` tag.
 const REMAP: &[(&str, &str)] = &[("machines", "compute"), ("gpus", "compute")];
+/// Curation — path parameters that address a MULTI-SEGMENT path (a server
+/// catch-all), keyed by `(product, param)`. Their value is a `/`-joined address
+/// (a KMS secret is `sub/path/name`), so the runtime keeps the slashes raw
+/// (encoding each segment) instead of `%2F`-escaping them into one opaque segment
+/// the backend 404s. This is knowledge the OpenAPI does not carry, so it lives
+/// here beside the other curation tables — not in the vendored spec. Everything
+/// else is single-segment, the route-confusion-safe default.
+const REST_PARAMS: &[(&str, &str)] = &[("kms", "secret")];
 const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 
 fn is_param(s: &str) -> bool {
@@ -341,6 +356,8 @@ struct Op {
     method: String,
     path: String,
     params: Vec<String>,
+    /// The subset of `params` that are multi-segment (catch-all) — see REST_PARAMS.
+    rest: Vec<String>,
     fields: Vec<FieldDef>,
 }
 
@@ -408,6 +425,14 @@ fn main() {
                 // keep the FIRST (body wins over query).
                 let mut seen_flag: BTreeSet<String> = BTreeSet::new();
                 fields.retain(|f| seen_flag.insert(f.flag.clone()));
+                // Mark any multi-segment (catch-all) path param for this product, so
+                // the runtime keeps its slashes raw (see REST_PARAMS / fill_path).
+                let rest: Vec<String> = f
+                    .params
+                    .iter()
+                    .filter(|p| REST_PARAMS.contains(&(product.as_str(), p.as_str())))
+                    .cloned()
+                    .collect();
                 let coord = (product.clone(), nodes.clone(), f.verb.clone());
                 raw.entry(coord).or_default().push(Op {
                     product,
@@ -416,6 +441,7 @@ fn main() {
                     method,
                     path: path.clone(),
                     params: f.params,
+                    rest,
                     fields,
                 });
             }
@@ -548,13 +574,14 @@ fn emit_op(o: &Op) -> String {
         format!("&[{}]", items.join(", "))
     };
     format!(
-        "    Op {{ product: {:?}, nodes: {}, verb: {:?}, method: {:?}, path: {:?}, params: {}, fields: {} }},\n",
+        "    Op {{ product: {:?}, nodes: {}, verb: {:?}, method: {:?}, path: {:?}, params: {}, rest: {}, fields: {} }},\n",
         o.product,
         emit_slice(&o.nodes),
         o.verb,
         o.method,
         o.path,
         emit_slice(&o.params),
+        emit_slice(&o.rest),
         fields
     )
 }
