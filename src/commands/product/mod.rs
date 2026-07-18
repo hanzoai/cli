@@ -71,6 +71,11 @@ pub struct Field {
     /// `true` ⇒ a URL query-string parameter (`?key=…`); `false` ⇒ a requestBody
     /// property. The flag looks identical; only the destination differs.
     pub query: bool,
+    /// A SECRET body value (`format: password` in the spec). It gets NO flag and
+    /// NO positional — the value is read from STDIN at dispatch through the one
+    /// secret law (`iam::secret::read_secret`), so it can never land in argv,
+    /// `ps` or shell history. The grammar refuses a value-bearing argument.
+    pub secret: bool,
 }
 
 /// The JSON type of a body field — schema `type` mapped to a clap parser.
@@ -93,9 +98,9 @@ impl Op {
 /// Add every generated product to `cmd` as a first-class top-level command.
 ///
 /// Collisions resolve ONE way: a LOCAL command owns its bare name. The generator
-/// already omits the hand-written products (`kms`/`billing`/`agent`/`deploy`), and
-/// this also skips any name the derive tree already took — so a future spec
-/// addition that collides is auto-excluded rather than clobbering an invariant.
+/// already omits the hand-written products (`billing`/`agent`/`deploy`), and this
+/// also skips any name the derive tree already took — so a future spec addition
+/// that collides is auto-excluded rather than clobbering an invariant.
 pub fn augment(mut cmd: Command) -> Command {
     let taken: std::collections::HashSet<String> =
         cmd.get_subcommands().map(|s| s.get_name().to_string()).collect();
@@ -213,6 +218,12 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
         c = c.arg(Arg::new(p).required(true).help(format!("path parameter {{{p}}}")));
     }
     for f in op.fields {
+        // A secret field is DELIBERATELY not an argument: it has no flag and no
+        // positional, so a value-bearing argv is a parse error, not a matter of
+        // discipline. The value is read from stdin at dispatch.
+        if f.secret {
+            continue;
+        }
         c = c.arg(field_arg(f));
     }
     let has_body = op.fields.iter().any(|f| !f.query);
@@ -341,7 +352,9 @@ fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
 /// sent as null. Each value is encoded at its schema type.
 fn typed_body(op: &Op, m: &ArgMatches) -> Value {
     let mut map = Map::new();
-    for f in op.fields.iter().filter(|f| !f.query) {
+    // A secret field has no matches entry (no flag/positional) — it is injected
+    // from stdin at dispatch, so it is skipped here.
+    for f in op.fields.iter().filter(|f| !f.query && !f.secret) {
         match f.ty {
             Ty::Str => {
                 if let Some(v) = m.get_one::<String>(f.id) {
@@ -416,12 +429,33 @@ pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
     let path = fill_path(op.path, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
     let body = match body {
-        LeafBody::Typed(v) => Some(v),
+        // A typed body may carry a stdin-secret field, read here (the IO layer)
+        // so `resolve` stays pure and the value never passes through argv.
+        LeafBody::Typed(v) => Some(inject_secret(op, v)?),
         LeafBody::Data(d) => read_body(d, &method)?,
         LeafBody::None => None,
     };
     // The `/v1` envelope's `data` is always what we surface (there is no `--raw`).
     call(cfg, method, path, body, query, false).await
+}
+
+/// Fill a stdin-secret body field (`format: password`, e.g. `kms secrets
+/// create`'s `value`) from STDIN through the ONE secret law
+/// (`iam::secret::read_secret`). Because the field has no flag and no positional,
+/// this is the ONLY way a secret enters the body — it can never come from argv.
+/// A single op reads stdin exactly once; more than one secret field is an
+/// authoring error we refuse rather than read stdin twice.
+fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
+    let mut secrets = op.fields.iter().filter(|f| f.secret);
+    let Some(f) = secrets.next() else { return Ok(body) };
+    if secrets.next().is_some() {
+        anyhow::bail!("{} declares more than one stdin-secret field — an op reads stdin once", op.path);
+    }
+    let value = crate::iam::secret::read_secret(std::io::stdin().lock())?;
+    body.as_object_mut()
+        .ok_or_else(|| anyhow!("a typed body must be a JSON object"))?
+        .insert(f.key.to_string(), Value::String(value));
+    Ok(body)
 }
 
 /// Fill a `/v1` template: a param preceded by `orgs` is the tenant scope, bound

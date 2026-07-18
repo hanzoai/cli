@@ -15,11 +15,12 @@
 
 use anyhow::{anyhow, bail, Result};
 use colored::*;
-use std::io::{IsTerminal, Read};
+use std::io::IsTerminal;
 
 use crate::config::Config;
 
 use super::provider::{self, Provider};
+use super::secret::{read_trimmed, secret_source, SecretSource};
 use super::{login, oauth};
 
 // ---- terminal capability (the piped/CI + NO_COLOR gate) --------------------
@@ -156,39 +157,9 @@ fn pick_provider() -> Result<Option<Choice>> {
 }
 
 // ---- reading a secret (stdin or hidden prompt — never argv) ----------------
-
-/// Where a login secret may come from, decided from the `--token` flag and
-/// whether stdin is a terminal. PURE — the actual read is done by the caller —
-/// so the "never argv" invariant is unit-testable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SecretSource {
-    /// Read the whole of stdin (`--token -`, or a pipe with no flag).
-    Stdin,
-    /// Prompt interactively with a hidden input (a terminal, no `--token`).
-    Prompt,
-    /// A literal was passed in argv — REFUSED for a key.
-    ArgvRefused,
-}
-
-fn secret_source(token: Option<&str>, stdin_tty: bool) -> SecretSource {
-    match token {
-        Some("-") => SecretSource::Stdin,
-        Some(_) => SecretSource::ArgvRefused,
-        None if !stdin_tty => SecretSource::Stdin, // piped input, e.g. `printf %s "$K" | hanzo login --provider openai`
-        None => SecretSource::Prompt,
-    }
-}
-
-/// Read a secret from `r`, trimmed; error if empty. The stdin path.
-fn read_secret_from<R: Read>(mut r: R) -> Result<String> {
-    let mut s = String::new();
-    r.read_to_string(&mut s).map_err(|e| anyhow!("reading key from stdin: {e}"))?;
-    let s = s.trim().to_string();
-    if s.is_empty() {
-        bail!("no key provided on stdin");
-    }
-    Ok(s)
-}
+// The argv-refusal decision (`secret_source`) and the key reader (`read_trimmed`)
+// are the ONE stdin-secret law, in `iam::secret`; this module only resolves a
+// provider key / identity token through them.
 
 /// Prompt for a secret with a hidden (non-echoing) input.
 fn prompt_secret(prompt: &str) -> Result<String> {
@@ -211,7 +182,7 @@ fn prompt_secret(prompt: &str) -> Result<String> {
 /// argv literal outright.
 fn read_key(token: Option<String>, prompt: &str) -> Result<String> {
     match secret_source(token.as_deref(), stdin_is_tty()) {
-        SecretSource::Stdin => read_secret_from(std::io::stdin().lock()),
+        SecretSource::Stdin => read_trimmed(std::io::stdin().lock()),
         SecretSource::Prompt => prompt_secret(prompt),
         SecretSource::ArgvRefused => bail!(
             "a key must never be passed on the command line (it would land in `ps` and shell history) \
@@ -227,7 +198,7 @@ fn read_key(token: Option<String>, prompt: &str) -> Result<String> {
 /// reaches here, so an explicit `--token` value may ONLY ever be `-`.
 fn read_identity_token(token: String) -> Result<String> {
     match secret_source(Some(&token), stdin_is_tty()) {
-        SecretSource::Stdin => read_secret_from(std::io::stdin().lock()),
+        SecretSource::Stdin => read_trimmed(std::io::stdin().lock()),
         // `Some(_)` never resolves to `Prompt`; a literal is refused exactly as a key is.
         SecretSource::Prompt | SecretSource::ArgvRefused => bail!(
             "a token must never be passed on the command line (it would land in `ps` and shell \
@@ -435,27 +406,8 @@ mod tests {
         assert!(!is_fresh(&cfg));
     }
 
-    /// THE invariant: a key never comes from argv. A literal token is refused; a
-    /// `-` (or a pipe) reads stdin; a bare terminal prompts.
-    #[test]
-    fn secret_source_never_takes_a_key_from_argv() {
-        assert_eq!(secret_source(Some("-"), true), SecretSource::Stdin);
-        assert_eq!(secret_source(Some("-"), false), SecretSource::Stdin);
-        // A literal on the command line is ALWAYS refused, TTY or not.
-        assert_eq!(secret_source(Some("sk-ant-literal"), true), SecretSource::ArgvRefused);
-        assert_eq!(secret_source(Some("sk-ant-literal"), false), SecretSource::ArgvRefused);
-        // No flag: a pipe feeds stdin; an interactive terminal prompts.
-        assert_eq!(secret_source(None, false), SecretSource::Stdin);
-        assert_eq!(secret_source(None, true), SecretSource::Prompt);
-    }
-
-    #[test]
-    fn read_secret_from_trims_and_rejects_empty() {
-        assert_eq!(read_secret_from(std::io::Cursor::new("  sk-ant-xyz\n")).unwrap(), "sk-ant-xyz");
-        assert_eq!(read_secret_from(std::io::Cursor::new("hk-abc")).unwrap(), "hk-abc");
-        assert!(read_secret_from(std::io::Cursor::new("   \n ")).is_err(), "whitespace-only is empty");
-        assert!(read_secret_from(std::io::Cursor::new("")).is_err());
-    }
+    // The argv-refusal law (`secret_source`) and the key reader (`read_trimmed`)
+    // are pinned by `iam::secret`'s own tests — the ONE home for that law.
 
     /// LOW-3: an identity JWT obeys the SAME stdin-only law as a provider key — a
     /// literal on the command line is REFUSED (it would land in `ps`/shell

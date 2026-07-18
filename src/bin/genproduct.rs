@@ -20,7 +20,7 @@ use serde_json::Value;
 
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// Local commands own these bare names; the generated tree never claims them.
-const EXCLUDE: [&str; 4] = ["kms", "billing", "agent", "deploy"];
+const EXCLUDE: [&str; 3] = ["billing", "agent", "deploy"];
 /// Curation — products NOT emitted as top-level commands. Reviewed by hand.
 const DENY: &[&str] = &[
     // Noise: sub-operations, UI/config surfaces, or enumeration artifacts — not
@@ -198,6 +198,17 @@ struct FieldDef {
     choices: Vec<String>,
     /// A query-string parameter (goes in the URL), vs a requestBody property.
     query: bool,
+    /// A SECRET body value (`format: password`): read from stdin, NEVER a flag —
+    /// so it can never land in argv, `ps` or shell history. The ONE stdin-secret
+    /// marker; the runtime reads it through `iam::secret::read_secret`.
+    secret: bool,
+}
+
+/// A body property that is a SECRET VALUE. The marker is the standard OpenAPI
+/// `format: password` — the one signal "this input is a secret", honored
+/// uniformly across the whole product surface (today: `kms secrets create`).
+fn is_secret(pschema: &Value) -> bool {
+    pschema.get("format").and_then(Value::as_str) == Some("password")
 }
 
 fn deref<'a>(spec: &'a Value, v: &'a Value) -> &'a Value {
@@ -280,7 +291,8 @@ fn fields_of(spec: &Value, schema: &Value) -> Vec<FieldDef> {
         .map(|(name, pschema)| {
             let (ty, choices) = classify(spec, &pschema);
             let required = required.contains(&name);
-            FieldDef { flag: kebab(&name), key: name, ty, required, choices, query: false }
+            let secret = is_secret(deref(spec, &pschema));
+            FieldDef { flag: kebab(&name), key: name, ty, required, choices, query: false, secret }
         })
         .collect()
 }
@@ -312,6 +324,9 @@ fn query_fields(spec: &Value, op: &Value) -> Vec<FieldDef> {
             required,
             choices,
             query: true,
+            // A query parameter rides the URL; a secret must never do that, so a
+            // query field is never a stdin-secret.
+            secret: false,
         });
     }
     out
@@ -518,14 +533,15 @@ fn emit_op(o: &Op) -> String {
                 // query param of the same name never collide.
                 let id = format!("{}.{}", if f.query { "query" } else { "field" }, f.key);
                 format!(
-                    "Field {{ key: {:?}, id: {:?}, flag: {:?}, ty: Ty::{}, required: {}, choices: {}, query: {} }}",
+                    "Field {{ key: {:?}, id: {:?}, flag: {:?}, ty: Ty::{}, required: {}, choices: {}, query: {}, secret: {} }}",
                     f.key,
                     id,
                     f.flag,
                     f.ty,
                     f.required,
                     emit_slice(&f.choices),
-                    f.query
+                    f.query,
+                    f.secret
                 )
             })
             .collect();
