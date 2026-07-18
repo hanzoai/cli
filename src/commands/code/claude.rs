@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use super::backend::{Backend, Launch, Mode, Spec};
+use super::backend::{Backend, Launch, Mode, Route, Routing, Spec};
 use super::event::{Mapped, Usage};
 
 pub struct Claude;
@@ -97,17 +97,43 @@ impl Backend for Claude {
             cleanup.push(path);
         }
 
-        // Route model calls through the Hanzo gateway (Bearer via env, not argv).
-        // Make our Bearer the SOLE credential in the child: a stray
-        // `ANTHROPIC_API_KEY` inherited from the shell would otherwise win Claude's
-        // auth precedence — either shadowing the gateway route (falling back to the
-        // user's own login) OR, worse, being sent as `x-api-key` to our
-        // `ANTHROPIC_BASE_URL`, leaking the user's personal Anthropic key to us. We
-        // clear it so `ANTHROPIC_AUTH_TOKEN` (Bearer) is unambiguous.
-        if let Some(r) = &spec.routing {
-            cmd.env("ANTHROPIC_BASE_URL", r.api.trim_end_matches('/'));
-            cmd.env("ANTHROPIC_AUTH_TOKEN", &r.token);
-            cmd.env_remove("ANTHROPIC_API_KEY");
+        // Route model calls (credential via env, never argv). In every routed
+        // branch we make OUR credential the SOLE one in the child: a stray
+        // `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL` inherited
+        // from the shell would otherwise win Claude's auth precedence — shadowing
+        // the intended route, or worse redirecting prompts+code to an
+        // attacker-set base URL and leaking the user's own key. So each branch
+        // sets exactly what it needs and CLEARS the rest.
+        match &spec.routing {
+            // Gateway: Bearer + our base URL; clear the api-key so the Bearer is
+            // unambiguous.
+            Route::Via(Routing::Gateway { api, token }) => {
+                cmd.env("ANTHROPIC_BASE_URL", api.trim_end_matches('/'));
+                cmd.env("ANTHROPIC_AUTH_TOKEN", token);
+                cmd.env_remove("ANTHROPIC_API_KEY");
+            }
+            // Direct Anthropic: the user's own key on the default endpoint
+            // (api.anthropic.com). Clear BASE_URL + AUTH_TOKEN so nothing redirects
+            // the key or shadows it.
+            Route::Via(Routing::Anthropic { key }) => {
+                cmd.env("ANTHROPIC_API_KEY", key);
+                cmd.env_remove("ANTHROPIC_AUTH_TOKEN");
+                cmd.env_remove("ANTHROPIC_BASE_URL");
+            }
+            // We hold NOTHING Claude can use — either an OpenAI key (the resolver
+            // never pairs it with Claude) or `FailClosed` (a provider was SELECTED
+            // but no usable credential resolved). FAIL CLOSED: clear all three so a
+            // stray shell `ANTHROPIC_*` can't silently drive the child to an
+            // inherited endpoint. The caller has already warned the user.
+            Route::Via(Routing::OpenAI { .. }) | Route::FailClosed => {
+                cmd.env_remove("ANTHROPIC_API_KEY");
+                cmd.env_remove("ANTHROPIC_AUTH_TOKEN");
+                cmd.env_remove("ANTHROPIC_BASE_URL");
+            }
+            // `--no-route` (or an unconfigured, signed-out run): Claude uses its
+            // OWN account. Leave the child's inherited model-auth exactly as the
+            // shell has it — the deliberate pass-through `--no-route` promises.
+            Route::Inherit => {}
         }
 
         cmd.args(&spec.passthrough);
@@ -269,7 +295,7 @@ fn stringify_content(c: Option<&Value>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::code::backend::{McpAttach, Routing};
+    use crate::commands::code::backend::McpAttach;
     use crate::commands::code::event::Kind;
     use std::path::PathBuf;
 
@@ -278,7 +304,7 @@ mod tests {
             mode,
             task: Some("do it".into()),
             cwd: PathBuf::from("/tmp/proj"),
-            routing: Some(Routing { api: "https://api.hanzo.ai".into(), token: "JWT".into() }),
+            routing: Route::Via(Routing::Gateway { api: "https://api.hanzo.ai".into(), token: "JWT".into() }),
             mcp: Some(McpAttach { program: "hanzo-mcp".into(), args: vec!["--project-dir".into(), "/tmp/proj".into()] }),
             structured: true,
             preset_session: None,
@@ -324,6 +350,29 @@ mod tests {
             .get_envs()
             .any(|(k, v)| k.to_string_lossy() == "ANTHROPIC_API_KEY" && v.is_none());
         assert!(removed, "ANTHROPIC_API_KEY must be removed from the routed child env");
+    }
+
+    /// "Logged in with Claude": a stored Anthropic key drives Claude DIRECTLY —
+    /// `ANTHROPIC_API_KEY` set, the gateway's Bearer/base-URL CLEARED, and the key
+    /// never in argv.
+    #[test]
+    fn anthropic_key_routes_claude_directly_via_env() {
+        let mut s = spec(Mode::Headless);
+        s.routing = Route::Via(Routing::Anthropic { key: "sk-ant-SECRET".into() });
+        let l = Claude.build(&s).unwrap();
+        let std = l.command.as_std();
+        let env: std::collections::HashMap<_, _> = std
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string())))
+            .collect();
+        assert_eq!(env.get("ANTHROPIC_API_KEY").map(String::as_str), Some("sk-ant-SECRET"));
+        // Direct means the DEFAULT endpoint: no gateway base URL, no Bearer to
+        // shadow the key.
+        let cleared = |name: &str| std.get_envs().any(|(k, v)| k.to_string_lossy() == name && v.is_none());
+        assert!(cleared("ANTHROPIC_AUTH_TOKEN"), "gateway Bearer must be cleared for a direct key");
+        assert!(cleared("ANTHROPIC_BASE_URL"), "gateway base URL must be cleared for a direct key");
+        let args = argv(&l);
+        assert!(!args.iter().any(|a| a.contains("sk-ant-SECRET")), "key must not be in argv");
     }
 
     #[test]
@@ -447,7 +496,7 @@ mod tests {
 
         let mut s = spec(Mode::Headless);
         s.cwd = dir.path().to_path_buf();
-        s.routing = Some(Routing { api: "https://api.hanzo.ai".into(), token: "SECRET-BEARER".into() });
+        s.routing = Route::Via(Routing::Gateway { api: "https://api.hanzo.ai".into(), token: "SECRET-BEARER".into() });
         // Default: project_mcp = false (repo is untrusted).
         let l = Claude.build(&s).unwrap();
         let args = argv(&l);
@@ -544,5 +593,45 @@ mod tests {
         // Belt and suspenders: the raw argv must not slip in project/local.
         let joined = args.join(" ");
         assert!(!joined.contains("user,project"), "must not widen sources by default: {joined}");
+    }
+
+    /// The three `ANTHROPIC_*` vars Claude reads for model auth.
+    const ANTHROPIC_AUTH: [&str; 3] = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"];
+
+    fn cleared(l: &Launch, var: &str) -> bool {
+        // `env_remove` surfaces in `get_envs()` as the key with a `None` value.
+        l.command.as_std().get_envs().any(|(k, v)| k.to_string_lossy() == var && v.is_none())
+    }
+
+    fn touched(l: &Launch, var: &str) -> bool {
+        l.command.as_std().get_envs().any(|(k, _)| k.to_string_lossy() == var)
+    }
+
+    /// LOW-1: `FailClosed` (a provider is SELECTED but no usable key resolved) must
+    /// clear ALL of Claude's model-auth env. Otherwise a hostile shell
+    /// `ANTHROPIC_BASE_URL` would silently redirect prompts+code — the exact
+    /// fail-open the finding flagged. The run denies the route, never inherits it.
+    #[test]
+    fn fail_closed_clears_all_anthropic_model_auth() {
+        let mut s = spec(Mode::Headless);
+        s.routing = Route::FailClosed;
+        let l = Claude.build(&s).unwrap();
+        for var in ANTHROPIC_AUTH {
+            assert!(cleared(&l, var), "{var} must be cleared under FailClosed (no inherited value may drive Claude)");
+        }
+    }
+
+    /// `--no-route` (`Inherit`) is the DELIBERATE pass-through: Claude uses its own
+    /// account, so we set NOTHING and clear NOTHING — the child keeps whatever the
+    /// user's shell provides. This is what makes `Inherit` distinct from
+    /// `FailClosed`, and why the two cannot share one `None` arm.
+    #[test]
+    fn inherit_leaves_model_auth_untouched() {
+        let mut s = spec(Mode::Headless);
+        s.routing = Route::Inherit;
+        let l = Claude.build(&s).unwrap();
+        for var in ANTHROPIC_AUTH {
+            assert!(!touched(&l, var), "{var} must be left untouched under --no-route (Inherit) — no set, no remove");
+        }
     }
 }

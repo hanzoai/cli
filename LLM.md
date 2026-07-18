@@ -37,7 +37,8 @@ production backends, chosen once per run by `token::vault()`:
   fallback elsewhere. Concurrent writers serialize on the config's cross-process
   `Lock` and re-read, so a `set` of one key never drops another.
 
-IAM tokens (`{brand}/{owner}/{name}`) and wallet keys (`wallet:{address}`) share
+IAM tokens (`{brand}/{owner}/{name}`), wallet keys (`wallet:{address}`) and
+provider API keys (`provider/{openai,anthropic,hanzo}`, `iam::provider`) share
 ONE store with disjoint key namespaces — one credential store, one way in.
 
 ## Multi-platform release (`.github/workflows/release-matrix.yml`)
@@ -53,8 +54,12 @@ storage is exhausted). A tag-vs-crate guard refuses a mislabeled release.
 before unpacking.
 
 ## Command surface (`src/main.rs` clap tree → `src/commands/*`, `src/iam/*`)
-- `login` / `whoami` / `switch` / `logout` — IAM OIDC PKCE S256 + the identity
-  model (`src/iam/*`, HIP-0111; below).
+- `login` / `whoami` / `switch` / `logout` — sign-in + the identity model
+  (`src/iam/*`, HIP-0111; below). Bare `hanzo login` on a TTY opens the
+  multi-provider picker (Hanzo OIDC · OpenAI · Anthropic · paste-a-key);
+  `--provider hanzo|openai|anthropic [--token -]` is the non-interactive path.
+  `logout --all` is a complete sign-out (identities + provider keys). See
+  "Onboarding + provider login" below.
 - `network list|current|use <name>|add <name> …` — the network model (below).
 - `kms list|get|set|rm` — secrets, the only place they live (below).
 - `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
@@ -139,6 +144,44 @@ at once and switches between them; a second login never clobbers the first.
   nothing else is — carrying a login forward is not a switch), and the legacy key
   is DELETED. No dual-read, no compat shim. An unidentifiable legacy blob fails
   closed; `hanzo login` supersedes and clears it.
+
+## Onboarding + provider login (`src/iam/onboarding.rs`, `src/iam/provider.rs`)
+A FRESH machine (no identity AND no `auth.provider`) at an interactive terminal
+greets with an animated ASCII "hanzo" wordmark, then a login picker — for bare
+`hanzo` and bare `hanzo login` alike. The reveal is a few hundred ms, line by
+line, gated on `stdout().is_terminal()` (piped/CI output stays clean) and
+degraded to a static, plain render under `NO_COLOR` / a dumb terminal / `CI` /
+`HANZO_NO_ANIMATION`. The picker is `dialoguer::Select` (already a dependency —
+no TUI crate added), plain-themed when color is off.
+
+- **Four sign-ins, one seam.** Hanzo → the existing OIDC/identity flow (above),
+  which also marks `auth.provider = hanzo`. OpenAI / Anthropic → an API key.
+  Paste-a-key → the provider is auto-detected by prefix (`hk-`→Hanzo gateway,
+  `sk-ant-`→Anthropic, `sk-`→OpenAI; the specific prefix is tested before the
+  looser one). Non-interactive / CI: `hanzo login --provider hanzo|openai|anthropic
+  [--token -]`.
+- **A key is a secret, so it obeys the token rules.** It arrives ONLY on stdin
+  (`--token -`, or a pipe) or a hidden prompt — NEVER argv (a literal is refused;
+  a property of `secret_source`, the same law as `kms set` / `login --token -`).
+  It is filed `0600` in the SAME `Vault` under `provider/{name}` via the
+  `iam::provider` seam — disjoint from identity + wallet keys — so the
+  `no_consumer_bypasses_the_active_identity_seam` guard still holds (consumers
+  call `provider::*`, never the vault directly). Only the NON-SECRET active
+  provider lands in the config index (`auth.provider`); `logout --all` clears the
+  keys and resets it to the gateway default.
+- **Routing extends, not forks** (`code::resolve_routing` / `route_plan`). A
+  stored key wires straight into `hanzo code` model routing: an Anthropic key
+  drives Claude DIRECTLY (`ANTHROPIC_API_KEY`, api.anthropic.com — gateway
+  Bearer/base-URL cleared), an OpenAI key drives `dev` (`OPENAI_API_KEY`), and
+  everything else is the metered Hanzo gateway (`Routing::Gateway` — the identity
+  Bearer, else a stored `hk-` key). A direct provider is preferred ONLY when it
+  matches the backend it can drive (Anthropic↔Claude, OpenAI↔`dev`); the gateway
+  is always the fallback, so a signed-in user keeps routing even if a key is
+  absent or mispaired. Keys are read from the Vault LAZILY (the plan reaches them
+  only as needed), so the common gateway path (Bearer in hand) costs no extra
+  keychain read and `--no-route` none at all. The boot banner names the real
+  destination (`api.anthropic.com` / `api.openai.com` / the gateway) and who
+  bills, so a direct route is never mistaken for the metered one.
 
 ## `hanzo code` (`src/commands/code/`) — session-aware coding wrapper
 Wraps Claude Code (`claude`) or `dev` (codex) with three things wired natively,
@@ -441,4 +484,6 @@ plane (`--with-cloud`). `stop` SIGTERMs that recorded PID (never a blind pkill).
   wallet secrets reuse): `identity.rs` (who a token is, from its own claims),
   `token.rs` (the `Vault` seam + its `Keyring`/`FileVault` backends + the
   `vault()` resolver + per-identity entries), `store.rs` (THE one way any command
-  resolves the ACTIVE identity), `login.rs` (the four verbs).
+  resolves the ACTIVE identity), `login.rs` (the four verbs), `provider.rs` (the
+  provider-key seam over the same `Vault` + prefix detection), `onboarding.rs`
+  (the fresh-machine banner + the multi-provider login picker/dispatch).
