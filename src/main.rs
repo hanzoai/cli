@@ -123,15 +123,23 @@ enum Commands {
         command: KmsCommands,
     },
 
-    /// Sign in to Hanzo Cloud (IAM OIDC, PKCE S256)
+    /// Sign in: Hanzo (OIDC), or a provider key (OpenAI / Anthropic). Bare
+    /// `hanzo login` on a terminal shows an interactive picker.
     Login {
         /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
 
-        /// Store a hanzo.id bearer token directly instead of the browser flow
-        /// (like `gh auth login --with-token`). Reads the token from stdin when
-        /// given the value `-`, so it never lands in argv or shell history.
+        /// Sign in non-interactively with a specific provider: hanzo | openai |
+        /// anthropic. `hanzo` runs the OIDC flow (or stores a token with
+        /// `--token -`); `openai`/`anthropic` store an API key read from stdin.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+
+        /// Supply the credential on stdin instead of interactively: `--token -`
+        /// reads a hanzo.id bearer (default provider) or a provider API key
+        /// (`--provider openai|anthropic`), so it never lands in argv or history.
+        /// A literal value is refused — for a bearer or a key alike.
         #[arg(long, value_name = "TOKEN")]
         token: Option<String>,
     },
@@ -541,9 +549,19 @@ async fn main() -> Result<()> {
     }
 
     // A truly-bare `hanzo` (no subcommand) resolves to a cloud-linked coding
-    // session (`bare`); every explicit subcommand routes normally.
+    // session (`bare`); every explicit subcommand routes normally. On a FRESH
+    // machine (no credentials) at an interactive terminal, greet with the
+    // onboarding banner + login picker first — so a first run is a welcome, not
+    // the coding wrapper's "not signed in" warning — then fall through to the
+    // session (which stays local until a sign-in lands).
     let cli = Cli::from_arg_matches(&matches)?;
-    let command = cli.command.unwrap_or_else(bare);
+    let command = match cli.command {
+        Some(c) => c,
+        None => {
+            iam::onboarding::first_run(&mut config, iam::paths::DEFAULT_BRAND).await;
+            bare()
+        }
+    };
 
     // Handle commands
     match command {
@@ -599,25 +617,12 @@ async fn main() -> Result<()> {
             }
             KmsCommands::Rm { name, env } => commands::kms::rm(&mut config, name, env).await?,
         },
-        Commands::Login { brand, token } => match token {
-            Some(t) => {
-                // Read from stdin when `-` so the token never rides argv/history.
-                let raw = if t == "-" {
-                    use std::io::Read;
-                    let mut s = String::new();
-                    std::io::stdin().read_to_string(&mut s)?;
-                    s
-                } else {
-                    t
-                };
-                let raw = raw.trim();
-                if raw.is_empty() {
-                    anyhow::bail!("no token provided");
-                }
-                iam::login::login_with_token(&mut config, &brand, raw).await?;
-            }
-            None => iam::login::login(&mut config, &brand).await?,
-        },
+        Commands::Login { brand, provider, token } => {
+            // ONE entrypoint: the picker (interactive), `--provider` (CI), and the
+            // `--token -` back-compat all resolve here. A secret only ever arrives
+            // on stdin or a hidden prompt — never argv.
+            iam::onboarding::run_login(&mut config, &brand, provider, token).await?;
+        }
         Commands::Whoami { brand, all } => {
             iam::login::whoami(&mut config, &brand, all).await?;
         }

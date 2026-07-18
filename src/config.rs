@@ -124,6 +124,14 @@ pub struct AuthState {
     /// Every identity signed in on this machine (metadata only — never secrets).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub identities: Vec<StoredIdentity>,
+    /// The active MODEL provider for `hanzo code` routing — "hanzo" (the gateway),
+    /// "openai", or "anthropic". NON-SECRET: it only NAMES which credential to
+    /// use; the credential itself is filed in the Vault (`iam::provider`). Set by
+    /// the login picker / `hanzo login --provider`. `None` ⇒ the gateway default.
+    /// A separate axis from the active IDENTITY: the identity is who cloud bills,
+    /// the provider is which model endpoint a coding session's calls go to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// Non-secret identity metadata: which principal, on which brand. The token is

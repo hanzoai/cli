@@ -16,7 +16,8 @@ use colored::*;
 use crate::config::Config;
 
 use super::identity::Selector;
-use super::paths::brand_flag;
+use super::paths::{brand_flag, DEFAULT_BRAND};
+use super::provider::{self, Provider};
 use super::token::TokenSet;
 use super::{oauth, store};
 
@@ -130,22 +131,37 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
 /// `hanzo logout [IDENTITY] [--brand] [--all]`: remove one identity, or every
 /// identity for the brand. Signing out of the active identity signs you OUT — it
 /// never silently promotes whatever identity remains.
+///
+/// `--all` is a COMPLETE sign-out: it also drops any stored provider
+/// model-credentials (OpenAI/Anthropic/`hk-`) and resets the provider selection
+/// to the gateway default. Those keys are not brand-scoped, so only the default
+/// brand clears them — `hanzo code` uses the default brand.
 pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
     if all {
         if identity.is_some() {
             bail!("`hanzo logout --all` removes every identity; do not also name one");
         }
         let removed = store::remove_all(cfg, brand)?;
-        if removed.is_empty() {
+        let cleared = clear_providers(cfg, brand)?;
+        if removed.is_empty() && cleared.is_empty() {
             println!("Not signed in to {brand}; nothing to do.");
             return Ok(());
         }
-        println!(
-            "{} Signed out of {} ({})",
-            "✓".green(),
-            brand.cyan(),
-            removed.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ")
-        );
+        if !removed.is_empty() {
+            println!(
+                "{} Signed out of {} ({})",
+                "✓".green(),
+                brand.cyan(),
+                removed.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        if !cleared.is_empty() {
+            println!(
+                "{} Cleared provider keys ({})",
+                "✓".green(),
+                cleared.join(", ")
+            );
+        }
         return Ok(());
     }
 
@@ -166,4 +182,27 @@ pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool
         None => {}
     }
     Ok(())
+}
+
+/// Drop every stored provider credential (OpenAI/Anthropic/`hk-`) and reset the
+/// provider selection to the gateway default. Provider keys are global — not
+/// brand-scoped — so this only runs for the default brand; any other brand is a
+/// no-op. Returns the labels of the providers actually cleared.
+fn clear_providers(cfg: &mut Config, brand: &str) -> Result<Vec<&'static str>> {
+    if brand != DEFAULT_BRAND {
+        return Ok(Vec::new());
+    }
+    let mut cleared = Vec::new();
+    for p in [Provider::Hanzo, Provider::OpenAI, Provider::Anthropic] {
+        if provider::clear(p)? {
+            cleared.push(p.label());
+        }
+    }
+    if cfg.auth.provider.is_some() {
+        cfg.update(|c| {
+            c.auth.provider = None;
+            Ok(())
+        })?;
+    }
+    Ok(cleared)
 }

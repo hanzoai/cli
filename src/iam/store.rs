@@ -1087,23 +1087,66 @@ mod tests {
     /// or one regresses, this fails.
     #[test]
     fn no_consumer_bypasses_the_active_identity_seam() {
-        // The consumers, verbatim (`include_str!` is compile-time — these paths
-        // are checked by the compiler, so a moved file breaks the build loudly).
-        for (name, src) in [
-            ("commands/billing.rs", include_str!("../commands/billing.rs")),
-            ("commands/code/mod.rs", include_str!("../commands/code/mod.rs")),
-            ("commands/kms.rs", include_str!("../commands/kms.rs")),
-            ("commands/product/mod.rs", include_str!("../commands/product/mod.rs")),
-            ("commands/wallet.rs", include_str!("../commands/wallet.rs")),
-            ("main.rs", include_str!("../main.rs")),
-            ("iam/login.rs", include_str!("login.rs")),
-        ] {
-            for banned in ["token::load", "token::store", "token::delete", "token::keyring"] {
+        // Walk the WHOLE crate source — not a fixed file list — so a NEW file that
+        // reaches a credential the wrong way is caught the day it lands, and a
+        // moved consumer can't quietly fall out of scope. The seam is STRUCTURAL.
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+        // Every raw door into the credential store. `token::{load,store,delete}`
+        // are the per-identity backend verbs; `token::vault` hands out a `Vault`
+        // that can set/get ANY slot (identity, provider OR wallet), so a consumer
+        // that grabs it goes around all three namespaced filings; `token::keyring`
+        // is the native backend. No CONSUMER may name any of them.
+        let doors = ["token::load", "token::store", "token::delete", "token::keyring", "token::vault"];
+
+        // The ONLY files permitted to touch each door — the seam itself. `token.rs`
+        // DEFINES the store and `store.rs` IS the identity filing (and hosts this
+        // guard), so both may use every door; `provider.rs`/`wallet.rs` are the
+        // provider-key / wallet-key filings and reach ONLY `vault()`. Everything
+        // else must resolve a credential through `iam::store` / `iam::provider` /
+        // `commands::wallet`, never the raw store.
+        let permitted = |rel: &str, door: &str| match rel {
+            "iam/token.rs" | "iam/store.rs" => true,
+            "iam/provider.rs" | "commands/wallet.rs" => door == "token::vault",
+            _ => false,
+        };
+
+        let mut files = Vec::new();
+        collect_rs(&src_root, &mut files);
+        assert!(
+            files.len() > 10,
+            "seam guard walked only {} files — the src tree walk is broken (root {})",
+            files.len(),
+            src_root.display(),
+        );
+
+        for path in &files {
+            let rel = path.strip_prefix(&src_root).unwrap().to_string_lossy().replace('\\', "/");
+            let src = std::fs::read_to_string(path).unwrap();
+            for door in doors {
+                if permitted(&rel, door) {
+                    continue;
+                }
                 assert!(
-                    !src.contains(banned),
-                    "{name} calls {banned} directly — every consumer must resolve the ACTIVE \
-                     identity via iam::store, or a second identity silently acts as the first"
+                    !src.contains(door),
+                    "{rel} names {door} directly — a consumer must resolve a credential through \
+                     the iam::store / iam::provider / commands::wallet seam, never the raw store, \
+                     or a second identity silently acts as the first"
                 );
+            }
+        }
+    }
+
+    /// Collect every `.rs` file under `dir`, recursively — the seam guard's
+    /// structural scan (so the guarantee covers files that do not exist yet).
+    fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                out.push(path);
             }
         }
     }
