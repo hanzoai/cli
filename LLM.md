@@ -75,11 +75,14 @@ before unpacking.
   (default node URL = the active network's `api`).
 - `deploy` — targets the active network; the active wallet signs (auto-provisions
   one if none, on a real deploy).
-- `code [--backend claude|dev] [--no-link] [--project-mcp] [--model <id>] [--resume <id>] [task]` —
+- `code [--backend claude|dev] [--no-link] [--project-mcp] [--ask|--safe] [--no-sandbox] [--model <id>] [--resume <id>] [task]` —
   wrap a local coding agent as a session-aware, portable, trackable object; a
   signed-in run links to your cloud by default, `--no-link` opts out (below).
-- bare `hanzo` (no subcommand) — shorthand for a linked interactive `hanzo code`
-  (link forced on; falls back to a local run when nobody is signed in).
+- bare `hanzo [flags] [task]` (no subcommand) — a linked interactive `hanzo code`,
+  WITH flags: the code args are flattened onto the top level, so `hanzo --model enso`,
+  `hanzo --resume <id>` (the line printed after every run), and `hanzo "fix the bug"`
+  all route to a coding session (link forced on; a local run when nobody is signed
+  in). An explicit subcommand (`hanzo network …`, `hanzo code …`) is unaffected.
 - `agent`, `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
 
 ## Identity model (`src/iam/*`) — MULTI-identity, like `gh auth switch`
@@ -237,29 +240,72 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   (`claude-fable-5`) and codex's built-in default are NOT in the gateway catalog,
   so a routed run that named no model would 400 ("model … is not available"). On
   the gateway route ONLY we set the model to a valid catalog id — Claude via
-  `ANTHROPIC_MODEL` + `ANTHROPIC_SMALL_FAST_MODEL`, `dev` via `-c model=<id>` (codex
-  has no small/fast model). The default pair is `enso` + `enso-flash`
-  (`enso-ultra` is the flagship, picked with `--model enso-ultra`). Precedence for
-  the main model: `--model` flag, then an exported `ANTHROPIC_MODEL`, then
-  `~/.hanzo/settings.json` `model`, then the built-in `enso`; the small/fast model
-  is `ANTHROPIC_SMALL_FAST_MODEL` → settings `smallFastModel` → `enso-flash`. There
-  is NO client-side allowlist — the gateway is the sole authority on validity, so a
-  bad id 400s with the gateway's own message. The model rides ONLY inside
-  `Routing::Gateway` (`backend.rs`), so it can never leak onto a DIRECT provider
-  route (a zen/enso id would be invalid at api.anthropic.com / api.openai.com);
-  those routes name no model, exactly as before. The mapping lives in ONE place —
-  `code::resolve_model`/`gateway_models` resolve it, the two backends' gateway env
-  assembly consume it.
+  `ANTHROPIC_MODEL`, `dev` via `-c model=<id>`. The small/fast (background) model is
+  set via `ANTHROPIC_DEFAULT_HAIKU_MODEL` (the deprecated `ANTHROPIC_SMALL_FAST_MODEL`
+  is cleared so a stale shell export can't shadow it); codex has no small/fast model.
+  The default pair is `enso` + `enso-flash` (`enso-ultra` is the flagship, picked
+  with `--model enso-ultra`). Precedence for the main model: `--model` flag, then an
+  exported `ANTHROPIC_MODEL`, then `~/.hanzo/settings.json` `model`, then the
+  built-in `enso`; the small/fast model is `ANTHROPIC_SMALL_FAST_MODEL` (a user's
+  exported override) → settings `smallFastModel` → `enso-flash`. There is NO
+  client-side allowlist — the gateway is the sole authority on validity, so a bad id
+  400s with the gateway's own message. The model rides ONLY inside `Routing::Gateway`
+  (`backend.rs`), so it can never leak onto a DIRECT provider route; those routes
+  name no model. The mapping lives in ONE place — `code::resolve_model`/`gateway_models`
+  resolve it, the two backends' gateway env assembly consume it.
+- **The gateway route requests the real (1M) context window.** Hanzo's frontier
+  models are natively 1M, but a coding backend pointed at a custom gateway can't
+  verify that and self-clamps to the standard window, so on the gateway route we
+  NAME the window (settings `contextWindow`, default 1M):
+  - **`dev` (open, true 1M):** codex would clamp an unknown model to its 272K
+    fallback, so we write a `model_catalog_json` (which we control) declaring the
+    model's `context_window` + `max_context_window` and pass `-c model_catalog_json=<file>`
+    — the true-1M path.
+  - **Claude (closed client, capped at 200K):** we append the `[1m]` extended-context
+    suffix for a large-context model (`enso`/`enso-ultra`/`zen5`/`zen5-coder`/…, NOT
+    `*-flash`/`*-mini`) — Claude Code strips it before sending the bare id upstream,
+    so it is safe. HONEST LIMITATION: Claude Code only LIFTS the window for models it
+    recognizes (`claude-*`); for a custom gateway id (`enso`) it gates capability
+    detection behind `isFirstPartyAnthropicBaseUrl()` and clamps to 200K regardless
+    of the `[1m]` suffix, `/v1/models` reporting (discovery carries only id +
+    display_name and ignores non-`claude`/`anthropic` ids), or `ANTHROPIC_BETAS`.
+    So `hanzo code --backend claude` on a custom model caps at 200K — the `[1m]`
+    suffix is correct-but-inert today and future-proof. We also set
+    `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` (surfaces the catalog in `/model`,
+    harmless otherwise). For a true 1M window on Claude, alias the gateway model
+    under a `claude-*` id Claude Code maps to 1M, or use the `dev` backend.
+- **Auto-approve is ON by default (the confirmed default).** The agent runs its
+  actions without a per-action prompt: Claude `--dangerously-skip-permissions`;
+  `dev` `-c approval_policy="never" -c sandbox_mode="workspace-write"` (auto-approve
+  but KEEP the workspace sandbox). Opt out with `--ask`/`--safe` (or
+  `~/.hanzo/settings.json` `autoApprove: false`) — the backend's own permission mode
+  governs. `--no-sandbox` escalates PAST auto-approve to a full bypass that also
+  drops the sandbox (`dev` `--dangerously-bypass-approvals-and-sandbox`; Claude is
+  already sandbox-free under skip-permissions); it is a deliberate per-invocation
+  act, never a persisted default (fail-secure — the sandbox-drop is never stored).
+  codex 0.144.x has no `--full-auto`/`--yolo`. The decision (`Approval` in
+  `backend.rs`, resolved once in `code::resolve_approval`) is ORTHOGONAL to the
+  trust gate: `--strict-mcp-config` + `--setting-sources user` still keep the repo's
+  own `.mcp.json` and settings/hooks out of the process env, so auto-approve widens
+  PERMISSION but NEVER reopens the routing-bearer exfil vector (test:
+  `auto_approve_does_not_reopen_the_repo_trust_gate`). NOTE: auto-approve does turn a
+  prompt-injection-via-repo-content vector from "the agent asks, you decline" into
+  "the agent auto-runs" — the residual fix is the scoped short-TTL routing token
+  (tracked cloud follow-on), not a per-action prompt.
 - **Native settings home — `~/.hanzo/settings.json` (`settings.rs`).** ONE JSON
   file configures the coding agent's defaults on a fresh machine, so a new box
   needs no per-shell `ANTHROPIC_MODEL` export or `~/.claude/settings.json` hack:
-  `model` (default `enso`), `smallFastModel` (default `enso-flash`), `mcp` (default
-  ON). Every key is optional and camelCase; a missing file is CREATED with the
-  defaults (0600, atomic via `crate::private`), a malformed one degrades to the
-  defaults WITHOUT clobbering the user's edit, and each value always yields to an
-  explicit CLI flag / process env. This is the home for the code-agent defaults;
-  the identity/network/wallet index stays in `~/.config/hanzo/config.toml`
-  (`code.link`/`code.theme` remain there — a later cut may consolidate).
+  `model` (default `enso`), `smallFastModel` (default `enso-flash`), `autoApprove`
+  (default TRUE), `mcp` (default ON), `contextWindow` (default 1M). Every key is
+  optional and camelCase; a missing file is CREATED with the defaults (0600, atomic
+  via `crate::private`), a malformed one degrades to the defaults WITHOUT clobbering
+  the user's edit, and each value always yields to an explicit CLI flag / process
+  env. Precedence per key: explicit CLI flag > process env > `~/.hanzo/settings.json`
+  > built-in default (where a tier has no natural source — e.g. no process env for
+  `autoApprove`/`mcp`/`contextWindow` — it is simply skipped). This is the home for
+  the code-agent defaults; the identity/network/wallet index stays in
+  `~/.config/hanzo/config.toml` (`code.link`/`code.theme` remain there — a later cut
+  may consolidate).
 - **Portable/resumable.** On register we emit a no-secret `status` context event
   (machine-id/host/os/arch/cwd/repo+ref/backend+version; git remote credentials
   scrubbed — `context.rs`). The backend's own resume handle + transcript pointer
@@ -313,11 +359,16 @@ satisfy; the orchestrator (register → spawn → stream → finalize) is identi
   (`links_target`), so an unauthenticated run registers no target and reaches cloud
   not at all. One HTTP seam (`http::send_json`) carries both the session and target
   clients (bearer only; the org is derived server-side from the JWT `owner`).
-- **Sandbox:** never widened — we never pass `--dangerously-skip-permissions`
-  (Claude) or `--yolo`/`--full-auto` (`dev`); the user's mode governs, extra
-  flags only via trailing `-- <args>` passthrough.
+- **Sandbox / permissions:** auto-approve is ON by default (see the auto-approve
+  bullet above) — this is the confirmed default, so a fresh box's `hanzo code` runs
+  the agent without per-action prompts. `--ask`/`--safe` restore the backend's own
+  mode; `--no-sandbox` drops the sandbox entirely; extra backend flags still arrive
+  via trailing `-- <args>` passthrough. The repo trust-gate is independent and
+  unweakened by any of this.
 - Tested with fixture streams + a real subprocess (`cat` a fixture) + a mock
-  cloud (`testmock.rs`); live `claude`/`dev` binaries are the only unproven seam.
+  cloud (`testmock.rs`); live `claude`/`dev` binaries are the only unproven seam —
+  in particular the `[1m]` window behavior for a custom Claude model is UNPROVEN
+  against a live `claude` + gateway (documented as capped at 200K; verify at deploy).
 
 ## Network model (`src/commands/network.rs`) — same as the console + fabric
 Sovereign L1 ⇒ `network_id == chain_id`. Built-ins mirror the console selector
