@@ -15,6 +15,14 @@ mod sdk;
 #[command(author = "Hanzo AI")]
 #[command(version)]  // = CARGO_PKG_VERSION; Cargo.toml is the ONE source
 #[command(about = "Unified CLI for Hanzo AI development tools", long_about = None)]
+// Bare `hanzo` IS `hanzo code`, WITH flags: the code args are flattened at the top
+// level, so `hanzo --resume <id>`, `hanzo --model enso`, and `hanzo "fix the bug"`
+// all route to a coding session (the `--resume` form is the one printed after every
+// run). `args_conflicts_with_subcommands` keeps them mutually exclusive with an
+// explicit subcommand (`hanzo network …`, `hanzo code …`), and `subcommand_negates_reqs`
+// lets a subcommand run without them — so the flattened args only apply to a bare
+// `hanzo`, exactly as the zero-arg fallback did before, now generalized to any flag.
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct Cli {
     /// Sets a custom config file
     #[arg(short, long, value_name = "FILE")]
@@ -24,18 +32,116 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 
-    /// Resume a prior linked coding session by its cloud session id. Sugar for
-    /// `hanzo code --resume <id>` on a bare `hanzo` (the form printed after every
-    /// run). NOT global: an explicit subcommand carries its own `--resume`, so
-    /// this applies only to the bare invocation.
+    /// The `hanzo code` args, flattened so a bare `hanzo [flags] [task]` is a
+    /// coding session with them. Ignored when an explicit subcommand is given.
+    #[command(flatten)]
+    code: CodeArgs,
+
+    /// Optional: a truly-bare `hanzo` (no subcommand) launches a cloud-linked
+    /// coding session from the flattened `code` args above. `--help`/`-h` and every
+    /// explicit subcommand are handled by clap before that fallback ever applies.
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+/// The `hanzo code` arguments — shared between the explicit `hanzo code …`
+/// subcommand ([`Commands::Code`]) and a bare `hanzo …` (flattened onto [`Cli`]),
+/// so both accept exactly the same flags and `hanzo --model enso`, `hanzo "task"`,
+/// `hanzo --resume <id>` behave identically to `hanzo code …`.
+#[derive(clap::Args, Clone)]
+struct CodeArgs {
+    /// Coding backend: claude | dev
+    #[arg(long, default_value = "claude")]
+    backend: String,
+
+    /// Force streaming this session to Hanzo cloud (mission-control) on. This
+    /// is already the default for a signed-in run; `--link` only overrides a
+    /// persisted `code.link = false`.
+    #[arg(long)]
+    link: bool,
+
+    /// Never stream to cloud, even when signed in or `code.link = true`.
+    #[arg(long)]
+    no_link: bool,
+
+    /// Do not route model calls through api.hanzo.ai (use the backend's own
+    /// model account instead of the metered Hanzo gateway).
+    #[arg(long)]
+    no_route: bool,
+
+    /// Do not attach the Hanzo MCP toolset.
+    #[arg(long)]
+    no_mcp: bool,
+
+    /// Also load the repository's own `.mcp.json` MCP servers. Off by
+    /// default: a repo is untrusted and any server it declares would run
+    /// with your session's model key — only pass this for repos you trust.
+    #[arg(long)]
+    project_mcp: bool,
+
+    /// Ask before each action instead of auto-approving it. Opts out of the
+    /// always-on auto-approve default (equivalent to `autoApprove: false`);
+    /// `--safe` is an alias. Mutually exclusive with `--no-sandbox`.
+    #[arg(long, visible_alias = "safe", conflicts_with = "no_sandbox")]
+    ask: bool,
+
+    /// Escalate PAST auto-approve to a full bypass that also drops the sandbox
+    /// (dev: `--dangerously-bypass-approvals-and-sandbox`). A deliberate,
+    /// per-invocation act — never a persisted default.
+    #[arg(long)]
+    no_sandbox: bool,
+
+    /// Resume a prior linked session by its cloud session id.
     #[arg(long, value_name = "SESSION_ID")]
     resume: Option<String>,
 
-    /// Optional: a truly-bare `hanzo` (no subcommand) launches a cloud-linked
-    /// coding session — see `bare`. `--help`/`-h` and every explicit subcommand
-    /// are handled by clap before that fallback ever applies.
-    #[command(subcommand)]
-    command: Option<Commands>,
+    /// Brand / tenant for auth: hanzo | lux | zoo | pars | bootnode
+    #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+    brand: String,
+
+    /// Claude theme to apply (Claude backend only), e.g. `dracula`. Defaults
+    /// to the persisted `code.theme` (dracula). `--theme none` skips theming.
+    #[arg(long)]
+    theme: Option<String>,
+
+    /// The gateway model to use, e.g. `enso`, `enso-ultra`, `zen5-coder`. Applies
+    /// on the metered Hanzo gateway route only; a direct provider key names its
+    /// own model. Overrides an exported `ANTHROPIC_MODEL` and `~/.hanzo/settings.json`;
+    /// unset falls back to those, then the built-in default. No client-side
+    /// allowlist — the gateway validates the id.
+    #[arg(long, value_name = "MODEL")]
+    model: Option<String>,
+
+    /// Task to run headless. If omitted, launches an interactive session.
+    task: Option<String>,
+
+    /// Extra args passed verbatim to the backend (after `--`). Use this for the
+    /// backend's own flags beyond `--no-sandbox`.
+    #[arg(last = true, allow_hyphen_values = true)]
+    passthrough: Vec<String>,
+}
+
+impl CodeArgs {
+    /// Map the parsed args to the code runner's [`Options`]. The `no_*` flags
+    /// become their positive sense here, in exactly ONE place.
+    fn into_options(self) -> commands::code::Options {
+        commands::code::Options {
+            backend: self.backend,
+            link: self.link,
+            no_link: self.no_link,
+            route: !self.no_route,
+            mcp: !self.no_mcp,
+            project_mcp: self.project_mcp,
+            ask: self.ask,
+            no_sandbox: self.no_sandbox,
+            resume: self.resume,
+            brand: self.brand,
+            theme: self.theme,
+            model: self.model,
+            task: self.task,
+            passthrough: self.passthrough,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -70,66 +176,9 @@ enum Commands {
     /// Session-aware coding: wrap Claude Code or `dev`, attach Hanzo MCP + auth,
     /// route usage through api.hanzo.ai, and stream the session live to Hanzo
     /// cloud (on by default when signed in; `--no-link` opts out). A trailing
-    /// `[task]` runs headless; omit it for interactive.
-    Code {
-        /// Coding backend: claude | dev
-        #[arg(long, default_value = "claude")]
-        backend: String,
-
-        /// Force streaming this session to Hanzo cloud (mission-control) on. This
-        /// is already the default for a signed-in run; `--link` only overrides a
-        /// persisted `code.link = false`.
-        #[arg(long)]
-        link: bool,
-
-        /// Never stream to cloud, even when signed in or `code.link = true`.
-        #[arg(long)]
-        no_link: bool,
-
-        /// Do not route model calls through api.hanzo.ai (use the backend's own
-        /// model account instead of the metered Hanzo gateway).
-        #[arg(long)]
-        no_route: bool,
-
-        /// Do not attach the Hanzo MCP toolset.
-        #[arg(long)]
-        no_mcp: bool,
-
-        /// Also load the repository's own `.mcp.json` MCP servers. Off by
-        /// default: a repo is untrusted and any server it declares would run
-        /// with your session's model key — only pass this for repos you trust.
-        #[arg(long)]
-        project_mcp: bool,
-
-        /// Resume a prior linked session by its cloud session id.
-        #[arg(long, value_name = "SESSION_ID")]
-        resume: Option<String>,
-
-        /// Brand / tenant for auth: hanzo | lux | zoo | pars | bootnode
-        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
-        brand: String,
-
-        /// Claude theme to apply (Claude backend only), e.g. `dracula`. Defaults
-        /// to the persisted `code.theme` (dracula). `--theme none` skips theming.
-        #[arg(long)]
-        theme: Option<String>,
-
-        /// The gateway model to use, e.g. `enso`, `enso-ultra`, `zen5-coder`. Applies
-        /// on the metered Hanzo gateway route only; a direct provider key names its
-        /// own model. Overrides an exported `ANTHROPIC_MODEL` and `~/.hanzo/settings.json`;
-        /// unset falls back to those, then the built-in default. No client-side
-        /// allowlist — the gateway validates the id.
-        #[arg(long, value_name = "MODEL")]
-        model: Option<String>,
-
-        /// Task to run headless. If omitted, launches an interactive session.
-        task: Option<String>,
-
-        /// Extra args passed verbatim to the backend (after `--`). Use this to
-        /// set the backend's own sandbox/permission flags — never widened by us.
-        #[arg(last = true, allow_hyphen_values = true)]
-        passthrough: Vec<String>,
-    },
+    /// `[task]` runs headless; omit it for interactive. The same flags are
+    /// accepted bare (`hanzo --model enso "fix the bug"`).
+    Code(CodeArgs),
 
     /// Sign in: Hanzo (OIDC), or a provider key (OpenAI / Anthropic). Bare
     /// `hanzo login` on a terminal shows an interactive picker.
@@ -508,29 +557,20 @@ enum ClusterCommands {
     },
 }
 
-/// The command a truly-bare `hanzo` (no subcommand) resolves to: an interactive,
-/// cloud-linked coding session — equivalent to `hanzo code --link`. Link is
-/// forced ON (the user asked for a linked session, so it wins over any persisted
-/// `code.link`); routing and the Hanzo MCP toolset stay on; the repo trust-gate
-/// stays CLOSED (`project_mcp = false`), so link-by-default never widens the
-/// repo-trust surface. Safety is unchanged and structural: the auth gate in
-/// `commands::code::run` degrades to a purely local run when nobody is signed
-/// in, so a bare `hanzo` on an unauthenticated machine streams nothing.
-fn bare(resume: Option<String>) -> Commands {
-    Commands::Code {
-        backend: "claude".to_string(),
-        link: true,
-        no_link: false,
-        no_route: false,
-        no_mcp: false,
-        project_mcp: false,
-        resume,
-        brand: iam::paths::DEFAULT_BRAND.to_string(),
-        theme: None,
-        model: None,
-        task: None,
-        passthrough: Vec::new(),
-    }
+/// The command a bare `hanzo [flags] [task]` (no subcommand) resolves to: a
+/// cloud-linked coding session carrying whatever top-level code flags the user
+/// typed (`hanzo --model enso`, `hanzo --resume <id>`, `hanzo "fix the bug"`).
+///
+/// Link is forced ON (the user asked for a session, so it wins over any persisted
+/// `code.link`; `--no-link` still opts out via `effective_link`). Every other flag
+/// is the user's own; unset ones keep their clap defaults (routing + MCP on, the
+/// repo trust-gate CLOSED — `project_mcp = false` — so a bare run never widens the
+/// repo-trust surface). Safety is unchanged and structural: the auth gate in
+/// `commands::code::run` degrades to a purely local run when nobody is signed in,
+/// so a bare `hanzo` on an unauthenticated machine streams nothing.
+fn bare(mut code: CodeArgs) -> Commands {
+    code.link = true;
+    Commands::Code(code)
 }
 
 #[tokio::main]
@@ -571,9 +611,9 @@ async fn main() -> Result<()> {
         Some(c) => c,
         None => {
             iam::onboarding::first_run(&mut config, iam::paths::DEFAULT_BRAND).await;
-            // A top-level `--resume` (the form printed after every run) is sugar
-            // for `hanzo code --resume` on the bare invocation.
-            bare(cli.resume)
+            // Bare `hanzo [flags] [task]` -> a linked coding session from the
+            // flattened top-level code args (link forced on).
+            bare(cli.code)
         }
     };
 
@@ -588,38 +628,8 @@ async fn main() -> Result<()> {
         Commands::Agent { command } => {
             sdk::python::run_agent_command(command).await?;
         }
-        Commands::Code {
-            backend,
-            link,
-            no_link,
-            no_route,
-            no_mcp,
-            project_mcp,
-            resume,
-            brand,
-            theme,
-            model,
-            task,
-            passthrough,
-        } => {
-            commands::code::run(
-                &mut config,
-                commands::code::Options {
-                    backend,
-                    link,
-                    no_link,
-                    route: !no_route,
-                    mcp: !no_mcp,
-                    project_mcp,
-                    resume,
-                    brand,
-                    theme,
-                    model,
-                    task,
-                    passthrough,
-                },
-            )
-            .await?;
+        Commands::Code(args) => {
+            commands::code::run(&mut config, args.into_options()).await?;
         }
         Commands::Login { brand, provider, token } => {
             // ONE entrypoint: the picker (interactive), `--provider` (CI), and the
@@ -775,59 +785,90 @@ mod tests {
         assert!(cli.command.is_none());
     }
 
-    /// The bare fallback is an interactive, cloud-linked coding session with
-    /// routing + MCP on and the repo trust-gate CLOSED.
-    #[test]
-    fn bare_is_a_linked_interactive_code_session() {
-        let Commands::Code {
-            backend,
-            link,
-            no_link,
-            no_route,
-            no_mcp,
-            project_mcp,
-            resume,
-            task,
-            ..
-        } = bare(None)
-        else {
-            panic!("bare `hanzo` must resolve to a Code session");
-        };
-        assert!(link, "bare `hanzo` forces link ON");
-        assert!(!no_link, "bare `hanzo` never opts out of link");
-        assert!(!no_route, "model routing stays on");
-        assert!(!no_mcp, "the Hanzo MCP toolset stays attached");
-        assert!(!project_mcp, "link-by-default must NOT widen the repo trust-gate");
-        assert!(task.is_none(), "no task -> interactive");
-        assert!(resume.is_none());
-        assert_eq!(backend, "claude");
+    /// Parse argv and resolve the bare-`hanzo` coding session it becomes — the
+    /// SAME path `main` takes (no subcommand -> `bare(cli.code)`).
+    fn parse_bare(argv: &[&str]) -> Commands {
+        let cli = Cli::try_parse_from(argv).expect("parses");
+        assert!(cli.command.is_none(), "expected a bare `hanzo` (no subcommand)");
+        bare(cli.code)
     }
 
-    /// `hanzo --resume <id>` (the line printed after every run) parses at the
-    /// top level and carries into the bare coding session — it is sugar for
-    /// `hanzo code --resume <id>`.
+    /// The bare fallback is an interactive, cloud-linked coding session with
+    /// routing + MCP on, auto-approve on, and the repo trust-gate CLOSED.
     #[test]
-    fn bare_resume_flag_carries_into_the_session() {
-        let cli = Cli::try_parse_from(["hanzo", "--resume", "abc123"])
-            .expect("`hanzo --resume <id>` parses");
-        assert!(cli.command.is_none(), "no subcommand -> the bare fallback");
-        assert_eq!(cli.resume.as_deref(), Some("abc123"));
-        let Commands::Code { resume, .. } = bare(cli.resume) else {
+    fn bare_is_a_linked_interactive_code_session() {
+        let Commands::Code(a) = parse_bare(&["hanzo"]) else {
             panic!("bare `hanzo` must resolve to a Code session");
         };
-        assert_eq!(resume.as_deref(), Some("abc123"));
+        assert!(a.link, "bare `hanzo` forces link ON");
+        assert!(!a.no_link, "bare `hanzo` never opts out of link");
+        assert!(!a.no_route, "model routing stays on");
+        assert!(!a.no_mcp, "the Hanzo MCP toolset stays attached");
+        assert!(!a.project_mcp, "a bare run must NOT widen the repo trust-gate");
+        assert!(!a.ask, "auto-approve stays on by default");
+        assert!(!a.no_sandbox, "no sandbox escalation by default");
+        assert!(a.task.is_none(), "no task -> interactive");
+        assert!(a.resume.is_none());
+        assert_eq!(a.backend, "claude");
+    }
+
+    /// `hanzo --resume <id>` (the line printed after every run) parses at the top
+    /// level and carries into the bare coding session — sugar for `hanzo code
+    /// --resume <id>`. This is the shipped-but-broken v1.7.x bug, now fixed by the
+    /// flattened top-level code args rather than a one-off `--resume` hoist.
+    #[test]
+    fn bare_resume_flag_carries_into_the_session() {
+        let Commands::Code(a) = parse_bare(&["hanzo", "--resume", "abc123"]) else {
+            panic!("bare `hanzo --resume` must resolve to a Code session");
+        };
+        assert_eq!(a.resume.as_deref(), Some("abc123"));
+        assert!(a.link, "a bare resume is still a linked session");
+    }
+
+    /// FIX 1 (coordinator): bare `hanzo` with any code FLAG routes to a coding
+    /// session — `hanzo --model enso`, `hanzo "task"`, `hanzo --ask` / `--safe` /
+    /// `--no-sandbox` all parse, exactly like `hanzo code …`.
+    #[test]
+    fn bare_hanzo_carries_top_level_code_flags() {
+        let Commands::Code(a) = parse_bare(&["hanzo", "--model", "enso"]) else { panic!("Code"); };
+        assert_eq!(a.model.as_deref(), Some("enso"));
+
+        let Commands::Code(a) = parse_bare(&["hanzo", "fix the bug"]) else { panic!("Code"); };
+        assert_eq!(a.task.as_deref(), Some("fix the bug"));
+
+        // `--safe` is an alias for `--ask`; `--no-sandbox` escalates.
+        let Commands::Code(a) = parse_bare(&["hanzo", "--safe"]) else { panic!("Code"); };
+        assert!(a.ask, "`--safe` opts out of auto-approve");
+        let Commands::Code(a) = parse_bare(&["hanzo", "--no-sandbox"]) else { panic!("Code"); };
+        assert!(a.no_sandbox);
+        // Opt-out and escalate are mutually exclusive.
+        assert!(
+            Cli::try_parse_from(["hanzo", "--ask", "--no-sandbox"]).is_err(),
+            "`--ask` and `--no-sandbox` must conflict"
+        );
     }
 
     /// An explicit `hanzo code --resume <id>` still carries its own `--resume`
-    /// (the subcommand flag), independent of the top-level convenience.
+    /// (the subcommand's flattened args), independent of the top-level path.
     #[test]
     fn explicit_code_resume_still_works() {
         let cli = Cli::try_parse_from(["hanzo", "code", "--resume", "xyz789"])
             .expect("`hanzo code --resume <id>` parses");
-        let Some(Commands::Code { resume, .. }) = cli.command else {
+        let Some(Commands::Code(a)) = cli.command else {
             panic!("expected the Code wrapper");
         };
-        assert_eq!(resume.as_deref(), Some("xyz789"));
+        assert_eq!(a.resume.as_deref(), Some("xyz789"));
+    }
+
+    /// An explicit non-code subcommand is unaffected by the flattened top-level
+    /// code args: `hanzo network current` is the Network command, not a task.
+    #[test]
+    fn explicit_subcommand_is_not_swallowed_by_the_task_positional() {
+        let cli = Cli::try_parse_from(["hanzo", "network", "current"]).expect("parses");
+        assert!(
+            matches!(cli.command, Some(Commands::Network { .. })),
+            "an explicit subcommand must win over the bare `[task]` positional"
+        );
     }
 
     /// An explicit subcommand is unchanged — it never routes through `bare`.
@@ -860,11 +901,11 @@ mod tests {
     #[test]
     fn explicit_code_does_not_force_link() {
         let cli = Cli::try_parse_from(["hanzo", "code"]).expect("`hanzo code` parses");
-        let Some(Commands::Code { link, no_link, .. }) = cli.command else {
+        let Some(Commands::Code(a)) = cli.command else {
             panic!("expected Code");
         };
-        assert!(!link);
-        assert!(!no_link);
+        assert!(!a.link);
+        assert!(!a.no_link);
     }
 
     // ---- the merged tree: derive commands + generated products, one parse -----
@@ -907,10 +948,10 @@ mod tests {
         let m = merged.try_get_matches_from(["hanzo", "code", "fix the bug"]).unwrap();
         assert!(commands::product::resolve(&m).is_none(), "a task stays the wrapper");
         let cli = Cli::from_arg_matches(&m).unwrap();
-        let Some(Commands::Code { task, .. }) = cli.command else {
+        let Some(Commands::Code(a)) = cli.command else {
             panic!("expected the Code wrapper");
         };
-        assert_eq!(task.as_deref(), Some("fix the bug"));
+        assert_eq!(a.task.as_deref(), Some("fix the bug"));
     }
 
     /// `--help` / `-h` is intercepted by clap, never swallowed by the fallback.
