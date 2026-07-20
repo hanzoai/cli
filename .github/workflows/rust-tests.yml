@@ -23,7 +23,14 @@ jobs:
       - name: Build
         run: cargo build --bin hanzo --locked
       - name: Test
-        run: cargo test --bin hanzo --locked
+        # The FULL suite in one command: unit tests (--bin hanzo) AND the
+        # tests/cli.rs binary integration tests (real argv, real exit codes,
+        # config-isolated). HANZO_E2E_TOKEN (a real hanzo.id bearer, from repo
+        # secrets) additionally runs the LIVE auth flow — login → whoami →
+        # usage against api.hanzo.ai; absent, that one test skips honestly.
+        env:
+          HANZO_E2E_TOKEN: ${{ secrets.HANZO_E2E_TOKEN }}
+        run: cargo test --locked
       - name: Clippy
         run: cargo clippy --bin hanzo --all-targets --locked
       - name: Version is ONE source

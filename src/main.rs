@@ -25,11 +25,17 @@ mod sdk;
 #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct Cli {
     /// Sets a custom config file
-    #[arg(short, long, value_name = "FILE")]
+    ///
+    /// GLOBAL: valid on every subcommand (`hanzo network list --config F`).
+    /// Without `global`, `args_conflicts_with_subcommands` (needed for the
+    /// bare-`hanzo` code fallback) made `--config` + ANY subcommand a parse
+    /// error — and `hanzo --config F whoami` silently ran a CODE session with
+    /// `whoami` as its task.
+    #[arg(short, long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
     /// Increase logging verbosity
-    #[arg(short, long, action = clap::ArgAction::Count)]
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
 
     /// The `hanzo code` args, flattened so a bare `hanzo [flags] [task]` is a
