@@ -17,9 +17,30 @@ console + cloud + the fabric: ONE network model, ONE wallet model, ONE way.
 ## Build & Run
 ```bash
 cargo build            # build gate
-cargo test --bin hanzo # unit tests (incl. wallet derivation vectors + FileVault)
+cargo test             # the FULL suite: unit tests + tests/cli.rs binary tests
 cargo clippy --bin hanzo
 ```
+
+`tests/cli.rs` runs the SHIPPED binary (assert_cmd): real argv, real exit codes,
+all persisted state isolated behind `--config <tempdir>`. It covers version/help
+surface, the network model (list/use/add round-trips, persisted selection), the
+identity refusals (`whoami` signed out, the argv-token refusal, a garbage stdin
+token), the wallet empty state, and — gated on `HANZO_E2E_TOKEN` (a real
+hanzo.id bearer; absent → honest skip naming the var) — the LIVE auth flow:
+`login --token -` → `whoami` → `usage` against hanzo.id + api.hanzo.ai. CI
+(`.github/workflows/rust-tests.yml`, our runners) runs `cargo test --locked`
+with the token from repo secrets.
+
+`--config`/`--verbose` are GLOBAL flags, placed after any subcommand
+(`hanzo network list --config F`). Before v1.8.1 they were top-level-only and
+`args_conflicts_with_subcommands` made `--config` + any subcommand a parse
+error (`hanzo --config F whoami` even ran a CODE session with `whoami` as its
+task). Because globals propagate into every generated product subcommand, a
+schema field named `config`/`verbose`/`help`/`version` cannot own the bare long
+flag: `field_flag` (product/mod.rs) renames ONLY those collisions to
+`--body-<key>` / `--query-<key>`, mirroring the `field.<key>`/`query.<key>` id
+namespacing (today: `guard sanitize input|output` and `stream topics create`,
+whose body `config` is `--body-config`).
 
 ## Credential store (`src/iam/token.rs`) — runs everywhere, one seam
 A credential must be reachable everywhere `hanzo` runs — desktop, container,
