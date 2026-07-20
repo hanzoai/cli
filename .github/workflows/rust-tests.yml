@@ -17,6 +17,12 @@ jobs:
     runs-on: hanzo-build-linux-amd64
     steps:
       - uses: actions/checkout@v4
+      # The runner image ships no C toolchain; build scripts (proc-macro2, libc)
+      # need `cc`. Same step the release matrix uses.
+      - name: Host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
