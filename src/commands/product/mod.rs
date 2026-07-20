@@ -246,7 +246,7 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
 fn field_arg(f: &'static Field) -> Arg {
     // The clap id is namespaced; the value placeholder shows the TYPE, so the id
     // (`field.act`) never leaks into `--help`.
-    let mut a = Arg::new(f.id).long(f.flag).required(f.required).help(field_help(f));
+    let mut a = Arg::new(f.id).long(field_flag(f)).required(f.required).help(field_help(f));
     match f.ty {
         Ty::Int => a = a.value_parser(clap::value_parser!(i64)).value_name("INT"),
         Ty::Num => a = a.value_parser(clap::value_parser!(f64)).value_name("NUMBER"),
@@ -258,6 +258,26 @@ fn field_arg(f: &'static Field) -> Arg {
         a = a.value_parser(clap::builder::PossibleValuesParser::new(f.choices)).value_name("ENUM");
     }
     a
+}
+
+/// The GLOBAL controls (`--config`, `--verbose`) plus clap's own (`--help`,
+/// `--version`) propagate into every generated subcommand, so a schema field
+/// with one of those names cannot own the bare long flag. The collision rename
+/// mirrors the id namespacing that already exists (`field.<key>` / `query.<key>`):
+/// a body field becomes `--body-<key>`, a query param `--query-<key>`. Every
+/// other field keeps the schema's own name — this touches collisions ONLY.
+fn field_flag(f: &'static Field) -> &'static str {
+    match (f.flag, f.query) {
+        ("config", false) => "body-config",
+        ("config", true) => "query-config",
+        ("verbose", false) => "body-verbose",
+        ("verbose", true) => "query-verbose",
+        ("help", false) => "body-help",
+        ("help", true) => "query-help",
+        ("version", false) => "body-version",
+        ("version", true) => "query-version",
+        _ => f.flag,
+    }
 }
 
 /// Type-derived help — DATA, never the spec's prose (which could carry a URL).
