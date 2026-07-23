@@ -9,6 +9,7 @@ mod http;
 mod private;
 mod iam;
 mod sdk;
+mod telemetry;
 
 #[derive(Parser)]
 #[command(name = "hanzo")]
@@ -600,10 +601,17 @@ async fn main() -> Result<()> {
     // Load config
     let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
 
+    // Best-effort usage telemetry, built once and flushed at exit. Disabled on
+    // opt-out; never blocks or breaks a command.
+    let telemetry = telemetry::build(&config);
+
     // A matched generated product dispatches first, through the shared seam.
     if let Some(resolved) = commands::product::resolve(&matches) {
-        commands::product::dispatch(&mut config, resolved).await?;
-        return Ok(());
+        let started = std::time::Instant::now();
+        let outcome = commands::product::dispatch(&mut config, resolved).await;
+        telemetry.command("product", started.elapsed(), outcome.is_ok());
+        telemetry.flush().await;
+        return outcome;
     }
 
     // A truly-bare `hanzo` (no subcommand) resolves to a cloud-linked coding
@@ -623,7 +631,19 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Handle commands
+    // Dispatch, timed and reported to telemetry (fail-soft), then flushed at exit.
+    let command_label = telemetry::label(&command);
+    let started = std::time::Instant::now();
+    let outcome = dispatch(command, config).await;
+    telemetry.command(command_label, started.elapsed(), outcome.is_ok());
+    telemetry.flush().await;
+    outcome
+}
+
+/// Run one resolved top-level command. Extracted from `main` so dispatch is a single
+/// timed unit for telemetry; the arms are unchanged (`config` is owned here, as it
+/// was in `main`).
+async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
     match command {
         Commands::Init { template, name } => {
             commands::init::run(template, name).await?;
@@ -776,7 +796,6 @@ async fn main() -> Result<()> {
             println!("  - TypeScript: Docs, MDX, UI, MCP");
         }
     }
-
     Ok(())
 }
 

@@ -11,7 +11,13 @@ repository = "https://github.com/hanzoai/cli"
 name = "hanzo"
 path = "src/main.rs"
 
+# The canonical Event emitter lives in its own crate so `dev` can share the exact
+# same wire via a pinned git dependency — one source of truth, two consumers.
+[workspace]
+members = ["crates/event"]
+
 [dependencies]
+hanzo-event = { path = "crates/event" }
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
