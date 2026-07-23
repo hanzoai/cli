@@ -803,6 +803,7 @@ dependencies = [
  "colored",
  "dialoguer",
  "dirs",
+ "hanzo-event",
  "k256",
  "keyring",
  "predicates",
@@ -820,6 +821,18 @@ dependencies = [
  "tracing-subscriber",
  "webbrowser",
  "which",
+]
+
+[[package]]
+name = "hanzo-event"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.2.16",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
