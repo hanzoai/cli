@@ -1,143 +1,169 @@
-<p align="center"><img src=".github/hero.svg" alt="cli" width="880"></p>
+<p align="center"><img src=".github/hero.svg" alt="hanzo" width="880"></p>
 
-# @hanzo/cli
+# hanzo — AI engineer in your terminal
 
-The official Hanzo AI CLI — one binary (`hanzo`) that drives your identity, the
-compute fleet, dedicated clusters, local model serving, and the whole Hanzo Cloud
-API, in a clean `hanzo <resource> <command>` shape.
-
-## Installation
+The Hanzo CLI. One binary to code with an AI agent, sign in, and deploy, manage, and
+interact with the [Open AI Cloud](https://hanzo.ai) — plus run the network. Written in
+Rust: a single static binary, rustls TLS, no runtime, no daemon.
 
 ```bash
-curl -fsSL https://hanzo.sh | sh     # every platform; verifies the sha256
+hanzo "add pagination to the /v1/orders endpoint and write the tests"
+```
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hanzoai/cli/main/install.sh | sh
+```
+
+The installer resolves the release asset for your platform (linux · macOS · Windows,
+amd64 · arm64), verifies its sha256, and drops the `hanzo` binary in `~/.local/bin`.
+
+> While `hanzoai/cli` is private the installer needs a GitHub token — `gh auth login`
+> first, or `GH_TOKEN=… sh install.sh`. Public `curl | sh` self-service works the moment
+> the repo is public; nothing else changes.
+
+From source (Rust toolchain):
+
+```bash
+git clone https://github.com/hanzoai/cli && cd cli
+cargo install --path .
 ```
 
 ## Quick start
 
 ```bash
-hanzo                      # a cloud-linked coding session (bare = agent run --mode code)
-hanzo agent run "fix the failing test"   # run a managed AI task headless
-hanzo auth login           # sign in through Hanzo IAM (OIDC)
-hanzo secret scan .        # find credentials/keys before they leave your machine
+# Sign in — interactive picker: Hanzo (OIDC) · OpenAI · Anthropic · paste a key
+hanzo auth login
+
+# Bare `hanzo` IS an AI engineer in your terminal — an interactive coding session,
+# linked to your cloud (mission-control) when you're signed in.
+hanzo
+
+# Or run a task headless
+hanzo "fix the failing test in api/handlers.go"
+
+# Who am I, and what's left in the tank
+hanzo auth show
+hanzo usage
 ```
 
-## Command model
+## Coding — bare `hanzo`
 
-`hanzo <resource> <command> [flags]` — one resource noun, verbs beneath it.
-
-| Resource  | What it does                                             |
-|-----------|----------------------------------------------------------|
-| `agent`   | Run managed AI tasks (`run TASK --mode code\|desktop`)   |
-| `auth`    | Manage identities and credentials (Hanzo IAM)            |
-| `cluster` | Manage dedicated cloud clusters (managed Kubernetes)     |
-| `compute` | Run containers and functions (cloud)                     |
-| `config`  | Manage local CLI settings                                |
-| `model`   | Serve models from this machine (OpenAI-compatible)       |
-| `node`    | Manage machines in the compute fleet                     |
-| `runner`  | Provide this machine as a CI runner                      |
-| `secret`  | Find exposed secrets in local files                      |
-| `serve`   | Run a Hanzo service (`cloud`, or `iam\|kms\|gateway\|…`) |
-| `version` | Print the CLI version                                    |
-
-### agent — run managed AI tasks
+`hanzo` wraps a local coding agent (Claude Code or `dev`) as a session-aware,
+resumable, portable object: the Hanzo MCP toolset is attached, model calls route
+through your metered Hanzo cloud, and a signed-in session streams live to
+mission-control. Auto-approve is on by default; the repo's own `.mcp.json` is
+trust-gated off unless you opt in.
 
 ```bash
-hanzo agent run "add pagination to the users endpoint"   # --mode code (default)
-hanzo agent run --mode desktop "book the flight in the browser"
-hanzo agent run --model enso --backend dev "refactor the parser"
+hanzo --model enso-ultra "refactor the auth middleware"
+hanzo --backend dev "port this module to async"
+hanzo --resume <session-id>          # continue a prior session
+hanzo --ask "…"                      # confirm each action (alias: --safe)
+hanzo --no-link "…"                  # keep it local, don't stream to cloud
+hanzo --no-route "…"                 # use the backend's own model account
 ```
 
-`--mode code` is a managed coding workspace (wraps Claude Code / `dev`, attaches
-the Hanzo MCP toolset, routes model calls through api.hanzo.ai, and streams the
-session to your Hanzo cloud when signed in). `--mode desktop` points the same
-agent at browser/desktop control. A bare `hanzo [flags] [task]` is the ergonomic
-shortcut for `agent run --mode code`.
+Zen models (`enso`, `enso-ultra`, `enso-flash`, `zen5-coder`, …) are Hanzo's own
+family; the gateway is the sole authority on the model catalog.
 
-### auth — identities and credentials
+## Commands
+
+The CLI is a resource-noun tree — `hanzo <resource> <command>`. Cloud capabilities
+beyond the hand-written resources appear as first-class **generated product
+subcommands** (`hanzo <product> <resource…> <verb>`, typed from the OpenAPI specs) —
+the one interface to `api.hanzo.ai/v1`. There is no `hanzo api` verb and no raw-path
+escape.
+
+### Identity & billing
+
+Multi-identity, like `gh auth switch` — hold many principals at once and switch
+between them; a second login never clobbers the first.
 
 ```bash
-hanzo auth login            # OIDC sign-in through Hanzo IAM (or a provider key)
-hanzo auth show             # the active identity + org
-hanzo auth list             # every identity, the active one marked
-hanzo auth use admin/z      # switch the active identity
-hanzo auth token            # print the active short-lived access token
-hanzo auth logout [--all]
+hanzo auth login [--provider hanzo|openai|anthropic] [--token -]
+hanzo auth show                 # the active identity
+hanzo auth list                 # every identity, active one marked
+hanzo auth use [owner/name]     # switch active identity
+hanzo auth logout [identity] [--all]
+hanzo usage                     # stacked per-account balances, each read with its own token
+hanzo billing balance | deposit
+hanzo connector add|list|verify|rm --provider cloudflare
 ```
 
-### cluster / node — dedicated clusters and the compute fleet
+Secrets arrive on **stdin only**, never argv (`--token -`) — nothing lands in
+shell history, `ps`, or CI logs. Credentials live in the OS keychain (macOS /
+Windows) or an owner-only `0600` file otherwise.
+
+### Cloud
 
 ```bash
-hanzo cluster create prod --region sfo3   # provision a managed Kubernetes cluster
-hanzo cluster list                        # your org's clusters
-hanzo cluster use prod                     # select the default cluster
-
-hanzo node join            # register THIS machine in the compute fleet
-hanzo node list            # fleet machines, capacity and GPUs
-hanzo node leave
+hanzo agent run …                        # run managed AI tasks
+hanzo cluster create|list|show|use|delete
+hanzo model serve <model>                # serve a model locally via the Hanzo engine (/v1 endpoint)
+hanzo serve cloud|iam|kms|gateway|storage|pubsub   # run a Hanzo service on your machine
 ```
 
-### model / serve — run things from this machine
+### Network & wallet
 
 ```bash
-hanzo model serve gemma3-4b          # OpenAI-compatible local endpoint (Hanzo engine)
-hanzo serve cloud                    # run the complete Hanzo Cloud API on one listener
-hanzo serve iam                      # run one service independently (iam|kms|gateway|storage|pubsub)
-hanzo runner start                   # provide this machine as a CI runner (arcd)
+hanzo network list|current|use <name>|add <name> …   # sovereign L1: network_id == chain_id
+hanzo wallet show|address|create [--local]|import|use|list   # PQ cloud custody (KMS/MPC) or local keychain
 ```
 
-### secret — local credential scanner
+### Fabric & fleet — hanzo.network
 
 ```bash
-hanzo secret scan .        # exits non-zero if it finds any key/token/private key
+hanzo fabric …                  # run/join the L1 fabric with hanzod, query its model cluster
+hanzo node join|leave|list|show # your machine in the compute fleet
+hanzo runner …                  # provide this machine as a CI runner
 ```
 
-A LOCAL scan of your working tree (distinct from cloud `kms`/`connector`, which
-STORE secrets). Findings are redacted; drop it into a pre-commit hook or CI.
-
-### config — local settings
+### Build & ship
 
 ```bash
-hanzo config list
-hanzo config get code.link
-hanzo config set code.link false
+hanzo init [template]           # scaffold a new project
+hanzo dev [--port <n>] [--hot]  # local development server
+hanzo share <port|host:port|url># public https://<token>.share.hanzo.ai URL on the zero-trust fabric
+hanzo secret scan <path>        # find exposed secrets before you commit
 ```
 
-## Cloud API — every capability, as a command
-
-Beyond the resource nouns above, the entire Hanzo Cloud surface is first-class:
-`hanzo <product> <resource…> <verb>` (e.g. `hanzo models list`, `hanzo chat
-completions …`, `hanzo kms secrets get …`, `hanzo compute machines list`),
-generated from the authored OpenAPI specs with real `--help` and typed flags. The
-origin comes from the active network, the bearer from the active identity — the
-CLI sends only the bearer, and the tenant is derived server-side from the JWT.
-
-## Also included
-
-`hanzo fabric` (run/join hanzo.network with hanzod + query its model cluster),
-`hanzo wallet`, `hanzo billing`, `hanzo usage`, `hanzo network`, `hanzo
-connector`, `hanzo share`, `hanzo init`, `hanzo dev`, and the TS SDK proxies
-(`docs`/`mdx`/`ui`/`mcp`).
-
-## Configuration & credentials
-
-Non-secret settings live in `~/.config/hanzo/config.toml` (edit them with `hanzo
-config`). Secrets — IAM tokens, wallet keys, provider API keys — live in the OS
-keychain (macOS/Windows) or an owner-only `0600` file (Linux/CI), never in the
-config and never in argv.
-
-## Building from source
+### SDK tooling
 
 ```bash
-git clone https://github.com/hanzoai/cli
-cd cli
-cargo build --release
-cargo test                 # unit + shipped-binary tests
+hanzo docs   # @hanzo/docs-cli
+hanzo mdx    # @hanzo/mdx
+hanzo ui     # @hanzo/ui
+hanzo mcp    # @hanzo/mcp
+```
+
+## Configuration
+
+- `hanzo config list | get <key> | set <key> <value>` — non-secret local settings,
+  stored at `~/.config/hanzo/config.toml` (network selection, active identity index,
+  custom networks). Never holds token material.
+- `~/.hanzo/settings.json` — coding-agent defaults: `model`, `smallFastModel`,
+  `autoApprove`, `mcp`, `contextWindow`. Every key is optional; an explicit CLI flag
+  or process env always wins.
+
+Global flags valid on any subcommand: `--config <file>`, `--verbose`.
+
+## Build from source
+
+```bash
+cargo build            # build gate
+cargo test             # full suite: unit tests + shipped-binary tests (assert_cmd)
 cargo clippy --bin hanzo
 ```
 
+`tests/cli.rs` runs the real binary with real argv and exit codes; state is isolated
+behind `--config <tempdir>`. The live auth flow is gated on `HANZO_E2E_TOKEN` (a real
+`hanzo.id` bearer) and honestly skips when absent.
+
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md).
+Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
@@ -145,10 +171,12 @@ MIT © Hanzo AI
 
 ## Support
 
-- Documentation: https://docs.hanzo.ai/cli
-- GitHub Issues: https://github.com/hanzoai/cli/issues
+- Docs: https://docs.hanzo.ai
+- Issues: https://github.com/hanzoai/cli/issues
 - Email: support@hanzo.ai
 
----
+## Hanzo — the Open AI Cloud
 
-Made with ❤️ by [Hanzo AI](https://hanzo.ai)
+Open source · every language · on-chain settlement. [hanzo.ai](https://hanzo.ai) · [docs.hanzo.ai](https://docs.hanzo.ai)
+
+**SDKs in every language** — [Python](https://github.com/hanzoai/python-sdk) (flagship) · [TypeScript](https://github.com/hanzo-js/sdk) · [Go](https://github.com/hanzo-go/sdk) · [Rust](https://github.com/hanzo-rs/sdk) · [C++](https://github.com/hanzo-cpp/sdk) · [Swift](https://github.com/hanzo-swift/sdk) · [Kotlin](https://github.com/hanzo-kt/sdk) · [umbrella](https://github.com/hanzoai/sdk)
