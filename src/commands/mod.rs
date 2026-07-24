@@ -9,6 +9,7 @@ pub mod deploy;
 pub mod ts_proxy;
 pub mod cluster;
 pub mod network;
+pub mod share;
 pub mod connector;
 pub mod wallet;
 pub mod node;

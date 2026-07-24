@@ -174,6 +174,21 @@ enum Commands {
         hot: bool,
     },
 
+    /// Publish a local service to a public https://<token>.share.hanzo.ai URL
+    /// (ngrok on our own zero-trust fabric). Provisioned from your login; no setup.
+    Share {
+        /// Local target: a port (3000), host:port, or a full url
+        target: String,
+
+        /// Backend mode: proxy | web | caddy | drive
+        #[arg(long, default_value = "proxy")]
+        backend_mode: String,
+
+        /// Reserve a stable subdomain name (else a random token)
+        #[arg(long)]
+        name: Option<String>,
+    },
+
     /// AI agent operations (Python SDK)
     Agent {
         #[command(subcommand)]
@@ -650,6 +665,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         }
         Commands::Dev { port, hot } => {
             commands::dev::run(port, hot).await?;
+        }
+        Commands::Share { target, backend_mode, name } => {
+            commands::share::run(&mut config, target, backend_mode, name).await?;
         }
         Commands::Agent { command } => {
             sdk::python::run_agent_command(command).await?;
