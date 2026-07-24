@@ -1,4 +1,4 @@
-//! `hanzo login` / `whoami` / `switch` / `logout` — the IAM auth commands.
+//! `hanzo auth login` / `whoami` / `switch` / `logout` — the IAM auth commands.
 //!
 //! Thin orchestration over [`oauth`] (protocol) and [`store`] (which identity,
 //! and its credential): run the flow, add/read/select/remove the identity,
@@ -21,7 +21,7 @@ use super::provider::{self, Provider};
 use super::token::TokenSet;
 use super::{oauth, store};
 
-/// `hanzo login [--brand]`: interactive OIDC PKCE sign-in. ADDS an identity
+/// `hanzo auth login [--brand]`: interactive OIDC PKCE sign-in. ADDS an identity
 /// (never clobbers another) and makes it active.
 pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
     oauth::server_url(brand)?; // reject unknown brands before opening a browser
@@ -29,7 +29,7 @@ pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
     add(cfg, brand, &tokens).await
 }
 
-/// `hanzo login --token`: store a hanzo.id bearer directly (like
+/// `hanzo auth login --token`: store a hanzo.id bearer directly (like
 /// `gh auth login --with-token`). Same identity law as the browser flow — the
 /// principal comes from the token's own claims, never from the caller.
 pub async fn login_with_token(cfg: &mut Config, brand: &str, access_token: &str) -> Result<()> {
@@ -71,14 +71,14 @@ async fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<()> {
     if held > 1 {
         println!(
             "{}",
-            format!("  {held} identities on {brand} — `hanzo whoami --all` to list, `hanzo switch` to change")
+            format!("  {held} identities on {brand} — `hanzo auth list` to list, `hanzo auth use` to change")
                 .dimmed()
         );
     }
     Ok(())
 }
 
-/// `hanzo whoami [--brand] [--all]`: the ACTIVE identity, or every identity.
+/// `hanzo auth show [--brand] [--all]`: the ACTIVE identity, or every identity.
 ///
 /// Listing lives here rather than behind a separate `identities` verb: one
 /// question ("who am I?"), one command, one way.
@@ -87,7 +87,7 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
 
     if all {
         if store::list(cfg, brand).is_empty() {
-            bail!("not signed in to {brand} — run `hanzo login{}`", brand_flag(brand));
+            bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
         }
         println!("{}", store::render(cfg, brand));
         println!("{}", "  (* = active; owner is the billing org)".dimmed());
@@ -95,7 +95,7 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
     }
 
     let Some((id, tokens)) = store::active_token(cfg, brand)? else {
-        bail!("not signed in to {brand} — run `hanzo login{}`", brand_flag(brand));
+        bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
     };
 
     // `owner/name` first and bold: it is the billing org and the SuperAdmin
@@ -114,7 +114,7 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
     Ok(())
 }
 
-/// `hanzo switch [IDENTITY] [--brand]`: select the active identity.
+/// `hanzo auth use [IDENTITY] [--brand]`: select the active identity.
 pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result<()> {
     let sel = identity.map(|s| s.parse::<Selector>()).transpose()?;
     let id = store::switch(cfg, brand, sel)?;
@@ -128,7 +128,7 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
     Ok(())
 }
 
-/// `hanzo logout [IDENTITY] [--brand] [--all]`: remove one identity, or every
+/// `hanzo auth logout [IDENTITY] [--brand] [--all]`: remove one identity, or every
 /// identity for the brand. Signing out of the active identity signs you OUT — it
 /// never silently promotes whatever identity remains.
 ///
@@ -139,7 +139,7 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
 pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
     if all {
         if identity.is_some() {
-            bail!("`hanzo logout --all` removes every identity; do not also name one");
+            bail!("`hanzo auth logout --all` removes every identity; do not also name one");
         }
         let removed = store::remove_all(cfg, brand)?;
         let cleared = clear_providers(cfg, brand)?;
@@ -175,7 +175,7 @@ pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool
         None if !store::list(cfg, brand).is_empty() => {
             println!(
                 "{}",
-                format!("  no active identity on {brand} — `hanzo switch <owner/name>`:").dimmed()
+                format!("  no active identity on {brand} — `hanzo auth use <owner/name>`:").dimmed()
             );
             println!("{}", store::render(cfg, brand));
         }
