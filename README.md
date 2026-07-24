@@ -2,200 +2,137 @@
 
 # @hanzo/cli
 
-The official Hanzo AI CLI for container management and development tools.
+The official Hanzo AI CLI — one binary (`hanzo`) that drives your identity, the
+compute fleet, dedicated clusters, local model serving, and the whole Hanzo Cloud
+API, in a clean `hanzo <resource> <command>` shape.
 
 ## Installation
 
 ```bash
-npm install -g @hanzo/cli
+curl -fsSL https://hanzo.sh | sh     # every platform; verifies the sha256
 ```
 
-Or with yarn:
-```bash
-yarn global add @hanzo/cli
-```
-
-Or with pnpm:
-```bash
-pnpm add -g @hanzo/cli
-```
-
-## Quick Start
-
-Run any container with a single command:
+## Quick start
 
 ```bash
-# Run nginx
-hanzo run nginx
-
-# Run with port mapping
-hanzo run nginx -p 8080:80
-
-# Run Supabase stack
-hanzo run supabase/supabase
-
-# Run with environment variables
-hanzo run postgres -e POSTGRES_PASSWORD=secret
-
-# Run in detached mode
-hanzo run redis -d
+hanzo                      # a cloud-linked coding session (bare = agent run --mode code)
+hanzo agent run "fix the failing test"   # run a managed AI task headless
+hanzo auth login           # sign in through Hanzo IAM (OIDC)
+hanzo secret scan .        # find credentials/keys before they leave your machine
 ```
 
-## Features
+## Command model
 
-- 🐳 **Container Management** - Run any OCI container with automatic image pulling
-- 📦 **Stack Support** - Deploy complex stacks like Supabase with one command
-- 🔍 **Runtime Detection** - Automatically detects Docker Desktop, Colima, Podman, etc.
-- 🚀 **Zero Config** - Works out of the box with sensible defaults
-- 📊 **Workload Tracking** - Integrated with hanzod for monitoring
+`hanzo <resource> <command> [flags]` — one resource noun, verbs beneath it.
 
-## Commands
+| Resource  | What it does                                             |
+|-----------|----------------------------------------------------------|
+| `agent`   | Run managed AI tasks (`run TASK --mode code\|desktop`)   |
+| `auth`    | Manage identities and credentials (Hanzo IAM)            |
+| `cluster` | Manage dedicated cloud clusters (managed Kubernetes)     |
+| `compute` | Run containers and functions (cloud)                     |
+| `config`  | Manage local CLI settings                                |
+| `model`   | Serve models from this machine (OpenAI-compatible)       |
+| `node`    | Manage machines in the compute fleet                     |
+| `runner`  | Provide this machine as a CI runner                      |
+| `secret`  | Find exposed secrets in local files                      |
+| `serve`   | Run a Hanzo service (`cloud`, or `iam\|kms\|gateway\|…`) |
+| `version` | Print the CLI version                                    |
 
-### Container Commands
+### agent — run managed AI tasks
 
 ```bash
-# Run a container
-hanzo run <image> [options]
-  -d, --detach              Run in background
-  -p, --port <mapping>      Port mapping (e.g., 8080:80)
-  -e, --env <var>          Environment variable
-  -v, --volume <mapping>    Volume mount
-
-# List containers
-hanzo ps
-  -a, --all                Show all containers
-
-# Stop a container
-hanzo stop <container-id>
-
-# View logs
-hanzo logs <container-id>
-  -f, --follow             Follow log output
-
-# Execute command in container
-hanzo exec <container-id> <command>
-
-# Pull an image
-hanzo pull <image>
-
-# Show available runtimes
-hanzo runtimes
+hanzo agent run "add pagination to the users endpoint"   # --mode code (default)
+hanzo agent run --mode desktop "book the flight in the browser"
+hanzo agent run --model enso --backend dev "refactor the parser"
 ```
 
-### Development Commands
+`--mode code` is a managed coding workspace (wraps Claude Code / `dev`, attaches
+the Hanzo MCP toolset, routes model calls through api.hanzo.ai, and streams the
+session to your Hanzo cloud when signed in). `--mode desktop` points the same
+agent at browser/desktop control. A bare `hanzo [flags] [task]` is the ergonomic
+shortcut for `agent run --mode code`.
+
+### auth — identities and credentials
 
 ```bash
-# Initialize a new project
-hanzo init [template]
-
-# Start development server
-hanzo dev
-  --port <port>           Port to use (default: 3000)
-  --hot                   Enable hot reload
-
-# Build project
-hanzo build
-  --prod                  Production build
-
-# Deploy to Hanzo Cloud
-hanzo deploy
-
-# Manage authentication
-hanzo auth login
-hanzo auth logout
-hanzo auth whoami
+hanzo auth login            # OIDC sign-in through Hanzo IAM (or a provider key)
+hanzo auth show             # the active identity + org
+hanzo auth list             # every identity, the active one marked
+hanzo auth use admin/z      # switch the active identity
+hanzo auth token            # print the active short-lived access token
+hanzo auth logout [--all]
 ```
 
-### AI Commands
+### cluster / node — dedicated clusters and the compute fleet
 
 ```bash
-# Chat with AI
-hanzo chat "Your question here"
+hanzo cluster create prod --region sfo3   # provision a managed Kubernetes cluster
+hanzo cluster list                        # your org's clusters
+hanzo cluster use prod                     # select the default cluster
 
-# Generate code
-hanzo generate <type> <name>
-
-# Analyze code
-hanzo analyze [path]
+hanzo node join            # register THIS machine in the compute fleet
+hanzo node list            # fleet machines, capacity and GPUs
+hanzo node leave
 ```
 
-## Examples
-
-### Running Nginx
-```bash
-hanzo run nginx -p 8080:80
-```
-
-### Running PostgreSQL
-```bash
-hanzo run postgres \
-  -e POSTGRES_PASSWORD=mysecret \
-  -v postgres_data:/var/lib/postgresql/data \
-  -p 5432:5432
-```
-
-### Running Supabase
-```bash
-hanzo run supabase/supabase
-```
-
-This will:
-1. Clone the Supabase repository
-2. Pull all required images
-3. Start the entire stack
-4. Provide you with URLs for Studio, API, and Database
-
-### Running Redis
-```bash
-hanzo run redis -d
-```
-
-## Runtime Support
-
-Hanzo CLI automatically detects and uses available container runtimes:
-
-- Docker Desktop
-- Colima
-- Podman
-- Containerd
-- Rancher Desktop
-
-## Configuration
-
-Configuration file is stored at `~/.hanzo/config.toml`:
-
-```toml
-[defaults]
-runtime = "auto"  # auto, docker, colima, podman
-registry = "docker.io"
-
-[auth]
-token = "your-auth-token"
-
-[telemetry]
-enabled = false
-```
-
-## Building from Source
-
-If you want to build from source:
+### model / serve — run things from this machine
 
 ```bash
-# Clone the repository
+hanzo model serve gemma3-4b          # OpenAI-compatible local endpoint (Hanzo engine)
+hanzo serve cloud                    # run the complete Hanzo Cloud API on one listener
+hanzo serve iam                      # run one service independently (iam|kms|gateway|storage|pubsub)
+hanzo runner start                   # provide this machine as a CI runner (arcd)
+```
+
+### secret — local credential scanner
+
+```bash
+hanzo secret scan .        # exits non-zero if it finds any key/token/private key
+```
+
+A LOCAL scan of your working tree (distinct from cloud `kms`/`connector`, which
+STORE secrets). Findings are redacted; drop it into a pre-commit hook or CI.
+
+### config — local settings
+
+```bash
+hanzo config list
+hanzo config get code.link
+hanzo config set code.link false
+```
+
+## Cloud API — every capability, as a command
+
+Beyond the resource nouns above, the entire Hanzo Cloud surface is first-class:
+`hanzo <product> <resource…> <verb>` (e.g. `hanzo models list`, `hanzo chat
+completions …`, `hanzo kms secrets get …`, `hanzo compute machines list`),
+generated from the authored OpenAPI specs with real `--help` and typed flags. The
+origin comes from the active network, the bearer from the active identity — the
+CLI sends only the bearer, and the tenant is derived server-side from the JWT.
+
+## Also included
+
+`hanzo fabric` (run/join hanzo.network with hanzod + query its model cluster),
+`hanzo wallet`, `hanzo billing`, `hanzo usage`, `hanzo network`, `hanzo
+connector`, `hanzo share`, `hanzo init`, `hanzo dev`, and the TS SDK proxies
+(`docs`/`mdx`/`ui`/`mcp`).
+
+## Configuration & credentials
+
+Non-secret settings live in `~/.config/hanzo/config.toml` (edit them with `hanzo
+config`). Secrets — IAM tokens, wallet keys, provider API keys — live in the OS
+keychain (macOS/Windows) or an owner-only `0600` file (Linux/CI), never in the
+config and never in argv.
+
+## Building from source
+
+```bash
 git clone https://github.com/hanzoai/cli
 cd cli
-
-# Build with Cargo
 cargo build --release
-
-# Install globally
-curl -fsSL https://raw.githubusercontent.com/hanzoai/cli/main/install.sh | sh
-
-# hanzoai/cli is currently PRIVATE, so the installer needs a token until it is public:
-#   GH_TOKEN=... sh install.sh        (or just `gh auth login` first)
-
-# From source instead:
-cargo install --path .
+cargo test                 # unit + shipped-binary tests
+cargo clippy --bin hanzo
 ```
 
 ## Contributing
@@ -209,7 +146,6 @@ MIT © Hanzo AI
 ## Support
 
 - Documentation: https://docs.hanzo.ai/cli
-- Discord: https://discord.gg/hanzoai
 - GitHub Issues: https://github.com/hanzoai/cli/issues
 - Email: support@hanzo.ai
 

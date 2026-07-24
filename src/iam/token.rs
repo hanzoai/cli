@@ -388,10 +388,10 @@ mod tests {
     }
 
     /// The fresh-install regression: on a brand-new machine the credential
-    /// store's parent directory does not exist yet, and the FIRST `hanzo login`
+    /// store's parent directory does not exist yet, and the FIRST `hanzo auth login`
     /// is the write that must create it. `FileVault::set` acquires the lock
     /// before writing, so the lock's own `create_dir_all` is what makes a clean
-    /// `curl | sh` → `hanzo login` work. This shipped broken in v1.4.0.
+    /// `curl | sh` → `hanzo auth login` work. This shipped broken in v1.4.0.
     #[test]
     fn file_vault_set_creates_a_missing_parent_dir() {
         let dir = std::env::temp_dir().join(format!(

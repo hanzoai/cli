@@ -507,7 +507,7 @@ fn fill_path(
             Some(name) => {
                 let prev = if i > 0 { raw[i - 1] } else { "" };
                 if prev == "orgs" {
-                    let o = owner.ok_or_else(|| anyhow!("not signed in — run `hanzo login`"))?;
+                    let o = owner.ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
                     out.push_str(&enc(o));
                 } else {
                     let v = it.next().ok_or_else(|| anyhow!("missing value for {{{name}}}"))?;
@@ -579,7 +579,7 @@ async fn call(
     let origin = network::active(cfg).api;
     let origin = origin.trim_end_matches('/');
     let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
-        .ok_or_else(|| anyhow!("not signed in — run `hanzo login`"))?;
+        .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
     // The identity we would suggest switching to on a 403 (SuperAdmin gate) — the
     // very identity we authenticate as, so the hint can never name someone else.
     let held = store::list(cfg, paths::DEFAULT_BRAND);

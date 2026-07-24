@@ -69,7 +69,7 @@ impl Identity {
                  claims the token itself carries, and this value has none.\n\
                  An `hk-` gateway API key identifies no principal, so it is not an identity and \
                  cannot be stored as one.\n\
-                 Run `hanzo login` to sign in as a human identity (it obtains an IAM access token)."
+                 Run `hanzo auth login` to sign in as a human identity (it obtains an IAM access token)."
             ),
         };
         // JWT payloads are base64url WITHOUT padding (RFC 7515 §2); tolerate a

@@ -1,119 +1,72 @@
-use anyhow::{Context, Result};
+//! `hanzo cluster` — dedicated cloud clusters (managed Kubernetes via the PaaS
+//! DOKS plane, `/v1/paas/cluster/doks/*`).
+//!
+//! DOKS is per-ORG: the tenant is the active identity's `owner`, ADDRESSED in the
+//! path (never a flag), exactly as `kms` — the server re-checks it against the JWT
+//! it verifies, so a wrong one 403s you against yourself. `use` selects the
+//! default cluster LOCALLY (config); `create`/`list`/`show`/`delete` call cloud
+//! through the one authenticated seam.
+//!
+//! | verb     | wire                                             |
+//! |----------|--------------------------------------------------|
+//! | `create` | `POST   /v1/paas/cluster/doks/provision`         |
+//! | `list`   | `GET    /v1/paas/cluster/doks/fleet`             |
+//! | `show`   | `GET    /v1/paas/cluster/doks/{org}/status`      |
+//! | `delete` | `DELETE /v1/paas/cluster/doks/{org}`             |
+
+use anyhow::Result;
 use colored::*;
-use reqwest::Client;
-use serde_json::{json, Value};
+use reqwest::Method;
+use serde_json::json;
 
-// Cluster operations against a Hanzo node's v2 API (/v1/node/cluster/*). The node must be
-// running with HANZO_CLUSTER_MODE=1. Responses are gzip-compressed by the node, so the
-// reqwest `gzip` feature must be enabled (see Cargo.toml).
+use crate::commands::cloud;
+use crate::config::Config;
 
-fn client() -> Result<Client> {
-    Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .context("failed to build http client")
-}
-
-fn print_json(v: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
-    );
-}
-
-async fn get_q(node: &str, path: &str, query: &[(&str, &str)]) -> Result<Value> {
-    let url = format!("{}{}", node.trim_end_matches('/'), path);
-    let resp = client()?
-        .get(&url)
-        .query(query)
-        .send()
-        .await
-        .context("request failed — is the node running?")?;
-    let status = resp.status();
-    let body: Value = resp
-        .json()
-        .await
-        .context("failed to parse node response as JSON")?;
-    if !status.is_success() {
-        anyhow::bail!("node returned {}: {}", status, body);
+/// `hanzo cluster create NAME [--region R]` — provision a dedicated cluster.
+pub async fn create(cfg: &mut Config, name: String, region: Option<String>) -> Result<()> {
+    let mut body = json!({ "name": name });
+    if let Some(r) = region {
+        body["region"] = json!(r);
     }
-    Ok(body)
-}
-
-async fn post(node: &str, path: &str, payload: &Value) -> Result<Value> {
-    let url = format!("{}{}", node.trim_end_matches('/'), path);
-    let resp = client()?
-        .post(&url)
-        .json(payload)
-        .send()
-        .await
-        .context("request failed — is the node running?")?;
-    let status = resp.status();
-    let body: Value = resp
-        .json()
-        .await
-        .context("failed to parse node response as JSON")?;
-    if !status.is_success() {
-        anyhow::bail!("node returned {}: {}", status, body);
-    }
-    Ok(body)
-}
-
-pub async fn topology(node: String) -> Result<()> {
-    print_json(&get_q(&node, "/v1/node/cluster/topology", &[]).await?);
+    let v = cloud::call(cfg, Method::POST, "/v1/paas/cluster/doks/provision", Some(&body)).await?;
+    cloud::print(&v);
     Ok(())
 }
 
-pub async fn models(node: String) -> Result<()> {
-    print_json(&get_q(&node, "/v1/node/cluster/models", &[]).await?);
+/// `hanzo cluster list` — the org's cluster fleet.
+pub async fn list(cfg: &mut Config) -> Result<()> {
+    let v = cloud::call(cfg, Method::GET, "/v1/paas/cluster/doks/fleet", None).await?;
+    cloud::print(&v);
     Ok(())
 }
 
-pub async fn route(node: String, model: String) -> Result<()> {
-    print_json(&get_q(&node, "/v1/node/cluster/route", &[("model", &model)]).await?);
+/// `hanzo cluster show [NAME]` — the org's cluster status. DOKS is org-scoped, so
+/// the tenant `owner` addresses it; `NAME` is accepted for symmetry (there is one
+/// managed cluster per org).
+pub async fn show(cfg: &mut Config, _name: String) -> Result<()> {
+    let org = cloud::owner(cfg)?;
+    let path = format!("/v1/paas/cluster/doks/{}/status", cloud::enc(&org));
+    let v = cloud::call(cfg, Method::GET, &path, None).await?;
+    cloud::print(&v);
     Ok(())
 }
 
-pub async fn placement(node: String, model: String) -> Result<()> {
-    print_json(&get_q(&node, "/v1/node/cluster/placement", &[("model", &model)]).await?);
+/// `hanzo cluster delete [NAME]` — tear down the org's cluster.
+pub async fn delete(cfg: &mut Config, _name: String) -> Result<()> {
+    let org = cloud::owner(cfg)?;
+    let path = format!("/v1/paas/cluster/doks/{}", cloud::enc(&org));
+    let v = cloud::call(cfg, Method::DELETE, &path, None).await?;
+    cloud::print(&v);
     Ok(())
 }
 
-pub async fn chat(node: String, model: String, message: String, max_tokens: u32) -> Result<()> {
-    let payload = json!({
-        "model": model,
-        "messages": [{ "role": "user", "content": message }],
-        "max_tokens": max_tokens,
-        "stream": false,
-    });
-    let v = post(&node, "/v1/node/cluster/chat", &payload).await?;
-
-    // Pretty path: show who served it + the assistant content.
-    let content = v
-        .get("response")
-        .and_then(|r| r.get("choices"))
-        .and_then(|c| c.get(0))
-        .and_then(|c0| c0.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str());
-    match content {
-        Some(text) => {
-            let served = v.get("served_by").and_then(|s| s.as_str()).unwrap_or("?");
-            let who = v
-                .get("peer")
-                .and_then(|p| p.get("node_name"))
-                .and_then(|n| n.as_str())
-                .or_else(|| v.get("node_name").and_then(|n| n.as_str()))
-                .unwrap_or("");
-            println!("{} {}", format!("[{} {}]", served, who).dimmed(), text);
-        }
-        None => print_json(&v),
-    }
-    Ok(())
-}
-
-pub async fn search(node: String, query: String, max_results: u32) -> Result<()> {
-    let payload = json!({ "query": query, "max_results": max_results });
-    print_json(&post(&node, "/v1/node/cluster/search", &payload).await?);
+/// `hanzo cluster use NAME` — select the default cluster, persisted locally (the
+/// same non-secret config the network/wallet selection lives in).
+pub fn use_cluster(cfg: &mut Config, name: String) -> Result<()> {
+    cfg.update(|c| {
+        c.cluster.active = Some(name.clone());
+        Ok(())
+    })?;
+    println!("{} default cluster → {}", "✓".green(), name.cyan().bold());
     Ok(())
 }
