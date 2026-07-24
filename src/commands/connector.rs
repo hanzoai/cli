@@ -9,14 +9,14 @@
 //! ## A credential has exactly one way in
 //! `add` reads the token from STDIN (`--token -`, or a pipe) — a literal
 //! `--token <value>` is REFUSED, the SAME law as `hanzo kms set` and
-//! `hanzo login --token -` (shared in `iam::secret`), so no argv, `ps`, shell
+//! `hanzo auth login --token -` (shared in `iam::secret`), so no argv, `ps`, shell
 //! history or CI log can ever hold it. It rides the request BODY over TLS (never
 //! a URL, never a log) with the identity bearer, and the CLI forgets it the
 //! moment the call returns. `list`/`verify`/`rm` never carry a credential at all.
 //!
 //! ## The org is derived, never asserted
 //! `http` sends the bearer AND NOTHING ELSE — no org header. Cloud derives the
-//! tenant from the JWT `owner` it verifies, so `hanzo switch` moves connectors for
+//! tenant from the JWT `owner` it verifies, so `hanzo auth use` moves connectors for
 //! free, exactly as it moves secrets and billing, with no `--org` and no new
 //! machinery. Connecting/disconnecting is an ORG-ADMIN action, enforced by the
 //! server against the token it verifies — the CLI states the intent, the gateway
@@ -75,7 +75,7 @@ impl Session {
 fn open(cfg: &mut Config) -> Result<Session> {
     let api = network::active(cfg).api;
     let (_, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
-        .ok_or_else(|| anyhow!("not signed in — run `hanzo login` first"))?;
+        .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
     Ok(Session::new(api, tok.access_token))
 }
 

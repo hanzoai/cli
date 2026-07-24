@@ -46,18 +46,23 @@ fn version_is_the_cargo_version() {
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
 
-/// `--help` names every major surface the CLI ships.
+/// `--help` names every major resource the CLI ships (the resource-noun tree),
+/// and the old top-level verbs are GONE.
 #[test]
-fn help_lists_the_major_surfaces() {
+fn help_lists_the_resource_nouns() {
     let out = hanzo().arg("--help").assert().success();
     let help = String::from_utf8_lossy(&out.get_output().stdout).to_string();
     for surface in [
-        "login", "whoami", "switch", "logout", "usage", "network", "wallet",
-        "billing", "connector", "node", "cluster", "deploy", "code", "kms",
+        "agent", "auth", "cluster", "config", "model", "node", "runner", "secret",
+        "serve", "version", "fabric", "network", "wallet", "billing", "connector", "usage",
     ] {
+        assert!(help.contains(surface), "`hanzo --help` must list the `{surface}` resource");
+    }
+    // The relocated verbs are not top-level names any more.
+    for gone in ["login", "whoami", "switch", "deploy"] {
         assert!(
-            help.contains(surface),
-            "`hanzo --help` must list the `{surface}` surface"
+            !help.contains(&format!("  {gone}  ")),
+            "`hanzo --help` must not list `{gone}` as a top-level command"
         );
     }
 }
@@ -144,16 +149,18 @@ fn network_add_sovereign_roundtrip() {
 
 // ── Identity + secrets law (hermetic) ────────────────────────────────────────
 
-/// `whoami` with no identity is an honest refusal naming `hanzo login`.
+/// `auth show` with no identity is an honest refusal naming `hanzo auth login`.
 #[test]
-fn whoami_signed_out_refuses_with_login_hint() {
+fn auth_show_signed_out_refuses_with_login_hint() {
     let cfg = tmp();
     hanzo()
-        .arg("whoami")
+        .args(["auth", "show"])
         .args(cfg_args(&cfg))
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not signed in").and(predicate::str::contains("hanzo login")));
+        .stderr(
+            predicate::str::contains("not signed in").and(predicate::str::contains("hanzo auth login")),
+        );
 }
 
 /// The stdin-secret law: a literal token on argv is REFUSED (it would land in
@@ -162,7 +169,7 @@ fn whoami_signed_out_refuses_with_login_hint() {
 fn login_refuses_a_literal_token_on_argv() {
     let cfg = tmp();
     hanzo()
-        .args(["login", "--provider", "hanzo", "--token", "not-a-real-token"])
+        .args(["auth", "login", "--provider", "hanzo", "--token", "not-a-real-token"])
         .args(cfg_args(&cfg))
         .assert()
         .failure();
@@ -174,7 +181,7 @@ fn login_refuses_a_literal_token_on_argv() {
 fn login_rejects_a_garbage_token_from_stdin() {
     let cfg = tmp();
     hanzo()
-        .args(["login", "--provider", "hanzo", "--token", "-"])
+        .args(["auth", "login", "--provider", "hanzo", "--token", "-"])
         .args(cfg_args(&cfg))
         .write_stdin("garbage-not-a-jwt\n")
         .assert()
@@ -216,18 +223,18 @@ fn live_login_whoami_usage_with_env_token() {
     let cfg = tmp();
 
     hanzo()
-        .args(["login", "--provider", "hanzo", "--token", "-"])
+        .args(["auth", "login", "--provider", "hanzo", "--token", "-"])
         .args(cfg_args(&cfg))
         .write_stdin(format!("{token}\n"))
         .assert()
         .success();
 
     hanzo()
-        .arg("whoami")
+        .args(["auth", "show"])
         .args(cfg_args(&cfg))
         .assert()
         .success()
-        // whoami prints the active identity as owner/name — never "not signed in".
+        // auth show prints the active identity as owner/name — never "not signed in".
         .stdout(predicate::str::contains("/"))
         .stdout(predicate::str::contains("not signed in").not());
 

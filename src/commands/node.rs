@@ -1,184 +1,90 @@
-//! `hanzo node` — run/join hanzo.network (the fabric) with hanzod.
+//! `hanzo node` — machines in the compute fleet.
 //!
-//! hanzod (`~/work/hanzo/node`) is Hanzo's L1 node on the Lux Network (same
-//! Quasar consensus, same ZAP transport as luxd). This command drives it:
-//! `up` starts it on the active network, `join` switches network + starts,
-//! `status` reports liveness, `stop` sends SIGTERM to the process WE started
-//! (by recorded PID — never a blind pkill).
+//! A "node" here is a machine that has JOINED the fleet as a run target — the
+//! computers mission-control can place agents on. This command manages them:
+//! - `join`  registers THIS machine (its spec/capacity/GPUs) as a run target.
+//! - `leave` removes THIS machine's registration (stops it advertising itself).
+//! - `list`  shows the fleet (`/v1/machines` — capacity + GPUs).
+//! - `show`  shows one machine by id.
 //!
-//! Per CI/CD policy we never BUILD the node here; we resolve an existing binary
-//! (HANZO_NODE_BIN, then `hanzod` on PATH) and, if absent, print how to get it.
+//! `join`/`leave` reuse the SAME capture + registry the coding wrapper uses
+//! (`code::context::Machine` + `code::target`), so a machine describes itself ONE
+//! way. The registry is org-scoped SERVER-SIDE from the JWT `owner`; the CLI sends
+//! only the bearer — never an org.
+//!
+//! (The hanzod L1 fabric — run/join hanzo.network — is `hanzo fabric`, a distinct
+//! concern from the compute fleet.)
 
-use crate::commands::network;
-use crate::config::Config;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Result};
 use colored::*;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use reqwest::Method;
 
-/// Where we record the PID of a hanzod we started (for `status`/`stop`).
-fn pid_file() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("hanzo")
-        .join("node.pid")
-}
+use crate::commands::code::context::{self, Machine, Snapshot};
+use crate::commands::code::target::{Register, TargetClient};
+use crate::commands::{cloud, network};
+use crate::config::Config;
+use crate::iam::{paths, store};
 
-fn write_pid(pid: u32) -> Result<()> {
-    let f = pid_file();
-    if let Some(dir) = f.parent() {
-        std::fs::create_dir_all(dir).ok();
+/// `hanzo node join` — register this machine in the compute fleet.
+pub async fn join(cfg: &mut Config) -> Result<()> {
+    let api = network::active(cfg).api;
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
+        .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
+
+    // The SAME host derivation the coding wrapper registers under, so `node join`
+    // and a linked `hanzo agent run` upsert ONE target row for this machine.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let snap = Snapshot::capture(&cwd, "hanzo-node", None);
+    let machine = Machine::capture().await;
+    let body = Register::from_machine(&snap.host, &machine);
+
+    let client = TargetClient::new(&api, &tok.access_token)?;
+    let id = client.register(&body).await?;
+    context::TargetRecord {
+        id: id.clone(),
+        host: snap.host.clone(),
+        machine_id: snap.machine_id.clone(),
+        api: api.trim_end_matches('/').to_string(),
+        updated_at: chrono::Utc::now().timestamp(),
     }
-    std::fs::write(&f, pid.to_string()).with_context(|| format!("writing {}", f.display()))
-}
+    .save()
+    .ok();
 
-fn read_pid() -> Option<u32> {
-    std::fs::read_to_string(pid_file()).ok()?.trim().parse().ok()
-}
-
-fn clear_pid() {
-    std::fs::remove_file(pid_file()).ok();
-}
-
-fn pid_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Resolve a runnable hanzod: explicit override, then PATH. We do NOT build.
-fn resolve_node_bin() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("HANZO_NODE_BIN") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
-    }
-    which::which("hanzod").ok()
-}
-
-fn missing_bin_err() -> anyhow::Error {
-    anyhow!(
-        "hanzod not found. Set HANZO_NODE_BIN=/path/to/hanzod, put `hanzod` on PATH, \
-         or build it in ~/work/hanzo/node (we do not build node binaries here — CI/CD does)."
-    )
-}
-
-/// Best-effort start of the cloud control plane alongside the node.
-fn spawn_cloud() -> Result<()> {
-    let bin = std::env::var("HANZO_CLOUD_BIN")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|p| p.exists())
-        .or_else(|| which::which("hanzo-cloud").ok())
-        .or_else(|| which::which("cloud").ok());
-    match bin {
-        Some(b) => {
-            let child = Command::new(&b)
-                .arg("cloud")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .context("spawning cloud control plane")?;
-            println!("{} cloud control plane started (pid {})", "✓".green(), child.id());
-        }
-        None => println!(
-            "{}",
-            "cloud binary not found — start it separately (set HANZO_CLOUD_BIN)".dimmed()
-        ),
+    println!("{} joined the fleet as {} ({})", "✓".green(), snap.host.cyan().bold(), id.dimmed());
+    let cap = machine.spec.capacity();
+    if !cap.is_empty() {
+        println!("  {}", cap.dimmed());
     }
     Ok(())
 }
 
-/// `hanzo node up [--foreground] [--with-cloud]`
-pub async fn up(cfg: &Config, foreground: bool, with_cloud: bool) -> Result<()> {
-    let net = network::active(cfg);
-    println!(
-        "{} starting hanzod on {} (network_id {}, chain {})",
-        "→".cyan(),
-        net.name.cyan().bold(),
-        net.network_id,
-        net.chain_id
-    );
-    let bin = resolve_node_bin().ok_or_else(missing_bin_err)?;
-
-    let mut cmd = Command::new(&bin);
-    cmd.env("HANZO_NETWORK", &net.name)
-        .env("HANZO_NETWORK_ID", net.network_id.to_string())
-        .env("HANZO_CHAIN_ID", net.chain_id.to_string())
-        .env("HANZO_RPC", &net.rpc);
-
-    if foreground {
-        println!("{}", "running in foreground (Ctrl-C to stop)…".dimmed());
-        let status = cmd.status().context("running hanzod")?;
-        if !status.success() {
-            bail!("hanzod exited with {status}");
-        }
-        return Ok(());
-    }
-
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    let child = cmd.spawn().context("spawning hanzod")?;
-    let pid = child.id();
-    write_pid(pid)?;
-    println!("{} hanzod started (pid {pid}) on {}", "✓".green(), net.name.cyan().bold());
-    println!("  {} hanzo node status   {} hanzo node stop", "→".dimmed(), "→".dimmed());
-
-    if with_cloud {
-        spawn_cloud()?;
+/// `hanzo node leave` — remove this machine's fleet registration. There is no
+/// persistent local daemon to kill: a machine advertises itself only while a
+/// `join`/linked run is registering it, so "stop its service" is forgetting the
+/// registration so nothing re-heartbeats it. The server prunes the stale target by
+/// its own clock.
+pub async fn leave(_cfg: &mut Config) -> Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let machine_id = Snapshot::capture(&cwd, "hanzo-node", None).machine_id;
+    if context::TargetRecord::forget(&machine_id)? {
+        println!("{} left the fleet (registration removed)", "✓".green());
     } else {
-        println!("  {}", "add --with-cloud to also start the cloud control plane".dimmed());
+        println!("{}", "this machine was not registered in the fleet".dimmed());
     }
     Ok(())
 }
 
-/// `hanzo node join <network> [--foreground] [--with-cloud]`
-pub async fn join(cfg: &mut Config, network_name: String, foreground: bool, with_cloud: bool) -> Result<()> {
-    network::use_network(cfg, network_name)?;
-    up(cfg, foreground, with_cloud).await
-}
-
-/// `hanzo node status`
-pub async fn status(cfg: &Config) -> Result<()> {
-    let net = network::active(cfg);
-    println!("{} {} (network_id {}, chain {})", "network".bold(), net.name.cyan(), net.network_id, net.chain_id);
-    match read_pid() {
-        Some(pid) if pid_alive(pid) => println!("{} hanzod running (pid {pid})", "●".green()),
-        Some(pid) => println!("{} stale pidfile (pid {pid} not running)", "○".yellow()),
-        None => println!("{} no hanzod started by this CLI", "○".dimmed()),
-    }
-    let url = format!("{}/health", net.api.trim_end_matches('/'));
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(2)).build()?;
-    match client.get(&url).send().await {
-        Ok(r) => println!("{} {} -> {}", "api".bold(), url.dimmed(), r.status()),
-        Err(_) => println!("{} {} {}", "api".bold(), url.dimmed(), "unreachable".yellow()),
-    }
+/// `hanzo node list` — the fleet's machines, capacity and GPUs.
+pub async fn list(cfg: &mut Config) -> Result<()> {
+    let v = cloud::call(cfg, Method::GET, "/v1/machines", None).await?;
+    cloud::print(&v);
     Ok(())
 }
 
-/// `hanzo node stop`
-pub fn stop(_cfg: &Config) -> Result<()> {
-    match read_pid() {
-        None => {
-            println!("{}", "no hanzod pidfile — nothing to stop".dimmed());
-        }
-        Some(pid) => {
-            let ok = Command::new("kill")
-                .arg(pid.to_string())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            clear_pid();
-            if ok {
-                println!("{} sent SIGTERM to hanzod (pid {pid})", "✓".green());
-            } else {
-                println!("{} no process {pid} (cleared stale pidfile)", "○".yellow());
-            }
-        }
-    }
+/// `hanzo node show NODE` — one machine by id.
+pub async fn show(cfg: &mut Config, id: String) -> Result<()> {
+    let path = format!("/v1/machines/{}", cloud::enc(&id));
+    let v = cloud::call(cfg, Method::GET, &path, None).await?;
+    cloud::print(&v);
     Ok(())
 }
