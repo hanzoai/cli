@@ -39,12 +39,12 @@ impl Lock {
     pub(crate) fn acquire(path: &Path) -> Result<Self> {
         let lock = lock_path(path);
         // The lock file lives beside the thing it guards, and on a brand-new
-        // machine that directory does not exist yet — the FIRST `hanzo login`
+        // machine that directory does not exist yet — the FIRST `hanzo auth login`
         // (via `FileVault::set`) is the very thing that would create it. Opening
         // the lock with `create(true)` makes the FILE, never its parent DIRS, so
         // without this the first write on a fresh install failed with
         // "No such file or directory". Ensure the directory before we lock, so a
-        // clean `curl | sh` → `hanzo login` just works.
+        // clean `curl | sh` → `hanzo auth login` just works.
         if let Some(dir) = lock.parent() {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("creating credential store directory {}", dir.display()))?;
@@ -100,9 +100,22 @@ pub struct Config {
     #[serde(default)]
     pub code: CodeState,
 
+    /// The default dedicated cloud cluster selected by `hanzo cluster use`.
+    #[serde(default)]
+    pub cluster: ClusterState,
+
     /// Path this config was loaded from; where `save` writes back. Not persisted.
     #[serde(skip)]
     path: PathBuf,
+}
+
+/// The default dedicated cloud cluster (`hanzo cluster use`). Non-secret, mirrors
+/// how `NetworkState`/`WalletState` hold a selection.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterState {
+    /// The selected cluster name; `None` until one is chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
 }
 
 /// The non-secret INDEX of signed-in identities. NEVER holds token material —
@@ -111,13 +124,13 @@ pub struct Config {
 /// in the keychain, the metadata + the active pointer are here.
 ///
 /// The index exists because the keychain has no portable enumeration API: it is
-/// what lets `hanzo whoami --all` list identities offline, and what makes an
+/// what lets `hanzo auth list` list identities offline, and what makes an
 /// active identity a persisted, explicit choice rather than a guess.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuthState {
     /// The ACTIVE identity per brand: brand -> "owner/name". Changed ONLY by an
-    /// explicit `hanzo login` / `hanzo switch` — never automatically, never as a
+    /// explicit `hanzo auth login` / `hanzo auth use` — never automatically, never as a
     /// fallback. See `iam::store`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub active: BTreeMap<String, String>,
@@ -127,7 +140,7 @@ pub struct AuthState {
     /// The active MODEL provider for `hanzo code` routing — "hanzo" (the gateway),
     /// "openai", or "anthropic". NON-SECRET: it only NAMES which credential to
     /// use; the credential itself is filed in the Vault (`iam::provider`). Set by
-    /// the login picker / `hanzo login --provider`. `None` ⇒ the gateway default.
+    /// the login picker / `hanzo auth login --provider`. `None` ⇒ the gateway default.
     /// A separate axis from the active IDENTITY: the identity is who cloud bills,
     /// the provider is which model endpoint a coding session's calls go to.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -286,7 +299,7 @@ impl Config {
     ///
     /// The config file is a shared mutable PLACE: several `hanzo` processes write
     /// it at once (a `hanzo code` migrating a legacy credential in one terminal
-    /// while you run `hanzo login` in another). A load-mutate-save against a
+    /// while you run `hanzo auth login` in another). A load-mutate-save against a
     /// stale in-memory snapshot silently reverts the other process's write, and
     /// for the auth index that means landing on a principal you did not choose —
     /// the hard invariant broken by a write race rather than a cascade.
@@ -338,6 +351,7 @@ impl Default for Config {
             network: NetworkState::default(),
             wallet: WalletState::default(),
             code: CodeState::default(),
+            cluster: ClusterState::default(),
             path: PathBuf::new(),
         }
     }

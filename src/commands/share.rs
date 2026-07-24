@@ -2,7 +2,7 @@
 //! `https://<token>.share.hanzo.ai` URL: ngrok on our own zero-trust fabric.
 //!
 //! DX: the per-org zrok account is provisioned SERVER-SIDE from your
-//! `hanzo login` identity (`POST /v1/share/enable`) — no separate signup, no
+//! `hanzo auth login` identity (`POST /v1/share/enable`) — no separate signup, no
 //! manual `zrok enable`, no config file. `hanzo share 3000` provisions, runs the
 //! fabric tunnel, and prints the public URL. The command sends only the bearer;
 //! the org is the gateway's to derive from the JWT (never a client field), the
@@ -47,7 +47,7 @@ pub async fn run(
     // 1. Provision from the login identity — one authed call, org server-derived.
     let api = network::active(cfg).api.trim_end_matches('/').to_string();
     let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
-        .ok_or_else(|| anyhow!("not signed in — run `hanzo login` first"))?;
+        .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
     let pr = enable(&api, &tok.access_token).await?;
 
     // 2. Locate the zrok fabric helper.

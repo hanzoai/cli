@@ -5,7 +5,7 @@
 //!      only on an interactive terminal (never piped/CI), theme-aware
 //!      (`NO_COLOR`, dumb terminals) — then the login picker.
 //!   2. The login DISPATCH — interactive (arrow-key picker) or non-interactive
-//!      (`hanzo login --provider hanzo|openai|anthropic [--token -]`). A secret
+//!      (`hanzo auth login --provider hanzo|openai|anthropic [--token -]`). A secret
 //!      only ever arrives on stdin or an interactive hidden prompt, NEVER argv.
 //!
 //! WHERE credentials land is not reinvented: a Hanzo sign-in is the existing
@@ -186,7 +186,7 @@ fn read_key(token: Option<String>, prompt: &str) -> Result<String> {
         SecretSource::Prompt => prompt_secret(prompt),
         SecretSource::ArgvRefused => bail!(
             "a key must never be passed on the command line (it would land in `ps` and shell history) \
-             — pipe it on stdin with `--token -`, or run `hanzo login` interactively"
+             — pipe it on stdin with `--token -`, or run `hanzo auth login` interactively"
         ),
     }
 }
@@ -202,7 +202,7 @@ fn read_identity_token(token: String) -> Result<String> {
         // `Some(_)` never resolves to `Prompt`; a literal is refused exactly as a key is.
         SecretSource::Prompt | SecretSource::ArgvRefused => bail!(
             "a token must never be passed on the command line (it would land in `ps` and shell \
-             history) — pipe it on stdin with `--token -`, or run `hanzo login` for the browser flow"
+             history) — pipe it on stdin with `--token -`, or run `hanzo auth login` for the browser flow"
         ),
     }
 }
@@ -226,7 +226,7 @@ fn confirm_provider(provider: Provider) {
     );
     println!(
         "{}",
-        "  (`hanzo login` → Hanzo to route every model through the gateway with unified billing)".dimmed()
+        "  (`hanzo auth login` → Hanzo to route every model through the gateway with unified billing)".dimmed()
     );
 }
 
@@ -279,7 +279,7 @@ fn refuse_provider_mismatch(provider: Provider, key: &str) -> Result<()> {
                 "that looks like a {} key, but `--provider {}` was requested. A key is filed under \
                  the provider it authenticates and a coding session sends it there, so storing a {} \
                  key as {} would transmit it to the wrong API. Re-run with `--provider {}`, or run \
-                 `hanzo login` and let the key's prefix pick the provider.",
+                 `hanzo auth login` and let the key's prefix pick the provider.",
                 detected.label(),
                 provider.slug(),
                 detected.label(),
@@ -315,7 +315,7 @@ async fn dispatch_choice(cfg: &mut Config, brand: &str, choice: Choice) -> Resul
     }
 }
 
-/// `hanzo login` — the command entrypoint. `--provider` drives the
+/// `hanzo auth login` — the command entrypoint. `--provider` drives the
 /// non-interactive path; without it, an interactive terminal gets the picker
 /// (with the fresh-machine banner the first time) and a non-terminal falls back
 /// to the browser OIDC flow, exactly as before.
@@ -335,7 +335,7 @@ pub async fn run_login(
 
     // No explicit provider.
     if let Some(t) = token {
-        // Back-compat: `hanzo login --token -` files a Hanzo identity.
+        // Back-compat: `hanzo auth login --token -` files a Hanzo identity.
         return hanzo_login(cfg, brand, Some(t)).await;
     }
 
@@ -373,7 +373,7 @@ pub async fn first_run(cfg: &mut Config, brand: &str) {
         }
         Ok(None) => println!(
             "{}",
-            "Skipped — continuing locally. Run `hanzo login` any time to connect.".dimmed()
+            "Skipped — continuing locally. Run `hanzo auth login` any time to connect.".dimmed()
         ),
         Err(e) => warn(&format!("could not show the sign-in picker ({e}) — continuing locally.")),
     }
@@ -435,7 +435,7 @@ mod tests {
             .to_string();
         assert!(err.contains("OpenAI"), "names the detected vendor: {err}");
         assert!(err.contains("anthropic"), "names the requested provider: {err}");
-        assert!(err.contains("hanzo login") || err.contains("--provider"), "actionable remedy: {err}");
+        assert!(err.contains("hanzo auth login") || err.contains("--provider"), "actionable remedy: {err}");
 
         // Sequenced as the caller does (`guard?; set_key`), the store never runs,
         // so the vault stays empty and `auth.provider` is never marked.

@@ -81,7 +81,7 @@ pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
         .context("calling IAM userinfo")?;
     if !resp.status().is_success() {
         bail!(
-            "userinfo failed ({}): session may be expired — run `hanzo login`",
+            "userinfo failed ({}): session may be expired — run `hanzo auth login`",
             resp.status()
         );
     }

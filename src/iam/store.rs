@@ -7,7 +7,7 @@
 //! one answer in exactly one place.
 //!
 //! HARD INVARIANT — the active identity changes ONLY by explicit user action
-//! (`hanzo login`, `hanzo switch`). There is no auto-switch, no fallback and no
+//! (`hanzo auth login`, `hanzo auth use`). There is no auto-switch, no fallback and no
 //! cascade: if the active identity's credential is missing, the run is
 //! UNAUTHENTICATED. It never quietly becomes some other identity you happen to
 //! hold. Acting as the wrong principal is worse than not acting.
@@ -62,7 +62,7 @@ pub fn remove(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Id
     remove_in(&*token::vault()?, cfg, brand, sel)
 }
 
-/// Remove EVERY identity for `brand` (`hanzo logout --all`).
+/// Remove EVERY identity for `brand` (`hanzo auth logout --all`).
 pub fn remove_all(cfg: &mut Config, brand: &str) -> Result<Vec<Identity>> {
     remove_all_in(&*token::vault()?, cfg, brand)
 }
@@ -128,13 +128,13 @@ pub fn refusal_hint(active: &Identity, held: &[Identity]) -> Option<String> {
     let remedy = match admins.as_slice() {
         // Name only an identity we KNOW we hold — never a guessed `admin/<name>`
         // that `switch` would then reject.
-        [one] => format!("You also hold {one} — switch to it and retry:\n\n      hanzo switch {one}"),
+        [one] => format!("You also hold {one} — switch to it and retry:\n\n      hanzo auth use {one}"),
         // `switch` resolves a bare owner itself, and lists when it is ambiguous.
         // Never re-implement that here.
         [_, ..] => format!(
-            "You hold several `{ADMIN_ORG}` identities — switch to one and retry:\n\n      hanzo switch {ADMIN_ORG}"
+            "You hold several `{ADMIN_ORG}` identities — switch to one and retry:\n\n      hanzo auth use {ADMIN_ORG}"
         ),
-        [] => format!("You hold no `{ADMIN_ORG}` identity — sign in as one:\n\n      hanzo login"),
+        [] => format!("You hold no `{ADMIN_ORG}` identity — sign in as one:\n\n      hanzo auth login"),
     };
     Some(format!(
         "\n  You are {active}; this needs the reserved `{ADMIN_ORG}` org (SuperAdmin).\n  {remedy}\n"
@@ -167,13 +167,13 @@ pub(crate) fn add_in(
     token::store(v, brand, &id, tokens)?;
     cfg.update(|c| {
         index(c, brand, &id);
-        set_active(c, brand, &id); // `hanzo login` IS the explicit user action
+        set_active(c, brand, &id); // `hanzo auth login` IS the explicit user action
         Ok(())
     })?;
     // An explicit login to this brand supersedes any pre-multi-identity
     // credential filed under the bare brand: the user just re-authenticated, so
     // the old blob is dead weight. This is also the escape hatch that clears a
-    // legacy entry whose claims cannot be read — `hanzo login` always works.
+    // legacy entry whose claims cannot be read — `hanzo auth login` always works.
     v.remove(token::legacy_key(brand))?;
     Ok(id)
 }
@@ -214,7 +214,7 @@ pub(crate) fn switch_in(
     if token::load(v, brand, &target)?.is_none() {
         bail!(
             "{brand} identity {target} is indexed but its credential is not in the keychain \
-             — run `hanzo login{}` to sign in as it again",
+             — run `hanzo auth login{}` to sign in as it again",
             brand_flag(brand)
         );
     }
@@ -224,7 +224,7 @@ pub(crate) fn switch_in(
         // A membership check alone would be equivalent to this only for
         // `Selector::Exact`. For a bare owner or the toggle, membership is not
         // the only precondition — UNAMBIGUITY is too, and a concurrent login can
-        // change it: `hanzo switch hanzo` would silently pick one where a fresh
+        // change it: `hanzo auth use hanzo` would silently pick one where a fresh
         // resolve refuses as ambiguous. Re-resolving turns that silent divergence
         // into a fail-closed refusal, subsumes the membership check, and restores
         // parity with `remove_in`, which already re-resolves under the lock. Both
@@ -236,7 +236,7 @@ pub(crate) fn switch_in(
         if fresh != target {
             bail!(
                 "identities on {brand} changed while switching — verified {target}, now resolves \
-                 to {fresh}. Nothing changed; re-run `hanzo switch`."
+                 to {fresh}. Nothing changed; re-run `hanzo auth use`."
             );
         }
         set_active(c, brand, &fresh);
@@ -269,7 +269,7 @@ pub(crate) fn active_token_in(
     if claimed != id {
         bail!(
             "stored credential for {brand} identity {id} actually identifies as {claimed} — \
-             refusing to use it; run `hanzo login{}`",
+             refusing to use it; run `hanzo auth login{}`",
             brand_flag(brand)
         );
     }
@@ -301,7 +301,7 @@ pub(crate) fn token_for_in(
     if &claimed != id {
         bail!(
             "stored credential for {brand} identity {id} actually identifies as {claimed} — \
-             refusing to use it; run `hanzo login{}`",
+             refusing to use it; run `hanzo auth login{}`",
             brand_flag(brand)
         );
     }
@@ -321,7 +321,7 @@ fn migrate_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Option<Ide
     let id = Identity::from_access_token(&tokens.access_token).with_context(|| {
         format!(
             "the credential stored by an older `hanzo` carries no identity — \
-             run `hanzo login{}` to replace it (or `hanzo logout --all{}` to clear it)",
+             run `hanzo auth login{}` to replace it (or `hanzo auth logout --all{}` to clear it)",
             brand_flag(brand),
             brand_flag(brand)
         )
@@ -339,7 +339,7 @@ fn migrate_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Option<Ide
         //
         // This check runs INSIDE the update, i.e. against fresh on-disk state
         // under the lock. That is what makes it correct under a race: a migration
-        // that started before a concurrent `hanzo login` finished still sees that
+        // that started before a concurrent `hanzo auth login` finished still sees that
         // login's pointer here and leaves it alone. Deciding on the caller's
         // stale snapshot would silently revert the user's explicit choice — on
         // the real fleet, demoting them off the identity they just picked.
@@ -368,7 +368,7 @@ pub(crate) fn remove_in(
             Some(s) => resolve_selector(c, brand, s)?,
             None => active(c, brand).ok_or_else(|| {
                 anyhow!(
-                    "no active identity on {brand} — name one:\n{}\n\n  hanzo logout <owner/name>",
+                    "no active identity on {brand} — name one:\n{}\n\n  hanzo auth logout <owner/name>",
                     render(c, brand)
                 )
             })?,
@@ -427,7 +427,7 @@ fn set_active(cfg: &mut Config, brand: &str, id: &Identity) {
 fn resolve_selector(cfg: &Config, brand: &str, sel: &Selector) -> Result<Identity> {
     let ids = list(cfg, brand);
     if ids.is_empty() {
-        bail!("not signed in to {brand} — run `hanzo login{}`", brand_flag(brand));
+        bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
     }
     match sel {
         Selector::Exact(id) => {
@@ -461,16 +461,16 @@ fn resolve_selector(cfg: &Config, brand: &str, sel: &Selector) -> Result<Identit
     }
 }
 
-/// `hanzo switch` with no argument: toggle when the choice is unambiguous.
+/// `hanzo auth use` with no argument: toggle when the choice is unambiguous.
 fn toggle_target(cfg: &Config, brand: &str) -> Result<Identity> {
     let ids = list(cfg, brand);
     match ids.len() {
-        0 => bail!("not signed in to {brand} — run `hanzo login{}`", brand_flag(brand)),
+        0 => bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand)),
         1 => Ok(ids[0].clone()),
         2 => {
             let cur = active(cfg, brand).ok_or_else(|| {
                 anyhow!(
-                    "no active identity on {brand} — name one:\n{}\n\n  hanzo switch <owner/name>",
+                    "no active identity on {brand} — name one:\n{}\n\n  hanzo auth use <owner/name>",
                     render(cfg, brand)
                 )
             })?;
@@ -479,7 +479,7 @@ fn toggle_target(cfg: &Config, brand: &str) -> Result<Identity> {
                 .ok_or_else(|| anyhow!("nothing to switch to on {brand}"))
         }
         n => bail!(
-            "{n} identities on {brand} — name the one you want:\n{}\n\n  hanzo switch <owner/name>",
+            "{n} identities on {brand} — name the one you want:\n{}\n\n  hanzo auth use <owner/name>",
             render(cfg, brand)
         ),
     }
@@ -660,7 +660,7 @@ mod tests {
         let hint = refusal_hint(&ident(ORG), &[ident(ORG), ident(ADMIN)]).unwrap();
         assert!(hint.contains("You are hanzo/z"), "{hint}");
         assert!(hint.contains("admin"), "must name the reserved org: {hint}");
-        assert!(hint.contains("hanzo switch admin/z"), "must be actionable: {hint}");
+        assert!(hint.contains("hanzo auth use admin/z"), "must be actionable: {hint}");
     }
 
     /// A SuperAdmin refused is NOT an identity problem: suggesting a switch to
@@ -676,8 +676,8 @@ mod tests {
     fn a_refusal_without_any_admin_identity_says_sign_in_not_switch() {
         let hint = refusal_hint(&ident(ORG), &[ident(ORG)]).unwrap();
         assert!(hint.contains("hold no `admin` identity"), "{hint}");
-        assert!(hint.contains("hanzo login"), "{hint}");
-        assert!(!hint.contains("hanzo switch"), "must not suggest an impossible switch: {hint}");
+        assert!(hint.contains("hanzo auth login"), "{hint}");
+        assert!(!hint.contains("hanzo auth use"), "must not suggest an impossible switch: {hint}");
     }
 
     /// Several SuperAdmin identities: defer to `switch`'s own bare-owner
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn a_refusal_with_several_admin_identities_defers_to_switch() {
         let hint = refusal_hint(&ident(ORG), &[ident(ADMIN), ident("admin/ops")]).unwrap();
-        assert!(hint.contains("hanzo switch admin\n") || hint.contains("hanzo switch admin"), "{hint}");
+        assert!(hint.contains("hanzo auth use admin\n") || hint.contains("hanzo auth use admin"), "{hint}");
         assert!(hint.contains("several"), "{hint}");
     }
 
@@ -906,7 +906,7 @@ mod tests {
     ///
     /// Interleaving:
     ///   A: `hanzo code` starts migrating the legacy credential (in flight)
-    ///   B: `hanzo login` explicitly sets active = hanzo/z, and saves
+    ///   B: `hanzo auth login` explicitly sets active = hanzo/z, and saves
     ///   A: migration finishes
     ///
     /// A must NOT land the user on the legacy identity. On the real fleet the
@@ -1083,7 +1083,7 @@ mod tests {
 
         let err = switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap_err().to_string();
         assert!(err.contains("not in the keychain"), "{err}");
-        assert!(err.contains("hanzo login"), "must be actionable: {err}");
+        assert!(err.contains("hanzo auth login"), "must be actionable: {err}");
         // A refused switch changes nothing.
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
     }
@@ -1097,7 +1097,7 @@ mod tests {
             .unwrap();
 
         let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
-        assert!(err.contains("hanzo login"), "must be actionable: {err}");
+        assert!(err.contains("hanzo auth login"), "must be actionable: {err}");
 
         // The advertised escape hatch actually works.
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
@@ -1127,7 +1127,7 @@ mod tests {
         assert!(err.contains("hanzo/ops") && err.contains("hanzo/z"), "{err}");
     }
 
-    /// Bare `hanzo switch` with exactly two identities toggles.
+    /// Bare `hanzo auth use` with exactly two identities toggles.
     #[test]
     fn bare_switch_toggles_between_exactly_two() {
         let (v, mut c) = (MemVault::new(), cfg());
@@ -1137,7 +1137,7 @@ mod tests {
         assert_eq!(switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(), ORG);
     }
 
-    /// Bare `hanzo switch` with more than two is ambiguous: list, do not guess.
+    /// Bare `hanzo auth use` with more than two is ambiguous: list, do not guess.
     #[test]
     fn bare_switch_with_more_than_two_lists_and_refuses() {
         let (v, mut c) = (MemVault::new(), cfg());
@@ -1146,7 +1146,7 @@ mod tests {
 
         let err = switch_in(&v, &mut c, "hanzo", None).unwrap_err().to_string();
         assert!(err.contains("3 identities"), "{err}");
-        assert!(err.contains("hanzo switch <owner/name>"), "{err}");
+        assert!(err.contains("hanzo auth use <owner/name>"), "{err}");
         // The active identity is untouched by a refused switch.
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), "zoo/z");
     }

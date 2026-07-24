@@ -11,7 +11,7 @@
 //! from the JWT `owner` claim (cloud's validated principal → commerce's
 //! `middleware.GetOrganization`), so there is no org flag and no `X-Org-Id`:
 //! nothing here can name — let alone forge — the tenant whose ledger it touches.
-//! That is also why there is no billing selector: `hanzo switch` moves the money
+//! That is also why there is no billing selector: `hanzo auth use` moves the money
 //! because it moves the identity, and `owner` IS the billing key.
 //!
 //! WHO MAY MINT IS THE SERVER'S CALL, ALWAYS. `deposit` is gated by commerce's
@@ -91,7 +91,7 @@ impl Deposit {
 /// principal that was refused; re-deriving it anywhere else is how the two drift
 /// apart. Both come from [`store::active_token`] — THE one way any command
 /// resolves a credential — so `hanzo billing` bills exactly the identity
-/// `hanzo whoami` names, and `hanzo switch` moves it.
+/// `hanzo auth show` names, and `hanzo auth use` moves it.
 struct Caller {
     id: Identity,
     token: String,
@@ -105,7 +105,7 @@ impl Caller {
     fn resolve(cfg: &mut Config) -> Result<Self> {
         let api = network::active(cfg).api.trim_end_matches('/').to_string();
         let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
-            .ok_or_else(|| anyhow!("not signed in — run `hanzo login` first"))?;
+            .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
         let held = store::list(cfg, paths::DEFAULT_BRAND);
         Ok(Self { id, token: tok.access_token, api, held })
     }
@@ -361,7 +361,7 @@ mod tests {
         assert!(err.contains("hanzo/z"), "must name the refused identity: {err}");
         // WHY, and the WAY OUT.
         assert!(err.contains("admin"), "must name the reserved org: {err}");
-        assert!(err.contains("hanzo switch admin/z"), "must be actionable: {err}");
+        assert!(err.contains("hanzo auth use admin/z"), "must be actionable: {err}");
         // Never the credential.
         assert!(!err.contains("TOK123"), "token must never be printed: {err}");
     }
@@ -391,7 +391,7 @@ mod tests {
             .to_string();
 
         assert!(err.contains("platform-administrator"), "server's words missing: {err}");
-        assert!(!err.contains("hanzo switch"), "must not suggest a pointless switch: {err}");
+        assert!(!err.contains("hanzo auth use"), "must not suggest a pointless switch: {err}");
     }
 
     // ---- reading the server honestly ---------------------------------------

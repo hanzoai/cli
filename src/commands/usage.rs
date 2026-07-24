@@ -95,7 +95,7 @@ pub async fn usage(cfg: &mut Config, brand: &str) -> Result<()> {
     let provider_rows = provider_rows(brand)?;
 
     if ids.is_empty() && provider_rows.is_empty() {
-        bail!("not signed in — run `hanzo login` first");
+        bail!("not signed in — run `hanzo auth login` first");
     }
 
     // Resolve each identity's OWN credential: reuse the active one we already
@@ -259,7 +259,7 @@ fn cell(b: &Balance) -> String {
             }
         }
         Balance::ProviderKey => "direct route — not metered here".dimmed().to_string(),
-        Balance::NoCredential => "no credential — run `hanzo login`".yellow().to_string(),
+        Balance::NoCredential => "no credential — run `hanzo auth login`".yellow().to_string(),
         Balance::Unavailable(why) => {
             format!("{} {}", "unavailable".yellow(), format!("({why})").dimmed())
         }

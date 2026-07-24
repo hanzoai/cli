@@ -75,36 +75,60 @@ storage is exhausted). A tag-vs-crate guard refuses a mislabeled release.
 before unpacking.
 
 ## Command surface (`src/main.rs` clap tree → `src/commands/*`, `src/iam/*`)
-- `login` / `whoami` / `switch` / `logout` — sign-in + the identity model
-  (`src/iam/*`, HIP-0111; below). Bare `hanzo login` on a TTY opens the
-  multi-provider picker (Hanzo OIDC · OpenAI · Anthropic · paste-a-key);
-  `--provider hanzo|openai|anthropic [--token -]` is the non-interactive path.
-  `logout --all` is a complete sign-out (identities + provider keys). See
-  "Onboarding + provider login" below.
-- `network list|current|use <name>|add <name> …` — the network model (below).
-- `kms list|get|set|rm` — secrets, the only place they live (below).
-- `wallet show|address|create|import <secret>|use <addr>|list` — wallet (below).
-- `billing balance|deposit` — the prepaid wallet's money (below).
-- `connector add|list|verify|rm --provider cloudflare` — connect an external
-  provider account to your org; the credential is sealed into KMS server-side,
-  `add`'s token is stdin-only (argv refused, the `iam::secret` law) (below).
-- `usage` — every identity (and provider key) you hold, STACKED: each account's
-  own remaining balance / usage-left, read client-side with its own token,
-  disjoint (below).
-- `node up|status|join <network>|stop` — run/join hanzo.network with hanzod.
-- `cluster topology|models|route|placement|chat|search` — talk to a hanzo node
-  (default node URL = the active network's `api`).
-- `deploy` — targets the active network; the active wallet signs (auto-provisions
-  one if none, on a real deploy).
-- `code [--backend claude|dev] [--no-link] [--project-mcp] [--ask|--safe] [--no-sandbox] [--model <id>] [--resume <id>] [task]` —
-  wrap a local coding agent as a session-aware, portable, trackable object; a
-  signed-in run links to your cloud by default, `--no-link` opts out (below).
-- bare `hanzo [flags] [task]` (no subcommand) — a linked interactive `hanzo code`,
-  WITH flags: the code args are flattened onto the top level, so `hanzo --model enso`,
-  `hanzo --resume <id>` (the line printed after every run), and `hanzo "fix the bug"`
-  all route to a coding session (link forced on; a local run when nobody is signed
-  in). An explicit subcommand (`hanzo network …`, `hanzo code …`) is unaffected.
-- `agent`, `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
+`hanzo <resource> <command>` — one resource noun, verbs beneath it. ONE module per
+resource in `src/commands/`, shared seams factored once (`commands::cloud` = the
+hand-written authenticated call; `commands::launch` = resolve+exec a sibling binary;
+`iam::store` = the identity seam). Every OTHER cloud capability is a GENERATED
+product subcommand (`commands::product`, merged at runtime).
+
+**Primary resources**
+- `agent run TASK [--mode code|desktop]` — the ONE way to run an agent. `code`
+  (default) is the managed coding workspace (`commands::code::run`, below); `desktop`
+  points the same run at browser/desktop control (Hanzo MCP browser/computer tools,
+  pinned on). Carries the full coding-session flags (`--model`/`--backend`/`--resume`/…).
+- `auth login|logout|show|list|use|token` — the identity model (`src/iam/*`,
+  HIP-0111; below). `login` signs in through **Hanzo IAM** (OIDC picker on a TTY,
+  `--provider hanzo|openai|anthropic [--token -]` non-interactive); `show`/`list` =
+  active / all; `use` = switch; `token` prints the active access token; `logout --all`
+  clears identities + provider keys.
+- `cluster create|list|show|use|delete` — dedicated cloud clusters (managed K8s via
+  PaaS DOKS, `/v1/paas/cluster/doks/*`; org-scoped). `use` selects a default locally.
+- `config list|get|set` — local settings (`~/.config/hanzo/config.toml`), through the
+  ONE atomic writer; a `set` that would make the config unparseable is refused.
+- `model serve MODEL` — OpenAI-compatible local endpoint via the Hanzo engine
+  (resolve+exec `hanzo-engine`/`$HANZO_ENGINE_BIN serve -m MODEL`; we never build it).
+- `node join|leave|list|show` — machines in the compute fleet. `join`/`leave` reuse
+  the run-target registry (`code::context::Machine` + `code::target`, `/v1/agents/targets`);
+  `list`/`show` read `/v1/machines`.
+- `runner start|stop|status` — provide this machine as a CI runner (resolve+exec
+  `arcd`/`$HANZO_RUNNER_BIN`).
+- `secret scan PATH` — LOCAL credential/private-key scanner (dependency-free, redacted,
+  exits non-zero on a find). Distinct from cloud `kms`/`connector`, which STORE secrets.
+- `serve cloud | SERVICE` — run a Hanzo service: `cloud` the whole API, or one
+  subsystem (iam|kms|gateway|storage|pubsub) — resolve+exec `hanzo-cloud <arg>`.
+- `version` — the CLI version.
+- bare `hanzo [flags] [task]` (no subcommand) — the ergonomic shortcut for
+  `agent run --mode code` (link forced on; a local run when nobody is signed in).
+
+**Kept resources (additive, reachable)**
+- `fabric up|status|join|stop` + `fabric cluster topology|models|route|placement|chat|search`
+  — run/join hanzo.network with hanzod, and query the model cluster it serves (the
+  former top-level `node`/`cluster`, re-homed here so they don't collide with the new
+  compute-fleet `node` and DOKS `cluster`).
+- `network`, `wallet`, `billing`, `usage`, `connector`, `share`, `init`, `dev`,
+  `docs|mdx|ui|mcp` (TS proxies) — unchanged.
+
+**HELD (no honest backend yet — not registered; reachable paths noted)**
+- `app` (declared/running apps + deploy --version) — no apps-plane endpoint; the old
+  `deploy` was a non-functional stub, now removed.
+- `build` (arcd image build/publish) — no verified arcd build CLI/endpoint; the old
+  local `build` stub is removed.
+- `compute` (run containers/functions) — no container-run endpoint. The cloud
+  `compute` product (`machines`/`gpus`/`regions`/`sizes`) and `functions` (invoke)
+  remain reachable as generated products (`hanzo compute …`, `hanzo functions invoke`).
+
+**Cloud (generated):** `hanzo <product> <resource…> <verb>` — `kms`, `models`, `chat`,
+`embeddings`, `o11y`, `compute`, `functions`, `paas`, `bot`, `agents`, … (below).
 
 ## Identity model (`src/iam/*`) — MULTI-identity, like `gh auth switch`
 One human holds many principals: `z@hanzo.ai` is BOTH `admin/z` (SuperAdmin, the
