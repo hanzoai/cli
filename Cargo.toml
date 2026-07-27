@@ -1,6 +1,10 @@
 [package]
 name = "hanzo-cli"
+<<<<<<< HEAD
 version = "1.0.0"
+=======
+version = "1.9.0"
+>>>>>>> 907d98a8
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -11,7 +15,17 @@ repository = "https://github.com/hanzoai/cli"
 name = "hanzo"
 path = "src/main.rs"
 
+<<<<<<< HEAD
 [dependencies]
+=======
+# The canonical Event emitter lives in its own crate so `dev` can share the exact
+# same wire via a pinned git dependency — one source of truth, two consumers.
+[workspace]
+members = ["crates/event"]
+
+[dependencies]
+hanzo-event = { path = "crates/event" }
+>>>>>>> 907d98a8
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
@@ -20,23 +34,59 @@ serde_json = "1.0"
 toml = "0.8"
 dirs = "5.0"
 colored = "2.1"
+<<<<<<< HEAD
 indicatif = "0.17"
 dialoguer = "0.11"
 reqwest = { version = "0.12", features = ["json"] }
+=======
+dialoguer = "0.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "http2", "charset"] }
+>>>>>>> 907d98a8
 which = "6.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3.10"
+<<<<<<< HEAD
 subprocess = "0.2"
+=======
+>>>>>>> 907d98a8
 chrono = { version = "0.4", features = ["serde"] }
 
 # Cloud auth (HIP-0111 OIDC PKCE S256).
 sha2 = "0.10"                                              # PKCE S256 challenge
 base64 = "0.22"                                            # base64url (no pad)
+<<<<<<< HEAD
 rand = "0.8"                                               # OsRng for PKCE verifier + state
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }  # OS keychain — tokens NEVER hit disk
 webbrowser = "1"                                           # open the IAM authorize URL
 
+=======
+rand = "0.8"                                               # OsRng for PKCE verifier + state + local wallet entropy
+webbrowser = "1"                                           # open the IAM authorize URL
+
+# Local / imported wallets — HD derivation + EVM address. Cloud-custody (KMS/MPC)
+# wallets need NONE of this; these are only for offline `wallet create --local`
+# and `wallet import`. Pure-Rust RustCrypto; secrets live in the OS keychain.
+bip39 = { package = "tiny-bip39", version = "1" }             # BIP-39 mnemonic (all word counts) -> seed
+bip32 = "0.5"                                             # secp256k1 BIP-32 HD derivation from a seed
+k256 = "0.13"                                             # secp256k1 (matches bip32) — public key -> EVM address
+sha3 = "0.10"                                             # Keccak-256 for EVM address
+
+# The native OS keychain is compiled ONLY where one exists without a C dependency
+# that blocks cross-compilation. macOS Keychain (Security.framework) and Windows
+# Credential Manager (advapi32) bind system libraries the target already ships,
+# so they cross-build from Linux clean. Linux secret-service is deliberately NOT
+# here: its `sync-secret-service` pulls C `libdbus` (arm64 cross-build fails) and
+# needs a D-Bus session absent in a container / over SSH / in CI — so Linux uses
+# `iam::token::FileVault` (owner-only 0600 file), the same store as the fallback
+# on every other target. See `src/iam/token.rs`.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+>>>>>>> 907d98a8
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
