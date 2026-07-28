@@ -233,9 +233,16 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
     assert_eq!(v.as_object().unwrap().len(), 1, "unset optionals must be omitted: {v}");
 }
 
-/// BUG-1 FIX: a collection GET whose verb also heads a nested group is a RUNNABLE
-/// GROUP — `hanzo kv list` runs `GET /v1/kv`, and `hanzo kv list push <key>`
-/// descends into the datatype. It is NOT a bare group that demands a subcommand.
+/// BUG-1 FIX: a collection GET is a runnable LEAF on a node that may also head a
+/// group — `hanzo kv list` runs `GET /v1/kv` rather than demanding a subcommand.
+///
+/// The descent half of this test used to run `hanzo kv list push mykey` against
+/// `/v1/kv/list/{key}/push`. Cloud serves exactly `/v1/kv` and `/v1/kv/{name}`, so
+/// the whole datatype subtree was a 404 the authored spec invented, and the
+/// registry refuted it. The resolver still makes such a node runnable — that is a
+/// property of the tree builder, not of any one coordinate — but the served
+/// surface no longer contains an example, and the CLI no longer offers the
+/// commands that were never answerable.
 #[test]
 fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
     let m = matches_of(&["hanzo", "kv", "list"]);
@@ -243,12 +250,10 @@ fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
     assert_eq!(op.path, "/v1/kv");
     assert_eq!(op.method, "GET");
 
-    // `push` has a required JSON body field; supplying it proves the descent
-    // reaches the datatype op (not the collection GET).
-    let m = matches_of(&["hanzo", "kv", "list", "push", "mykey", "--values", "[1,2]"]);
-    let Some(Resolved::Leaf { op, values, .. }) = resolve(&m) else { panic!("expected a leaf") };
-    assert_eq!(op.path, "/v1/kv/list/{key}/push");
-    assert_eq!(values, vec!["mykey"]);
+    assert!(
+        !OPS.iter().any(|o| o.path.starts_with("/v1/kv/list")),
+        "the unserved kv datatype subtree must stay refuted"
+    );
 }
 
 /// BUG-2 FIX: an `in: query` parameter becomes a TYPED `--flag` that rides the
@@ -285,11 +290,15 @@ fn a_friendly_alias_dispatches_to_the_same_generated_op() {
 #[test]
 fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
     for noise in ["console", "download", "upload", "files", "completions", "settings",
-                  "provisioning", "do", "csrf", "indexers", "search-docs", "gateway"] {
+                  "provisioning", "do", "csrf", "indexers", "search-docs"] {
         assert!(!is_product(noise), "{noise} must be denied as a top-level command");
     }
-    // `gateway` is dropped because its whole `/v1/gateway/*` subtree is unmounted
-    // (404 live); no op may carry a `/v1/gateway/` path.
+    // `gateway` is absent WITHOUT a curation entry: cloud's live route table
+    // refutes all 27 authored `/v1/gateway/*` operations, so `genspec` never puts
+    // them in the spec. This assertion is the proof the mechanism replaced the
+    // hand-written knowledge — it passed before with a DENY entry, and passes now
+    // with none.
+    assert!(!is_product("gateway"), "the registry must refute the unmounted /v1/gateway/* subtree");
     assert!(
         !OPS.iter().any(|o| o.path.starts_with("/v1/gateway/")),
         "no op may target the unmounted /v1/gateway/* subtree"
@@ -352,10 +361,12 @@ fn hand_written_products_are_not_generated() {
     }
 }
 
-/// `kms` is now a GENERATED product, folded to EXACTLY the four routes cloud
-/// mounts (`clients/kms/mount.go`): `secrets {list,get,create,rm}`. Nothing the
-/// server cannot answer is invented — in particular there is NO PATCH/`update`
-/// and NO `rotate` (cloud mounts neither on the org-scoped secrets plane).
+/// `kms` is a GENERATED product folded to EXACTLY the routes cloud mounts —
+/// and that set is now the REGISTRY's answer, not a count kept here by hand.
+/// `/v1/kms/{health,auth/login}` join `secrets {list,get,create,rm}` because
+/// cloud's live route table serves them; nothing it cannot answer is invented,
+/// in particular NO PATCH/`update` and NO `rotate` on the org-scoped secrets
+/// plane. Add a kms route and this list is what must change.
 #[test]
 fn kms_is_generated_with_exactly_the_real_cloud_routes() {
     assert!(is_product("kms"), "kms must be generated now, not hand-written");
@@ -369,9 +380,11 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
         r#"DELETE ["secrets"] rm"#.to_string(),
         r#"GET ["secrets"] get"#.to_string(),
         r#"GET ["secrets"] list"#.to_string(),
+        r#"GET [] health"#.to_string(),
+        r#"POST ["auth"] login"#.to_string(),
         r#"POST ["secrets"] create"#.to_string(),
     ];
-    assert_eq!(got, want, "kms must fold to exactly the 4 real cloud routes");
+    assert_eq!(got, want, "kms must fold to exactly the real cloud routes");
     // No unanswerable verb (PATCH/PUT → update/replace) and no rotate.
     for o in OPS.iter().filter(|o| o.product == "kms") {
         assert!(o.method != "PATCH" && o.method != "PUT", "cloud mounts no kms write besides POST");
@@ -483,10 +496,15 @@ fn query_pairs_are_appended_and_encoded() {
 
 /// The write-only-folder-secret bug: `get`/`rm` percent-encoded the `/` in a
 /// folder-scoped address (`prod/db → prod%2Fdb`) → the server 404'd. Their
-/// `{secret}` is now marked MULTI-SEGMENT, so the slashes ride raw and the catch-
+/// terminal param is marked MULTI-SEGMENT, so the slashes ride raw and the catch-
 /// all resolves. A FLAT name is unchanged, every segment is still encoded, and
 /// `.`/`..`/empty are refused before a URL exists — so `create --path p` then
 /// `get p/x` / `rm p/x` round-trips while `..` can never re-address another org.
+///
+/// The MARKING is derived, not declared: cloud mounts this route as
+/// `/v1/kms/orgs/:org/secrets/*`, the registry reports the `*` as `{wildcard1}`,
+/// and `genspec` records it on the operation. The client keeps no list of which
+/// parameters are paths.
 #[test]
 fn kms_folder_secret_path_round_trips_with_raw_slashes() {
     for verb in ["get", "rm"] {
@@ -494,7 +512,7 @@ fn kms_folder_secret_path_round_trips_with_raw_slashes() {
             .iter()
             .find(|o| o.product == "kms" && o.verb == verb)
             .unwrap_or_else(|| panic!("kms {verb}"));
-        assert_eq!(op.rest, &["secret"], "kms {verb} must mark {{secret}} multi-segment");
+        assert_eq!(op.rest, op.params, "kms {verb} must mark its address param multi-segment");
 
         // A folder-scoped address keeps its slashes RAW (server: last seg = name).
         let filled =

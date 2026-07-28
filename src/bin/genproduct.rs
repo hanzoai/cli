@@ -1,16 +1,20 @@
-//! `genproduct` — regenerate `src/commands/product/generated.rs` from the
-//! COMMITTED, hand-authored OpenAPI snapshot. Run by hand when the snapshot
-//! changes; the output is checked in, so `hanzo` never fetches a spec at runtime.
+//! `genproduct` — derive `src/commands/product/generated.rs` from `spec/cloud.json`
+//! and nothing else. Offline and deterministic: the same spec always yields the
+//! same tree, which is what lets `--check` be a build gate and what keeps `hanzo`
+//! free of any runtime spec fetch.
 //!
-//! Source of truth: `spec/products.json` — the per-product OpenAPI 3.1 specs
-//! (repo hanzoai/openapi) vendored as one JSON object keyed by product. It carries
-//! real requestBody schemas AND typed `parameters`, so a write op becomes TYPED
-//! body `--flags` and a query parameter becomes a TYPED query `--flag`, not
-//! `--data`.
+//! Source of truth: `spec/cloud.json`, ONE OpenAPI 3.1 document written by
+//! `genspec` — the authored shapes from hanzoai/openapi, minus every operation
+//! cloud's live route table refutes. Existence is therefore the REGISTRY's answer
+//! and shape is the authored spec's; neither is restated here. Refresh the surface
+//! with `cargo run --features genspec --bin genspec`, then run this.
 //!
 //! The fold from path → (product, resource nodes, verb, params) is TOTAL; typed
 //! fields resolve $ref → component schema → property names + types + required.
 //! It emits pure DATA: no host, no URL, no auth. See `commands::product`.
+//!
+//! Usage: `genproduct` writes the tree; `genproduct --check` regenerates it in
+//! memory and fails if the committed file differs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -21,7 +25,10 @@ use serde_json::Value;
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// Local commands own these bare names; the generated tree never claims them.
 const EXCLUDE: [&str; 3] = ["billing", "agent", "deploy"];
-/// Curation — products NOT emitted as top-level commands. Reviewed by hand.
+/// Curation — products NOT emitted as top-level commands. POLICY ONLY: whether a
+/// route EXISTS is decided upstream by `genspec` against cloud's live route table,
+/// so nothing here may encode "the server 404s this". Every entry states a choice
+/// that would still hold if the route were served perfectly.
 const DENY: &[&str] = &[
     // Noise: sub-operations, UI/config surfaces, or enumeration artifacts — not
     // first-class products a person reaches for.
@@ -36,13 +43,12 @@ const DENY: &[&str] = &[
     // provisioner (you provision via the concrete `hanzo vector|kv|s3 create`),
     // and `do` is the DigitalOcean PROVIDER backend.
     "provisioning", "do",
-    // `gateway` is aspirational: the whole `/v1/gateway/*` subtree is unmounted
-    // (404 live). The real gateway surface is TOP-LEVEL — `/v1/models`,
-    // `/v1/chat/completions`, `/v1/embeddings` — already reached as `hanzo models`,
-    // `hanzo chat completions`, `hanzo embeddings`. Shipping a command group the
-    // server cannot answer is worse than no verb, so it is dropped until the
-    // openapi authors the routes that are actually served.
-    "gateway",
+    // `gateway` USED TO BE HERE, with a comment noting its whole `/v1/gateway/*`
+    // subtree was unmounted. That was a fact about the server kept in a list in the
+    // client — exactly the drift this file no longer owns. `genspec` refutes those
+    // 27 operations against the live route table, so the entry is gone and the
+    // curation test still passes. The real inference surface is TOP-LEVEL and
+    // unaffected: `hanzo models`, `hanzo chat completions`, `hanzo embeddings`.
 ];
 /// Curation — absorb a product's ops UNDER another command as a sub-namespace, so
 /// the compute plane is ONE `hanzo compute` (machines + gpus + regions/sizes)
@@ -51,14 +57,6 @@ const DENY: &[&str] = &[
 /// ambiguity — sub-namespacing unifies them losslessly. A flat surface would need
 /// the cloud specs reorganized under one `/v1/compute` tag.
 const REMAP: &[(&str, &str)] = &[("machines", "compute"), ("gpus", "compute")];
-/// Curation — path parameters that address a MULTI-SEGMENT path (a server
-/// catch-all), keyed by `(product, param)`. Their value is a `/`-joined address
-/// (a KMS secret is `sub/path/name`), so the runtime keeps the slashes raw
-/// (encoding each segment) instead of `%2F`-escaping them into one opaque segment
-/// the backend 404s. This is knowledge the OpenAPI does not carry, so it lives
-/// here beside the other curation tables — not in the vendored spec. Everything
-/// else is single-segment, the route-confusion-safe default.
-const REST_PARAMS: &[(&str, &str)] = &[("kms", "secret")];
 const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 
 fn is_param(s: &str) -> bool {
@@ -367,84 +365,76 @@ fn method_rank(m: &str) -> usize {
 
 fn main() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let products: Value =
-        serde_json::from_str(&fs::read_to_string(manifest.join("spec/products.json")).unwrap()).unwrap();
+    let spec_path = manifest.join("spec/cloud.json");
+    let spec: Value = serde_json::from_str(
+        &fs::read_to_string(&spec_path)
+            .unwrap_or_else(|e| panic!("read {}: {e} — run `cargo run --features genspec --bin genspec`", spec_path.display())),
+    )
+    .unwrap();
+    let paths = spec.get("paths").and_then(Value::as_object).expect("spec has no paths");
 
-    // Global authored path universe (product = first path segment, not the dir).
-    let mut all: BTreeSet<String> = BTreeSet::new();
-    for (_dir, spec) in products.as_object().unwrap() {
-        for (p, _item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
-            if p.starts_with("/v1/") {
-                all.insert(p.clone());
-            }
-        }
-    }
+    // The path universe the fold reads to tell a collection from an item and a
+    // group from a leaf. It is the SERVED surface, so a sibling route that cloud
+    // does not answer can no longer shape a command that it does.
+    let all: BTreeSet<String> = paths.keys().filter(|p| p.starts_with("/v1/")).cloned().collect();
 
-    // Fold every authored op; carry the (dir spec, op) so $ref resolves locally.
     let mut raw: BTreeMap<(String, Vec<String>, String), Vec<Op>> = BTreeMap::new();
-    let mut seen_ops: BTreeSet<(String, String)> = BTreeSet::new();
-    for (_dir, spec) in products.as_object().unwrap() {
-        for (path, item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
-            // A path key with a `?query` (AWS-S3-style sub-resource selectors) is
-            // not a distinct RESOURCE — the query, not the path, distinguishes it.
-            // Fold only clean paths; those niche variants stay reachable via `hanzo
-            // api … --query`.
-            if !path.starts_with("/v1/") || path.contains('?') || path.contains('#') {
+    for (path, item) in paths {
+        // A path key with a `?query` (AWS-S3-style sub-resource selectors) is
+        // not a distinct RESOURCE — the query, not the path, distinguishes it.
+        if !path.starts_with("/v1/") || path.contains('?') || path.contains('#') {
+            continue;
+        }
+        let product0 = segs(path)[1];
+        if EXCLUDE.contains(&product0) || DENY.contains(&product0) || is_wild(product0) {
+            continue;
+        }
+        for (m, op) in item.as_object().into_iter().flatten() {
+            if !VERBS.contains(&m.as_str()) {
                 continue;
             }
-            let product0 = segs(path)[1];
-            if EXCLUDE.contains(&product0) || DENY.contains(&product0) || is_wild(product0) {
-                continue;
+            let method = m.to_uppercase();
+            let Some(f) = fold(&method, path, &all) else { continue };
+            // Curation remap: absorb a product UNDER another as a sub-namespace
+            // (e.g. `machines list` → `compute machines list`). The PATH is
+            // unchanged — only the command coordinate moves.
+            let (mut product, mut nodes) = (f.product, f.nodes);
+            if let Some((from, target)) = REMAP.iter().find(|(from, _)| *from == product) {
+                product = target.to_string();
+                nodes.insert(0, (*from).to_string());
             }
-            for (m, op) in item.as_object().into_iter().flatten() {
-                if !VERBS.contains(&m.as_str()) {
-                    continue;
-                }
-                let method = m.to_uppercase();
-                if !seen_ops.insert((method.clone(), path.clone())) {
-                    continue; // a path defined in two dirs — first wins
-                }
-                let Some(f) = fold(&method, path, &all) else { continue };
-                // Curation remap: absorb a product UNDER another as a sub-namespace
-                // (e.g. `machines list` → `compute machines list`). The PATH is
-                // unchanged — only the command coordinate moves.
-                let (mut product, mut nodes) = (f.product, f.nodes);
-                if let Some((from, target)) = REMAP.iter().find(|(from, _)| *from == product) {
-                    product = target.to_string();
-                    nodes.insert(0, (*from).to_string());
-                }
-                // Typed flags: body properties (writes) + query parameters (all ops).
-                let mut fields = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
-                    body_schema(spec, op).map(|s| fields_of(spec, s)).unwrap_or_default()
-                } else {
-                    vec![]
-                };
-                fields.extend(query_fields(spec, op));
-                // One name may appear as BOTH a body property and a query param
-                // (or twice after kebab-casing); a clap long must be unique, so
-                // keep the FIRST (body wins over query).
-                let mut seen_flag: BTreeSet<String> = BTreeSet::new();
-                fields.retain(|f| seen_flag.insert(f.flag.clone()));
-                // Mark any multi-segment (catch-all) path param for this product, so
-                // the runtime keeps its slashes raw (see REST_PARAMS / fill_path).
-                let rest: Vec<String> = f
-                    .params
-                    .iter()
-                    .filter(|p| REST_PARAMS.contains(&(product.as_str(), p.as_str())))
-                    .cloned()
-                    .collect();
-                let coord = (product.clone(), nodes.clone(), f.verb.clone());
-                raw.entry(coord).or_default().push(Op {
-                    product,
-                    nodes,
-                    verb: f.verb,
-                    method,
-                    path: path.clone(),
-                    params: f.params,
-                    rest,
-                    fields,
-                });
-            }
+            // Typed flags: body properties (writes) + query parameters (all ops).
+            let mut fields = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
+                body_schema(&spec, op).map(|s| fields_of(&spec, s)).unwrap_or_default()
+            } else {
+                vec![]
+            };
+            fields.extend(query_fields(&spec, op));
+            // One name may appear as BOTH a body property and a query param
+            // (or twice after kebab-casing); a clap long must be unique, so
+            // keep the FIRST (body wins over query).
+            let mut seen_flag: BTreeSet<String> = BTreeSet::new();
+            fields.retain(|f| seen_flag.insert(f.flag.clone()));
+            // The multi-segment (catch-all) path params, as the ROUTER reports
+            // them: genspec marks a param the server addresses with a fiber `*`,
+            // so the runtime keeps its slashes raw instead of `%2F`-escaping them
+            // into one opaque segment the backend 404s (see fill_path).
+            let rest: Vec<String> = op
+                .get("x-catch-all")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            let coord = (product.clone(), nodes.clone(), f.verb.clone());
+            raw.entry(coord).or_default().push(Op {
+                product,
+                nodes,
+                verb: f.verb,
+                method,
+                path: path.clone(),
+                params: f.params,
+                rest,
+                fields,
+            });
         }
     }
 
@@ -500,10 +490,11 @@ fn main() {
     }
 
     // ---- emit ----
-    // The authored specs are the ONLY source: every cloud capability is a real
-    // `hanzo <product> <resource> <verb>`. A product with no authored spec, or an
-    // unenumerable one, is simply absent — there is no passthrough and no `hanzo
-    // api` fallback to paper over it. That gap closes by authoring the spec.
+    // `spec/cloud.json` is the ONLY source: every cloud capability is a real
+    // `hanzo <product> <resource> <verb>`. A product the spec does not carry —
+    // never authored, or authored and refuted by the live route table — is simply
+    // absent. There is no passthrough and no `hanzo api` fallback to paper over
+    // it: that gap closes by authoring the spec, or by serving the route.
     let ntyped = coords.iter().filter(|o| !o.fields.is_empty()).count();
     let ndata = coords
         .iter()
@@ -512,9 +503,9 @@ fn main() {
     let nprod = coords.iter().map(|o| &o.product).collect::<BTreeSet<_>>().len();
 
     let mut s = String::new();
-    s.push_str("//! @generated by `cargo run --bin genproduct` from the committed spec\n");
-    s.push_str("//! snapshot at `spec/products.json` (the hand-authored OpenAPI specs).\n");
-    s.push_str("//! DO NOT EDIT BY HAND.\n//!\n");
+    s.push_str("//! @generated by `cargo run --bin genproduct` from `spec/cloud.json`\n");
+    s.push_str("//! (the authored shapes, minus everything cloud's live route table refutes).\n");
+    s.push_str("//! DO NOT EDIT BY HAND — `cargo test` regenerates and diffs this.\n//!\n");
     s.push_str("//! Pure DATA: (product, resource nodes, verb, method, /v1 path, params, typed\n");
     s.push_str("//! body fields). No host, no absolute URL, no auth — pinned by a test.\n\n");
     s.push_str("use super::{Field, Op, Ty};\n\n");
@@ -532,6 +523,24 @@ fn main() {
     s.push_str("];\n");
 
     let out = manifest.join("src/commands/product/generated.rs");
+    // --check is the drift gate (see tests/spec_drift.rs). The derivation runs
+    // either way; the flag only decides whether the answer is written or compared,
+    // so the gate can never test a different derivation than the one that writes.
+    if std::env::args().any(|a| a == "--check") {
+        let got = fs::read_to_string(&out).unwrap_or_default();
+        if got != s {
+            eprintln!(
+                "genproduct --check: {} is not what spec/cloud.json derives ({} vs {} bytes). \
+                 Run `cargo run --bin genproduct` and commit the result.",
+                out.display(),
+                got.len(),
+                s.len()
+            );
+            std::process::exit(1);
+        }
+        eprintln!("genproduct --check: {} ops match spec/cloud.json", coords.len());
+        return;
+    }
     fs::write(&out, s).unwrap();
     eprintln!(
         "genproduct: {} ops ({} typed, {} data-fallback) across {} products -> {}",
