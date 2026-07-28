@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.9.0"
+version = "1.9.1"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -10,6 +10,19 @@ repository = "https://github.com/hanzoai/cli"
 [[bin]]
 name = "hanzo"
 path = "src/main.rs"
+
+# genspec pulls the cloud command surface forward: it reads cloud's live route
+# table over the wire and the authored master (YAML) from a hanzoai/openapi
+# checkout. Both are MAINTAINER inputs — the shipped `hanzo` parses no YAML,
+# fetches no spec and links no cloud code — so its parser is compiled only when
+# the seam is run.
+[[bin]]
+name = "genspec"
+path = "src/bin/genspec.rs"
+required-features = ["genspec"]
+
+[features]
+genspec = ["dep:serde_norway"]
 
 # The canonical Event emitter lives in its own crate so `dev` can share the exact
 # same wire via a pinned git dependency — one source of truth, two consumers.
@@ -23,6 +36,7 @@ tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_norway = { version = "0.9", optional = true }        # genspec only — reads hanzoai/openapi's YAML master
 toml = "0.8"
 dirs = "5.0"
 colored = "2.1"

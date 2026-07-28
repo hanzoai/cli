@@ -1,9 +1,12 @@
 //! `hanzo <product> <resource…> <verb>` — cloud's Go surface as FIRST-CLASS
-//! product commands, generated from the hand-authored OpenAPI specs. This is the
-//! ONLY interface to cloud: every capability is a real subcommand — there is no
-//! `hanzo api` verb and no raw-path escape.
+//! product commands, DERIVED from `spec/cloud.json`. This is the ONLY interface to
+//! cloud: every capability is a real subcommand — there is no `hanzo api` verb and
+//! no raw-path escape.
 //!
-//! A build-time generator folds each authored path into a (product, resource
+//! Nothing here links cloud. `genspec` joins the two documents that each answer
+//! half of "what commands exist": cloud's LIVE route table, read over the wire,
+//! says which operations are served, and hanzoai/openapi's authored master says
+//! what each one takes. `genproduct` folds that one spec into a (product, resource
 //! nodes, verb, method, path template, params, typed body fields) coordinate and
 //! commits it as pure DATA (`generated.rs`). At runtime we build a clap tree from
 //! that data and dispatch it through the one authenticated seam below: the ORIGIN
@@ -16,9 +19,10 @@
 //! schema gets TYPED `--flags` (one per property, with the property's type and
 //! required-ness) and the JSON body is assembled from them — not `--data`. A write
 //! with NO schema (or a freeform body) falls back to `--data '<json>'`. A product
-//! with no authored spec is simply ABSENT (no passthrough, no `hanzo api` to paper
-//! over it — that gap closes by authoring the spec). Nothing is invented — the
-//! fields are exactly the schema's properties.
+//! that is never authored, or authored and refuted by the live route table, is
+//! simply ABSENT (no passthrough, no `hanzo api` to paper over it — that gap
+//! closes by authoring the spec, or by serving the route). Nothing is invented —
+//! the fields are exactly the schema's properties.
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
