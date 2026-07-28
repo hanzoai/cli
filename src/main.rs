@@ -9,6 +9,9 @@ mod http;
 mod private;
 mod iam;
 mod telemetry;
+// ZAP reaches the local host over a UNIX socket. Windows has none, so there the
+// local host is reached over the HTTP view it also serves (see commands::host).
+#[cfg(unix)]
 mod zap;
 
 #[derive(Parser)]
