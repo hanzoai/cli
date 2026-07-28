@@ -157,6 +157,52 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
   with no bearer and the server decides, the same rule the tree already follows for
   a 403. State (pid, log, socket, `CLOUD_DATA_DIR`) lives in `<data>/hanzo/host/`.
 
+**The session channel** — `hanzo code` is watchable and steerable from the dashboard while it
+runs. One channel, two directions, one transport, one vocabulary.
+
+- **OUT** (`src/commands/code/session.rs`): register on `POST /v1/agents/sessions`, forward each
+  parsed event to `POST …/:id/events`, close with `PATCH …/:id`. Unchanged; already shipped.
+- **IN** (`src/commands/code/control.rs`): drain `GET /v1/agents/sessions/:id/control?after=<seq>`
+  once a second. Cursor-driven, so an applied command is never redelivered and a reconnect replays
+  exactly what was missed, in order, once. The durable log IS the buffer — nothing is queued locally.
+- **The op set is CLOUD'S, not ours.** `pause` · `resume` · `stop` · `message` — the `Cmd*`
+  constants in `cloud/apps/agents/sessions.go`, already mirrored by `event::Kind::Control`. Naming
+  CLI-side synonyms (`interrupt`, `steer`) would be two spellings of one verb, so the wire words
+  ARE the type. `hanzo` implements three of the four; `resume` is a no-op against an already-running
+  session (a *paused* session has no process — reopening it is `hanzo code --resume <id>` on the
+  machine that holds it).
+
+| Command | Signal | What Claude does | Session after |
+|---|---|---|---|
+| `pause` | SIGINT | aborts the in-flight tool, writes `[Request interrupted by user for tool use]` + a final `result` (`terminal_reason:"aborted_tools"`), flushes the transcript, exits 0 | `paused` — resumable, same id |
+| `stop` | SIGTERM | same abort path, exits 143 | `done` |
+| `message` | SIGINT | as `pause`, then the supervisor relaunches with `--resume <sid>` + the new prompt | stays running, same id |
+
+- **The status comes from the COMMAND, never the exit code.** A commanded stop exits 143 and is
+  still a clean `done`. Folding those readings into one `bool` is what made a deliberate stop look
+  like a crash; `finalize` now takes a `Status` the caller decides.
+- **Signals go to the child's own pid, never the process group.** Putting the child in its own
+  group would make it a background group against an inherited tty and earn it SIGTTIN on the first
+  stdin read. Claude tears down its own tool subprocesses on abort (verified: no orphan survives a
+  stopped `sleep 300`), so the direct pid is sufficient.
+- **A steer that beats start-up still lands.** If the turn never disclosed a session id there is no
+  transcript to preserve, so it relaunches fresh with the new instruction rather than dropping it.
+- **AuthZ**: the CLI sends the bearer and NOTHING else — never an org. Cloud derives the tenant from
+  the JWT `owner` and 404s a session belonging to another org, on both the detail read and the
+  drain. Cross-org control is therefore impossible rather than merely refused, and a refused drain
+  is an ERROR here, never an empty-but-successful page that would read as "no commands" (which would
+  also wrongly advance the cursor). Proven by
+  `control_tests::another_orgs_stop_cannot_terminate_our_child`.
+- **Why HTTPS and not ZAP**, since the local wire is ZAP: there is no ZAP client to use. `zap/rust`
+  is server-only (no client type at all), TCP, plaintext, no auth, strict request/response with no
+  server-push; the `hanzo-zap` crate on crates.io is a *different*, stubbed codebase; and
+  `zap-proto/ws` — the bidirectional/pubsub sub-protocol — is a README and a schema file with no
+  implementation in any language. Pointing today's ZAP at a remote peer would also ship a
+  developer's prompts and code in cleartext, which is exactly what `src/zap.rs` forbids in writing.
+  So this follows the rule the repo already documents: **local = ZAP over a unix socket, remote =
+  HTTPS until the ZAP transport carries its own session crypto.** Both directions ride the one
+  `crate::http` seam, so when that lands they move together — there is no second wire to migrate.
+
 **Key entry points**: `src/main.rs` (clap tree + bare-`hanzo` flatten), `src/commands/`
 (one module per resource; `product/` = generated cloud tree), `src/iam/` (identity,
 token store, HIP-0111 OIDC PKCE), `src/commands/code/` (coding wrapper). Secrets arrive
