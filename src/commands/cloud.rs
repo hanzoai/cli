@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use reqwest::{Client, Method};
 use serde_json::Value;
 
-use crate::commands::host;
+use crate::commands::host::{self, Origin};
 use crate::config::Config;
 use crate::iam::{paths, store};
 
@@ -23,17 +23,32 @@ use crate::iam::{paths, store};
 /// already template-filled — never a user-supplied host.
 pub async fn call(cfg: &mut Config, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
     // WHERE — the same seam the generated tree uses, so a LOCAL origin gets a host
-    // started (or reused) behind it here too. WHO — a local host may have no IAM,
-    // so a missing credential goes out as no bearer and the server decides.
+    // started (or reused) behind it here too, and is spoken to over ZAP. WHO — a
+    // local host may have no IAM, so a missing credential goes out as no bearer and
+    // the server decides.
     let origin = host::origin(cfg).await?;
     let token = match store::active_token(cfg, paths::DEFAULT_BRAND)? {
         Some((_id, tok)) => tok.access_token,
-        None if host::is_local(&origin) => String::new(),
+        None if matches!(origin, Origin::LocalZap(_)) => String::new(),
         None => return Err(not_signed_in()),
     };
-    let url = format!("{origin}{path}");
-    let http = Client::new();
-    crate::http::send_json(&http, method, &url, &token, body).await
+    let (status, resp) = match &origin {
+        Origin::LocalZap(sock) => crate::zap::send(sock, &method, path, &token, body).await?,
+        Origin::Http(base) => {
+            crate::http::send(&Client::new(), method, &format!("{base}{path}"), &token, body).await?
+        }
+    };
+    // The "fail on a non-2xx" rule this seam has always had, applied once for both
+    // wires rather than duplicated per transport.
+    if !status.is_success() {
+        let shown = match &resp {
+            Value::Null => String::new(),
+            Value::String(s) => s.trim().to_string(),
+            v => v.to_string(),
+        };
+        anyhow::bail!("{path} -> {status}: {shown}");
+    }
+    Ok(resp)
 }
 
 /// The active identity's org (its `owner` claim) — for the org-scoped paths

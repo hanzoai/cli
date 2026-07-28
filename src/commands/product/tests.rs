@@ -484,12 +484,15 @@ fn a_data_body_on_a_read_is_a_named_error() {
 
 #[test]
 fn query_pairs_are_appended_and_encoded() {
-    let u = build_url("https://x.example", "/v1/agents", &["env=prod".into()]).unwrap();
-    assert!(u.starts_with("https://x.example/v1/agents?") && u.contains("env=prod"));
+    let t = target("/v1/agents", &["env=prod".into()]).unwrap();
+    assert_eq!(t, "/v1/agents?env=prod");
     // A value that looks like extra params is encoded, not injected.
-    let u = build_url("https://x.example", "/v1/x", &["q=a b&c=d".into()]).unwrap();
-    assert!(u.contains("q=a+b%26c%3Dd"), "{u}");
-    assert!(build_url("https://x.example", "/v1/x", &["noeq".into()]).is_err());
+    let t = target("/v1/x", &["q=a b&c=d".into()]).unwrap();
+    assert!(t.contains("q=a+b%26c%3Dd"), "{t}");
+    assert!(target("/v1/x", &["noeq".into()]).is_err());
+    // No query means no trailing `?` — the target is the bare path, which is what
+    // both wires expect.
+    assert_eq!(target("/v1/agents", &[]).unwrap(), "/v1/agents");
 }
 
 // ---- KMS folder secrets: a multi-segment path fills to RAW slashes ------------
