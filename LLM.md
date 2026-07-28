@@ -82,6 +82,15 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
   local `hanzo` call makes exactly one `connect(AF_UNIX)` and no `AF_INET` at all. The
   host is still told to bind loopback TCP only because `cmd/host` always listens on
   both; nothing here dials it.
+  - **Windows is the one platform where local is HTTP**, because it has no unix
+    socket to speak ZAP over. `Origin::Local` therefore carries the socket PATH on
+    unix and the loopback BASE URL on Windows — one variant, because "is this the
+    local host" is the question the credential rule asks and the wire is not it.
+    `src/zap.rs` is `#[cfg(unix)]`; so is the `-zap` flag handed to the spawned
+    host, and `healthy()` probes whichever wire that platform actually uses.
+    Forgetting this is what broke the windows-amd64 release asset in v1.9.3:
+    `tokio::net::UnixStream` does not exist there, and no CI caught it because the
+    release matrix had been deleted the same day.
   - Wire notes that will bite a reimplementation: the socket's 4-byte length prefix is
     BIG-endian and everything inside the frame is LITTLE-endian; a slot's `relOffset`
     is measured from the slot's own position; `relOffset == 0` is NULL regardless of

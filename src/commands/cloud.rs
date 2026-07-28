@@ -29,11 +29,17 @@ pub async fn call(cfg: &mut Config, method: Method, path: &str, body: Option<&Va
     let origin = host::origin(cfg).await?;
     let token = match store::active_token(cfg, paths::DEFAULT_BRAND)? {
         Some((_id, tok)) => tok.access_token,
-        None if matches!(origin, Origin::LocalZap(_)) => String::new(),
+        None if matches!(origin, Origin::Local(_)) => String::new(),
         None => return Err(not_signed_in()),
     };
     let (status, resp) = match &origin {
-        Origin::LocalZap(sock) => crate::zap::send(sock, &method, path, &token, body).await?,
+        #[cfg(unix)]
+        Origin::Local(sock) => crate::zap::send(sock, &method, path, &token, body).await?,
+        #[cfg(not(unix))]
+        Origin::Local(base) => {
+            crate::http::send(&Client::new(), method, &format!("{base}{path}"), &token, body)
+                .await?
+        }
         Origin::Http(base) => {
             crate::http::send(&Client::new(), method, &format!("{base}{path}"), &token, body).await?
         }

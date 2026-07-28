@@ -32,7 +32,9 @@ use std::io::Read;
 
 use crate::commands::host::{self, Origin};
 use crate::config::Config;
-use crate::{http, zap};
+use crate::http;
+#[cfg(unix)]
+use crate::zap;
 use crate::iam::{paths, store};
 
 mod generated;
@@ -601,7 +603,13 @@ async fn call(
 
     let target = target(&path, &query)?;
     let (status, resp) = match &origin {
-        Origin::LocalZap(sock) => zap::send(sock, &method, &target, &token, body.as_ref()).await?,
+        #[cfg(unix)]
+        Origin::Local(sock) => zap::send(sock, &method, &target, &token, body.as_ref()).await?,
+        #[cfg(not(unix))]
+        Origin::Local(base) => {
+            http::send(&Client::new(), method, &format!("{base}{target}"), &token, body.as_ref())
+                .await?
+        }
         Origin::Http(base) => {
             http::send(&Client::new(), method, &format!("{base}{target}"), &token, body.as_ref())
                 .await?
