@@ -52,6 +52,50 @@ api.hanzo.ai/v1/openapi.json┘                        (existence: the live rout
   none of them may encode "the server 404s this", which is the registry's job.
 - A capability missing from the CLI is missing from a document: author it in
   hanzoai/openapi, or serve it in hanzoai/cloud. There is no third place.
+
+**The lineage contract — which half is authoritative about what.** The two inputs
+are not redundant readings of one truth; each owns a different question, and
+neither can answer the other's.
+
+- **The AUTHORED master decides EXISTENCE.** `genspec` ITERATES `hanzo.yaml` and
+  nothing else. The registry never ADDS an operation — it only removes. So a route
+  the server serves perfectly is invisible to `hanzo` until hanzoai/openapi names
+  it. This is the direction people get backwards, and it is the expensive one: it
+  fails silently, with a working server and a CLI that has never heard of it.
+- **The REGISTRY decides SERVED-NESS, per owned product.** Any route under
+  `/v1/<product>/` makes cloud the authority for that product, and an authored
+  operation its table lacks is dropped. Silence about a product refutes nothing.
+- **The authored half is the SHAPE source only while handlers stay untyped.** Most
+  of cloud is raw fiber handlers with no Go type to read a body schema off, so
+  bodies and query params come from the authored spec. As handlers become zip
+  typed ops their schemas appear in the registry document with prose lifted from
+  the doc comments, and the authored half shrinks. It is a shrinking dependency,
+  not a permanent one — `/v1/admin/plugins` is what the end state looks like:
+  cloud emits the full schema, and the authored spec exists to make it REACHABLE.
+- **Refresh:** `genspec` then `genproduct`, in that order, then `cargo test`
+  (`tests/spec_drift.rs` re-runs `genproduct --check`, so a stale `generated.rs`
+  fails the build).
+
+  ```
+  cargo run --features genspec --bin genspec -- \
+      --openapi ../openapi --registry <route-table.json>
+  cargo run --bin genproduct
+  cargo test
+  ```
+
+  Prefer the wire for `--registry`. Use a captured table when the deployed build
+  is BEHIND the one whose routes you are adding — a route in cloud `main` but not
+  yet on api.hanzo.ai is refuted by the live table and silently dropped. The
+  capture that answers this is the UNION of the live table and cloud main's own
+  `openapi.yaml`: refutation needs a product owned AND no matching route, so a
+  union treats a route as served if EITHER reading has it, which is exactly the
+  truth during a rollout. Both are readings of one router at two commits.
+- **A refuted operation is REMOVED, never repaired.** When a served route changes
+  SHAPE, the authored path stops matching, the whole operation is dropped, and the
+  command disappears rather than pointing somewhere new. `/v1/kms/orgs/{org}/secrets`
+  → `/v1/kms/secrets` (the org moved into the token) did exactly this: `hanzo kms
+  secrets` addressed a 404 until the contract was corrected. So a 404 from a
+  generated command is a bug in hanzoai/openapi, and the fix is never in this repo.
 - **Why build-time and not a spec fetched at run time**: cloud's lazy `cmd/host`
   serves no fleet-wide document. zip installs `/.well-known/openapi.json` only when
   an app registers typed ops, and the host registers none — it links zip and the

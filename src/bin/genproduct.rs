@@ -102,11 +102,17 @@ fn has_child(p: &str, all: &BTreeSet<String>) -> bool {
     let pre = format!("{}/", p.trim_end_matches('/'));
     all.iter().any(|k| k != p && k.trim_end_matches('/').starts_with(&pre))
 }
+/// A collection is a path whose MEMBERS are addressed by appending a `{param}`.
+/// The member path need not STOP there: `/v1/admin/plugins/{name}/reload` selects
+/// one plugin exactly as `/v1/iam/users/{id}` selects one user, so the read at the
+/// root is a `list` either way. Requiring the param to be the last segment would
+/// call `plugins` a singular resource on the evidence that its members happen to
+/// have sub-actions rather than a bare GET.
 fn is_collection(p: &str, all: &BTreeSet<String>) -> bool {
     let ps = segs(p);
     all.iter().any(|k| {
         let ks = segs(k);
-        ks.len() == ps.len() + 1 && ks[..ps.len()] == ps[..] && is_param(ks[ks.len() - 1])
+        ks.len() > ps.len() && ks[..ps.len()] == ps[..] && is_param(ks[ps.len()])
     })
 }
 fn cmd_tokens(sg: &[&str]) -> Vec<String> {
@@ -410,6 +416,13 @@ fn main() {
                 vec![]
             };
             fields.extend(query_fields(&spec, op));
+            // A body property that repeats a PATH parameter is the SAME value,
+            // already supplied as a positional. It appears twice because zip binds
+            // the path segment into the same Go struct as the body, so the emitted
+            // schema honestly carries both. A flag for it would be a second way to
+            // say one thing — and one that cannot work alone, the positional being
+            // required.
+            fields.retain(|fd| !f.params.contains(&fd.key));
             // One name may appear as BOTH a body property and a query param
             // (or twice after kebab-casing); a clap long must be unique, so
             // keep the FIRST (body wins over query).

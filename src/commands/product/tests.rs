@@ -426,7 +426,7 @@ fn kms_secret_value_can_never_reach_argv() {
     let Some(Resolved::Leaf { op, body: LeafBody::Typed(v), .. }) = resolve(&m) else {
         panic!("typed leaf");
     };
-    assert_eq!(op.path, "/v1/kms/orgs/{org}/secrets");
+    assert_eq!(op.path, "/v1/kms/secrets");
     assert_eq!(v["name"], "DB");
     assert_eq!(v["env"], "prod");
     assert!(v.get("value").is_none(), "the secret must NOT be assembled from flags: {v}");
@@ -502,12 +502,18 @@ fn query_pairs_are_appended_and_encoded() {
 /// terminal param is marked MULTI-SEGMENT, so the slashes ride raw and the catch-
 /// all resolves. A FLAT name is unchanged, every segment is still encoded, and
 /// `.`/`..`/empty are refused before a URL exists — so `create --path p` then
-/// `get p/x` / `rm p/x` round-trips while `..` can never re-address another org.
+/// `get p/x` / `rm p/x` round-trips while `..` can never re-address another secret.
 ///
 /// The MARKING is derived, not declared: cloud mounts this route as
-/// `/v1/kms/orgs/:org/secrets/*`, the registry reports the `*` as `{wildcard1}`,
-/// and `genspec` records it on the operation. The client keeps no list of which
+/// `/v1/kms/secrets/*`, the registry reports the `*` as `{wildcard1}`, and
+/// `genspec` records it on the operation. The client keeps no list of which
 /// parameters are paths.
+///
+/// The ORG is not in this URL and cannot be: cloud reads it from the validated
+/// principal (`clients/kms/mount.go` — "the org is the CALLER'S … never named in
+/// the URL", because a path segment made the tenant caller-selectable). So no
+/// address a caller can spell reaches another tenant, traversal or not; the
+/// refusals below are about not re-addressing another SECRET.
 #[test]
 fn kms_folder_secret_path_round_trips_with_raw_slashes() {
     for verb in ["get", "rm"] {
@@ -520,15 +526,19 @@ fn kms_folder_secret_path_round_trips_with_raw_slashes() {
         // A folder-scoped address keeps its slashes RAW (server: last seg = name).
         let filled =
             fill_path(op.path, op.rest, Some("acme"), &["prod/db/password".into()]).unwrap();
-        assert_eq!(filled, "/v1/kms/orgs/acme/secrets/prod/db/password");
+        assert_eq!(filled, "/v1/kms/secrets/prod/db/password");
 
         // A FLAT name (already working) is untouched — one segment, no slash.
         let flat = fill_path(op.path, op.rest, Some("acme"), &["DB".into()]).unwrap();
-        assert_eq!(flat, "/v1/kms/orgs/acme/secrets/DB");
+        assert_eq!(flat, "/v1/kms/secrets/DB");
 
         // Each segment is STILL percent-encoded: a space/`?` cannot re-address.
         let enc = fill_path(op.path, op.rest, Some("acme"), &["a b/x?y".into()]).unwrap();
-        assert_eq!(enc, "/v1/kms/orgs/acme/secrets/a%20b/x%3Fy");
+        assert_eq!(enc, "/v1/kms/secrets/a%20b/x%3Fy");
+
+        // The active org is handed in and does NOT appear: it is the token's, and
+        // an org that cannot be spelled cannot be swapped.
+        assert!(!filled.contains("acme"), "the org must not reach the URL: {filled}");
 
         // Traversal / empty segments are refused BEFORE a URL is built.
         for evil in ["../../evil/k", "a/../b", "a//b", "/leading", "trailing/", "."] {
