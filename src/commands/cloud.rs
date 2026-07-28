@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use reqwest::{Client, Method};
 use serde_json::Value;
 
-use crate::commands::network;
+use crate::commands::host;
 use crate::config::Config;
 use crate::iam::{paths, store};
 
@@ -22,13 +22,18 @@ use crate::iam::{paths, store};
 /// 2xx body (a non-2xx is an error carrying the server's own message). `path` is
 /// already template-filled — never a user-supplied host.
 pub async fn call(cfg: &mut Config, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
-    let origin = network::active(cfg).api;
-    let origin = origin.trim_end_matches('/');
-    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
-        .ok_or_else(not_signed_in)?;
+    // WHERE — the same seam the generated tree uses, so a LOCAL origin gets a host
+    // started (or reused) behind it here too. WHO — a local host may have no IAM,
+    // so a missing credential goes out as no bearer and the server decides.
+    let origin = host::origin(cfg).await?;
+    let token = match store::active_token(cfg, paths::DEFAULT_BRAND)? {
+        Some((_id, tok)) => tok.access_token,
+        None if host::is_local(&origin) => String::new(),
+        None => return Err(not_signed_in()),
+    };
     let url = format!("{origin}{path}");
     let http = Client::new();
-    crate::http::send_json(&http, method, &url, &tok.access_token, body).await
+    crate::http::send_json(&http, method, &url, &token, body).await
 }
 
 /// The active identity's org (its `owner` claim) — for the org-scoped paths

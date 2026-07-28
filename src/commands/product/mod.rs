@@ -30,7 +30,7 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Map, Value};
 use std::io::Read;
 
-use crate::commands::network;
+use crate::commands::host;
 use crate::config::Config;
 use crate::http;
 use crate::iam::{paths, store};
@@ -580,19 +580,28 @@ async fn call(
     query: Vec<String>,
     raw: bool,
 ) -> Result<()> {
-    let origin = network::active(cfg).api;
-    let origin = origin.trim_end_matches('/');
-    let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
-        .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
+    // WHERE. A LOCAL origin also gets a host started (or reused) behind it, so the
+    // same command tree runs against a checkout with no server up.
+    let origin = host::origin(cfg).await?;
+    let origin = origin.as_str();
+
+    // WHO. A local host may have no IAM to sign in to, so a missing credential is
+    // NOT refused here — the call goes out unauthenticated and the server decides.
+    // That is the same rule this module already follows for a 403: the refusal is
+    // always the server's, never a client-side guess.
+    let identity = store::active_token(cfg, paths::DEFAULT_BRAND)?;
+    if identity.is_none() && !host::is_local(origin) {
+        bail!("not signed in — run `hanzo auth login`");
+    }
     // The identity we would suggest switching to on a 403 (SuperAdmin gate) — the
     // very identity we authenticate as, so the hint can never name someone else.
     let held = store::list(cfg, paths::DEFAULT_BRAND);
-    let hint = store::refusal_hint(&id, &held);
+    let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
+    let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
 
     let url = build_url(origin, &path, &query)?;
     let http_client = Client::new();
-    let (status, resp) =
-        http::send(&http_client, method, &url, &tok.access_token, body.as_ref()).await?;
+    let (status, resp) = http::send(&http_client, method, &url, &token, body.as_ref()).await?;
 
     if status.is_success() {
         // A 2xx is NOT proof of success. Some planes (Casdoor/iam) answer an error
