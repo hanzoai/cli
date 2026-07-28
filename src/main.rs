@@ -9,6 +9,7 @@ mod http;
 mod private;
 mod iam;
 mod telemetry;
+mod zap;
 
 #[derive(Parser)]
 #[command(name = "hanzo")]

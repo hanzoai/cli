@@ -73,10 +73,27 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
   starts on the first request to its prefix (~15ms) and answers in ~0.5ms after — and
   stopping it per command would make every call cold. `stop` sends SIGTERM, which zip
   drains LIFO into every child it started.
-- Loopback TCP, not a unix socket, for the front door: zip serves HTTP through
-  fasthttp's `ListenAndServe` (`net.Listen("tcp4", …)`), so its http transport cannot
-  bind a path. The transport that can is ZAP, whose binary framing this client does
-  not speak — so ZAP gets the unix socket and HTTP gets 127.0.0.1, never 0.0.0.0.
+- **The local wire is ZAP, not HTTP.** The host serves the SAME routes on both; ZAP
+  is the fleet's primary transport and HTTP is a secondary view for third parties who
+  cannot speak it. The CLI is first party, so locally it speaks ZAP over a unix socket
+  in `<data>/hanzo/host/` — `src/zap.rs`, a byte-for-byte port of
+  `github.com/zap-proto/http`'s codec, pinned by golden vectors emitted from the Go
+  encoder itself (`src/zap/tests.rs`). No HTTP grammar, no port on any interface: a
+  local `hanzo` call makes exactly one `connect(AF_UNIX)` and no `AF_INET` at all. The
+  host is still told to bind loopback TCP only because `cmd/host` always listens on
+  both; nothing here dials it.
+  - Wire notes that will bite a reimplementation: the socket's 4-byte length prefix is
+    BIG-endian and everything inside the frame is LITTLE-endian; a slot's `relOffset`
+    is measured from the slot's own position; `relOffset == 0` is NULL regardless of
+    the length word; an empty field is a `{0,0}` slot, NOT a zero-length entry.
+  - Remote stays HTTPS: zaphttp has no session crypto yet (its transport reserves an
+    X-Wing PQ KEM handshake for later), so TLS still terminates at the ingress. That
+    is the EXCEPTION, and it ends when the ZAP transport carries its own.
+  - Measured, so nobody has to guess: steady state ~66µs (ZAP/unix) vs ~98µs
+    (HTTP/loopback) mean over 3000 requests; isolating the WIRE alone (both over TCP)
+    it is ~91µs vs ~100µs. Real but ~32µs — against ~10-20ms of CLI process startup
+    that is invisible to a user. The reason to do it is one wire and one contract,
+    not speed.
 - Against a local host a MISSING credential is not refused here: the call goes out
   with no bearer and the server decides, the same rule the tree already follows for
   a 403. State (pid, log, socket, `CLOUD_DATA_DIR`) lives in `<data>/hanzo/host/`.

@@ -30,9 +30,9 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Map, Value};
 use std::io::Read;
 
-use crate::commands::host;
+use crate::commands::host::{self, Origin};
 use crate::config::Config;
-use crate::http;
+use crate::{http, zap};
 use crate::iam::{paths, store};
 
 mod generated;
@@ -580,17 +580,17 @@ async fn call(
     query: Vec<String>,
     raw: bool,
 ) -> Result<()> {
-    // WHERE. A LOCAL origin also gets a host started (or reused) behind it, so the
-    // same command tree runs against a checkout with no server up.
+    // WHERE, and over WHICH WIRE. A LOCAL origin also gets a host started (or
+    // reused) behind it, so the same command tree runs against a checkout with no
+    // server up — over ZAP, the native transport, because the CLI is first party.
     let origin = host::origin(cfg).await?;
-    let origin = origin.as_str();
 
     // WHO. A local host may have no IAM to sign in to, so a missing credential is
     // NOT refused here — the call goes out unauthenticated and the server decides.
     // That is the same rule this module already follows for a 403: the refusal is
     // always the server's, never a client-side guess.
     let identity = store::active_token(cfg, paths::DEFAULT_BRAND)?;
-    if identity.is_none() && !host::is_local(origin) {
+    if identity.is_none() && matches!(origin, Origin::Http(_)) {
         bail!("not signed in — run `hanzo auth login`");
     }
     // The identity we would suggest switching to on a 403 (SuperAdmin gate) — the
@@ -599,9 +599,14 @@ async fn call(
     let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
     let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
 
-    let url = build_url(origin, &path, &query)?;
-    let http_client = Client::new();
-    let (status, resp) = http::send(&http_client, method, &url, &token, body.as_ref()).await?;
+    let target = target(&path, &query)?;
+    let (status, resp) = match &origin {
+        Origin::LocalZap(sock) => zap::send(sock, &method, &target, &token, body.as_ref()).await?,
+        Origin::Http(base) => {
+            http::send(&Client::new(), method, &format!("{base}{target}"), &token, body.as_ref())
+                .await?
+        }
+    };
 
     if status.is_success() {
         // A 2xx is NOT proof of success. Some planes (Casdoor/iam) answer an error
@@ -665,13 +670,17 @@ fn read_body(data: Option<String>, method: &Method) -> Result<Option<Value>> {
     Ok(Some(value))
 }
 
-/// Build the absolute URL, appending any `--query k=v` pairs. Split out so the
-/// join is unit-testable without a network. Values are percent-encoded by
+/// The origin-form request target: `/path` plus any `--query k=v`, percent-
+/// encoded. ZAP puts this in the target slot and HTTP appends it to its origin,
+/// so a query is encoded exactly ONCE, here, for both wires. Values go through
 /// `reqwest::Url`, so a `k=a b&c` cannot forge extra parameters.
-fn build_url(origin: &str, path: &str, query: &[String]) -> Result<String> {
-    let mut url = reqwest::Url::parse(&format!("{origin}{path}"))
-        .with_context(|| format!("building URL {origin}{path}"))?;
-    {
+fn target(path: &str, query: &[String]) -> Result<String> {
+    // A placeholder authority, only so the URL crate will parse an origin-form
+    // path and lend its query encoder. Nothing reads it back — the host on the
+    // wire comes from the transport, never from here.
+    let mut url = reqwest::Url::parse(&format!("http://local{path}"))
+        .with_context(|| format!("building request target {path}"))?;
+    if !query.is_empty() {
         let mut pairs = url.query_pairs_mut();
         for q in query {
             let (k, v) = q
@@ -680,7 +689,10 @@ fn build_url(origin: &str, path: &str, query: &[String]) -> Result<String> {
             pairs.append_pair(k, v);
         }
     }
-    Ok(url.to_string())
+    Ok(match url.query() {
+        Some(q) => format!("{}?{}", url.path(), q),
+        None => url.path().to_string(),
+    })
 }
 
 /// Read the cloud `/v1` envelope (`{status,msg,data}`) for an error the HTTP status

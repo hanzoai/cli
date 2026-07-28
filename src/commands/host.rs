@@ -3,30 +3,30 @@
 //! Every cloud call resolves WHERE through [`origin`]. When the active network
 //! points at loopback, that resolution also GUARANTEES something is listening
 //! there: it reuses a running host, or starts the one `make host` built in a
-//! hanzoai/cloud checkout. Nothing links Go — the CLI speaks the same HTTP it
-//! speaks to api.hanzo.ai, at a different origin. That is the whole seam.
+//! hanzoai/cloud checkout. Nothing links Go.
 //!
 //! WHY the host and not the 108 app binaries: the host is a ROUTER that mounts
 //! each subsystem as its own process, started on the first request that reaches
-//! its prefix. Cold is ~100ms, warm ~0.6ms, and an app nobody calls costs a
-//! route entry. So pointing the CLI at the host gets the whole surface for the
-//! price of the commands actually run.
+//! its prefix. Cold is ~15ms, warm ~0.5ms, and an app nobody calls costs a route
+//! entry. So pointing the CLI at the host gets the whole surface for the price of
+//! the commands actually run.
 //!
 //! WHY a persistent daemon rather than a child per command: that laziness only
 //! pays off warm. Stopping the host between commands would make every call cold
 //! and throw the entire benefit away. It outlives the CLI, and `hanzo host stop`
 //! ends it — SIGTERM, which zip drains LIFO into every child it started.
 //!
-//! WHY loopback TCP and not a unix socket for the front door: zip serves HTTP
-//! through fasthttp's `ListenAndServe`, which is `net.Listen("tcp4", …)`, so its
-//! http transport cannot bind a unix path. The transport that can is ZAP, whose
-//! binary framing this client does not speak. HTTP therefore rides 127.0.0.1 —
-//! never 0.0.0.0 — and ZAP, which the host also serves and which nothing here
-//! dials, is pinned to a unix socket so it claims no port at all.
+//! WHY a unix socket, and WHY ZAP: the host serves the SAME routes on two wires —
+//! ZAP, the fleet's primary transport, and HTTP, a secondary view for third
+//! parties who cannot speak it. The CLI is first party, so locally it speaks ZAP
+//! ([`crate::zap`]) over a unix socket in the user's own state directory: no
+//! HTTP grammar, no second serialization, no port on any interface. The host is
+//! still told to bind loopback TCP because `cmd/host` always listens on both, but
+//! nothing here dials it — a bound port is never what "running" means to us.
 
 use anyhow::{bail, Context, Result};
 use colored::*;
-use reqwest::Client;
+use reqwest::Method;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -42,23 +42,38 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// "is someone already listening", and the answer is local either way.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// The ONE origin resolver for every cloud call. Returns the active network's
-/// api origin; when that origin is loopback, a host is running behind it by the
-/// time this returns. A remote origin is passed through untouched — nothing is
-/// started, nothing is probed.
-pub async fn origin(cfg: &Config) -> Result<String> {
-    let api = network::active(cfg).api.trim_end_matches('/').to_string();
-    if let Some(addr) = loopback_addr(&api) {
-        ensure(&api, &addr).await?;
-    }
-    Ok(api)
+/// Where a cloud call goes, and over which wire.
+pub enum Origin {
+    /// The local host's ZAP socket. ZAP is the fleet's PRIMARY transport and the
+    /// CLI is first party, so locally it speaks the native wire — the HTTP view
+    /// the host also serves exists for third parties, and we are not one.
+    LocalZap(PathBuf),
+    /// A published `api.*` origin over HTTPS. TLS terminates at the ingress and
+    /// zaphttp has no handshake of its own yet, so a remote host is reached the
+    /// way third parties reach it. This is the EXCEPTION, kept only until the ZAP
+    /// transport carries its own session crypto.
+    Http(String),
 }
 
-/// True when `origin` names a host on this machine. Callers use it to decide what
-/// a MISSING credential means: against cloud it is "sign in first", against a
-/// local host it is the server's call, not ours.
-pub fn is_local(origin: &str) -> bool {
-    loopback_addr(origin).is_some()
+/// The ONE origin resolver for every cloud call. A loopback network resolves to
+/// the local ZAP socket, with a host guaranteed to be listening on it by the time
+/// this returns; anything else is passed through as HTTP — nothing started,
+/// nothing probed.
+pub async fn origin(cfg: &Config) -> Result<Origin> {
+    let api = network::active(cfg).api.trim_end_matches('/').to_string();
+    match loopback_addr(&api) {
+        Some(addr) => {
+            ensure(&addr).await?;
+            Ok(Origin::LocalZap(zap_socket()?))
+        }
+        None => Ok(Origin::Http(api)),
+    }
+}
+
+/// The local host's ZAP socket. zip reads the wire off the address SHAPE, so a
+/// path binds a unix socket — which is why this is a path and not a port.
+pub fn zap_socket() -> Result<PathBuf> {
+    Ok(state_dir()?.join("host.zap.sock"))
 }
 
 /// The `host:port` to bind when `origin` is loopback, else `None`. The host binds
@@ -74,24 +89,27 @@ fn loopback_addr(origin: &str) -> Option<String> {
     local.then(|| format!("127.0.0.1:{}", url.port_or_known_default().unwrap_or(80)))
 }
 
-/// True when a host answers `/healthz` at `origin`. Liveness is the HOST's own
-/// route — it answers while every plugin is still cold — so this asks whether the
-/// router is up, never whether any subsystem is.
-async fn healthy(origin: &str) -> bool {
-    let Ok(http) = Client::builder().timeout(PROBE_TIMEOUT).build() else { return false };
-    matches!(http.get(format!("{origin}/healthz")).send().await, Ok(r) if r.status().is_success())
+/// True when a host answers `/healthz` on the ZAP socket. Liveness is the HOST's
+/// own route — it answers while every plugin is still cold — so this asks whether
+/// the router is up, never whether any subsystem is. Probed over ZAP like every
+/// other local call: the CLI does not speak HTTP to the local host at all, so a
+/// bound TCP port is never what "running" means here.
+async fn healthy() -> bool {
+    let Ok(sock) = zap_socket() else { return false };
+    let probe = crate::zap::send(&sock, &Method::GET, "/healthz", "", None);
+    matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok((s, _))) if s.is_success())
 }
 
 /// Reuse a running host, or start one and wait for it to listen.
-async fn ensure(origin: &str, addr: &str) -> Result<()> {
-    if healthy(origin).await {
+async fn ensure(addr: &str) -> Result<()> {
+    if healthy().await {
         return Ok(()); // already serving — never double-start
     }
     let bin = binary()?;
     let mut child = spawn(&bin, addr)?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        if healthy(origin).await {
+        if healthy().await {
             return Ok(());
         }
         // A host that died has already written why. Surfacing its exit beats
@@ -215,7 +233,7 @@ fn alive(_pid: i32) -> bool {
 /// plugins still start on the first request that needs them).
 pub async fn start(cfg: &Config) -> Result<()> {
     let api = local_origin(cfg)?;
-    let existed = healthy(&api).await;
+    let existed = healthy().await;
     origin(cfg).await?;
     let verb = if existed { "already running" } else { "started" };
     println!("{} local cloud host {} at {}", "✓".green(), verb, api.cyan());
@@ -225,7 +243,7 @@ pub async fn start(cfg: &Config) -> Result<()> {
 /// `hanzo host status` — is it up, where, and as which pid.
 pub async fn status(cfg: &Config) -> Result<()> {
     let api = local_origin(cfg)?;
-    if healthy(&api).await {
+    if healthy().await {
         match running_pid() {
             Some(pid) => println!("{} running at {} (pid {pid})", "●".green(), api.cyan()),
             // Serving, but not by a process this CLI started — a `make run`, a
@@ -247,7 +265,7 @@ pub async fn stop(cfg: &Config) -> Result<()> {
     // pids are recycled, so a stale file plus an unlucky wrap would aim SIGTERM at
     // whatever process inherited the number. Nothing serving means nothing to stop,
     // whatever the file says.
-    if !healthy(&api).await {
+    if !healthy().await {
         let _ = std::fs::remove_file(state_dir()?.join("host.pid"));
         println!("{} not running", "○".dimmed());
         return Ok(());
