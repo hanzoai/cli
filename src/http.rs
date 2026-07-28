@@ -32,7 +32,13 @@ pub(crate) async fn send<B: Serialize>(
     token: &str,
     body: Option<&B>,
 ) -> Result<(StatusCode, Value)> {
-    let mut req = http.request(method, url).bearer_auth(token);
+    // An EMPTY token means "no credential", which is a real state against a local
+    // host with no IAM behind it. Sending `Authorization: Bearer ` would assert an
+    // empty one instead, so the header is omitted rather than sent blank.
+    let mut req = http.request(method, url);
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
     if let Some(b) = body {
         req = req.json(b);
     }

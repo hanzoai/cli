@@ -217,6 +217,12 @@ enum Commands {
         command: NetworkCommands,
     },
 
+    /// The local cloud host — every cloud command, served from a checkout
+    Host {
+        #[command(subcommand)]
+        command: HostCommands,
+    },
+
     /// Wallet identity — PQ cloud custody (KMS/MPC) or local keychain
     Wallet {
         #[command(subcommand)]
@@ -487,6 +493,19 @@ enum FabricClusterCommands {
     },
 }
 
+/// The local cloud host's lifecycle. Every other cloud command starts it on
+/// demand, so these exist for the two things demand cannot express: seeing
+/// whether it is up, and deciding when it goes down.
+#[derive(Subcommand)]
+enum HostCommands {
+    /// Start the local cloud host (its subsystems still start on first request)
+    Start,
+    /// Show whether the local cloud host is running, and where
+    Status,
+    /// Stop the local cloud host and every subsystem it started
+    Stop,
+}
+
 #[derive(Subcommand)]
 enum NetworkCommands {
     /// List built-in + custom networks
@@ -743,6 +762,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 }
             }
         },
+        Commands::Host { command } => match command {
+            HostCommands::Start => commands::host::start(&config).await?,
+            HostCommands::Status => commands::host::status(&config).await?,
+            HostCommands::Stop => commands::host::stop(&config).await?,
+        },
+
         Commands::Network { command } => match command {
             NetworkCommands::List => commands::network::list(&config)?,
             NetworkCommands::Current => commands::network::current(&config)?,

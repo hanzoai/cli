@@ -1,5 +1,6 @@
 // The cloud product tree (generated) + the shared seams.
 pub mod cloud;
+pub mod host;
 pub mod launch;
 pub mod product;
 
