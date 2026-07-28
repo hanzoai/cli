@@ -78,10 +78,16 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
   cannot speak it. The CLI is first party, so locally it speaks ZAP over a unix socket
   in `<data>/hanzo/host/` — `src/zap.rs`, a byte-for-byte port of
   `github.com/zap-proto/http`'s codec, pinned by golden vectors emitted from the Go
-  encoder itself (`src/zap/tests.rs`). No HTTP grammar, no port on any interface: a
-  local `hanzo` call makes exactly one `connect(AF_UNIX)` and no `AF_INET` at all. The
-  host is still told to bind loopback TCP only because `cmd/host` always listens on
-  both; nothing here dials it.
+  encoder itself (`src/zap/tests.rs`). No HTTP grammar and no port for the CLOUD
+  CALL: `strace -e trace=connect hanzo authz health` shows `connect(AF_UNIX,
+  …/host.zap.sock)` twice — the `/healthz` probe and the call — and no `AF_INET`
+  for either. The host is still told to bind loopback TCP because `cmd/host`
+  always listens on both; the cloud path never dials it.
+  - What DOES still open a TCP socket on a local run, so nobody is surprised by an
+    strace: `crates/event`'s best-effort telemetry POST to `{api_base}/v1/event`,
+    which owns its own reqwest client and knows nothing about ZAP. One `AF_INET`
+    to 127.0.0.1:3690 per invocation, fire-and-forget, `HANZO_DO_NOT_TRACK`
+    silences it. It is a second wire to the same host and the only one left.
   - **Windows is the one platform where local is HTTP**, because it has no unix
     socket to speak ZAP over. `Origin::Local` therefore carries the socket PATH on
     unix and the loopback BASE URL on Windows — one variant, because "is this the
