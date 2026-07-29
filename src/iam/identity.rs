@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 /// Who a token authenticates as. Derived from the token's OWN claims, so a
 /// stored credential can never be mislabeled into another principal's slot.
-/// Casdoor names a principal `owner/name`; `owner` is ALSO the org the gateway
+/// IAM names a principal `owner/name`; `owner` is ALSO the org the gateway
 /// bills AND the SuperAdmin predicate — one value, three uses.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Identity {
@@ -19,7 +19,7 @@ pub struct Identity {
     pub name: String,
 }
 
-/// The claims we read off an access token. Casdoor issues `owner` (the org) and
+/// The claims we read off an access token. IAM issues `owner` (the org) and
 /// `name` (the username) on every access token it mints.
 #[derive(Debug, Deserialize)]
 struct Claims {

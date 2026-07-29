@@ -617,7 +617,7 @@ async fn call(
     };
 
     if status.is_success() {
-        // A 2xx is NOT proof of success. Some planes (Casdoor/iam) answer an error
+        // A 2xx is NOT proof of success. Some planes (IAM) answer an error
         // with HTTP 200 and an `{"status":"error","msg":…}` envelope; rendering
         // only `data` then prints nothing and exits 0, silently swallowing the
         // refusal. Surface the server's own message to stderr with a non-zero exit.
@@ -704,7 +704,7 @@ fn target(path: &str, query: &[String]) -> Result<String> {
 }
 
 /// Read the cloud `/v1` envelope (`{status,msg,data}`) for an error the HTTP status
-/// did not carry. Some planes (Casdoor/iam) answer a refusal with HTTP 200 and
+/// did not carry. Some planes (IAM) answer a refusal with HTTP 200 and
 /// `{"status":"error","msg":"…"}`, so a 2xx is not proof of success. Returns the
 /// server's own message when the body is an ERROR — an explicit `status:"error"`
 /// (any case), or a bare `{"error":"…"}` with no `data` — and `None` otherwise, so

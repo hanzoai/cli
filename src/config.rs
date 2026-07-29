@@ -153,10 +153,10 @@ pub struct AuthState {
 pub struct StoredIdentity {
     /// Brand / tenant this identity was issued by (hanzo | lux | zoo | …).
     pub brand: String,
-    /// The Casdoor org — ALSO the org the gateway bills and the SuperAdmin
+    /// The IAM org — ALSO the org the gateway bills and the SuperAdmin
     /// predicate (`owner == "admin"`). One value, three uses.
     pub owner: String,
-    /// The Casdoor username.
+    /// The IAM username.
     pub name: String,
 }
 
