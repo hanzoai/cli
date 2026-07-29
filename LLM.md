@@ -203,6 +203,45 @@ runs. One channel, two directions, one transport, one vocabulary.
   HTTPS until the ZAP transport carries its own session crypto.** Both directions ride the one
   `crate::http` seam, so when that lands they move together — there is no second wire to migrate.
 
+**The Claude config home, and the carrier** — `hanzo code claude` and the user's own
+Claude Code are two products sharing one binary. Two modules keep them decomplected;
+both are pure functions of the resolved ROUTE, so every reader agrees without coordinating.
+
+- **`code/home.rs` — whose config home this run uses.** A ROUTED run
+  (`Route::Via`) relocates `CLAUDE_CONFIG_DIR` to `~/.hanzo/claude`, because that is
+  when a saved `/model` could outrank `ANTHROPIC_MODEL` and when Hanzo's injected
+  tiers could leak back out. `--no-route` (`Route::Inherit`) and `FailClosed` keep
+  `~/.claude` — on Linux the account the flag promises IS a file in that home
+  (`.credentials.json`), so relocating would hand the user a login prompt instead of
+  the pass-through. `home::relocate` = "must we set the env var"; `home::of` = "which
+  home will actually be read" (transcripts, theme). Seeding is WRITE-ONCE and happens
+  only where we relocated. **Everything that reads or writes that home — the launch
+  env, `transcript_path`, `theme::apply` — must take the route.** A path hard-coded to
+  either home is a file that does not exist on the other one.
+- **`code/tier.rs` — the zen ⇆ carrier table, the ONE source of truth.** Claude Code
+  budgets a context window only from ids it RECOGNIZES, so a custom id (`zen5-pro`)
+  gets the fallback budget and is clamped client-side. A tier therefore names a
+  CARRIER (`claude-opus-4-8[1m]`) that Claude budgets from, and a per-run
+  `--settings modelOverrides` overlay rewrites it back to the zen id before the
+  request leaves the process — verified live: Claude displays
+  `model claude-sonnet-4-6[1m]` while the gateway receives `zen5`. The overlay rides
+  the RUN, never the seeded home: persisted, it would rewrite a `--no-route` or
+  direct-Anthropic session's model to a zen id and 404 against api.anthropic.com.
+  Requires Claude Code v2.1.200+.
+  - The table also fills every `ANTHROPIC_DEFAULT_*_MODEL` slot. This is not
+    branding: Claude resolves subagents, `/compact` and its background work through
+    those slots, and their built-ins are `claude-*` ids the gateway does not serve,
+    so an unset slot 400s every subagent.
+  - **Key a slot on its TIER, never on its zen id.** `zen5-pro` fills two slots (opus
+    and fable); an id lookup is ambiguous between them and silently gave the
+    "max effort" slot the opus carrier.
+  - A model absent from the table passes through untouched — the table is a lookup,
+    never an allowlist. The gateway stays the sole authority on which ids are valid.
+  - A CARRIED model also gets `--append-system-prompt` naming its real tier, because
+    the carrier is exactly what would otherwise make it introduce itself as Claude.
+    An append, so the harness keeps its own tool-use/safety prompt; an untiered id
+    rides no carrier and so claims nothing.
+
 **Key entry points**: `src/main.rs` (clap tree + bare-`hanzo` flatten), `src/commands/`
 (one module per resource; `product/` = generated cloud tree), `src/iam/` (identity,
 token store, HIP-0111 OIDC PKCE), `src/commands/code/` (coding wrapper). Secrets arrive
