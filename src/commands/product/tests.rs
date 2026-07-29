@@ -558,7 +558,7 @@ fn kms_folder_secret_path_round_trips_with_raw_slashes() {
 
 // ---- a 2xx with an error envelope is a failure, never a silent success --------
 
-/// The silent-swallow bug: some planes (Casdoor/iam) answer a refusal with HTTP
+/// The silent-swallow bug: some planes (IAM) answer a refusal with HTTP
 /// 200 and `{"status":"error","msg":…}`. `envelope_error` reads that as a failure
 /// carrying the server's message (so `call` exits non-zero to stderr), while a
 /// genuine success — a success envelope, a delete's null `data`, or a raw body —
@@ -567,7 +567,7 @@ fn kms_folder_secret_path_round_trips_with_raw_slashes() {
 fn a_2xx_error_envelope_is_surfaced_not_swallowed() {
     use serde_json::json;
 
-    // The Casdoor/iam shape: HTTP 200 body, but the envelope says error.
+    // The IAM shape: HTTP 200 body, but the envelope says error.
     assert_eq!(
         envelope_error(&json!({"status": "error", "msg": "Unauthorized operation"})).as_deref(),
         Some("Unauthorized operation")

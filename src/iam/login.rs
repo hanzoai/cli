@@ -6,7 +6,7 @@
 //! auth surface, not an `auth` sub-group.
 //!
 //! Multi-identity, like `gh auth switch`: a login ADDS an identity, `switch`
-//! selects among them, and every identity survives. `owner` — the Casdoor org —
+//! selects among them, and every identity survives. `owner` — the IAM org —
 //! is what the gateway bills and what the SuperAdmin gate keys on, so switching
 //! identity switches the billing org with no separate selector to desync.
 
