@@ -1,8 +1,8 @@
 //! The single source of truth for Hanzo IAM OIDC endpoint paths (HIP-0111).
 //!
 //! This mirrors `@hanzo/iam`'s `src/paths.ts`: there is ONE set of paths, no
-//! legacy `/oauth/*`, no `/api/` prefix. Hanzo IAM is a Casdoor-derived OIDC
-//! provider served per-brand from a configurable origin (`server_url`).
+//! legacy `/oauth/*`, no `/api/` prefix. Hanzo IAM is an OIDC provider served
+//! per-brand from a configurable origin (`server_url`).
 //!
 //! CRITICAL GOTCHA (from the SDK): IAM serves a `200 text/html` SPA catch-all
 //! for ANY unregistered path. A wrong path is silent breakage, not a 404. So
