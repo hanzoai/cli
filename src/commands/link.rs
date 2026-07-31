@@ -1,10 +1,16 @@
 //! `hanzo link` — put a shell on the fabric and register it, so it can be driven
 //! from the console.
 //!
-//! Three things, none of them new: ttyd serves a shell over a loopback port,
-//! `share::start` publishes that port (the same tunnel `hanzo share` uses), and
-//! the session registry gets a row carrying the URL. The console lists the row
-//! and frames the URL.
+//! Four things, none of them new: this machine registers as a run-target so the
+//! fleet can see its CPU and GPUs and send it work, ttyd serves a shell over a
+//! loopback port, `share::start` publishes that port (the same tunnel `hanzo
+//! share` uses), and the session registry gets a row carrying the URL. The
+//! console lists the machine, the shell under it, and frames the terminal.
+//!
+//! COMPUTE AND SHELL ARE ONE ACT. Linking a machine that the fleet can schedule
+//! onto but nobody can look at, or a shell on a machine the fleet does not know
+//! about, are both half a link — so this does both and the console shows them
+//! together.
 //!
 //! The bytes never pass through cloud — it holds the address, not the connection
 //! — so a link that ends stops answering in its own frame rather than leaving a
@@ -15,6 +21,7 @@
 //! disconnect and can be attached locally at the same time.
 
 use crate::commands::code::session::SessionClient;
+use crate::commands::code::{context, target};
 use crate::commands::{network, share};
 use crate::config::Config;
 use crate::iam::{paths, store};
@@ -92,7 +99,20 @@ pub async fn run(
     let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
 
-    // ttyd first: publishing a port nothing is serving would announce a URL that
+    // Register this machine as a run-target first, so the fleet knows its CPU and
+    // GPUs and the console has a machine to group the shell under. DETACHED and
+    // best-effort, exactly as `hanzo code` does it: capability probing and the
+    // cloud write must never be on the critical path of getting a shell up.
+    {
+        let (api, token) = (api.clone(), tok.access_token.clone());
+        let host = hostname();
+        tokio::spawn(async move {
+            let machine = context::Machine::capture().await;
+            target::sync(&api, &token, &context::machine_id(), &host, &machine).await;
+        });
+    }
+
+    // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
     let _ttyd = start_ttyd(TTYD_PORT, &cmd, !read_only)?;
     println!("{} {}", "→".green(), cmd.join(" ").cyan());
