@@ -6,6 +6,7 @@ pub mod product;
 
 // Resource-noun commands — the primary `hanzo <resource> <verb>` tree.
 pub mod agent;
+pub mod man;
 pub mod auth;
 pub mod config;
 pub mod fabric;

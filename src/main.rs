@@ -521,6 +521,18 @@ enum ConnectorCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // A truly bare `hanzo`, `hanzo --help` or `hanzo help` prints the root man
+    // page — NAME/SYNOPSIS/GROUPS/COMMANDS, one line per product, like a proper
+    // cloud CLI. Everything else (including `hanzo <group> --help` and the
+    // `hanzo "task"` coding session) parses normally; `-h` keeps clap's terse
+    // summary as the short form.
+    {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if argv.is_empty() || argv == ["--help"] || argv == ["help"] {
+            print!("{}", commands::man::page());
+            return Ok(());
+        }
+    }
     // ONE tree: the derive command, augmented with the generated first-class
     // product commands. One parse, one dispatch — a matched cloud product goes
     // through the product seam, everything else is a derive command (or bare).
