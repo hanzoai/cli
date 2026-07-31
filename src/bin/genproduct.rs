@@ -412,17 +412,39 @@ fn main() {
             // handler-name strip: drop the exact prefix, recapitalize, and a
             // connective "is/are" goes with it ("Package books is double-entry
             // accounting" -> "Double-entry accounting").
+            // The strip is generic over the package WORD, not the tag name —
+            // `audit` is package auditlog, `evals` package eval — any leading
+            // "Package <word>" is the convention, whatever the word.
             let d = {
                 let mut d = d;
-                if let Some(rest) = d.strip_prefix(&format!("Package {n} ")) {
-                    let rest = rest.strip_prefix("is ").or_else(|| rest.strip_prefix("are ")).unwrap_or(rest);
-                    let mut c = rest.chars();
-                    d = match c.next() {
-                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                        None => rest.to_string(),
-                    };
+                if let Some(rest) = d.strip_prefix("Package ") {
+                    if let Some(sp) = rest.find(' ') {
+                        let rest = &rest[sp + 1..];
+                        let rest = rest.strip_prefix("is ").or_else(|| rest.strip_prefix("are ")).unwrap_or(rest);
+                        let mut c = rest.chars();
+                        d = match c.next() {
+                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                            None => rest.to_string(),
+                        };
+                    }
                 }
                 d
+            };
+            // The list line is ONE sentence, capped — clap renders it beside a
+            // hundred siblings. A sentence ending in ":" was leading into a Go
+            // doc's list; the colon dangles here, so it goes. The FULL prose
+            // stays in the OpenAPI document and the MCP tool; the CLI's help
+            // line is a label, not a manual.
+            let d = {
+                let mut s = match d.find(". ") {
+                    Some(i) => d[..i + 1].to_string(),
+                    None => d.clone(),
+                };
+                if s.len() > 100 {
+                    let cut = s[..100].rfind(' ').unwrap_or(100);
+                    s = format!("{}…", s[..cut].trim_end_matches([',', ';', ':', '.']));
+                }
+                s.trim_end_matches(['.', ':']).trim().to_string()
             };
             (!d.is_empty()).then_some((n, d))
         })
