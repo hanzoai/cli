@@ -69,6 +69,10 @@ struct Registry {
     /// The registry document's own component schemas — the shapes zip reflected
     /// from the live Go types, which described ops' $refs resolve against.
     schemas: Map<String, Value>,
+    /// Per-product prose from the document's `tags` — each entry's description
+    /// is the owning Go package's doc synopsis, lifted by the same weave that
+    /// writes the subsets. Products, like operations, describe themselves.
+    products: BTreeMap<String, String>,
 }
 
 /// One spelling for "the same route whatever the params are named": a literal
@@ -123,7 +127,18 @@ impl Registry {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        Registry { routes, owned, ops, schemas }
+        let mut products = BTreeMap::new();
+        for t in doc.get("tags").and_then(Value::as_array).into_iter().flatten() {
+            if let (Some(n), Some(d)) =
+                (t.get("name").and_then(Value::as_str), t.get("description").and_then(Value::as_str))
+            {
+                let d = d.trim();
+                if !d.is_empty() {
+                    products.insert(n.to_string(), d.to_string());
+                }
+            }
+        }
+        Registry { routes, owned, ops, schemas, products }
     }
 
     /// Segment-by-segment match against one route pattern. A literal matches
@@ -366,6 +381,17 @@ async fn main() {
     let components: Map<String, Value> =
         keep.iter().filter_map(|n| merged.get(n).map(|s| (n.clone(), s.clone()))).collect();
 
+    // The OpenAPI-native place for per-product prose: a `tags` entry per product
+    // that actually has operations in this spec AND a description in the
+    // registry. `genproduct` turns these into the product groups' help lines.
+    let present: BTreeSet<&str> = paths.keys().filter_map(|p| segs(p).get(1).copied()).collect();
+    let tags: Vec<Value> = reg
+        .products
+        .iter()
+        .filter(|(n, _)| present.contains(n.as_str()))
+        .map(|(n, d)| json!({"name": n, "description": d}))
+        .collect();
+
     let doc = json!({
         "openapi": "3.1.0",
         "info": {
@@ -382,6 +408,10 @@ async fn main() {
         "paths": paths,
         "components": {"schemas": components},
     });
+    let mut doc = doc;
+    if !tags.is_empty() {
+        doc.as_object_mut().expect("doc").insert("tags".into(), json!(tags));
+    }
 
     let bytes = serde_json::to_vec(&doc).expect("encode");
     std::fs::write(&a.out, &bytes).unwrap_or_else(|e| panic!("write {}: {e}", a.out.display()));

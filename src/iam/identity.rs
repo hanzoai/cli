@@ -86,7 +86,10 @@ impl Identity {
 /// Reject anything that could break out of its slot in the keychain key
 /// (`{brand}/{owner}/{name}`) or the `owner/name` index string. A claim is
 /// attacker-influenced data: an `owner` of `../hanzo` or `a/b` would let a
-/// forged token address ANOTHER identity's storage slot. Structure over trust.
+/// forged token address ANOTHER identity's storage slot. Structure over trust
+/// — and ONLY structure: IAM mints usernames like "Zach Kelling" or "José",
+/// so the rule is a deny-list of what actually escapes a slot (separators,
+/// control bytes, non-space whitespace), never an allowlist of blessed ASCII.
 fn check_component(field: &str, v: &str) -> Result<()> {
     if v.is_empty() {
         bail!("token claim `{field}` is empty");
@@ -94,10 +97,16 @@ fn check_component(field: &str, v: &str) -> Result<()> {
     if v.len() > 128 {
         bail!("token claim `{field}` is too long ({} > 128)", v.len());
     }
-    if !v.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+    if !v.starts_with(|c: char| c.is_alphanumeric()) {
         bail!("token claim `{field}` must start with a letter or digit: {v:?}");
     }
-    if let Some(bad) = v.chars().find(|c| !matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' | '@')) {
+    if v.ends_with(' ') {
+        bail!("token claim `{field}` ends with a space: {v:?}");
+    }
+    if let Some(bad) = v
+        .chars()
+        .find(|&c| c == '/' || c == '\\' || c.is_control() || (c.is_whitespace() && c != ' '))
+    {
         bail!("token claim `{field}` contains an unsupported character {bad:?}: {v:?}");
     }
     Ok(())
@@ -170,6 +179,22 @@ mod tests {
         assert_eq!(id.to_string(), "hanzo/z");
     }
 
+    /// IAM mints human usernames — an interior space or a non-ASCII letter is a
+    /// legal claim, and rejecting it turns a successful browser sign-in into a
+    /// dead end (v1.9.9 did exactly this to "Zach Kelling").
+    #[test]
+    fn human_usernames_are_legal_claims() {
+        let id = Identity::from_access_token(&jwt("hanzo", "Zach Kelling")).unwrap();
+        assert_eq!(id.to_string(), "hanzo/Zach Kelling");
+        let id = Identity::from_access_token(&jwt("hanzo", "José")).unwrap();
+        assert_eq!(id.name, "José");
+        // And the selector round-trips it, quoted at the shell like any name.
+        assert_eq!(
+            "hanzo/Zach Kelling".parse::<Selector>().unwrap(),
+            Selector::Exact(Identity::new("hanzo", "Zach Kelling").unwrap())
+        );
+    }
+
     /// The billing key IS `owner` — one value, no separate selector anywhere.
     #[test]
     fn owner_is_the_billing_org() {
@@ -210,9 +235,10 @@ mod tests {
             ("..", "z"),
             (".hidden", "z"),
             ("admin", ""),
-            ("ad min", "z"),
             ("admin", "z\u{0}"),
             ("admin\\z", "z"),
+            ("admin", "z\tk"),
+            ("admin", "z "),
         ] {
             let token = claims_jwt(&format!(r#"{{"owner":"{owner}","name":"{name}"}}"#));
             assert!(

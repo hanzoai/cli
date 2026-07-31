@@ -1963,3 +1963,7 @@ pub(crate) static OPS: &[Op] = &[
     Op { product: "world", nodes: &[], verb: "stream", method: "GET", path: "/v1/world/stream", params: &[], rest: &[], fields: &[], sum: "Live news refreshes for the caller's org and project, as Server-Sent Events." },
     Op { product: "x402", nodes: &["settlements"], verb: "get", method: "GET", path: "/v1/x402/settlements/{id}", params: &["id"], rest: &[], fields: &[], sum: "Settlement reads one x402 payment receipt by id." },
 ];
+
+/// Each product's own prose (its package doc synopsis), for the group help.
+pub(crate) static PRODUCTS: &[(&str, &str)] = &[
+];

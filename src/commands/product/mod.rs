@@ -38,7 +38,7 @@ use crate::zap;
 use crate::iam::{paths, store};
 
 mod generated;
-pub(crate) use generated::OPS;
+pub(crate) use generated::{OPS, PRODUCTS};
 
 /// One generated operation — pure DATA derived from the authored spec SHAPE.
 pub struct Op {
@@ -178,6 +178,11 @@ struct Node {
     leaf: Option<&'static Op>,
 }
 
+/// The product's own prose — its package doc synopsis, when it has one.
+fn product_about(name: &str) -> Option<&'static str> {
+    PRODUCTS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d)
+}
+
 fn build_product(product: &'static str) -> Command {
     let mut root = Node::default();
     for op in OPS.iter().filter(|o| o.product == product) {
@@ -187,7 +192,15 @@ fn build_product(product: &'static str) -> Command {
         }
         n.children.entry(op.verb).or_default().leaf = Some(op);
     }
-    to_command(product, &root)
+    let c = to_command(product, &root);
+    // The product describes ITSELF: its package doc synopsis is the about line
+    // in `hanzo --help` and `hanzo <product> --help`. A runnable root keeps its
+    // op's prose in long help; a product with no doc keeps the plain fallback —
+    // the cure for which is a package doc in cloud, never a string here.
+    match product_about(product) {
+        Some(d) => c.about(d),
+        None => c,
+    }
 }
 
 fn to_command(name: &'static str, node: &Node) -> Command {
