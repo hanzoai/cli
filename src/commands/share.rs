@@ -35,6 +35,32 @@ struct EnableResp {
     url_template: String,
 }
 
+/// A running share: the zrok child and the public URL it announced.
+///
+/// Dropping it kills the tunnel, so a caller that holds one cannot leave a share
+/// alive after it has stopped caring about it.
+pub struct Share {
+    pub url: String,
+    child: tokio::process::Child,
+}
+
+impl Drop for Share {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+impl Share {
+    /// Wait for the tunnel to end, echoing zrok's log as it goes.
+    pub async fn wait(&mut self) -> Result<()> {
+        let status = self.child.wait().await?;
+        if !status.success() {
+            bail!("share ended: {status}");
+        }
+        Ok(())
+    }
+}
+
 /// `hanzo share <target> [--backend-mode M] [--name N]`.
 pub async fn run(
     cfg: &mut Config,
@@ -42,6 +68,23 @@ pub async fn run(
     backend_mode: String,
     name: Option<String>,
 ) -> Result<()> {
+    let mut sh = start(cfg, target, backend_mode, name).await?;
+    println!("\n  {}  →  live\n", sh.url.green().bold());
+    sh.wait().await
+}
+
+/// Provision, enable and start a public share, returning it once zrok has
+/// announced the URL.
+///
+/// This is the ONE implementation of "publish a local port on the fabric";
+/// `hanzo share` prints the URL and waits, `hanzo link` puts it on a session and
+/// holds it. Two front doors, one tunnel.
+pub async fn start(
+    cfg: &mut Config,
+    target: String,
+    backend_mode: String,
+    name: Option<String>,
+) -> Result<Share> {
     let backend = resolve_target(&target)?;
 
     // 1. Provision from the login identity — one authed call, org server-derived.
@@ -91,19 +134,28 @@ pub async fn run(
         .spawn()
         .with_context(|| format!("start {zbin} share"))?;
 
+    // zrok announces the token on one of the two streams; whichever carries it
+    // first wins, and the other keeps echoing as log.
     let tmpl = pr.url_template.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(2);
     if let Some(out) = child.stdout.take() {
-        let tmpl = tmpl.clone();
-        tokio::spawn(async move { stream(out, tmpl).await });
+        let (tmpl, tx) = (tmpl.clone(), tx.clone());
+        tokio::spawn(async move { stream(out, tmpl, tx).await });
     }
     if let Some(err) = child.stderr.take() {
-        tokio::spawn(async move { stream(err, tmpl).await });
+        tokio::spawn(async move { stream(err, tmpl, tx).await });
     }
-    let status = child.wait().await?;
-    if !status.success() {
-        bail!("share ended: {status}");
-    }
-    Ok(())
+
+    // A tunnel that never announces a URL is not a share; time out rather than
+    // hand back one that nothing can reach.
+    let url = match tokio::time::timeout(std::time::Duration::from_secs(60), rx.recv()).await {
+        Ok(Some(u)) => u,
+        _ => {
+            let _ = child.start_kill();
+            bail!("zrok did not announce a share url");
+        }
+    };
+    Ok(Share { url, child })
 }
 
 /// One authenticated provisioning call. Sends ONLY the bearer — no org.
@@ -150,12 +202,15 @@ fn resolve_target(arg: &str) -> Result<String> {
 
 /// Relay helper output; highlight the public URL when the share token appears
 /// (`… <token>.public`).
-async fn stream<R: tokio::io::AsyncRead + Unpin>(r: R, url_template: String) {
+async fn stream<R: tokio::io::AsyncRead + Unpin>(
+    r: R,
+    url_template: String,
+    tx: tokio::sync::mpsc::Sender<String>,
+) {
     let mut lines = BufReader::new(r).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(tok) = share_token(&line) {
-            let url = url_template.replace("{token}", &tok);
-            println!("\n  {}  →  live\n", url.green().bold());
+            let _ = tx.try_send(url_template.replace("{token}", &tok));
         } else {
             eprintln!("{}", line.dimmed());
         }
