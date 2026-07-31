@@ -18,7 +18,20 @@ fn generated_data_carries_no_host_url_or_auth() {
     // SCHEME even in prose: naming a host is a fact, carrying a link is a vector.
     let src = include_str!("generated.rs");
     let mut scrubbed = String::with_capacity(src.len());
+    let mut in_products = false;
     for line in src.lines() {
+        // PRODUCTS entries are prose too — a product's own doc may truthfully
+        // name the URL shape it mints (share's `<token>.share.hanzo.ai`).
+        if line.starts_with("pub(crate) static PRODUCTS") {
+            in_products = true;
+        }
+        if in_products {
+            if line == "];" {
+                in_products = false;
+            }
+            scrubbed.push('\n');
+            continue;
+        }
         match line.find("sum: \"") {
             Some(i) => scrubbed.push_str(&line[..i]),
             None => scrubbed.push_str(line),
@@ -33,6 +46,11 @@ fn generated_data_carries_no_host_url_or_auth() {
     }
     for op in OPS {
         assert!(!op.sum.contains("://"), "prose may name a host, never carry a link: {}", op.sum);
+    }
+    // A product description is display-only prose, but it still must not carry
+    // an auth token — and the tuple shape means it can never be dialed.
+    for (name, d) in PRODUCTS {
+        assert!(!d.contains("Bearer") && !d.contains("Authorization"), "auth in {name} prose");
     }
     // Every path template is a bare `/v1/…` — no scheme can ride a path.
     for op in OPS {
@@ -323,9 +341,12 @@ fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
         OPS.iter().any(|o| o.path == "/v1/models" && o.verb == "list"),
         "`hanzo models list` (GET /v1/models) must remain"
     );
-    for plural in ["networks", "clusters", "bots"] {
+    for plural in ["networks", "bots"] {
         assert!(!is_product(plural), "cloud plural {plural} must be deduped away (local wins)");
     }
+    // The hand `cluster` proxy is deleted, so the SERVED clusters product is
+    // the one way to reach dedicated clusters.
+    assert!(is_product("clusters"), "`hanzo clusters` is the cloud product, no local shadow");
     assert!(!is_product("machines") && !is_product("gpus"), "absorbed into compute");
     assert!(is_product("compute"));
     assert!(

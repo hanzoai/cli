@@ -7,13 +7,11 @@ pub mod product;
 // Resource-noun commands — the primary `hanzo <resource> <verb>` tree.
 pub mod agent;
 pub mod auth;
-pub mod cluster;
 pub mod config;
 pub mod fabric;
-pub mod model;
-pub mod node;
+pub mod engine;
 pub mod runner;
-pub mod secret;
+pub mod scan;
 pub mod serve;
 
 // The coding/agent orchestrator behind `agent run`.
@@ -23,10 +21,7 @@ pub mod code;
 // connectors, local dev helpers, and the TS SDK proxies).
 pub mod billing;
 pub mod connector;
-pub mod dev;
 pub mod init;
 pub mod network;
 pub mod share;
-pub mod ts_proxy;
-pub mod usage;
 pub mod wallet;
