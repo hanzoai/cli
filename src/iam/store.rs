@@ -62,6 +62,21 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     else {
         return Ok(Some((id, tok)));
     };
+    // SERIALIZE the refresh. IAM rotates single-use refresh tokens and, on replay,
+    // deletes the whole rotation family — so two `hanzo` processes racing here do
+    // not merely duplicate work, they destroy the credential and force a browser
+    // login. `hanzo link` holds a shell for hours while other commands run, which
+    // is exactly that race.
+    //
+    // Re-read AFTER taking the lock: the process that waited is very likely waiting
+    // on the one that just refreshed, and the token on disk is now fresh. Spending
+    // the rt we read BEFORE the lock would be the replay this exists to prevent.
+    let _guard = crate::config::Lock::acquire(&token::lock_subject())?;
+    if let Some((id2, tok2)) = active_token_in(&*token::vault()?, cfg, brand)? {
+        if !expiring(&tok2.access_token, now_unix()) {
+            return Ok(Some((id2, tok2)));
+        }
+    }
     let fresh = match oauth::refresh(origin, rt).await {
         Ok(fresh) => fresh,
         Err(e) => {

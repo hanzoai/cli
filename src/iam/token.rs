@@ -215,6 +215,19 @@ fn keychain_reachable() -> bool {
 
 /// The keychain key for one identity of one brand. `Identity` forbids `/` in
 /// both components, so this composition is unambiguous and non-spoofable.
+/// The path the credential lock guards.
+///
+/// The same file `FileVault` locks for its writes, so a refresh and a write
+/// serialize against each other rather than against two different locks — which
+/// would be no lock at all. Used even when the Keyring backend is active: the
+/// keychain has no cross-process lock of its own, and what must be serialized is
+/// the single-use refresh token, not the storage medium.
+pub fn lock_subject() -> std::path::PathBuf {
+    FileVault::resolve()
+        .map(|v| v.path)
+        .unwrap_or_else(|_| std::path::PathBuf::from("credentials"))
+}
+
 pub fn key(brand: &str, id: &Identity) -> String {
     format!("{brand}/{}/{}", id.owner, id.name)
 }
