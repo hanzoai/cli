@@ -11,15 +11,28 @@ use clap::Command;
 /// in the generated file, the build fails here rather than shipping a redirect.
 #[test]
 fn generated_data_carries_no_host_url_or_auth() {
-    // A scheme (`://`), a host, or an auth token in the data could redirect a
-    // call; a bare `http` in a field NAME (e.g. `httpHeaders`) cannot — it is
-    // never used as a URL — so the guard is on the redirect-bearing substrings.
+    // A scheme (`://`), a host, or an auth token in CALL-BEARING data could
+    // redirect a call. `sum` is display-only prose the runtime never dials, and a
+    // doc comment may truthfully name a host ("imports into git.hanzo.ai") — so
+    // the guard runs over the source with the sum strings blanked, then bans a
+    // SCHEME even in prose: naming a host is a fact, carrying a link is a vector.
     let src = include_str!("generated.rs");
+    let mut scrubbed = String::with_capacity(src.len());
+    for line in src.lines() {
+        match line.find("sum: \"") {
+            Some(i) => scrubbed.push_str(&line[..i]),
+            None => scrubbed.push_str(line),
+        }
+        scrubbed.push('\n');
+    }
     for banned in ["://", "Bearer", "Authorization", ".hanzo.", "hanzo.ai", "api.hanzo"] {
         assert!(
-            !src.contains(banned),
-            "generated data must be host/url/auth-free; found {banned:?}"
+            !scrubbed.contains(banned),
+            "generated call data must be host/url/auth-free; found {banned:?}"
         );
+    }
+    for op in OPS {
+        assert!(!op.sum.contains("://"), "prose may name a host, never carry a link: {}", op.sum);
     }
     // Every path template is a bare `/v1/…` — no scheme can ride a path.
     for op in OPS {
@@ -293,16 +306,18 @@ fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
                   "provisioning", "do", "csrf", "indexers", "search-docs"] {
         assert!(!is_product(noise), "{noise} must be denied as a top-level command");
     }
-    // `gateway` is absent WITHOUT a curation entry: cloud's live route table
-    // refutes all 27 authored `/v1/gateway/*` operations, so `genspec` never puts
-    // them in the spec. This assertion is the proof the mechanism replaced the
-    // hand-written knowledge — it passed before with a DENY entry, and passes now
-    // with none.
-    assert!(!is_product("gateway"), "the registry must refute the unmounted /v1/gateway/* subtree");
-    assert!(
-        !OPS.iter().any(|o| o.path.starts_with("/v1/gateway/")),
-        "no op may target the unmounted /v1/gateway/* subtree"
-    );
+    // `gateway` exists exactly as far as the registry DESCRIBES it — no more, no
+    // less. The 27-op authored subtree stayed refuted (dead routes never come
+    // back), and the one route cloud genuinely serves and documents
+    // (/v1/gateway/config, typed 2026-07-30) came in through the registry side of
+    // genspec. Every gateway op therefore carries prose, because being described
+    // is WHY it exists — an undescribed gateway op here would mean the dead
+    // subtree leaked back through the authored master.
+    let gw: Vec<_> = OPS.iter().filter(|o| o.path.starts_with("/v1/gateway")).collect();
+    assert!(!gw.is_empty(), "the served /v1/gateway/config must surface");
+    for o in &gw {
+        assert!(!o.sum.is_empty(), "{} {} is undescribed — only registry-described gateway ops may exist", o.method, o.path);
+    }
     // The real gateway surface stays reachable at its TOP-LEVEL served paths.
     assert!(
         OPS.iter().any(|o| o.path == "/v1/models" && o.verb == "list"),

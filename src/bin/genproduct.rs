@@ -43,6 +43,13 @@ const DENY: &[&str] = &[
     // provisioner (you provision via the concrete `hanzo vector|kv|s3 create`),
     // and `do` is the DigitalOcean PROVIDER backend.
     "provisioning", "do",
+    // A LOCAL hand-written command owns these names, whatever the server serves:
+    // `code` is the AI coding session, `agent`/`billing`/`deploy` are wrappers
+    // with their own UX, and `help` is clap's own builtin — a generated `help`
+    // product panics the parser with a duplicate command. These became reachable
+    // when genspec started trusting registry-described ops for existence; the
+    // choice that a local command wins its bare name predates that and stands.
+    "code", "help", "agent", "billing", "deploy",
     // `gateway` USED TO BE HERE, with a comment noting its whole `/v1/gateway/*`
     // subtree was unmounted. That was a fact about the server kept in a list in the
     // client — exactly the drift this file no longer owns. `genspec` refutes those
@@ -363,6 +370,9 @@ struct Op {
     /// The subset of `params` that are multi-segment (catch-all) — see REST_PARAMS.
     rest: Vec<String>,
     fields: Vec<FieldDef>,
+    /// One line of prose from the spec (a typed op's doc comment, lifted by
+    /// zipdoc and carried through genspec). Empty when the op is undescribed.
+    sum: String,
 }
 
 fn method_rank(m: &str) -> usize {
@@ -437,6 +447,7 @@ fn main() {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
                 .unwrap_or_default();
+            let sum = op.get("summary").and_then(Value::as_str).unwrap_or("").to_string();
             let coord = (product.clone(), nodes.clone(), f.verb.clone());
             raw.entry(coord).or_default().push(Op {
                 product,
@@ -447,6 +458,7 @@ fn main() {
                 params: f.params,
                 rest,
                 fields,
+                sum,
             });
         }
     }
@@ -596,7 +608,7 @@ fn emit_op(o: &Op) -> String {
         format!("&[{}]", items.join(", "))
     };
     format!(
-        "    Op {{ product: {:?}, nodes: {}, verb: {:?}, method: {:?}, path: {:?}, params: {}, rest: {}, fields: {} }},\n",
+        "    Op {{ product: {:?}, nodes: {}, verb: {:?}, method: {:?}, path: {:?}, params: {}, rest: {}, fields: {}, sum: {:?} }},\n",
         o.product,
         emit_slice(&o.nodes),
         o.verb,
@@ -604,6 +616,7 @@ fn emit_op(o: &Op) -> String {
         o.path,
         emit_slice(&o.params),
         emit_slice(&o.rest),
-        fields
+        fields,
+        o.sum
     )
 }

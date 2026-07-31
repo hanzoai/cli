@@ -56,17 +56,45 @@ fn is_wild(s: &str) -> bool {
     is_param(s) && s.contains("wild")
 }
 
-/// The registry's evidence: the route patterns it serves, per method, and the
-/// set of products it owns.
+/// The registry's evidence: the route patterns it serves, per method, the set
+/// of products it owns — and, for DESCRIBED operations (zip typed ops, whose
+/// prose and schemas are generated from the Go code), the operations themselves.
 struct Registry {
     routes: BTreeMap<String, Vec<Vec<String>>>,
     owned: BTreeSet<String>,
+    /// (METHOD, normalized path) -> (registry's own path key, the op object).
+    /// Only ops carrying a summary or description are held: prose is what marks
+    /// an operation as authored-in-code rather than an accident of the router.
+    ops: BTreeMap<(String, String), (String, Value)>,
+    /// The registry document's own component schemas — the shapes zip reflected
+    /// from the live Go types, which described ops' $refs resolve against.
+    schemas: Map<String, Value>,
+}
+
+/// One spelling for "the same route whatever the params are named": a literal
+/// matches itself, any `{param}` is `{}`, a fiber catch-all is `{*}`.
+fn norm(s: &[&str]) -> String {
+    s.iter()
+        .map(|x| if is_wild(x) { "{*}" } else if is_param(x) { "{}" } else { *x })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The one-line prose of an op: its summary, else the first line of its
+/// description. Empty means the op is undescribed.
+fn prose(op: &Value) -> Option<String> {
+    let take = |v: &Value| v.as_str().map(|x| x.lines().next().unwrap_or("").trim().to_string());
+    op.get("summary")
+        .and_then(take)
+        .filter(|x| !x.is_empty())
+        .or_else(|| op.get("description").and_then(take).filter(|x| !x.is_empty()))
 }
 
 impl Registry {
     fn read(doc: &Value) -> Self {
         let mut routes: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
         let mut owned = BTreeSet::new();
+        let mut ops: BTreeMap<(String, String), (String, Value)> = BTreeMap::new();
         for (path, item) in doc.get("paths").and_then(Value::as_object).into_iter().flatten() {
             let s = segs(path);
             // The bare `/v1/*` is the global fallthrough. Counting it as
@@ -78,13 +106,24 @@ impl Registry {
                 owned.insert(s[1].to_string());
             }
             let pat: Vec<String> = s.iter().map(|x| x.to_string()).collect();
-            for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
+            for (m, op) in item.as_object().into_iter().flatten() {
                 if VERBS.contains(&m.to_ascii_lowercase().as_str()) {
                     routes.entry(m.to_ascii_uppercase()).or_default().push(pat.clone());
+                    if prose(op).is_some() {
+                        ops.insert(
+                            (m.to_ascii_uppercase(), norm(&s)),
+                            (path.clone(), op.clone()),
+                        );
+                    }
                 }
             }
         }
-        Registry { routes, owned }
+        let schemas = doc
+            .pointer("/components/schemas")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        Registry { routes, owned, ops, schemas }
     }
 
     /// Segment-by-segment match against one route pattern. A literal matches
@@ -138,8 +177,11 @@ impl Registry {
 /// operation (responses, security, summaries) describes the API to a human or an
 /// SDK, not a command line, and carrying it would bloat a committed artifact
 /// nobody edits.
-fn prune(op: &Value, catch_all: Option<String>) -> Value {
+fn prune(op: &Value, catch_all: Option<String>, summary: Option<String>) -> Value {
     let mut out = Map::new();
+    if let Some(s) = summary.filter(|s| !s.is_empty()) {
+        out.insert("summary".into(), json!(s));
+    }
     if let Some(p) = catch_all {
         out.insert("x-catch-all".into(), json!([p]));
     }
@@ -249,6 +291,7 @@ async fn main() {
     .expect("parse hanzo.yaml");
 
     let mut paths = Map::new();
+    let mut emitted: BTreeSet<(String, String)> = BTreeSet::new();
     let (mut kept, mut refuted) = (0usize, BTreeMap::<String, usize>::new());
     for (path, item) in master.get("paths").and_then(Value::as_object).into_iter().flatten() {
         let s = segs(path);
@@ -270,11 +313,39 @@ async fn main() {
             }
             kept += 1;
             let catch_all = route.and_then(|r| Registry::catch_all(r, &s));
-            item_out.insert(m.to_ascii_lowercase(), prune(op, catch_all));
+            // Prose: the registry's own (generated from the Go doc comment) when
+            // the op is typed, else whatever the authored master says.
+            let key = (m.to_ascii_uppercase(), norm(&s));
+            let summary = reg.ops.get(&key).and_then(|(_, rop)| prose(rop)).or_else(|| prose(op));
+            emitted.insert(key);
+            item_out.insert(m.to_ascii_lowercase(), prune(op, catch_all, summary));
         }
         if !item_out.is_empty() {
             paths.insert(path.clone(), Value::Object(item_out));
         }
+    }
+
+    // THE INVERSION, and the end state of the lineage contract: an operation the
+    // REGISTRY describes exists, authored or not. A described op is a zip typed
+    // op — its prose and schema are generated from the Go code, which makes the
+    // registry the author. The hand-maintained hanzo.yaml stops deciding
+    // existence for these; it remains only the shape source for ops the registry
+    // cannot yet describe. As typing reaches 100%, hanzo.yaml's job goes to zero.
+    let mut added = 0usize;
+    for ((method, key), (rpath, rop)) in &reg.ops {
+        if emitted.contains(&(method.clone(), key.clone())) {
+            continue;
+        }
+        let s = segs(rpath);
+        let pat: Vec<String> = s.iter().map(|x| x.to_string()).collect();
+        let catch_all = Registry::catch_all(&pat, &s);
+        added += 1;
+        paths
+            .entry(rpath.clone())
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .expect("path item")
+            .insert(method.to_ascii_lowercase(), prune(rop, catch_all, prose(rop)));
     }
 
     let empty = Map::new();
@@ -283,9 +354,17 @@ async fn main() {
         .and_then(|c| c.get("schemas"))
         .and_then(Value::as_object)
         .unwrap_or(&empty);
-    let keep = reachable(&paths, schemas);
+    // One schema namespace: the authored master's, with the registry's laid over
+    // it. On a name both define, the registry wins — its schema is reflected from
+    // the live Go type, and the authored one is the hand-written approximation
+    // this pipeline exists to retire.
+    let mut merged: Map<String, Value> = schemas.clone();
+    for (k, v) in &reg.schemas {
+        merged.insert(k.clone(), v.clone());
+    }
+    let keep = reachable(&paths, &merged);
     let components: Map<String, Value> =
-        keep.iter().filter_map(|n| schemas.get(n).map(|s| (n.clone(), s.clone()))).collect();
+        keep.iter().filter_map(|n| merged.get(n).map(|s| (n.clone(), s.clone()))).collect();
 
     let doc = json!({
         "openapi": "3.1.0",
@@ -311,7 +390,8 @@ async fn main() {
     let mut worst: Vec<_> = refuted.iter().collect();
     worst.sort_by_key(|(p, n)| (std::cmp::Reverse(**n), (*p).clone()));
     eprintln!(
-        "genspec: {kept} operations kept, {total} refuted by the registry ({} owned products) -> {} ({} bytes)",
+        "genspec: {kept} authored kept, {added} added from the registry (described ops), {total} refuted \
+         ({} owned products) -> {} ({} bytes)",
         reg.owned.len(),
         a.out.display(),
         bytes.len()
