@@ -114,9 +114,20 @@ pub async fn start(
         "--backend-mode".into(),
         backend_mode,
     ];
+    // --name-selection is OUR fork's flag. A machine with upstream zrok on PATH
+    // has a binary that rejects it outright, which killed the share rather than
+    // degrading — so ask the binary what it takes before assuming.
     if !pr.namespace.is_empty() {
-        args.push("--name-selection".into());
-        args.push(pr.namespace.clone());
+        if supports_flag(&zbin, "--name-selection").await {
+            args.push("--name-selection".into());
+            args.push(pr.namespace.clone());
+        } else {
+            eprintln!(
+                "{} zrok has no --name-selection; sharing without the {} namespace",
+                "note:".yellow(),
+                pr.namespace
+            );
+        }
     }
     if let Some(n) = &name {
         args.push("--name".into());
@@ -232,6 +243,23 @@ fn share_token(line: &str) -> Option<String> {
     }
     let tok = &line[start..i];
     (tok.len() >= 6).then(|| tok.to_string())
+}
+
+/// Does this zrok accept `flag` on `share public`?
+///
+/// Asked rather than assumed because two zrok lineages are in the wild — ours and
+/// upstream — and the difference is a hard failure at share time, not a warning.
+async fn supports_flag(zbin: &str, flag: &str) -> bool {
+    Command::new(zbin)
+        .args(["share", "public", "--help"])
+        .output()
+        .await
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).into_owned()
+                + &String::from_utf8_lossy(&o.stderr);
+            text.contains(flag)
+        })
+        .unwrap_or(false)
 }
 
 /// Locate the zrok helper: `HANZO_ZROK_BIN`, then `zrok2`/`zrok` on `PATH`.
