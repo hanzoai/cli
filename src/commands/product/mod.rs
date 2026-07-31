@@ -64,6 +64,10 @@ pub struct Op {
     /// Typed request-body fields from the requestBody schema. Empty ⇒ no typed
     /// body (a write with no schema uses `--data`; a read has no body).
     pub fields: &'static [Field],
+    /// One line of prose from the spec — a typed op's doc comment, lifted by
+    /// zipdoc, carried by genspec. Empty when the op is undescribed, in which
+    /// case the help falls back to `METHOD /path`.
+    pub sum: &'static str,
 }
 
 /// One typed request-body field, from a schema property.
@@ -226,7 +230,16 @@ fn leaf(op: &'static Op) -> Command {
 /// a control, because the clap id is namespaced and `--data` is added only when
 /// no field already claims that long.
 fn leaf_named(name: &'static str, op: &'static Op) -> Command {
-    let mut c = Command::new(name).about(format!("{} {}", op.method, op.path));
+    // The prose IS the help when the op has any — the same sentence the OpenAPI
+    // description, the MCP tool and the SDK docstring carry, because all four are
+    // projections of one doc comment. The route stays visible in long help.
+    let mut c = if op.sum.is_empty() {
+        Command::new(name).about(format!("{} {}", op.method, op.path))
+    } else {
+        Command::new(name)
+            .about(op.sum)
+            .long_about(format!("{}\n\n{} {}", op.sum, op.method, op.path))
+    };
     for &p in op.params {
         c = c.arg(Arg::new(p).required(true).help(format!("path parameter {{{p}}}")));
     }
