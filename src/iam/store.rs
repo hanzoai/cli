@@ -1273,3 +1273,75 @@ mod tests {
         assert!(!toml.contains("eyJ"), "no JWT material in config: {toml}");
     }
 }
+
+/// The active credential, REFRESHED if the access token has expired.
+///
+/// IAM mints a one-hour access token and a longer-lived refresh token. Without
+/// this the CLI held the refresh token and never spent it, so every command an
+/// hour after login failed — and failed confusingly, because a stale token reads
+/// downstream as "X-Org-Id required" or "a validated principal is required"
+/// rather than "log in again".
+///
+/// Refreshes SLIGHTLY EARLY (`SKEW`): a token that passes the check here and
+/// expires in flight is the same failure this exists to remove.
+///
+/// Falls back to the stored token when there is no refresh token or the exchange
+/// fails, so this can only ever improve on the previous behaviour — a caller that
+/// would have sent a stale token still sends it, and sees the server's own error.
+pub async fn active_token_fresh(
+    cfg: &mut Config,
+    brand: &str,
+) -> Result<Option<(Identity, TokenSet)>> {
+    const SKEW: i64 = 60;
+    let Some((id, tok)) = active_token(cfg, brand)? else {
+        return Ok(None);
+    };
+    // The access token IS a JWT, so its own `exp` is the authority — no second
+    // copy of the expiry to drift from it.
+    let expiring = jwt_exp(&tok.access_token)
+        .map(|e| e - SKEW <= now_unix())
+        .unwrap_or(false);
+    if !expiring {
+        return Ok(Some((id, tok)));
+    }
+    let Some(rt) = tok.refresh_token.clone() else {
+        return Ok(Some((id, tok)));
+    };
+    let Some(origin) = crate::iam::paths::server_url_for_brand(brand) else {
+        return Ok(Some((id, tok)));
+    };
+    match crate::iam::oauth::refresh(&origin, &rt).await {
+        Ok(mut fresh) => {
+            // IAM may or may not rotate the refresh token; keep the old one when it
+            // does not, or the NEXT refresh has nothing to spend.
+            if fresh.refresh_token.is_none() {
+                fresh.refresh_token = Some(rt);
+            }
+            let _ = token::store(&*token::vault()?, brand, &id, &fresh);
+            Ok(Some((id, fresh)))
+        }
+        Err(_) => Ok(Some((id, tok))),
+    }
+}
+
+/// Seconds since the epoch, without pulling in a clock abstraction for one read.
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// The `exp` claim of a JWT, or None if it is not one / carries no exp.
+///
+/// Deliberately does NOT verify the signature: this decides whether to spend a
+/// refresh token, not whether to trust the contents. The server verifies.
+fn jwt_exp(token: &str) -> Option<i64> {
+    use base64::Engine;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("exp")?.as_i64()
+}

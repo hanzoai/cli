@@ -140,6 +140,31 @@ async fn exchange_code(
     serde_json::from_str::<TokenSet>(&body).context("parsing token response")
 }
 
+/// Exchange a refresh token for a fresh access token (RFC 6749 §6).
+///
+/// The access token IAM mints lives one hour. Without this the CLI holds a
+/// refresh token it never spends, so every command an hour after login fails —
+/// and fails CONFUSINGLY, because a stale token reads downstream as "X-Org-Id
+/// required" or "a validated principal is required" rather than "log in again".
+pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
+    let resp = reqwest::Client::new()
+        .post(paths::iam_url(origin, TOKEN))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", CLIENT_ID),
+        ])
+        .send()
+        .await
+        .context("calling IAM token endpoint")?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("token refresh failed ({status}): {body}");
+    }
+    serde_json::from_str::<TokenSet>(&body).context("parsing refresh response")
+}
+
 /// The OAuth parameters carried back on the loopback redirect.
 #[derive(Debug, Default)]
 struct Callback {
