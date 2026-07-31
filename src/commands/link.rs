@@ -96,7 +96,10 @@ pub async fn run(
     let cmd = shell_command(shell.as_deref());
 
     let api = network::active(cfg).api.trim_end_matches('/').to_string();
-    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
+    // Refreshing accessor, not the raw one: a link holds a shell for hours, and
+    // the access token lives one.
+    let (_id, tok) = store::active_token_fresh(cfg, paths::DEFAULT_BRAND)
+        .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
 
     // Register this machine as a run-target first, so the fleet knows its CPU and
