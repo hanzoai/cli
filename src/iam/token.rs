@@ -188,16 +188,14 @@ fn entry(key: &str) -> Result<keyring::Entry> {
 /// Resolve the credential store for THIS run — THE one place the backend is
 /// chosen, so identity tokens and wallet keys reach secrets identically.
 ///
-/// macOS / Windows use the native keychain when it ANSWERS a probe, else the
-/// file — a headless or service account with no unlocked keychain still works.
-/// Every other target uses the file unconditionally.
+/// ALWAYS the file. The macOS keychain prompts for the login password on every
+/// read from a binary it does not recognise, and a CLI re-signs on each release,
+/// so the prompt returns forever. Worse, one command can read the store more than
+/// once (a refresh re-reads under its lock), so the dialog appeared twice for a
+/// single invocation. What is stored is a one-hour bearer token, not a signing
+/// key: an owner-only 0600 file under the user's own home is the proportionate
+/// place for it, and it works identically headless, over ssh, and in CI.
 pub fn vault() -> Result<Box<dyn Vault>> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    {
-        if keychain_reachable() {
-            return Ok(Box::new(Keyring));
-        }
-    }
     Ok(Box::new(FileVault::resolve()?))
 }
 
