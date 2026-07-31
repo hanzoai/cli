@@ -389,6 +389,26 @@ fn main() {
     .unwrap();
     let paths = spec.get("paths").and_then(Value::as_object).expect("spec has no paths");
 
+    // Per-product prose: the spec's `tags`, each description the owning Go
+    // package's doc synopsis (lifted by cloud's weave, carried by genspec).
+    // Whitespace is normalized to one line, and a scheme in one is a build
+    // error — the artifact carries no host, in prose either.
+    let mut tags: Vec<(String, String)> = spec
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|t| {
+            let n = t.get("name")?.as_str()?.to_string();
+            let d = t.get("description")?.as_str()?.split_whitespace().collect::<Vec<_>>().join(" ");
+            (!d.is_empty()).then_some((n, d))
+        })
+        .collect();
+    tags.sort();
+    for (n, d) in &tags {
+        assert!(!d.contains("://"), "tag {n}: description carries a URL scheme: {d}");
+    }
+
     // The path universe the fold reads to tell a collection from an item and a
     // group from a leaf. It is the SERVED surface, so a sibling route that cloud
     // does not answer can no longer shape a command that it does.
@@ -544,6 +564,17 @@ fn main() {
     s.push_str("pub(crate) static OPS: &[Op] = &[\n");
     for o in &coords {
         s.push_str(&emit_op(o));
+    }
+    s.push_str("];\n");
+
+    // One line per product that documents itself — the group's help line. Only
+    // products that actually field commands; a tag for an excluded product is
+    // dropped with it.
+    let live: BTreeSet<&String> = coords.iter().map(|o| &o.product).collect();
+    s.push_str("\n/// Each product's own prose (its package doc synopsis), for the group help.\n");
+    s.push_str("pub(crate) static PRODUCTS: &[(&str, &str)] = &[\n");
+    for (n, d) in tags.iter().filter(|(n, _)| live.contains(n)) {
+        s.push_str(&format!("    ({n:?}, {d:?}),\n"));
     }
     s.push_str("];\n");
 
