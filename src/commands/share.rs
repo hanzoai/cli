@@ -99,7 +99,6 @@ pub async fn start(
     // 3. Enable this machine against the provisioned account (idempotent, quiet).
     let _ = Command::new(&zbin)
         .args(["enable", &pr.account_token])
-        .env("ZROK2_API_ENDPOINT", &pr.controller)
         .env("ZROK_API_ENDPOINT", &pr.controller)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -138,7 +137,6 @@ pub async fn start(
     println!("{} sharing {}", "→".green(), backend.cyan());
     let mut child = Command::new(&zbin)
         .args(&args)
-        .env("ZROK2_API_ENDPOINT", &pr.controller)
         .env("ZROK_API_ENDPOINT", &pr.controller)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -262,7 +260,7 @@ async fn supports_flag(zbin: &str, flag: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Locate the zrok helper: `HANZO_ZROK_BIN`, then `zrok2`/`zrok` on `PATH`.
+/// Locate the zrok helper: `HANZO_ZROK_BIN`, then `zrok` on `PATH`.
 fn zrok_bin() -> Result<String> {
     if let Ok(b) = std::env::var("HANZO_ZROK_BIN") {
         let b = b.trim().to_string();
@@ -270,7 +268,7 @@ fn zrok_bin() -> Result<String> {
             return Ok(b);
         }
     }
-    for name in ["zrok2", "zrok"] {
+    for name in ["zrok"] {
         if which(name).is_some() {
             return Ok(name.to_string());
         }
