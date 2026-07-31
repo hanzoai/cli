@@ -94,7 +94,7 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
         return Ok(());
     }
 
-    let Some((id, tokens)) = store::active_token_fresh(cfg, brand).await? else {
+    let Some((id, tokens)) = store::active_token(cfg, brand).await? else {
         bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
     };
 

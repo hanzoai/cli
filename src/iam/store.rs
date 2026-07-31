@@ -18,7 +18,7 @@ use crate::config::{Config, StoredIdentity};
 
 use super::identity::{Identity, Selector};
 use super::oauth;
-use super::paths::brand_flag;
+use super::paths::{self, brand_flag};
 use super::token::{self, TokenSet, Vault};
 
 /// Add the identity `tokens` authenticates as, and make it active.
@@ -31,14 +31,125 @@ pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity>
     add_in(&*token::vault()?, cfg, brand, tokens)
 }
 
-/// Resolve the ACTIVE identity's credential for `brand`.
+/// Resolve the ACTIVE identity's credential for `brand`, REFRESHED if the access
+/// token has run out.
 ///
 /// `None` means "not signed in" — never "signed in as somebody else". Returns
 /// the identity alongside the token because the two must not drift: callers that
 /// need to know WHO they are (billing, org-scoped resume) read it from here
 /// rather than re-deriving it somewhere else.
-pub fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, TokenSet)>> {
-    active_token_in(&*token::vault()?, cfg, brand)
+///
+/// THE ONE ACCESSOR, and `async` so that it can be. For a while there were two —
+/// this one, which handed back whatever was in the keychain, and a refreshing
+/// sibling — and eight of the eleven consumers reached for the wrong one. IAM
+/// mints a one-hour access token, so `hanzo auth token` printed an expired token
+/// every time it was run more than an hour after signing in, and the failure
+/// surfaced downstream as "X-Org-Id required" rather than "your session ended".
+/// A seam a caller can get wrong is not a seam; there is now nothing to choose.
+pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, TokenSet)>> {
+    // The vault is dropped before the await below: `Vault` is not `Send`, and
+    // holding one across it would make every caller's future un-spawnable.
+    let Some((id, tok)) = active_token_in(&*token::vault()?, cfg, brand)? else {
+        return Ok(None);
+    };
+    if !expiring(&tok.access_token, now_unix()) {
+        return Ok(Some((id, tok)));
+    }
+    // Nothing to spend, or a brand with no IAM: hand back what we hold and let the
+    // SERVER refuse it. Falling back can only ever match the old behaviour.
+    let (Some(rt), Some(origin)) =
+        (tok.refresh_token.as_deref(), paths::server_url_for_brand(brand))
+    else {
+        return Ok(Some((id, tok)));
+    };
+    let fresh = match oauth::refresh(origin, rt).await {
+        Ok(fresh) => fresh,
+        Err(e) => {
+            // Still fall back — a caller that would have sent a spent token still
+            // sends it, and this can only improve on the previous behaviour. But say
+            // WHY. The server's refusal is the only message that names the actual
+            // cause; swallowing it leaves the command to fail somewhere downstream
+            // complaining about something else, which is the whole reason this bug
+            // took a day to find rather than a minute.
+            crate::warn(&format!(
+                "could not refresh the {brand} credential ({e}) — sending the expired one; \
+                 run `hanzo auth login{}` if it is refused",
+                brand_flag(brand)
+            ));
+            return Ok(Some((id, tok)));
+        }
+    };
+    let fresh = adopted(brand, &id, fresh)?;
+    if let Err(e) = token::store(&*token::vault()?, brand, &id, &fresh) {
+        // NOT swallowed. IAM rotates on every grant and treats a re-presented
+        // refresh token as a replay, revoking the whole family — so the token still
+        // on disk is already dead, and the next run will have to sign in again. Say
+        // so now, or that re-login reads as a security incident nobody caused.
+        crate::warn(&format!(
+            "could not save the refreshed {brand} credential ({e}) — this run is fine, but you \
+             will have to run `hanzo auth login{}` again",
+            brand_flag(brand)
+        ));
+    }
+    Ok(Some((id, fresh)))
+}
+
+/// Accept a refreshed credential for `id`, or refuse it. PURE.
+///
+/// A refresh returns a newly minted access token, and nothing obliges the server
+/// to put the same claims in it. `active_token_in` fails CLOSED when a slot's
+/// contents name a different principal, so filing a re-labelled token under the
+/// old key would poison that slot: every later read would bail until the user
+/// worked out that only `hanzo auth login` clears it. Refuse here instead, where
+/// the reason is still known. Re-authenticating after a rename is cheap.
+fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<TokenSet> {
+    let claimed = Identity::from_access_token(&fresh.access_token)
+        .context("identifying the refreshed credential")?;
+    if &claimed != id {
+        bail!(
+            "the refreshed {brand} credential identifies as {claimed}, not {id} — refusing to \
+             file it; run `hanzo auth login{}`",
+            brand_flag(brand)
+        );
+    }
+    Ok(fresh)
+}
+
+/// Whether this access token is spent, or close enough that spending it would
+/// race. PURE.
+///
+/// The access token IS a JWT, so its own `exp` is the authority — there is no
+/// second copy of the expiry to drift from it, and `expires_in` (a duration with
+/// no anchor) cannot answer this at all. Refreshes SLIGHTLY EARLY: a token that
+/// passes this check and expires in flight is the same failure it exists to
+/// remove. A token whose `exp` cannot be read is treated as LIVE — validity is
+/// the server's call, and refusing to send something we merely cannot parse
+/// would break a caller for our own lack of understanding.
+fn expiring(access_token: &str, now: i64) -> bool {
+    const SKEW: i64 = 60;
+    jwt_exp(access_token).is_some_and(|exp| exp - SKEW <= now)
+}
+
+/// Seconds since the epoch, without pulling in a clock abstraction for one read.
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// The `exp` claim of a JWT, or None if it is not one / carries no exp.
+///
+/// Deliberately does NOT verify the signature: this decides whether to spend a
+/// refresh token, not whether to trust the contents. The server verifies.
+fn jwt_exp(token: &str) -> Option<i64> {
+    use base64::Engine;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("exp")?.as_i64()
 }
 
 /// Resolve the credential for a SPECIFIC held identity — the read-only fan-out
@@ -488,7 +599,7 @@ fn toggle_target(cfg: &Config, brand: &str) -> Result<Identity> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::iam::identity::testjwt::jwt;
+    use crate::iam::identity::testjwt::{claims_jwt, jwt};
     use crate::iam::token::memvault::MemVault;
 
     const ADMIN: &str = "admin/z";
@@ -1202,8 +1313,18 @@ mod tests {
         // are the per-identity backend verbs; `token::vault` hands out a `Vault`
         // that can set/get ANY slot (identity, provider OR wallet), so a consumer
         // that grabs it goes around all three namespaced filings; `token::keyring`
-        // is the native backend. No CONSUMER may name any of them.
-        let doors = ["token::load", "token::store", "token::delete", "token::keyring", "token::vault"];
+        // is the native backend. `active_token_in` is the seam's own NON-REFRESHING
+        // resolve — reaching it hands back whatever is in the keychain, expired or
+        // not, which is exactly the bug `active_token` was made `async` to remove.
+        // No CONSUMER may name any of them.
+        let doors = [
+            "token::load",
+            "token::store",
+            "token::delete",
+            "token::keyring",
+            "token::vault",
+            "active_token_in",
+        ];
 
         // The ONLY files permitted to touch each door — the seam itself. `token.rs`
         // DEFINES the store and `store.rs` IS the identity filing (and hosts this
@@ -1272,76 +1393,131 @@ mod tests {
         assert!(!toml.contains("access_token"));
         assert!(!toml.contains("eyJ"), "no JWT material in config: {toml}");
     }
-}
 
-/// The active credential, REFRESHED if the access token has expired.
-///
-/// IAM mints a one-hour access token and a longer-lived refresh token. Without
-/// this the CLI held the refresh token and never spent it, so every command an
-/// hour after login failed — and failed confusingly, because a stale token reads
-/// downstream as "X-Org-Id required" or "a validated principal is required"
-/// rather than "log in again".
-///
-/// Refreshes SLIGHTLY EARLY (`SKEW`): a token that passes the check here and
-/// expires in flight is the same failure this exists to remove.
-///
-/// Falls back to the stored token when there is no refresh token or the exchange
-/// fails, so this can only ever improve on the previous behaviour — a caller that
-/// would have sent a stale token still sends it, and sees the server's own error.
-pub async fn active_token_fresh(
-    cfg: &mut Config,
-    brand: &str,
-) -> Result<Option<(Identity, TokenSet)>> {
-    const SKEW: i64 = 60;
-    let Some((id, tok)) = active_token(cfg, brand)? else {
-        return Ok(None);
-    };
-    // The access token IS a JWT, so its own `exp` is the authority — no second
-    // copy of the expiry to drift from it.
-    let expiring = jwt_exp(&tok.access_token)
-        .map(|e| e - SKEW <= now_unix())
-        .unwrap_or(false);
-    if !expiring {
-        return Ok(Some((id, tok)));
+    // ---- the spent-token incident -------------------------------------------
+
+    /// A JWT for `owner`/`name` that stops being valid at `exp`.
+    fn jwt_until(owner: &str, name: &str, exp: i64) -> String {
+        claims_jwt(&format!(
+            r#"{{"owner":"{owner}","name":"{name}","sub":"u-1","exp":{exp}}}"#
+        ))
     }
-    let Some(rt) = tok.refresh_token.clone() else {
-        return Ok(Some((id, tok)));
-    };
-    let Some(origin) = crate::iam::paths::server_url_for_brand(brand) else {
-        return Ok(Some((id, tok)));
-    };
-    match crate::iam::oauth::refresh(&origin, &rt).await {
-        Ok(mut fresh) => {
-            // IAM may or may not rotate the refresh token; keep the old one when it
-            // does not, or the NEXT refresh has nothing to spend.
-            if fresh.refresh_token.is_none() {
-                fresh.refresh_token = Some(rt);
-            }
-            let _ = token::store(&*token::vault()?, brand, &id, &fresh);
-            Ok(Some((id, fresh)))
-        }
-        Err(_) => Ok(Some((id, tok))),
+
+    /// THE incident, in its measured numbers. The browser login at
+    /// 2026-07-31T18:18:02Z minted an access token whose `exp` was exactly 3600s
+    /// later; `hanzo auth token`, run a couple of hours after that, printed it
+    /// verbatim. It was not a stale COPY and not the wrong slot — it was the
+    /// right credential, an hour past its life, because the accessor that path
+    /// used never looked at the expiry.
+    #[test]
+    fn the_credential_from_an_hour_old_login_is_already_spent() {
+        const LOGIN: i64 = 1_785_521_882; // 2026-07-31T18:18:02Z, from the keychain
+        let tok = jwt_until("hanzo", "Zach Kelling", LOGIN + 3600);
+        assert!(!expiring(&tok, LOGIN), "brand new at the moment of login");
+        assert!(expiring(&tok, LOGIN + 7_200), "and spent two hours later");
+    }
+
+    /// The expiry is read from the token's OWN `exp`, and acted on slightly
+    /// early: a token that passes the check and then expires in flight is the
+    /// same failure this exists to remove.
+    #[test]
+    fn expiry_comes_from_the_token_itself_and_is_acted_on_early() {
+        const NOW: i64 = 1_785_521_882;
+        assert!(!expiring(&jwt_until("hanzo", "z", NOW + 3600), NOW), "an hour left");
+        assert!(!expiring(&jwt_until("hanzo", "z", NOW + 61), NOW), "just outside the skew");
+        assert!(expiring(&jwt_until("hanzo", "z", NOW + 30), NOW), "would expire in flight");
+        assert!(expiring(&jwt_until("hanzo", "z", NOW - 1), NOW), "already spent");
+    }
+
+    /// A token we cannot read an expiry out of is LIVE. Validity is the server's
+    /// call; refusing to send something we merely cannot parse would break a
+    /// caller for our own lack of understanding.
+    #[test]
+    fn a_token_with_no_readable_expiry_is_treated_as_live() {
+        const NOW: i64 = 1_785_521_882;
+        assert!(!expiring(&jwt("hanzo", "z"), NOW), "a JWT with no exp claim");
+        assert!(!expiring("not-a-jwt", NOW));
+        assert!(!expiring("", NOW));
+    }
+
+    /// A refreshed credential must land in the SLOT IT WAS READ FROM. That is
+    /// the whole point: the next process has to find the new token. File it
+    /// anywhere else and the spent one stays on disk, so every run refreshes and
+    /// none of them benefits — and against IAM, which consumes a refresh token on
+    /// every grant, the second run presents a dead one.
+    #[test]
+    fn a_refreshed_credential_replaces_the_one_it_was_read_from() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        let spent = jwt_until("hanzo", "z", 1);
+        add_in(&v, &mut c, "hanzo", &tokens(&spent)).unwrap();
+
+        let (id, held) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(held.access_token, spent);
+        assert!(expiring(&held.access_token, now_unix()), "the read hands back a spent token");
+
+        // What the refresh half does once IAM has answered.
+        let fresh = adopted("hanzo", &id, tokens(&jwt_until("hanzo", "z", 9_999_999_999))).unwrap();
+        token::store(&v, "hanzo", &id, &fresh).unwrap();
+
+        // A LATER PROCESS — its own config, the same vault — reads the fresh
+        // token, under the same identity.
+        let mut later = cfg();
+        later.auth = c.auth.clone();
+        let (again, got) = active_token_in(&v, &mut later, "hanzo").unwrap().unwrap();
+        assert_eq!(again, id);
+        assert_eq!(got.access_token, fresh.access_token);
+        assert_ne!(got.access_token, spent);
+        assert!(!expiring(&got.access_token, now_unix()));
+    }
+
+    /// A refresh returns a NEWLY MINTED access token and nothing obliges the
+    /// server to put the same claims in it. `active_token_in` fails closed when a
+    /// slot's contents name a different principal, so filing a re-labelled token
+    /// under the old key would wedge that slot: every later read bails, and only
+    /// `hanzo auth login` clears it. Refuse before writing — a rename then costs
+    /// a login rather than a credential nobody can use or explain.
+    #[test]
+    fn a_refresh_that_comes_back_as_someone_else_is_refused_not_filed() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+
+        let err = adopted("hanzo", &id, tokens(&jwt("admin", "z"))).unwrap_err().to_string();
+        assert!(err.contains("identifies as admin/z"), "{err}");
+        assert!(err.contains("hanzo auth login"), "{err}");
+
+        // Nothing was written, so the slot still resolves to what it always held.
+        let (still, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(still.to_string(), ORG);
+        assert_eq!(tok.access_token, jwt("hanzo", "z"));
+    }
+
+    /// There is ONE public accessor for the active credential and it is `async`,
+    /// because refreshing needs I/O.
+    ///
+    /// This is the shape the incident had: a SECOND, synchronous accessor lived
+    /// beside the refreshing one, and eight of the eleven consumers reached for
+    /// it — `hanzo auth token` among them. Nothing was wrong with either function.
+    /// The bug was that there were two, so being right required every caller to
+    /// know which. Making the one accessor `async` means the type system now
+    /// carries that guarantee for callers; this guards the OTHER half, that a
+    /// convenient synchronous sibling never comes back.
+    #[test]
+    fn there_is_one_accessor_for_the_active_credential_and_it_is_async() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/iam/store.rs"),
+        )
+        .unwrap();
+        let decls = |prefix: &str| {
+            src.lines().filter(|l| l.trim_start().starts_with(prefix)).count()
+        };
+        assert_eq!(decls("pub async fn active_token"), 1, "the one accessor");
+        assert_eq!(
+            decls("pub fn active_token"),
+            0,
+            "a synchronous accessor for the active credential hands back whatever is in the \
+             keychain, expired or not — that is the bug, whatever it is called"
+        );
     }
 }
 
-/// Seconds since the epoch, without pulling in a clock abstraction for one read.
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// The `exp` claim of a JWT, or None if it is not one / carries no exp.
-///
-/// Deliberately does NOT verify the signature: this decides whether to spend a
-/// refresh token, not whether to trust the contents. The server verifies.
-fn jwt_exp(token: &str) -> Option<i64> {
-    use base64::Engine;
-    let payload = token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload)
-        .ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    v.get("exp")?.as_i64()
-}

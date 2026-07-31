@@ -230,10 +230,6 @@ fn confirm_provider(provider: Provider) {
     );
 }
 
-fn warn(msg: &str) {
-    eprintln!("{} {}", "warning:".yellow().bold(), msg);
-}
-
 /// Sign in as a Hanzo IDENTITY (the OIDC browser flow, or a supplied token), and
 /// record `hanzo` as the active provider so model routing uses the gateway.
 async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Result<()> {
@@ -368,14 +364,14 @@ pub async fn first_run(cfg: &mut Config, brand: &str) {
     match pick_provider() {
         Ok(Some(choice)) => {
             if let Err(e) = dispatch_choice(cfg, brand, choice).await {
-                warn(&format!("sign-in did not complete ({e}) — continuing locally."));
+                crate::warn(&format!("sign-in did not complete ({e}) — continuing locally."));
             }
         }
         Ok(None) => println!(
             "{}",
             "Skipped — continuing locally. Run `hanzo auth login` any time to connect.".dimmed()
         ),
-        Err(e) => warn(&format!("could not show the sign-in picker ({e}) — continuing locally.")),
+        Err(e) => crate::warn(&format!("could not show the sign-in picker ({e}) — continuing locally.")),
     }
 }
 

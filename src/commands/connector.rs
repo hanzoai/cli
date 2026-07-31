@@ -72,9 +72,9 @@ impl Session {
 /// Resolve the ACTIVE identity + network into a session. The org is a projection
 /// of the token (server-side), so the session never carries one. Not signed in
 /// means NOT SIGNED IN — it never falls through to another identity.
-fn open(cfg: &mut Config) -> Result<Session> {
+async fn open(cfg: &mut Config) -> Result<Session> {
     let api = network::active(cfg).api;
-    let (_, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
+    let (_, tok) = store::active_token(cfg, paths::DEFAULT_BRAND).await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
     Ok(Session::new(api, tok.access_token))
 }
@@ -110,7 +110,7 @@ pub async fn add(
     check_provider(&provider)?;
     // The credential: stdin (`--token -`/pipe) or a hidden prompt — never argv.
     let token = secret::resolve_token(token, || prompt_token(&provider))?;
-    let s = open(cfg)?;
+    let s = open(cfg).await?;
     let body = connect_body(&token, account_id.as_deref());
     let url = format!("{}/{}/connect", s.base(), provider);
     let resp = s.call(Method::POST, &url, Some(&body)).await?;
@@ -154,7 +154,7 @@ fn connect_body(token: &str, account_id: Option<&str>) -> Value {
 /// credential connectors (`PROVIDERS`) are shown; OAuth social/chat integrations
 /// live under their own surface.
 pub async fn list(cfg: &mut Config) -> Result<()> {
-    let s = open(cfg)?;
+    let s = open(cfg).await?;
     let resp = s.call(Method::GET, &s.base(), None).await?;
     let providers = resp.get("providers").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut shown = 0;
@@ -191,7 +191,7 @@ pub async fn list(cfg: &mut Config) -> Result<()> {
 /// the stored credential from KMS and checks it; the value is never returned.
 pub async fn verify(cfg: &mut Config, provider: String) -> Result<()> {
     check_provider(&provider)?;
-    let s = open(cfg)?;
+    let s = open(cfg).await?;
     let url = format!("{}/{}/verify", s.base(), provider);
     let resp = s.call(Method::POST, &url, None).await?;
     if resp.get("active").and_then(Value::as_bool).unwrap_or(false) {
@@ -207,7 +207,7 @@ pub async fn verify(cfg: &mut Config, provider: String) -> Result<()> {
 /// connection. Idempotent.
 pub async fn rm(cfg: &mut Config, provider: String) -> Result<()> {
     check_provider(&provider)?;
-    let s = open(cfg)?;
+    let s = open(cfg).await?;
     let url = format!("{}/{}/disconnect", s.base(), provider);
     s.call(Method::POST, &url, None).await?;
     println!("{} removed {} connector", "✓".green(), provider.cyan().bold());

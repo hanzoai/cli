@@ -631,7 +631,7 @@ async fn call(
     // NOT refused here — the call goes out unauthenticated and the server decides.
     // That is the same rule this module already follows for a 403: the refusal is
     // always the server's, never a client-side guess.
-    let identity = store::active_token(cfg, paths::DEFAULT_BRAND)?;
+    let identity = store::active_token(cfg, paths::DEFAULT_BRAND).await?;
     if identity.is_none() && matches!(origin, Origin::Http(_)) {
         bail!("not signed in — run `hanzo auth login`");
     }
