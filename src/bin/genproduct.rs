@@ -35,10 +35,11 @@ const DENY: &[&str] = &[
     "download", "upload", "files", "completions", "console", "settings",
     "search-docs", "index-docs", "chat-docs", "indexers", "embed-status",
     "csrf", "openapi.json", "account-bridge", "agent-bindings",
-    // Singular/plural dedupe: the LOCAL hand-written command owns the singular
-    // (`network` = network selection, `cluster` = talk-to-a-node), and `bot` is
-    // the canonical cloud product — so the redundant cloud PLURALS are dropped.
-    "networks", "clusters", "bots",
+    // Singular/plural dedupe: the LOCAL hand-written command owns `network`
+    // (network selection), and `bot` is the canonical cloud product — so the
+    // redundant cloud PLURALS are dropped. `clusters` is served again: the hand
+    // `cluster` proxy is deleted (it discarded its own name argument).
+    "networks", "bots",
     // Internal control planes, not user commands: `provisioning` is the internal
     // provisioner (you provision via the concrete `hanzo vector|kv|s3 create`),
     // and `do` is the DigitalOcean PROVIDER backend.
@@ -50,6 +51,10 @@ const DENY: &[&str] = &[
     // when genspec started trusting registry-described ops for existence; the
     // choice that a local command wins its bare name predates that and stands.
     "code", "help", "agent", "billing", "deploy",
+    // `engine` is the LOCAL `hanzo engine serve <model>` (launches hanzo-engine on
+    // this machine). The cloud engine product manages engine CLUSTERS; when its
+    // revival lands it needs its own noun or a nested home, not this name.
+    "engine",
     // `gateway` USED TO BE HERE, with a comment noting its whole `/v1/gateway/*`
     // subtree was unmounted. That was a fact about the server kept in a list in the
     // client — exactly the drift this file no longer owns. `genspec` refutes those
@@ -391,8 +396,9 @@ fn main() {
 
     // Per-product prose: the spec's `tags`, each description the owning Go
     // package's doc synopsis (lifted by cloud's weave, carried by genspec).
-    // Whitespace is normalized to one line, and a scheme in one is a build
-    // error — the artifact carries no host, in prose either.
+    // Whitespace is normalized to one line. Prose is display-only — it may
+    // truthfully name a host or URL shape; the no-host invariant guards call
+    // data, and the test scrubs prose before enforcing it.
     let mut tags: Vec<(String, String)> = spec
         .get("tags")
         .and_then(Value::as_array)
@@ -401,13 +407,27 @@ fn main() {
         .filter_map(|t| {
             let n = t.get("name")?.as_str()?.to_string();
             let d = t.get("description")?.as_str()?.split_whitespace().collect::<Vec<_>>().join(" ");
+            // Go doc convention opens with "Package <name> "; that identifier
+            // belongs to Go's namespace, not the help line. Same rule as the
+            // handler-name strip: drop the exact prefix, recapitalize, and a
+            // connective "is/are" goes with it ("Package books is double-entry
+            // accounting" -> "Double-entry accounting").
+            let d = {
+                let mut d = d;
+                if let Some(rest) = d.strip_prefix(&format!("Package {n} ")) {
+                    let rest = rest.strip_prefix("is ").or_else(|| rest.strip_prefix("are ")).unwrap_or(rest);
+                    let mut c = rest.chars();
+                    d = match c.next() {
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        None => rest.to_string(),
+                    };
+                }
+                d
+            };
             (!d.is_empty()).then_some((n, d))
         })
         .collect();
     tags.sort();
-    for (n, d) in &tags {
-        assert!(!d.contains("://"), "tag {n}: description carries a URL scheme: {d}");
-    }
 
     // The path universe the fold reads to tell a collection from an item and a
     // group from a leaf. It is the SERVED surface, so a sibling route that cloud

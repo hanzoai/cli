@@ -44,12 +44,10 @@ pub fn label(command: &Commands) -> &'static str {
     match command {
         Commands::Agent { .. } => "agent",
         Commands::Auth { .. } => "auth",
-        Commands::Cluster { .. } => "cluster",
         Commands::Config { .. } => "config",
-        Commands::Model { .. } => "model",
-        Commands::Node { .. } => "node",
+        Commands::Engine { .. } => "engine",
         Commands::Runner { .. } => "runner",
-        Commands::Secret { .. } => "secret",
+        Commands::Scan { .. } => "scan",
         Commands::Serve { .. } => "serve",
         Commands::Version => "version",
         Commands::Fabric { .. } => "fabric",
@@ -58,13 +56,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Wallet { .. } => "wallet",
         Commands::Billing { .. } => "billing",
         Commands::Connector { .. } => "connector",
-        Commands::Usage { .. } => "usage",
         Commands::Share { .. } => "share",
         Commands::Init { .. } => "init",
-        Commands::Dev { .. } => "dev",
-        Commands::Docs { .. } => "docs",
-        Commands::Mdx { .. } => "mdx",
-        Commands::Ui { .. } => "ui",
-        Commands::Mcp { .. } => "mcp",
     }
 }

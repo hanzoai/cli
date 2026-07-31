@@ -159,28 +159,16 @@ enum Commands {
         command: AuthCommands,
     },
 
-    /// Manage dedicated cloud clusters
-    Cluster {
-        #[command(subcommand)]
-        command: ClusterCommands,
-    },
-
     /// Manage local CLI settings
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
     },
 
-    /// Serve models from this machine
-    Model {
+    /// Run AI engines on this machine (`engine serve <model>`)
+    Engine {
         #[command(subcommand)]
-        command: ModelCommands,
-    },
-
-    /// Manage machines in the compute fleet
-    Node {
-        #[command(subcommand)]
-        command: NodeCommands,
+        command: EngineCommands,
     },
 
     /// Provide this machine as a CI runner
@@ -189,11 +177,8 @@ enum Commands {
         command: RunnerCommands,
     },
 
-    /// Find exposed secrets in local files
-    Secret {
-        #[command(subcommand)]
-        command: SecretCommands,
-    },
+    /// Scan local files for exposed secrets (exits non-zero on a find)
+    Scan { path: PathBuf },
 
     /// Run a Hanzo service: `cloud` for the whole API, or one service
     /// (iam | kms | gateway | storage | pubsub)
@@ -245,13 +230,6 @@ enum Commands {
         command: ConnectorCommands,
     },
 
-    /// Stacked, per-account balances for every identity (and provider key) you hold
-    Usage {
-        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
-        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
-        brand: String,
-    },
-
     /// Publish a local service to a public https://<token>.share.hanzo.ai URL
     Share {
         /// Local target: a port (3000), host:port, or a full url
@@ -271,40 +249,6 @@ enum Commands {
         template: String,
         /// Project name
         name: Option<String>,
-    },
-
-    /// Start development server
-    Dev {
-        /// Port to use
-        #[arg(short, long, default_value = "3000")]
-        port: u16,
-        /// Enable hot reload
-        #[arg(long)]
-        hot: bool,
-    },
-
-    /// Documentation tooling (@hanzo/docs-cli)
-    Docs {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// MDX processing (@hanzo/mdx)
-    Mdx {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// UI components (@hanzo/ui)
-    Ui {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// MCP server operations (@hanzo/mcp)
-    Mcp {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
     },
 }
 
@@ -374,25 +318,6 @@ enum AuthCommands {
 }
 
 #[derive(Subcommand)]
-enum ClusterCommands {
-    /// Provision a dedicated cluster
-    Create {
-        name: String,
-        /// Cloud region for the cluster
-        #[arg(long)]
-        region: Option<String>,
-    },
-    /// List the org's clusters
-    List,
-    /// Show a cluster's state / version / health
-    Show { name: String },
-    /// Select the default cluster (persisted locally)
-    Use { name: String },
-    /// Tear down a cluster
-    Delete { name: String },
-}
-
-#[derive(Subcommand)]
 enum ConfigCommands {
     /// Print every setting
     List,
@@ -403,7 +328,7 @@ enum ConfigCommands {
 }
 
 #[derive(Subcommand)]
-enum ModelCommands {
+enum EngineCommands {
     /// Serve a model on an OpenAI-compatible local endpoint (via the Hanzo engine)
     Serve {
         model: String,
@@ -414,18 +339,6 @@ enum ModelCommands {
 }
 
 #[derive(Subcommand)]
-enum NodeCommands {
-    /// Register this machine in the compute fleet
-    Join,
-    /// Remove this machine from the fleet (stop it advertising itself)
-    Leave,
-    /// List the fleet's machines, capacity and GPUs
-    List,
-    /// Show one machine by id
-    Show { node: String },
-}
-
-#[derive(Subcommand)]
 enum RunnerCommands {
     /// Register + run this machine as a CI runner
     Start,
@@ -433,12 +346,6 @@ enum RunnerCommands {
     Stop,
     /// Report the runner's state
     Status,
-}
-
-#[derive(Subcommand)]
-enum SecretCommands {
-    /// Scan local files for credentials / private keys (exits non-zero on a find)
-    Scan { path: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -692,38 +599,21 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
             AuthCommands::Token { brand } => commands::auth::token(&mut config, &brand)?,
         },
-        Commands::Cluster { command } => match command {
-            ClusterCommands::Create { name, region } => {
-                commands::cluster::create(&mut config, name, region).await?
+        Commands::Engine { command } => match command {
+            EngineCommands::Serve { model, passthrough } => {
+                commands::engine::serve(model, passthrough).await?
             }
-            ClusterCommands::List => commands::cluster::list(&mut config).await?,
-            ClusterCommands::Show { name } => commands::cluster::show(&mut config, name).await?,
-            ClusterCommands::Use { name } => commands::cluster::use_cluster(&mut config, name)?,
-            ClusterCommands::Delete { name } => commands::cluster::delete(&mut config, name).await?,
         },
+        Commands::Scan { path } => commands::scan::scan(path).await?,
         Commands::Config { command } => match command {
             ConfigCommands::List => commands::config::list(&config)?,
             ConfigCommands::Get { key } => commands::config::get(&config, &key)?,
             ConfigCommands::Set { key, value } => commands::config::set(&mut config, &key, &value)?,
         },
-        Commands::Model { command } => match command {
-            ModelCommands::Serve { model, passthrough } => {
-                commands::model::serve(model, passthrough).await?
-            }
-        },
-        Commands::Node { command } => match command {
-            NodeCommands::Join => commands::node::join(&mut config).await?,
-            NodeCommands::Leave => commands::node::leave(&mut config).await?,
-            NodeCommands::List => commands::node::list(&mut config).await?,
-            NodeCommands::Show { node } => commands::node::show(&mut config, node).await?,
-        },
         Commands::Runner { command } => match command {
             RunnerCommands::Start => commands::runner::start().await?,
             RunnerCommands::Stop => commands::runner::stop().await?,
             RunnerCommands::Status => commands::runner::status().await?,
-        },
-        Commands::Secret { command } => match command {
-            SecretCommands::Scan { path } => commands::secret::scan(path).await?,
         },
         Commands::Serve { service, passthrough } => {
             if service == "cloud" {
@@ -823,16 +713,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::connector::rm(&mut config, provider).await?
             }
         },
-        Commands::Usage { brand } => commands::usage::usage(&mut config, &brand).await?,
         Commands::Share { target, backend_mode, name } => {
             commands::share::run(&mut config, target, backend_mode, name).await?
         }
         Commands::Init { template, name } => commands::init::run(template, name).await?,
-        Commands::Dev { port, hot } => commands::dev::run(port, hot).await?,
-        Commands::Docs { args } => commands::ts_proxy::docs(args).await?,
-        Commands::Mdx { args } => commands::ts_proxy::mdx(args).await?,
-        Commands::Ui { args } => commands::ts_proxy::ui(args).await?,
-        Commands::Mcp { args } => commands::ts_proxy::mcp(args).await?,
     }
     Ok(())
 }
@@ -900,9 +784,17 @@ mod tests {
                 "`{gone}` must no longer be a top-level subcommand"
             );
         }
-        for present in
-            ["agent", "auth", "cluster", "config", "model", "node", "runner", "secret", "serve"]
-        {
+        // `cluster`/`model`/`node`/`secret`/`usage`/`dev`/`docs`/`mdx`/`ui`/`mcp`
+        // are DELETED hand commands: proxies, npx passthroughs, and shadows of
+        // generated cloud products (the org-review verdicts). `engine` and
+        // `scan` are their surviving local halves.
+        for gone in ["cluster", "model", "node", "secret", "usage", "dev", "docs", "mdx", "ui"] {
+            assert!(
+                !names.iter().any(|n| n == gone),
+                "`{gone}` is a deleted hand command and must not be a top-level"
+            );
+        }
+        for present in ["agent", "auth", "config", "engine", "runner", "scan", "serve"] {
             assert!(names.iter().any(|n| n == present), "`{present}` must be a resource noun");
         }
     }
@@ -923,15 +815,11 @@ mod tests {
     /// The resource nouns parse their verbs.
     #[test]
     fn resource_nouns_parse() {
-        assert!(Cli::try_parse_from(["hanzo", "cluster", "create", "prod"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "cluster", "use", "prod"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "config", "get", "network.active"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "config", "set", "code.link", "false"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "model", "serve", "gemma"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "node", "join"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "node", "show", "m-1"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "engine", "serve", "gemma"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "runner", "start"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "secret", "scan", "."]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "scan", "."]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "serve", "cloud"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "serve", "iam"]).is_ok());
         assert!(matches!(
