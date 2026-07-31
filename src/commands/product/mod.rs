@@ -168,6 +168,20 @@ fn product_names() -> Vec<&'static str> {
     OPS.iter().map(|o| o.product).filter(|p| seen.insert(*p)).collect()
 }
 
+/// Every generated product with its one-line prose, for the root man page —
+/// the SAME names the parser accepts and the SAME prose the group help shows.
+pub(crate) fn catalog() -> Vec<(&'static str, String)> {
+    product_names()
+        .into_iter()
+        .map(|n| {
+            let about = product_about(n)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("`{n}` cloud operations"));
+            (n, about)
+        })
+        .collect()
+}
+
 /// A trie node: `children` are subcommands and `leaf` is a terminal op. A node can
 /// be BOTH — a collection whose name also heads a nested group (`GET /v1/kv` is the
 /// `list` leaf, and `/v1/kv/list/{key}` nests under the same `list` node). That is
