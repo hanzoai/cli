@@ -98,7 +98,7 @@ pub async fn run(
     let api = network::active(cfg).api.trim_end_matches('/').to_string();
     // Refreshing accessor, not the raw one: a link holds a shell for hours, and
     // the access token lives one.
-    let (_id, tok) = store::active_token_fresh(cfg, paths::DEFAULT_BRAND)
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)
         .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
 

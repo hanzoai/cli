@@ -102,9 +102,9 @@ struct Caller {
 }
 
 impl Caller {
-    fn resolve(cfg: &mut Config) -> Result<Self> {
+    async fn resolve(cfg: &mut Config) -> Result<Self> {
         let api = network::active(cfg).api.trim_end_matches('/').to_string();
-        let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?
+        let (id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND).await?
             .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
         let held = store::list(cfg, paths::DEFAULT_BRAND);
         Ok(Self { id, token: tok.access_token, api, held })
@@ -231,12 +231,12 @@ impl Caller {
 
 /// `hanzo billing balance` — the ACTIVE identity's own prepaid wallet.
 pub async fn balance(cfg: &mut Config) -> Result<()> {
-    Caller::resolve(cfg)?.read_balance().await
+    Caller::resolve(cfg).await?.read_balance().await
 }
 
 /// `hanzo billing deposit` — the money-in primitive, gated server-side.
 pub async fn deposit(cfg: &mut Config, d: Deposit) -> Result<()> {
-    Caller::resolve(cfg)?.post_deposit(&d).await
+    Caller::resolve(cfg).await?.post_deposit(&d).await
 }
 
 #[cfg(test)]

@@ -145,7 +145,7 @@ pub fn active(cfg: &Config) -> Option<StoredWallet> {
 async fn cloud_provision(cfg: &mut Config, name: &str, custody: &str) -> Result<StoredWallet> {
     let net = network::active(cfg);
     let api = net.api.trim_end_matches('/');
-    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)?.ok_or_else(|| {
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND).await?.ok_or_else(|| {
         anyhow!("not signed in — run `hanzo auth login` first (or `hanzo wallet create --local`)")
     })?;
     let client = reqwest::Client::new();

@@ -27,7 +27,7 @@ pub async fn call(cfg: &mut Config, method: Method, path: &str, body: Option<&Va
     // local host may have no IAM, so a missing credential goes out as no bearer and
     // the server decides.
     let origin = host::origin(cfg).await?;
-    let token = match store::active_token(cfg, paths::DEFAULT_BRAND)? {
+    let token = match store::active_token(cfg, paths::DEFAULT_BRAND).await? {
         Some((_id, tok)) => tok.access_token,
         None if matches!(origin, Origin::Local(_)) => String::new(),
         None => return Err(not_signed_in()),
@@ -60,8 +60,9 @@ pub async fn call(cfg: &mut Config, method: Method, path: &str, body: Option<&Va
 /// The active identity's org (its `owner` claim) — for the org-scoped paths
 /// (`paas/cluster/doks/{org}/…`). Addressed, never asserted: the server re-checks
 /// it against the JWT it verifies, so a wrong one 403s you against yourself.
-pub fn owner(cfg: &mut Config) -> Result<String> {
-    let (id, _) = store::active_token(cfg, paths::DEFAULT_BRAND)?.ok_or_else(not_signed_in)?;
+pub async fn owner(cfg: &mut Config) -> Result<String> {
+    let (id, _) =
+        store::active_token(cfg, paths::DEFAULT_BRAND).await?.ok_or_else(not_signed_in)?;
     Ok(id.owner)
 }
 

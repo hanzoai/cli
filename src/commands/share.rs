@@ -89,7 +89,7 @@ pub async fn start(
 
     // 1. Provision from the login identity — one authed call, org server-derived.
     let api = network::active(cfg).api.trim_end_matches('/').to_string();
-    let (_id, tok) = store::active_token_fresh(cfg, paths::DEFAULT_BRAND)
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)
         .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
     let pr = enable(&api, &tok.access_token).await?;

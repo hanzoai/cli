@@ -14,6 +14,13 @@ mod telemetry;
 #[cfg(unix)]
 mod zap;
 
+/// Tell the user something went sideways WITHOUT failing the run — one place, so
+/// every warning the CLI prints looks the same and none of them lands on stdout,
+/// where it would corrupt what a caller is piping (`hanzo auth token`).
+pub fn warn(msg: &str) {
+    eprintln!("{} {}", "warning:".yellow().bold(), msg);
+}
+
 #[derive(Parser)]
 #[command(name = "hanzo")]
 #[command(author = "Hanzo AI")]
@@ -626,7 +633,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             AuthCommands::Use { identity, brand } => {
                 commands::auth::use_identity(&mut config, &brand, identity)?
             }
-            AuthCommands::Token { brand } => commands::auth::token(&mut config, &brand)?,
+            AuthCommands::Token { brand } => commands::auth::token(&mut config, &brand).await?,
         },
         Commands::Engine { command } => match command {
             EngineCommands::Serve { model, passthrough } => {
