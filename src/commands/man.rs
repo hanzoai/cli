@@ -1,5 +1,5 @@
 //! The root man page — what a bare `hanzo`, `hanzo --help` or `hanzo help`
-//! prints. The gcloud form: NAME / SYNOPSIS / DESCRIPTION / GLOBAL FLAGS /
+//! prints. The man-page form: NAME / SYNOPSIS / DESCRIPTION / GLOBAL FLAGS /
 //! GROUPS / COMMANDS, each group on one line. GROUPS is composed from the SAME
 //! generated data the parser uses (`product::catalog`) plus the hand-written
 //! resource groups — never a second table of products.
@@ -39,7 +39,7 @@ fn b(s: &str) -> String {
 }
 
 /// One indented, wrapped entry: name on its own line, prose under it — the
-/// gcloud group form. Prose is wrapped at the same width for every entry.
+/// same form for every entry. Prose is wrapped at one width throughout.
 fn entry(out: &mut String, name: &str, about: &str) {
     out.push_str(&format!("     {}\n", b(name)));
     let mut line = String::from("       ");
@@ -55,8 +55,8 @@ fn entry(out: &mut String, name: &str, about: &str) {
     let tail = line.trim_end();
     if !tail.is_empty() {
         out.push_str(tail);
-        // gcloud ends every group line with a period; a truncation
-        // ellipsis is already terminal punctuation.
+        // Every group line ends with a period; a truncation ellipsis is
+        // already terminal punctuation.
         if !tail.ends_with('.') && !tail.ends_with('\u{2026}') {
             out.push('.');
         }
