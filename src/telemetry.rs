@@ -46,6 +46,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Auth { .. } => "auth",
         Commands::Config { .. } => "config",
         Commands::Engine { .. } => "engine",
+        Commands::Link { .. } => "link",
         Commands::Runner { .. } => "runner",
         Commands::Scan { .. } => "scan",
         Commands::Serve { .. } => "serve",

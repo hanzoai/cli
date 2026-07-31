@@ -2,6 +2,7 @@
 pub mod cloud;
 pub mod host;
 pub mod launch;
+pub mod link;
 pub mod product;
 
 // Resource-noun commands — the primary `hanzo <resource> <verb>` tree.

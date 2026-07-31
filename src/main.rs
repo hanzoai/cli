@@ -159,6 +159,23 @@ enum Commands {
         command: AuthCommands,
     },
 
+    /// Put this shell on the fabric so it can be driven from the console
+    Link {
+        /// What to run: your $SHELL by default, or name one — `bash`, `zsh`, or
+        /// `tmux` for a shell that survives a disconnect and can be attached
+        /// locally at the same time.
+        #[arg(long)]
+        shell: Option<String>,
+
+        /// Publish it read-only. A viewer sees the work and cannot type into it.
+        #[arg(long)]
+        read_only: bool,
+
+        /// Name this link in the console. Defaults to the working directory.
+        #[arg(long)]
+        title: Option<String>,
+    },
+
     /// Manage local CLI settings
     Config {
         #[command(subcommand)]
@@ -617,6 +634,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
         },
         Commands::Scan { path } => commands::scan::scan(path).await?,
+        Commands::Link {
+            shell,
+            read_only,
+            title,
+        } => commands::link::run(&mut config, shell, read_only, title).await?,
+
         Commands::Config { command } => match command {
             ConfigCommands::List => commands::config::list(&config)?,
             ConfigCommands::Get { key } => commands::config::get(&config, &key)?,
