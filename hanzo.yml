@@ -8,9 +8,14 @@
 #
 # NO images: the CLI is a binary a person installs, not a container a cluster
 # runs. NO binaries: this repo's binaries are the five-target cross-build in
-# .github/workflows/release-matrix.yml (cargo-zigbuild + a vendored macOS SDK) —
+# .hanzo/workflows/release-matrix.yml (cargo-zigbuild + a vendored macOS SDK) —
 # that is genuinely per-repo build logic and it is already correct; the generic
 # Go-shaped lane here cannot produce it. NO deploy: nothing here rolls out.
+#
+# That path is `.hanzo/`, not `.github/`: the runners belong to git.hanzo.ai and
+# github.com has none, so a pipeline under `.github/` queues forever instead of
+# building. Both CI files in this repo live under `.hanzo/workflows/` for that
+# one reason.
 #
 # What CI owns for this repo is the two gates below and the client lane.
 
