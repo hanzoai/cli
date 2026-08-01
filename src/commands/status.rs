@@ -180,6 +180,12 @@ fn render(clusters: &Reading, apps: &Reading, nodes: &Reading) {
             println!("  {:<12} {:<28} {}", kind, name, verdict.red());
         }
     }
+    // Drift is not an alarm: these are serving. It goes UNDER the alarms, in one
+    // line, so a fleet that deploys constantly does not read as a fleet on fire.
+    let drifted = drift(apps);
+    if drifted > 0 {
+        println!("{} — {drifted} serving an older tag than declared", "drift".yellow().bold());
+    }
 
     println!();
     head("clusters", clusters);
@@ -297,15 +303,22 @@ fn row(label: &str, value: String) {
     }
 }
 
-/// Everything that is not healthy, in one list, most-important-first order:
+/// Everything that is BROKEN, in one list, most-important-first order:
 /// applications, then clusters, then machines.
+///
+/// Broken is judged on HEALTH alone, never on sync. An application that is
+/// Healthy but OutOfSync has DRIFTED — its declared tag and its running tag
+/// disagree — and drift is a routine state of a fleet that deploys constantly,
+/// not an incident. Collapsing the two put 182 drifted-but-serving apps in the
+/// same list as the one that was actually down, which buries the incident in
+/// the noise and teaches the reader to skip the block that matters most.
+/// Drift is counted by `drift`, one line, below the alarms.
 fn problems(clusters: &Reading, apps: &Reading, nodes: &Reading) -> Vec<Problem> {
     let mut out: Vec<Problem> = Vec::new();
     if let Ok(rows) = apps {
         for a in rows {
-            let v = verdict(a);
-            if v != "Healthy / Synced" {
-                out.push(("application", first(a, &["/metadata/name"], "unnamed"), v));
+            if first(a, &["/status/health/status"], "Unknown") != "Healthy" {
+                out.push(("application", first(a, &["/metadata/name"], "unnamed"), verdict(a)));
             }
         }
     }
@@ -326,6 +339,18 @@ fn problems(clusters: &Reading, apps: &Reading, nodes: &Reading) -> Vec<Problem>
         }
     }
     out
+}
+
+/// Applications that are serving but whose running tag is not the declared one.
+/// Reported as a COUNT: naming 182 rows that are all fine is not information.
+fn drift(apps: &Reading) -> usize {
+    let Ok(rows) = apps else { return 0 };
+    rows.iter()
+        .filter(|a| {
+            first(a, &["/status/health/status"], "Unknown") == "Healthy"
+                && first(a, &["/status/sync/status"], "Unknown") != "Synced"
+        })
+        .count()
 }
 
 #[cfg(test)]
@@ -393,10 +418,12 @@ mod tests {
 
     // ---- most important first -----------------------------------------------
 
-    /// Only the unhealthy lead the page, and each names what it is, which one,
-    /// and the verdict — applications first, then clusters, then machines.
+    /// Only the BROKEN lead the page, and each names what it is, which one, and
+    /// the verdict — applications first, then clusters, then machines. A Healthy
+    /// but OutOfSync app (`kms` here) has drifted and is deliberately NOT here:
+    /// it is serving, and 182 of these would bury the one that is down.
     #[test]
-    fn the_problem_set_is_everything_not_healthy() {
+    fn only_the_broken_lead_the_page_and_drift_is_not_broken() {
         let apps = Ok(vec![
             app("gateway", "Healthy", "Synced"),
             app("iam", "Degraded", "Synced"),
@@ -416,11 +443,28 @@ mod tests {
             p,
             vec![
                 ("application", "iam".into(), "Degraded / Synced".into()),
-                ("application", "kms".into(), "Healthy / OutOfSync".into()),
                 ("cluster", "zoo-k8s".into(), "provisioning".into()),
                 ("node", "spark".into(), "offline".into()),
             ]
         );
+        // The drifted one is counted, not alarmed about.
+        assert_eq!(drift(&apps), 1);
+    }
+
+    /// Drift is HEALTH-gated: an app that is both unhealthy AND out of sync is
+    /// an incident, already named above, and must not be double-counted as
+    /// drift. Only the serving-but-stale are drift.
+    #[test]
+    fn drift_counts_only_the_healthy_but_stale() {
+        let apps = Ok(vec![
+            app("a", "Healthy", "OutOfSync"),
+            app("b", "Healthy", "Unknown"),
+            app("c", "Degraded", "OutOfSync"),
+            app("d", "Healthy", "Synced"),
+        ]);
+        assert_eq!(drift(&apps), 2);
+        // And a surface that did not answer contributes no drift, never a zero.
+        assert_eq!(drift(&Err("403 nope".into())), 0);
     }
 
     /// A verdict the server did not state is UNKNOWN — and unknown is not
