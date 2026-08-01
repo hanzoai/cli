@@ -33,12 +33,29 @@ the live code; the INSTALL was old. So:
 > both must be this crate. An installer that ships one name, or ships two
 > different versions, produces a CLI whose surface nobody can explain.
 
-`hanzo version` now makes that skew LOUD (`commands/version.rs`): it resolves
-`hanzo-node` on PATH exactly the way a delegating caller would — first match
-wins, which is the precedence that let a stale build hide — and reports the
-mismatch. Same file (hardlink or symlink) or same version is silent; a different
-build prints `stale delegate: <path> is vX — this is vY`. It never repairs and
-never refuses; it only stops the failure from being invisible.
+`hanzo version` now makes that skew LOUD (`commands/version.rs`), in BOTH
+directions, and it resolves PATH exactly the way a delegating caller would —
+first match wins, which is the precedence that let a stale build hide:
+- a stale delegate BEHIND us — `stale delegate: <path> is vX — this is vY`.
+  Same file (hardlink or symlink) or same version is silent.
+- a different file AHEAD of us holding the name — `shadowed name: 'hanzo' on
+  PATH is <path> — this is <us>`. This is the one that actually bit: a Go
+  control binary at `/usr/local/bin/hanzo` and this build at
+  `~/.local/bin/hanzo`, each answering a different `hanzo status`.
+
+It never repairs and never refuses; it only stops the failure from being
+invisible.
+
+**`--version`, `-V` and `version` are ONE function.** `#[command(version)]` let
+clap intercept `--version`, print its own line and exit — so `commands::version::run`
+(the only thing that carries the skew report) never ran for the spelling people
+actually type, and the two spellings printed different text. `main` now sets
+`disable_version_flag`, declares `-V`/`--version` as its own flag, and routes it
+to that one function before any other dispatch. The answer is ONE line on
+STDOUT — `hanzo <semver>` — because that is the shape the Go binary's delegate
+parser reads (first line, last token, optional `v` stripped) and the shape every
+other `--version` prints. A skew report is a WARNING, not the answer, so it goes
+to STDERR and a caller piping the version gets exactly one clean line.
 
 `install.sh` does exactly that: it installs `hanzo`, symlinks `hanzo-node` to
 the same file (a copy where links are unavailable), and warns when another
@@ -140,6 +157,31 @@ context window is survivable, a session that cannot start is not).
 - cloud: `hanzo serve`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
 - fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
+- the whole cloud, one screen: `hanzo status` (see below)
+
+**`hanzo status` is the fleet view, and it is COMPOSED, never a new API**
+(`commands/status.rs`). It reads three routes cloud already serves, concurrently,
+through the ONE authenticated seam (`product::Seam` — origin from `network`,
+bearer from the active identity, no org header): `GET /v1/k8s/clusters`
+(`clusters`), `GET /v1/deploy/applications` (argocd `items`), `GET
+/v1/fleet/workers` (`workers`). There is no fourth wire and no CLI-only side
+channel. Two laws it exists to enforce:
+- **Most important first.** Anything unhealthy leads the page — an application
+  that is not `Healthy`+`Synced`, a cluster not running, a node not online. The
+  rest is grouped and COUNTED, so 336 healthy applications are three lines.
+- **A surface that did not answer is UNAVAILABLE, never zero.** `/v1/deploy/gitops`
+  answers `403 not authorized for this deploy console` to a non-console identity,
+  and `/v1/k8s/clusters` legitimately answers `{"clusters":[]}` — those are
+  DIFFERENT facts. A refusal prints its status and the server's own words
+  (collapsed to one clipped line, so an ingress HTML page cannot eat the page it
+  was meant to explain); an empty 200 prints "none reported"; an answer with no
+  list prints "unreadable". "all clear" is claimed only when every surface was
+  actually read. One failing surface never fails the command — failing to read
+  ALL of them does (non-zero exit).
+
+Before this existed, `status` was not a command at all: it fell through to the
+flattened coding-session positional, so typing `hanzo status` started a headless
+coding agent on the task "status".
 
 **Where the cloud surface comes from** — `hanzo <product> …` is DERIVED, never
 hand-maintained, and the client links no cloud code: it reads a spec, which is what it

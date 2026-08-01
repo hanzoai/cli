@@ -593,39 +593,8 @@ async fn call(
     query: Vec<String>,
     raw: bool,
 ) -> Result<()> {
-    // WHERE, and over WHICH WIRE. A LOCAL origin also gets a host started (or
-    // reused) behind it, so the same command tree runs against a checkout with no
-    // server up — over ZAP, the native transport, because the CLI is first party.
-    let origin = host::origin(cfg).await?;
-
-    // WHO. A local host may have no IAM to sign in to, so a missing credential is
-    // NOT refused here — the call goes out unauthenticated and the server decides.
-    // That is the same rule this module already follows for a 403: the refusal is
-    // always the server's, never a client-side guess.
-    let identity = store::active_token(cfg, paths::DEFAULT_BRAND).await?;
-    if identity.is_none() && matches!(origin, Origin::Http(_)) {
-        bail!("not signed in — run `hanzo auth login`");
-    }
-    // The identity we would suggest switching to on a 403 (SuperAdmin gate) — the
-    // very identity we authenticate as, so the hint can never name someone else.
-    let held = store::list(cfg, paths::DEFAULT_BRAND);
-    let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
-    let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
-
-    let target = target(&path, &query)?;
-    let (status, resp) = match &origin {
-        #[cfg(unix)]
-        Origin::Local(sock) => zap::send(sock, &method, &target, &token, body.as_ref()).await?,
-        #[cfg(not(unix))]
-        Origin::Local(base) => {
-            http::send(&Client::new(), method, &format!("{base}{target}"), &token, body.as_ref())
-                .await?
-        }
-        Origin::Http(base) => {
-            http::send(&Client::new(), method, &format!("{base}{target}"), &token, body.as_ref())
-                .await?
-        }
-    };
+    let seam = Seam::open(cfg).await?;
+    let (status, resp) = seam.send(method, &path, &query, body).await?;
 
     if status.is_success() {
         // A 2xx is NOT proof of success. Some planes (IAM) answer an error
@@ -649,11 +618,78 @@ async fn call(
         v => v.to_string(),
     };
     if status == StatusCode::FORBIDDEN {
-        if let Some(hint) = hint {
+        if let Some(hint) = seam.hint {
             anyhow::bail!("{path} -> {status}: {shown}{hint}");
         }
     }
     anyhow::bail!("{path} -> {status}: {shown}");
+}
+
+/// WHERE and WHO, resolved ONCE — the one authenticated route into cloud, held
+/// as a value so a command that reads SEVERAL surfaces (`hanzo status`) resolves
+/// the origin and the credential once and then fans out concurrently, instead of
+/// re-deriving them per call and drifting.
+pub(crate) struct Seam {
+    origin: Origin,
+    /// The bearer AND NOTHING ELSE goes on the wire — cloud derives the tenant
+    /// from the `owner` claim it verifies, so nothing here can name a tenant.
+    token: String,
+    /// The identity-switch hint to offer if — and only if — the SERVER returns a
+    /// 403. Resolved from the very identity we authenticate as, so it can never
+    /// name someone else.
+    pub(crate) hint: Option<String>,
+    http: Client,
+}
+
+impl Seam {
+    pub(crate) async fn open(cfg: &mut Config) -> Result<Self> {
+        // WHERE, and over WHICH WIRE. A LOCAL origin also gets a host started (or
+        // reused) behind it, so the same command tree runs against a checkout with
+        // no server up — over ZAP, the native transport, because the CLI is first
+        // party.
+        let origin = host::origin(cfg).await?;
+
+        // WHO. A local host may have no IAM to sign in to, so a missing credential
+        // is NOT refused here — the call goes out unauthenticated and the server
+        // decides. That is the same rule this module already follows for a 403:
+        // the refusal is always the server's, never a client-side guess.
+        let identity = store::active_token(cfg, paths::DEFAULT_BRAND).await?;
+        if identity.is_none() && matches!(origin, Origin::Http(_)) {
+            bail!("not signed in — run `hanzo auth login`");
+        }
+        let held = store::list(cfg, paths::DEFAULT_BRAND);
+        let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
+        let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
+        Ok(Self { origin, token, hint, http: Client::new() })
+    }
+
+    /// Send one request over whichever wire the origin named. The STATUS is
+    /// handed back, never flattened: a refusal is a value the caller must read,
+    /// and only a transport fault is an `Err`.
+    pub(crate) async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[String],
+        body: Option<Value>,
+    ) -> Result<(StatusCode, Value)> {
+        let target = target(path, query)?;
+        match &self.origin {
+            #[cfg(unix)]
+            Origin::Local(sock) => {
+                zap::send(sock, &method, &target, &self.token, body.as_ref()).await
+            }
+            #[cfg(not(unix))]
+            Origin::Local(base) => {
+                let url = format!("{base}{target}");
+                http::send(&self.http, method, &url, &self.token, body.as_ref()).await
+            }
+            Origin::Http(base) => {
+                let url = format!("{base}{target}");
+                http::send(&self.http, method, &url, &self.token, body.as_ref()).await
+            }
+        }
+    }
 }
 
 /// Map an op's method string to a `reqwest::Method`.
@@ -722,7 +758,7 @@ fn target(path: &str, query: &[String]) -> Result<String> {
 /// a genuine success (a success envelope, or a raw non-enveloped body) renders
 /// unchanged. It never invents a message and never fires on a success that merely
 /// has a `msg` with null `data`: an explicit non-error `status` wins.
-fn envelope_error(body: &Value) -> Option<String> {
+pub(crate) fn envelope_error(body: &Value) -> Option<String> {
     let obj = body.as_object()?;
     let message = || {
         obj.get("msg")

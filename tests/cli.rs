@@ -46,6 +46,50 @@ fn version_is_the_cargo_version() {
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
 
+/// THE DEFECT: `hanzo --version` printed clap's own line and exited, so it never
+/// reached `commands::version::run` — the only thing that reports an install
+/// skew — and it disagreed with `hanzo version` on format. All three spellings
+/// must be ONE function, so their STDOUT must be byte-identical: exactly one
+/// line, `hanzo <semver>`, which is what the Go control binary's delegate parser
+/// reads. A skew report is a warning, so it may never land on stdout.
+#[test]
+fn every_version_spelling_prints_the_one_line() {
+    let out = |args: &[&str]| {
+        let a = hanzo().args(args).assert().success();
+        String::from_utf8_lossy(&a.get_output().stdout).to_string()
+    };
+    let one = format!("hanzo {}\n", env!("CARGO_PKG_VERSION"));
+    assert_eq!(out(&["--version"]), one);
+    assert_eq!(out(&["-V"]), one);
+    assert_eq!(out(&["version"]), one);
+}
+
+/// THE DEFECT: there was no `status` command, so `hanzo status` was parsed as the
+/// flattened coding-session TASK and launched a headless agent. It must be a real
+/// command with its own help.
+#[test]
+fn status_is_a_command_not_a_coding_session() {
+    hanzo()
+        .args(["status", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unhealthy").and(predicate::str::contains("Usage: hanzo status")));
+}
+
+/// Signed out, `status` REFUSES and names the way in — it never renders an empty
+/// cloud as though that were the truth.
+#[test]
+fn status_signed_out_refuses_and_never_shows_an_empty_fleet() {
+    let cfg = tmp();
+    hanzo()
+        .args(["status"])
+        .args(cfg_args(&cfg))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not signed in").and(predicate::str::contains("hanzo auth login")))
+        .stdout(predicate::str::contains("all clear").not());
+}
+
 /// `--help` names every major resource the CLI ships (the resource-noun tree),
 /// and the old top-level verbs are GONE.
 #[test]
