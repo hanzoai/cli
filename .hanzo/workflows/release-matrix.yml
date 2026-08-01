@@ -120,18 +120,23 @@ jobs:
           tar -xf macsdk.tar.xz -C "$HOME"
           echo "SDKROOT=$HOME/MacOSX11.3.sdk" >> "$GITHUB_ENV"
 
-      # The command tree is a CLAIM about what the server serves, and a release is
-      # the moment that claim reaches users. Re-ask the live route table with the
-      # same rule that generated the spec: `--verify` fails on any operation the
-      # table refutes. Recording the source (`info.description`, asserted offline in
-      # spec_drift) says WHERE the spec came from; only this says whether it is
-      # still TRUE — a spec built from the wire keeps naming the wire forever while
-      # the router moves underneath it. v1.7.2 shipped 149 `/v1/cloud/<verb-noun>`
-      # commands the server has never served; a later spec carried 129 more.
-      # Needs no hanzoai/openapi checkout, so it costs a clone and a GET.
-      - name: The live route table still serves this command tree
+      # THE DRIFT GATE. The command tree is a CLAIM about what the server serves,
+      # and a release is the moment that claim reaches users — so it is put to the
+      # server, in BOTH directions, before one artifact is minted. Recording the
+      # source (`info.description`, asserted offline in spec_drift) says WHERE the
+      # spec came from; only this says whether it is still TRUE. v1.7.2 shipped 149
+      # `/v1/cloud/<verb-noun>` commands the server has never served, a later spec
+      # carried 129 more, and 46 served products shipped with no command at all.
+      #
+      # `genspec --verify` stood here and did half of it: it could only refute
+      # inside a product the live table OWNS, which leaves everything behind a `*`
+      # relay door and the whole edge-answered inference plane un-refutable, and it
+      # never asked the other direction. `driftgate` applies that same predicate AND
+      # asks the running host wherever the table can only answer with a door or a
+      # silence. Needs no hanzoai/openapi checkout — a clone, a build and the network.
+      - name: The live server contradicts this command tree in neither direction
         if: matrix.target.host
-        run: cargo run --features genspec --bin genspec --locked -- --verify
+        run: make verify
 
       # Tests GATE the artifact. They run on the HOST arch only — a cross-built
       # binary cannot execute here; the cross targets are the same source through

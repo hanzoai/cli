@@ -22,78 +22,19 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+/// The ONE curation table — which products the tree does not surface at their own
+/// bare name, which it absorbs under another command, and WHY, as data rather than
+/// as a comment. `driftgate` reads the same file to excuse the same gaps and RUNS
+/// every spelling an entry claims, so a product dropped here and a product excused
+/// there can never be two different lists, and a reason cannot quietly stop being
+/// true. It was three tables — `DENY`, `REMAP`, and an `EXCLUDE` that was a strict
+/// subset of `DENY` — with the reasons in comments; two of `EXCLUDE`'s three names
+/// reserved local commands that had been DELETED, and 21 served `/v1/deploy`
+/// operations reached nobody while the list still called it a decision.
+#[path = "../curation.rs"]
+mod curation;
+
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
-/// Curation — products NOT emitted as top-level commands. POLICY ONLY, and the
-/// test of an entry is ONE question: would it still hold if the route were served
-/// perfectly? Each one below answers yes, because each states a fact about what a
-/// COMMAND LINE is — never a fact about what the server does. Whether a route
-/// exists is the document's answer, made upstream by `genspec` against cloud's own
-/// API document.
-///
-/// That is now enforced rather than promised: THE CURATION LAW (search that phrase
-/// in `main`) refuses to generate at all while any entry names a product
-/// `spec/cloud.json` does not carry, so an entry cannot decay into "the server 404s
-/// this" without failing the build. Under it went nine names no document has ever
-/// carried (`console` `search-docs` `index-docs` `chat-docs` `embed-status`
-/// `account-bridge` `agent-bindings` `provisioning` `do`), two "redundant plurals"
-/// the document shows to be separate surfaces (`/v1/bots` is bot RUNS while
-/// `/v1/bot` is bot nodes plus a door; `/v1/networks` is the org's Zero Trust
-/// overlay while the local `network` SELECTS a network), and five relay-door
-/// products called enumeration artifacts, each with its own prose and 1–11 served
-/// operations (`files` `upload` `download` `indexers` `settings`).
-///
-/// `EXCLUDE` used to sit beside this list holding `billing`/`agent`/`deploy` with
-/// the note "local commands own these bare names". It was a THIRD statement of one
-/// fact — every entry was already in DENY, and `product::augment` reads the real
-/// answer off the parser (`cmd.get_subcommands()`) rather than off any list. Two of
-/// its three names had ALSO stopped being true: `agent` and `deploy` were deleted as
-/// top-level commands (`main.rs::old_top_level_verbs_are_removed` asserts it), so the
-/// list reserved names for commands that no longer existed and 21 served routes —
-/// the whole `/v1/deploy` control plane behind the Hanzo CD console — reached no one.
-const DENY: &[&str] = &[
-    // A command line is not a browser: `/v1/csrf` mints the anti-CSRF token a
-    // browser echoes back with a form POST, and nothing a person types has a form.
-    "csrf",
-    // The document that decides the commands is not one of them.
-    "openapi.json",
-    // In a command line `completions` names SHELL completion. The operation is
-    // already reachable where it reads correctly: `hanzo chat completions`.
-    "completions",
-    // A LOCAL hand-written command owns these names, whatever the server serves:
-    // `code` is the AI coding session, `billing` is the prepaid-wallet wrapper with
-    // its own UX, and `help` is clap's own builtin — a generated `help` product
-    // panics the parser with a duplicate command.
-    //
-    // Each of these SHADOWS served operations, and the shadow is a stated gap, not
-    // a claim that the routes are absent: `hanzo billing` reaches 2 of the 22 live
-    // `/v1/billing/*` routes, and `hanzo code` reaches none of the 6 live
-    // `/v1/code/*` ones. Closing a shadow means the local command ABSORBS the
-    // product's operations — a UX decision per command, not a list edit here.
-    "code", "help", "billing",
-    // `engine` is the LOCAL `hanzo engine serve <model>` (launches hanzo-engine on
-    // this machine). The cloud engine product manages engine CLUSTERS; when its
-    // revival lands it needs its own noun or a nested home, not this name. It has
-    // revived — `/v1/engine/{model,models,status,system}` are served — so this is a
-    // shadow of 4 operations on the same terms as `billing` above.
-    "engine",
-    // Singular/plural: `/v1/agent` (one tool-calling round + its conversation log,
-    // registered by github.com/hanzoai/agent) and `/v1/agents` (the agent registry,
-    // sessions and targets) are two products sharing one noun. Mounting both would
-    // ship `hanzo agent` beside `hanzo agents`, which is the collision the house
-    // rule forbids, so the plural — the larger, cloud-owned surface — keeps the
-    // name. The fix is a route move in hanzoai/agent (`/v1/agent` →
-    // `/v1/agents/run`, `/v1/agent/{presets,conversations}` → `/v1/agents/…`), and
-    // this entry goes when that lands. It is NOT here because a local command owns
-    // the name: no local `agent` command exists.
-    "agent",
-];
-/// Curation — absorb a product's ops UNDER another command as a sub-namespace, so
-/// the compute plane is ONE `hanzo compute` (machines + gpus + regions/sizes)
-/// instead of three top-levels. `machines`/`gpus` live at their own path prefixes
-/// with a colliding `get`, so a FLAT `compute list` is impossible without
-/// ambiguity — sub-namespacing unifies them losslessly. A flat surface would need
-/// the cloud specs reorganized under one `/v1/compute` tag.
-const REMAP: &[(&str, &str)] = &[("machines", "compute"), ("gpus", "compute")];
 const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 
 fn is_param(s: &str) -> bool {
@@ -488,12 +429,8 @@ fn main() {
     // this, every entry decays into the "this one 404s" knowledge deleting it cost
     // a release.
     let carried: BTreeSet<&str> = all.iter().filter_map(|p| segs(p).get(1).copied()).collect();
-    let stale: Vec<&str> = DENY
-        .iter()
-        .chain(REMAP.iter().map(|(from, _)| from))
-        .copied()
-        .filter(|n| !carried.contains(n))
-        .collect();
+    let stale: Vec<&str> =
+        curation::CURATED.iter().map(|c| c.product).filter(|n| !carried.contains(n)).collect();
     assert!(
         stale.is_empty(),
         "curation names {} product(s) spec/cloud.json does not carry: {}\n\n\
@@ -512,7 +449,7 @@ fn main() {
             continue;
         }
         let product0 = segs(path)[1];
-        if DENY.contains(&product0) || is_wild(product0) {
+        if curation::dropped(product0) || is_wild(product0) {
             continue;
         }
         for (m, op) in item.as_object().into_iter().flatten() {
@@ -525,9 +462,8 @@ fn main() {
             // (e.g. `machines list` → `compute machines list`). The PATH is
             // unchanged — only the command coordinate moves.
             let (mut product, mut nodes) = (f.product, f.nodes);
-            if let Some((from, target)) = REMAP.iter().find(|(from, _)| *from == product) {
-                product = target.to_string();
-                nodes.insert(0, (*from).to_string());
+            if let Some(parent) = curation::under(&product) {
+                nodes.insert(0, std::mem::replace(&mut product, parent.to_string()));
             }
             // Typed flags: body properties (writes) + query parameters (all ops).
             let mut fields = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
