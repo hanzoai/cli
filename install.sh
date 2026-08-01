@@ -15,6 +15,9 @@ set -eu
 
 REPO="hanzoai/cli"
 BIN="hanzo"
+# The second name this same build installs under: what cloud's control binary
+# delegates to. One build, two names — never two versions.
+DELEGATE="hanzo-node"
 PREFIX="${HANZO_INSTALL_PREFIX:-$HOME/.local/bin}"
 
 die() { printf '\nhanzo: %s\n' "$1" >&2; exit 1; }
@@ -119,9 +122,35 @@ mkdir -p "$PREFIX"
 mv "$tmp/$BIN$ext" "$PREFIX/$BIN$ext"
 chmod 755 "$PREFIX/$BIN$ext"
 
+# The SAME build under the second name. cloud's control binary hands every verb
+# it does not own to `hanzo-node` (it resolves that name before `hanzo`), so the
+# two names must never be two versions: install one and not the other, or
+# upgrade one and not the other, and a user types `hanzo`, gets delegated, and
+# runs an old build with no version anywhere on screen. That is not theoretical
+# — a stale twin served ~150 commands that no longer existed, silently.
+#
+# A symlink makes the skew impossible rather than merely unlikely; where links
+# are not available (Windows) a copy still matches by version.
+if ln -sf "$BIN$ext" "$PREFIX/$DELEGATE$ext" 2>/dev/null; then
+  :
+else
+  cp -f "$PREFIX/$BIN$ext" "$PREFIX/$DELEGATE$ext" && chmod 755 "$PREFIX/$DELEGATE$ext"
+fi
+
 printf 'hanzo: installed %s\n' "$PREFIX/$BIN$ext"
+printf 'hanzo: installed %s (the delegate name, same build)\n' "$PREFIX/$DELEGATE$ext"
+
 case ":$PATH:" in
-  *":$PREFIX:"*) ;;
+  *":$PREFIX:"*)
+    # On PATH, but is it the FIRST one? An earlier entry wins, and that
+    # precedence is exactly how a stale install hides: the user upgrades here
+    # and keeps running something else. Name the one that would actually run.
+    found="$(command -v "$BIN" 2>/dev/null || true)"
+    if [ -n "$found" ] && [ "$found" != "$PREFIX/$BIN$ext" ]; then
+      printf 'hanzo: WARNING %s comes first on PATH and will run instead of the\n' "$found"
+      printf '       build just installed at %s. Remove it, or put %s first.\n' "$PREFIX/$BIN$ext" "$PREFIX"
+    fi
+    ;;
   *) printf 'hanzo: %s is not on PATH — add it:\n  export PATH="%s:$PATH"\n' "$PREFIX" "$PREFIX" ;;
 esac
 printf 'hanzo: next → hanzo login\n'

@@ -40,17 +40,22 @@ mismatch. Same file (hardlink or symlink) or same version is silent; a different
 build prints `stale delegate: <path> is vX — this is vY`. It never repairs and
 never refuses; it only stops the failure from being invisible.
 
-Today they do not, and this is the open gap:
-- `curl hanzo.sh | sh` runs `uv tool install` over PyPI and maps `hanzo-cli` →
-  the command `hanzo`. PyPI `hanzo-cli` is a SEPARATE pure-Python project
-  (`py3-none-any`), not this crate — so that path puts a different program at
-  the name, into `~/.local/bin`, which outranks `/usr/local/bin` on a normal
-  PATH. It also never installs the `hanzo-node` name at all (it maps PyPI
-  `hanzo-node` to the command `hanzod`, the compute node, a third thing again).
-- the brew tap (`hanzoai/homebrew-tap`) has NO `hanzo` formula — only `Dev.rb` /
-  `hanzo-dev.rb` and a `hanzo-desktop` cask. `brew install hanzoai/tap/hanzo`
-  does not exist.
-- so the ONLY path that installs this crate as `hanzo` is our own `install.sh`.
+`install.sh` does exactly that: it installs `hanzo`, symlinks `hanzo-node` to
+the same file (a copy where links are unavailable), and warns when another
+`hanzo` earlier on PATH would run instead of the build it just placed — the
+precedence that let a stale twin hide.
+
+The remaining gaps are elsewhere:
+- PyPI carries `hanzo`, `hanzo-cli` and `hanzo-node` as SEPARATE projects that
+  are not this crate. `curl hanzo.sh | sh` used to install one of them at the
+  name `hanzo`, into `~/.local/bin`, which outranks `/usr/local/bin` on a normal
+  PATH. It now calls THIS installer instead, so there is one download path and
+  one asset-naming rule, not two.
+- releases are what installers actually resolve, and they are cut by the
+  `Release Matrix` workflow on a self-hosted runner. With no runner registered
+  the tag queues and no assets appear — so main can be current while every
+  install path still serves an old build. A version bump that never becomes a
+  release ships nothing.
 
 **Command surface** — resource-noun tree `hanzo <resource> <command>`, plus generated
 product subcommands `hanzo <product> …` (derived from the spec, below — the ONE
