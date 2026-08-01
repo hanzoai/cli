@@ -51,7 +51,16 @@ fn shell_command(shell: Option<&str>) -> Vec<String> {
             "hanzo".into(),
         ],
         Some(other) => vec![other.to_string()],
-        None => vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())],
+        // tmux by default: it is the only way the shell can be driven from HERE and
+        // from the browser at once. A plain pty belongs to whoever spawned it, so a
+        // published one leaves the local terminal watching its own shell.
+        None => vec![
+            "tmux".into(),
+            "new".into(),
+            "-A".into(),
+            "-s".into(),
+            "hanzo".into(),
+        ],
     }
 }
 
@@ -125,6 +134,9 @@ pub async fn run(
         format!("http://127.0.0.1:{TTYD_PORT}"),
         "proxy".into(),
         None,
+        // Gated by default. A terminal reachable by anyone who learns the URL is
+        // not something to opt IN to protecting.
+        Some("hanzo"),
     )
     .await?;
 
@@ -143,7 +155,19 @@ pub async fn run(
     println!("\n  {}  →  live\n", sh.url.green().bold());
     println!("  {} {}", "session".dimmed(), reg.id.dimmed());
 
-    let out = sh.wait().await;
+    // Hand the caller a prompt on the SAME session ttyd is serving, rather than
+    // making them wait on a tunnel they cannot type into. Both ends attach to one
+    // tmux session, so what is typed here appears there and the reverse.
+    let attached = tokio::process::Command::new("tmux")
+        .args(["new", "-A", "-s", "hanzo"])
+        .status()
+        .await;
+    let out = match attached {
+        // tmux is absent or refused: fall back to holding the tunnel, which is the
+        // old behaviour rather than a failure.
+        Err(_) => sh.wait().await,
+        Ok(_) => Ok(()),
+    };
     // Withdraw the URL on the way out. Best effort: the tunnel is already gone, so
     // a failure here costs a stale row, not a reachable shell.
     let _ = client.set_terminal(&reg.id, None).await;

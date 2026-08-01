@@ -68,7 +68,7 @@ pub async fn run(
     backend_mode: String,
     name: Option<String>,
 ) -> Result<()> {
-    let mut sh = start(cfg, target, backend_mode, name).await?;
+    let mut sh = start(cfg, target, backend_mode, name, None).await?;
     println!("\n  {}  →  live\n", sh.url.green().bold());
     sh.wait().await
 }
@@ -84,6 +84,7 @@ pub async fn start(
     target: String,
     backend_mode: String,
     name: Option<String>,
+    oauth_provider: Option<&str>,
 ) -> Result<Share> {
     let backend = resolve_target(&target)?;
 
@@ -132,6 +133,17 @@ pub async fn start(
     if let Some(n) = &name {
         args.push("--name".into());
         args.push(n.clone());
+    }
+    // A published terminal is a shell. Gating it behind the org's own identity
+    // provider is what makes the URL insufficient on its own — without this, anyone
+    // who learns the hostname has the shell.
+    if let Some(p) = oauth_provider {
+        if supports_flag(&zbin, "--oauth-provider").await {
+            args.push("--oauth-provider".into());
+            args.push(p.to_string());
+        } else {
+            bail!("this zrok cannot gate a share (--oauth-provider unsupported); refusing to publish an open terminal");
+        }
     }
     args.push(backend.clone());
 
@@ -222,7 +234,10 @@ async fn stream<R: tokio::io::AsyncRead + Unpin>(
         if let Some(tok) = share_token(&line) {
             let _ = tx.try_send(url_template.replace("{token}", &tok));
         } else {
-            eprintln!("{}", line.dimmed());
+            // The tunnel's own log is diagnostics, not output. A share prints one
+            // URL; a link prints one URL and then holds a shell — neither wants the
+            // fabric narrating every GET. `-v` turns it back on.
+            tracing::debug!("{}", line);
         }
     }
 }
