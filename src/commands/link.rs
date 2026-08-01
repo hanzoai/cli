@@ -188,10 +188,22 @@ fn hostname() -> String {
 mod tests {
     use super::*;
 
+    // The default is tmux, not $SHELL: only a multiplexed session can be driven
+    // from the local terminal AND the browser at once, which is what linking is for.
+    // A bare $SHELL default would publish a pty the caller can only watch.
     #[test]
-    fn defaults_to_the_users_own_shell() {
+    fn defaults_to_a_session_both_ends_can_drive() {
+        assert_eq!(
+            shell_command(None),
+            vec!["tmux", "new", "-A", "-s", "hanzo"]
+        );
+    }
+
+    // Naming a plain shell still gets exactly that — one head, published.
+    #[test]
+    fn a_named_shell_is_not_multiplexed() {
         std::env::set_var("SHELL", "/opt/homebrew/bin/zsh");
-        assert_eq!(shell_command(None), vec!["/opt/homebrew/bin/zsh"]);
+        assert_eq!(shell_command(Some("zsh")), vec!["zsh"]);
     }
 
     #[test]
