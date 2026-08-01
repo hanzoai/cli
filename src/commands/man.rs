@@ -11,7 +11,6 @@ use crate::commands::product;
 /// The hand-written resource GROUPS (they take subcommands), with the same
 /// one-line prose their clap definitions carry.
 const GROUPS: &[(&str, &str)] = &[
-    ("agent", "Run managed AI tasks"),
     ("auth", "Manage identities and credentials"),
     ("billing", "Prepaid wallet money: read the balance, mint a deposit"),
     ("config", "Manage local CLI settings"),
@@ -33,6 +32,7 @@ const COMMANDS: &[(&str, &str)] = &[
          A trailing task runs headless",
     ),
     ("dev", "Start a coding session on the `dev` backend: `hanzo code dev`, spelled shorter"),
+    ("desktop", "Point an agent at the desktop and browser instead of the repo"),
     ("init", "Initialize a new Hanzo project"),
     ("scan", "Scan local files for exposed secrets"),
     ("serve", "Run a Hanzo service: `cloud` for the whole API, or one service"),

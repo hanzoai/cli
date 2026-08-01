@@ -392,7 +392,7 @@ fn there_is_no_passthrough_or_raw_path_escape() {
 /// LONGER among them — it is generated now (see `kms_is_generated_*`).
 #[test]
 fn hand_written_products_are_not_generated() {
-    for local in ["agent", "billing", "deploy", "code"] {
+    for local in ["billing", "deploy", "code", "desktop"] {
         assert!(!is_product(local), "{local} must be hand-written / a wrapper, not generated");
     }
 }

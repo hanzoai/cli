@@ -42,11 +42,11 @@ pub fn build(config: &Config) -> hanzo_event::Telemetry {
 /// paths, or user input, so the recorded property can carry no PII.
 pub fn label(command: &Commands) -> &'static str {
     match command {
-        Commands::Agent { .. } => "agent",
         Commands::Auth { .. } => "auth",
         // Every spelling of the coding session reports as one command, because
         // it IS one command — `hanzo dev` is not a distinct thing to measure.
         Commands::Code(..) | Commands::Dev(..) => "code",
+        Commands::Desktop(..) => "desktop",
         Commands::Config { .. } => "config",
         Commands::Engine { .. } => "engine",
         Commands::Link { .. } => "link",

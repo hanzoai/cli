@@ -200,12 +200,6 @@ impl CodeArgs {
 /// (`commands::product`), merged in at runtime.
 #[derive(Subcommand)]
 enum Commands {
-    /// Run managed AI tasks
-    Agent {
-        #[command(subcommand)]
-        command: AgentCommands,
-    },
-
     /// Start a coding session: a coding agent with the Hanzo MCP toolset
     /// attached, its model calls metered through the Hanzo cloud, and the
     /// session streamed live to mission control
@@ -232,6 +226,13 @@ enum Commands {
     /// dev` would not do, you are forking the command — put it in
     /// `commands::code::run` instead.
     Dev(CodeArgs),
+
+    /// Point an agent at the desktop and browser instead of the repo
+    ///
+    /// The same session as `hanzo code` — same backends, same linking, same
+    /// metering — aimed somewhere else. The Hanzo browser/computer tools ARE
+    /// how it drives the desktop, so this pins the toolset on.
+    Desktop(CodeArgs),
 
     /// Manage identities and credentials
     Auth {
@@ -346,21 +347,6 @@ enum Commands {
         template: String,
         /// Project name
         name: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum AgentCommands {
-    /// Run a managed AI task. `--mode code` (default) is a managed coding
-    /// workspace; `--mode desktop` is browser/desktop control (à la hanzo.bot).
-    Run {
-        /// What the agent is pointed at: code | desktop
-        #[arg(long, default_value = "code",
-              value_parser = clap::builder::PossibleValuesParser::new(["code", "desktop"]))]
-        mode: String,
-        /// The coding-session flags (`--model`, `--backend`, `--resume`, `[task]`, …)
-        #[command(flatten)]
-        code: CodeArgs,
     },
 }
 
@@ -672,7 +658,7 @@ async fn main() -> Result<()> {
             let mut code = cli.code;
             code.link = true;
             let started = std::time::Instant::now();
-            let outcome = code_session(&mut config, code).await;
+            let outcome = code_session(&mut config, code, Target::Repo).await;
             telemetry.command("code", started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
             outcome
@@ -689,26 +675,36 @@ async fn main() -> Result<()> {
 ///
 /// Do not add a second launcher for a new spelling: add the spelling to
 /// `select` and let it land here like the rest.
-async fn code_session(config: &mut config::Config, args: CodeArgs) -> Result<()> {
+async fn code_session(
+    config: &mut config::Config,
+    args: CodeArgs,
+    target: Target,
+) -> Result<()> {
     iam::onboarding::first_run(config, iam::paths::DEFAULT_BRAND).await;
-    commands::code::run(config, args.into_options()?).await
+    let mut opts = args.into_options()?;
+    if target == Target::Desktop {
+        // The browser/computer tools ARE how an agent drives a desktop, so this
+        // target cannot run without them and never inherits a persisted opt-out.
+        opts.mcp = true;
+    }
+    commands::code::run(config, opts).await
+}
+
+/// What a session is pointed at. The ONLY thing that ever differed between
+/// `hanzo code` and the old `agent run --mode desktop`, now carried as a value
+/// instead of a second command with its own flag.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Repo,
+    Desktop,
 }
 
 /// Run one resolved top-level command.
 async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
     match command {
-        Commands::Agent { command } => match command {
-            AgentCommands::Run { mode, code } => {
-                commands::agent::run(
-                    &mut config,
-                    code.into_options()?,
-                    commands::agent::Mode::parse(&mode),
-                )
-                .await?
-            }
-        },
+        Commands::Code(args) => code_session(&mut config, args, Target::Repo).await?,
 
-        Commands::Code(args) => code_session(&mut config, args).await?,
+        Commands::Desktop(args) => code_session(&mut config, args, Target::Desktop).await?,
 
         // `hanzo dev …` IS `hanzo code dev …`. It names the backend and hands to
         // the one launcher — no behaviour of its own. Naming a backend as well
@@ -722,7 +718,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 );
             }
             args.dev = true;
-            code_session(&mut config, args).await?
+            code_session(&mut config, args, Target::Repo).await?
         }
         Commands::Auth { command } => match command {
             AuthCommands::Login { brand, provider, token } => {
@@ -767,9 +763,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::serve::service(service, passthrough).await?
             }
         }
-        Commands::Version => {
-            println!("{} v{}", "Hanzo CLI".bold(), env!("CARGO_PKG_VERSION"));
-        }
+        Commands::Version => commands::version::run(),
         Commands::Fabric { command } => match command {
             FabricCommands::Up { foreground, with_cloud } => {
                 commands::fabric::up(&config, foreground, with_cloud).await?
@@ -892,28 +886,24 @@ mod tests {
         assert!(Cli::try_parse_from(["hanzo", "--ask", "--no-sandbox"]).is_err());
     }
 
-    /// `hanzo agent run` is the ONE way to run an agent, with `--mode code|desktop`
-    /// and the full coding-session flags.
+    /// `hanzo agent run --mode code` was a second spelling of `hanzo code` — the
+    /// same options reaching the same `code::run`, differing in nothing. It is
+    /// gone. What it alone could do, point an agent at a desktop instead of a
+    /// repo, is now its own command rather than a mode flag on another one.
     #[test]
-    fn agent_run_is_the_one_agent_verb() {
-        let cli = Cli::try_parse_from(["hanzo", "agent", "run", "--mode", "desktop", "browse docs"])
-            .expect("`agent run --mode desktop` parses");
-        let Some(Commands::Agent { command: AgentCommands::Run { mode, code } }) = cli.command else {
-            panic!("expected agent run");
-        };
-        assert_eq!(mode, "desktop");
-        assert_eq!(code.positional.as_deref(), Some("browse docs"));
+    fn the_duplicate_agent_spelling_is_gone_and_desktop_survives() {
+        // The duplicate spelling no longer parses, in either mode.
+        assert!(Cli::try_parse_from(["hanzo", "agent", "run", "fix it"]).is_err());
+        assert!(Cli::try_parse_from(["hanzo", "agent", "run", "--mode", "code"]).is_err());
+        assert!(Cli::try_parse_from(["hanzo", "agent", "run", "--mode", "desktop"]).is_err());
 
-        // Default mode is code, and the code flags flatten in.
-        let cli = Cli::try_parse_from(["hanzo", "agent", "run", "--model", "enso", "fix it"]).unwrap();
-        let Some(Commands::Agent { command: AgentCommands::Run { mode, code } }) = cli.command else {
-            panic!("expected agent run");
-        };
-        assert_eq!(mode, "code");
+        // The capability it carried alone is reachable, and takes the same
+        // session flags every other spelling does.
+        let cli = Cli::try_parse_from(["hanzo", "desktop", "--model", "enso", "browse docs"])
+            .expect("`hanzo desktop` parses");
+        let Some(Commands::Desktop(code)) = cli.command else { panic!("expected desktop") };
         assert_eq!(code.model.as_deref(), Some("enso"));
-
-        // An unknown mode is rejected by clap.
-        assert!(Cli::try_parse_from(["hanzo", "agent", "run", "--mode", "wat"]).is_err());
+        assert_eq!(code.positional.as_deref(), Some("browse docs"));
     }
 
     /// Every entry spelling reaches the SAME resolved session. `hanzo code`,
@@ -983,9 +973,11 @@ mod tests {
     /// their resource nouns. (`kms` is NOT here: it is a generated cloud product,
     /// not a removed local verb, so it stays reachable.)
     ///
-    /// `code` and `dev` are NOT in these lists: starting a coding session is the
-    /// CLI's front door, so it keeps its own name. Both are spellings of the one
-    /// session path, not a second way to run an agent — see [`code_session`].
+    /// `code`, `dev` and `desktop` are NOT in these lists: starting a session is
+    /// the CLI's front door, so it keeps its own name. `code`/`dev` are spellings
+    /// of one session path and `desktop` only points it elsewhere — see
+    /// [`code_session`]. `agent` IS gone: `agent run --mode code` was a second
+    /// spelling of `hanzo code`, and its desktop mode became `hanzo desktop`.
     #[test]
     fn old_top_level_verbs_are_removed() {
         let names: Vec<String> =
@@ -1007,7 +999,7 @@ mod tests {
             );
         }
         for present in
-            ["agent", "auth", "code", "config", "dev", "engine", "runner", "scan", "serve"]
+            ["auth", "code", "config", "desktop", "dev", "engine", "runner", "scan", "serve"]
         {
             assert!(names.iter().any(|n| n == present), "`{present}` must be a resource noun");
         }
