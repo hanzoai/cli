@@ -112,26 +112,57 @@ impl Op {
 
 // ---- build the clap tree (BUILDER api — 130 products can't be a derive enum) --
 
-/// The generated products this parser MOUNTS: every product whose bare name no
-/// local command has already claimed.
+/// The generated products this parser mounts AT THEIR OWN NAME: every product no
+/// local command has already claimed. A claimed one is not dropped — it is
+/// absorbed into the command that owns the name (see [`augment`]) — so this is a
+/// question about the man page's top-level listing, not about reachability.
 ///
-/// Collisions resolve ONE way and in ONE place: a LOCAL command owns its bare
-/// name, and the answer to "which names are local" is read off the parser itself
-/// rather than restated in a list. [`augment`] mounts exactly this set and
-/// [`catalog`] advertises exactly this set, so the man page cannot name a group
-/// the parser does not accept.
+/// The answer to "which names are local" is read off the parser itself rather
+/// than restated in a list. [`catalog`] advertises exactly this set, so the man
+/// page cannot name a top-level group the parser does not accept.
 pub(crate) fn mounted(cmd: &Command) -> Vec<&'static str> {
     let taken: std::collections::HashSet<&str> =
         cmd.get_subcommands().map(clap::Command::get_name).collect();
     product_names().into_iter().filter(|p| !taken.contains(p)).collect()
 }
 
-/// Add every mounted generated product to `cmd` as a first-class top-level command.
+/// THE COLLISION LAW, and it is one law applied at every level: a LOCAL command
+/// owns its name, and the generated operations of that name mount INSIDE it.
+///
+/// A product no local command claims becomes a first-class top-level command. A
+/// product whose name is taken is ABSORBED — `hanzo billing invoices` is the
+/// document's operation, `hanzo billing balance` is the hand-written one, and the
+/// same rule settles both: whoever was there first keeps the name.
+///
+/// It used to DROP the collision, and the cost was measured before this was
+/// written: 7 `/v1/code`, 25 `/v1/billing` and 4 `/v1/engine` operations were
+/// served, described, and reachable by nothing, excused by three curation entries
+/// whose own reasons said so. A name clash is not a decision about the surface,
+/// it is an arrangement of it — so it is settled here, by arranging, and
+/// `src/curation.rs` no longer carries an entry that says "taken".
 pub fn augment(mut cmd: Command) -> Command {
-    for product in mounted(&cmd) {
-        cmd = cmd.subcommand(build_product(product));
+    for product in product_names() {
+        cmd = match cmd.find_subcommand(product).is_some() {
+            false => cmd.subcommand(build_product(product)),
+            true => cmd.mut_subcommand(product, |local| absorb(local, product)),
+        };
     }
     cmd
+}
+
+/// Merge a generated product into the local command that owns its bare name: each
+/// of the product's own top-level nodes becomes a subcommand of it, EXCEPT one the
+/// local command already declares — that one is the local command's, all the way
+/// down, and [`resolve`] reads the same tree to route it back to the derive
+/// dispatch. One predicate, both halves; they cannot disagree.
+fn absorb(local: Command, product: &'static str) -> Command {
+    let owned: std::collections::HashSet<String> =
+        local.get_subcommands().map(|c| c.get_name().to_string()).collect();
+    trie(product)
+        .children
+        .iter()
+        .filter(|(name, _)| !owned.contains(**name))
+        .fold(local, |c, (name, node)| c.subcommand(to_command(name, node)))
 }
 
 /// Distinct product names in `OPS`, stable order.
@@ -171,7 +202,9 @@ fn product_about(name: &str) -> Option<&'static str> {
     PRODUCTS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d)
 }
 
-fn build_product(product: &'static str) -> Command {
+/// One product's whole operation set as a trie — the shape both a first-class
+/// product command and an absorbed one are built from.
+fn trie(product: &'static str) -> Node {
     let mut root = Node::default();
     for op in OPS.iter().filter(|o| o.product == product) {
         let mut n = &mut root;
@@ -180,6 +213,11 @@ fn build_product(product: &'static str) -> Command {
         }
         n.children.entry(op.verb).or_default().leaf = Some(op);
     }
+    root
+}
+
+fn build_product(product: &'static str) -> Command {
+    let root = trie(product);
     let c = to_command(product, &root);
     // The product describes ITSELF: its package doc synopsis is the about line
     // in `hanzo --help` and `hanzo <product> --help`. A runnable root keeps its
@@ -349,9 +387,15 @@ pub enum LeafBody {
     None,
 }
 
-/// If `matches` selected a GENERATED product, resolve it; otherwise `None` so the
-/// derive tree handles it (a local command, or bare).
-pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
+/// If `matches` selected a GENERATED operation, resolve it; otherwise `None` so
+/// the derive tree handles it (a local command, or bare).
+///
+/// `hand` is the derive tree BEFORE augmentation — the same reading [`absorb`]
+/// takes, asked the same way. Under an absorbed name both kinds of command live
+/// side by side, and which one a token is cannot be answered from the data alone:
+/// `hanzo billing balance` names a local command and `hanzo billing invoices`
+/// names an operation, and only the hand-written tree knows which is which.
+pub fn resolve(hand: &Command, matches: &ArgMatches) -> Option<Resolved> {
     let (top, sub) = matches.subcommand()?;
     if !is_product(top) {
         return None;
@@ -363,6 +407,13 @@ pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
     while let Some((n, mm)) = m.subcommand() {
         chain.push(n);
         m = mm;
+    }
+    // Absorbed: the local command owns the name, so a node IT declares is its own
+    // — including the bare command itself, which `absorb` never gives an op.
+    if let Some(local) = hand.find_subcommand(top) {
+        if local.find_subcommand(*chain.get(1)?).is_some() {
+            return None;
+        }
     }
     let op = find_op(&chain)?;
     Some(resolve_leaf(op, m))

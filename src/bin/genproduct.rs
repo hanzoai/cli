@@ -37,6 +37,12 @@ mod curation;
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 
+/// How many served operations lose their command coordinate to a second method at
+/// the same address. A CEILING, not an equality — it is free to fall, and it may
+/// not rise without a person deciding what the second command is called. Measured
+/// where it is applied, at the end of the collapse.
+const ELIDED: usize = 118;
+
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
 }
@@ -539,8 +545,20 @@ fn main() {
         }
     }
 
-    // Collapse multi-method coordinates by priority (one op per command).
+    // Collapse multi-method coordinates by priority (one op per command) — and
+    // COUNT what that costs. The fold names a leaf after its own noun, so two
+    // methods at one address want one name: `PUT` and `PATCH` on an item both
+    // read as `update`, `GET` and `POST` on `/v1/billing/payment-methods` both
+    // read as `payment-methods`. One of them wins and the other reaches nobody.
+    //
+    // Which SECOND name is right is a verb decision this generator cannot make
+    // (is a `PUT` beside a `PATCH` a different command, or the same one?), so it
+    // is not made here. What is not acceptable is making it silently: an
+    // operation that vanishes without a number is exactly the shape of defect
+    // this pipeline exists to end. So the loss is reported, and pinned as a
+    // CEILING — free to fall, and it cannot grow without somebody deciding.
     let mut coords: Vec<Op> = Vec::new();
+    let mut elided: Vec<Op> = Vec::new();
     for (_c, mut ops) in resolved {
         ops.sort_by_key(|o| method_rank(&o.method));
         let arities: BTreeSet<usize> = ops.iter().map(|o| o.params.len()).collect();
@@ -549,8 +567,11 @@ fn main() {
             "unresolved arity collision: {:?}",
             ops.iter().map(|o| &o.path).collect::<Vec<_>>()
         );
-        coords.push(ops.into_iter().next().unwrap());
+        let mut it = ops.into_iter();
+        coords.push(it.next().expect("a coordinate holds at least one op"));
+        elided.extend(it);
     }
+    elided.sort_by(|a, b| (&a.path, &a.method).cmp(&(&b.path, &b.method)));
     coords.sort_by(|a, b| (&a.product, &a.nodes, &a.verb).cmp(&(&b.product, &b.nodes, &b.verb)));
 
     // Guard: the runtime tree needs unique (product, nodes, verb) — fail loudly.
@@ -589,6 +610,44 @@ fn main() {
          openapi` in hanzoai/cloud, then re-run `cargo run --features genspec --bin genspec`.",
         bare.len(),
         bare.join("\n"),
+    );
+
+    // The elision ceiling, applied where the number can be read beside the ops it
+    // stands for. Under it, the report is printed anyway: a gap nobody prints is a
+    // gap nobody closes.
+    let by_product = elided.iter().fold(BTreeMap::<&str, usize>::new(), |mut m, o| {
+        *m.entry(o.product.as_str()).or_default() += 1;
+        m
+    });
+    let worst = {
+        let mut v: Vec<_> = by_product.iter().collect();
+        v.sort_by_key(|(p, n)| (std::cmp::Reverse(**n), **p));
+        v.into_iter()
+            .take(8)
+            .map(|(p, n)| format!("{p} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    eprintln!(
+        "genproduct: {} served operation(s) share a coordinate with a higher-priority method and \
+         reach no command ({worst}{})",
+        elided.len(),
+        if by_product.len() > 8 { ", …" } else { "" }
+    );
+    assert!(
+        elided.len() <= ELIDED,
+        "THE ELISION CEILING ROSE: {} operations now lose their coordinate to another method, and \
+         ELIDED in src/bin/genproduct.rs says {ELIDED}. The new one(s):\n{}\n\n\
+         Two methods at one address want one command name, so one of them reaches nobody. Give the \
+         second a name of its own (the fold's `has_child` branch already does this: the noun becomes \
+         a node and each method takes its `root_verb`), or — if the two really are one command — \
+         say so by lowering ELIDED with the reason in the commit.",
+        elided.len(),
+        elided
+            .iter()
+            .map(|o| format!("  {} {}", o.method, o.path))
+            .collect::<Vec<_>>()
+            .join("\n"),
     );
 
     // ---- emit ----

@@ -230,14 +230,23 @@ fn the_org_scope_is_never_a_positional_or_flag() {
 
 // ---- resolve: a parse becomes a call, through the tree -----------------------
 
+/// The hand-written tree these parses are grafted onto. Empty here on purpose:
+/// with no local command, nothing is absorbed, so every generated coordinate is
+/// reachable at its own name and a test can address it without knowing which
+/// names `main` happens to claim. The absorbed case is asserted where the real
+/// derive tree is — `main::tests::a_local_command_absorbs_the_product_of_its_own_name`.
+fn hand() -> Command {
+    Command::new("hanzo")
+}
+
 fn matches_of(argv: &[&str]) -> clap::ArgMatches {
-    augment(Command::new("hanzo")).try_get_matches_from(argv).expect("parses")
+    augment(hand()).try_get_matches_from(argv).expect("parses")
 }
 
 #[test]
 fn a_simple_leaf_resolves_and_fills() {
     let m = matches_of(&["hanzo", "agents", "sessions", "get", "sess_1"]);
-    let Some(Resolved::Leaf { op, values, .. }) = resolve(&m) else {
+    let Some(Resolved::Leaf { op, values, .. }) = resolve(&hand(), &m) else {
         panic!("expected a leaf");
     };
     assert_eq!(op.path, "/v1/agents/sessions/{id}");
@@ -255,7 +264,7 @@ fn a_simple_leaf_resolves_and_fills() {
 fn a_typed_write_assembles_a_json_body_from_flags() {
     // `hanzo authz check --sub alice --obj doc:1 --act read`
     let m = matches_of(&["hanzo", "authz", "check", "--sub", "alice", "--obj", "doc:1", "--act", "read"]);
-    let Some(Resolved::Leaf { op, body, .. }) = resolve(&m) else {
+    let Some(Resolved::Leaf { op, body, .. }) = resolve(&hand(), &m) else {
         panic!("expected a leaf");
     };
     assert_eq!(op.method, "POST");
@@ -294,8 +303,8 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
     argv.push(format!("--{}", int.flag));
     argv.push("42".into());
 
-    let m = augment(Command::new("hanzo")).try_get_matches_from(&argv).expect("parses");
-    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&m) else {
+    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
         panic!("typed leaf");
     };
     assert_eq!(v[int.key], 42, "int flag must serialize as a JSON number");
@@ -316,7 +325,7 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
 #[test]
 fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
     let m = matches_of(&["hanzo", "kv", "list"]);
-    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("expected a leaf") };
+    let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("expected a leaf") };
     assert_eq!(op.path, "/v1/kv");
     assert_eq!(op.method, "GET");
 
@@ -331,7 +340,7 @@ fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
 #[test]
 fn a_query_param_becomes_a_typed_flag_in_the_url() {
     let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway", "--limit", "50"]);
-    let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&m) else { panic!("leaf") };
+    let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&hand(), &m) else { panic!("leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
     assert!(query.contains(&"product=gateway".to_string()), "{query:?}");
@@ -348,7 +357,7 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
     argv.extend(req.nodes.iter().map(|n| n.to_string()));
     argv.push(req.verb.to_string());
     assert!(
-        augment(Command::new("hanzo")).try_get_matches_from(&argv).is_err(),
+        augment(hand()).try_get_matches_from(&argv).is_err(),
         "`{}` must refuse to run without its required query flag",
         argv.join(" ")
     );
@@ -371,12 +380,12 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
 fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     assert!(is_product("logs"), "cloud serves /v1/logs/* — `logs` is a product");
     let m = matches_of(&["hanzo", "logs", "query"]);
-    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("expected a leaf") };
+    let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("expected a leaf") };
     assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
     // The o11y op the alias pointed at is still reachable under its own product —
     // one capability, one place, never duplicated to keep a nickname alive.
     let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
-    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("o11y leaf") };
+    let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(
         !include_str!("mod.rs").contains("ALIASES"),
@@ -443,7 +452,7 @@ fn curation_speaks_only_of_what_a_command_line_is() {
 #[test]
 fn a_deep_nested_leaf_resolves_and_fills_in_order() {
     let m = matches_of(&["hanzo", "platform", "projects", "apps", "get", "site", "web"]);
-    let Some(Resolved::Leaf { op, values, .. }) = resolve(&m) else {
+    let Some(Resolved::Leaf { op, values, .. }) = resolve(&hand(), &m) else {
         panic!("expected a leaf");
     };
     assert_eq!(op.path, "/v1/platform/projects/{project}/apps/{app}");
@@ -470,15 +479,43 @@ fn there_is_no_passthrough_or_raw_path_escape() {
 
 // ---- collisions: a local command always wins its bare name -------------------
 
-/// A name a LOCAL command owns is not generated. `kms` is NO LONGER among them —
-/// it is generated now (see `kms_is_generated_*`) — and neither is `deploy`: it
-/// was a hand command once, was deleted, and the reservation outlived it. See
-/// [`a_reservation_must_name_a_command_that_exists`].
+/// A name a LOCAL command owns is ABSORBED, never dropped — the local command
+/// keeps every verb it declares and gains every one the document does.
+///
+/// This test used to assert the opposite: that `billing` and `code` "must be
+/// hand-written, not generated". That is how 25 served `/v1/billing` operations
+/// and 7 `/v1/code` ones came to be reachable by nothing, with a curation entry
+/// calling it a decision. Written as a PROPERTY over whatever collides, so the
+/// next local command to share a cloud name is covered without an edit.
 #[test]
-fn hand_written_products_are_not_generated() {
-    for local in ["billing", "code", "desktop"] {
-        assert!(!is_product(local), "{local} must be hand-written / a wrapper, not generated");
+fn a_local_name_absorbs_the_product_instead_of_dropping_it() {
+    use clap::CommandFactory;
+    let hand = crate::Cli::command();
+    let merged = augment(crate::Cli::command());
+    let mut absorbed = 0usize;
+    for p in OPS.iter().map(|o| o.product).collect::<std::collections::BTreeSet<_>>() {
+        let Some(local) = hand.find_subcommand(p) else { continue };
+        absorbed += 1;
+        let here = merged.find_subcommand(p).expect("a product mounts under some name");
+        // Every operation of the product reaches a node under the local command…
+        for op in OPS.iter().filter(|o| o.product == p) {
+            let node = *op.nodes.first().unwrap_or(&op.verb);
+            assert!(
+                here.find_subcommand(node).is_some(),
+                "`hanzo {p} {node}` must exist — otherwise {} {} reaches nobody",
+                op.method,
+                op.path
+            );
+        }
+        // …and every name the local command declared is still its own.
+        for name in local.get_subcommands().map(clap::Command::get_name) {
+            assert!(
+                here.find_subcommand(name).is_some(),
+                "`hanzo {p} {name}` is the local command's and was overwritten"
+            );
+        }
     }
+    assert!(absorbed > 0, "no product shares a local name — the collision law is untested");
 }
 
 /// A NAME MAY ONLY BE RESERVED BY A COMMAND THAT EXISTS.
@@ -509,9 +546,11 @@ fn a_reservation_must_name_a_command_that_exists() {
         if !local.contains(p) {
             continue;
         }
-        // Shadowed: the local command must genuinely exist, which `local` just
-        // proved. Its operations are then a STATED gap, not a silent one.
-        assert!(super::mounted(&hand).iter().all(|m| *m != p), "{p} is shadowed, not mounted");
+        // Absorbed: the local command must genuinely exist, which `local` just
+        // proved, and it is not advertised as a top-level product because it is
+        // not one. Its operations are reachable inside it — see
+        // [`a_local_name_absorbs_the_product_instead_of_dropping_it`].
+        assert!(super::mounted(&hand).iter().all(|m| *m != p), "{p} is absorbed, not mounted");
     }
     // The reservation that had lost its owner: `deploy` is generated again, and it
     // is the CD control plane, not a wrapper.
@@ -610,7 +649,7 @@ fn kms_secret_value_can_never_reach_argv() {
     // What DOES parse carries only the address + env; the body OMITS the secret
     // (it is read from stdin at dispatch, never assembled from a flag).
     let m = matches_of(&["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod"]);
-    let Some(Resolved::Leaf { op, body: LeafBody::Typed(v), .. }) = resolve(&m) else {
+    let Some(Resolved::Leaf { op, body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
         panic!("typed leaf");
     };
     assert_eq!(op.path, "/v1/kms/secrets");

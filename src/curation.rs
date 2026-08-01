@@ -28,6 +28,16 @@
 //! the surfaces nothing reaches — must say so in `why`, in words, where the count
 //! makes it impossible to look away from.
 //!
+//! "A LOCAL COMMAND OWNS THIS NAME" IS NOT AN ENTRY AT ALL, and that is the third
+//! law. It was three — `code`, `billing`, `engine` — and each admitted in its own
+//! `why` that the routes are served and reached by nobody: 7 + 25 + 4 operations
+//! curated out on the strength of a name clash. A clash is not a decision, it is
+//! an ARRANGEMENT, and `commands::product::augment` now makes it one: the local
+//! command ABSORBS the product of its own name, and inside it a local subcommand
+//! owns its name the same way. One law at every level, no table. Only a fact that
+//! survives the arrangement — a name a command line cannot spend at all — is an
+//! entry here.
+//!
 //! It is compiled into the two GENERATOR binaries and never into `hanzo`: a
 //! shipped CLI carries no policy about products it does not have.
 
@@ -76,24 +86,6 @@ pub const CURATED: &[Curated] = &[
         product: "completions",
         instead: Instead::Claimed("chat completions"),
         why: "in a command line `completions` names SHELL completion; the operation is already reachable where it reads correctly, as `hanzo chat completions`",
-    },
-    // The three shadows. Each is a stated gap, not a claim that the routes are
-    // absent: closing one means the local command ABSORBS the product's
-    // operations, which is a UX decision per command, not an edit here.
-    Curated {
-        product: "code",
-        instead: Instead::Claimed("code"),
-        why: "`hanzo code` is the AI coding session and owns the bare name; it reaches none of the 6 live /v1/code routes, and closing that shadow means the local command absorbs them",
-    },
-    Curated {
-        product: "billing",
-        instead: Instead::Claimed("billing"),
-        why: "`hanzo billing` is the prepaid-wallet wrapper with its own UX; it reaches 2 of the 22 live /v1/billing routes, and closing that shadow means the local command absorbs them",
-    },
-    Curated {
-        product: "engine",
-        instead: Instead::Claimed("engine"),
-        why: "`hanzo engine serve <model>` runs an engine on THIS machine; the cloud engine product manages engine CLUSTERS and shadows 4 served operations until it takes its own noun or a nested home",
     },
     Curated {
         product: "help",
