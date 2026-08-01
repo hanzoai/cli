@@ -5,8 +5,8 @@
 //! present the result. All four verbs are flat and top-level — the CLI has one
 //! auth surface, not an `auth` sub-group.
 //!
-//! Multi-identity, like `gh auth switch`: a login ADDS an identity, `switch`
-//! selects among them, and every identity survives. `owner` — the IAM org —
+//! Multi-identity: a login ADDS an identity, `switch` selects among them, and
+//! every identity survives. `owner` — the IAM org —
 //! is what the gateway bills and what the SuperAdmin gate keys on, so switching
 //! identity switches the billing org with no separate selector to desync.
 
@@ -29,9 +29,10 @@ pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
     add(cfg, brand, &tokens).await
 }
 
-/// `hanzo auth login --token`: store a hanzo.id bearer directly (like
-/// `gh auth login --with-token`). Same identity law as the browser flow — the
-/// principal comes from the token's own claims, never from the caller.
+/// `hanzo auth login --token`: store a hanzo.id bearer directly, for a shell
+/// that cannot open a browser (CI, a container, a remote host). Same identity law
+/// as the browser flow — the principal comes from the token's own claims, never
+/// from the caller.
 pub async fn login_with_token(cfg: &mut Config, brand: &str, access_token: &str) -> Result<()> {
     add(
         cfg,

@@ -349,7 +349,7 @@ enum Commands {
     Share {
         /// Local target: a port (3000), host:port, or a full url
         target: String,
-        /// Backend mode: proxy | web | caddy | drive
+        /// What sits behind the URL: proxy | web | static | drive
         #[arg(long, default_value = "proxy")]
         backend_mode: String,
         /// Reserve a stable subdomain name (else a random token)
@@ -429,7 +429,7 @@ enum ConfigCommands {
 
 #[derive(Subcommand)]
 enum EngineCommands {
-    /// Serve a model on an OpenAI-compatible local endpoint (via the Hanzo engine)
+    /// Serve a model from this machine on a local /v1 chat-completions endpoint
     Serve {
         model: String,
         /// Extra engine args passed verbatim (after `--`), e.g. `--port 8080`

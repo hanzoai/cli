@@ -827,3 +827,97 @@ fn a_2xx_error_envelope_is_surfaced_not_swallowed() {
     assert!(envelope_error(&serde_json::Value::Null).is_none());
     assert!(envelope_error(&json!("plain string")).is_none());
 }
+
+// ---- naming: the reader is a customer, not a maintainer ---------------------
+
+/// The vendors this CLI's OWN help text may not name.
+///
+/// Not a blanket ban on the word: `hanzo auth login --provider openai` has to say
+/// whose key the customer is pasting, and the module that drives a third-party
+/// binary has to name the binary. What is banned is naming somebody else's product
+/// in the copy a customer reads — as the STANDARD ("an OpenAI-compatible
+/// endpoint" makes their API the real one and ours the imitation), as an ANALOGY
+/// ("ngrok on our own fabric", "like `gh auth switch`" — an analogy where a
+/// property belongs), or as a VALUE in a flag whose vocabulary is ours to choose
+/// (`--backend-mode caddy`; the customer is picking "serve a directory", and
+/// share.rs translates at the one place the value leaves for the helper).
+const FOREIGN: &[&str] = &[
+    "OpenAI-compatible", "Anthropic-compatible", "ChatGPT", "ngrok", "zrok",
+    "caddy", "Caddy", "nginx", "PostHog", "Stripe", "Casbin", "Casdoor",
+    "gh auth", "Prometheus", "Grafana", "Datadog", "Auth0", "Okta", "Vercel",
+    "Heroku", "Cloudflare Workers", "LangChain", "Ollama", "HuggingFace",
+];
+
+/// Walk every `about` and `long_about` in the HAND-WRITTEN tree and refuse a
+/// foreign name.
+///
+/// Scoped to the hand-written tree on purpose, and the scope is the honest part:
+/// the generated half's prose is the Go doc comment on the handler in
+/// hanzoai/cloud, lifted by zip into the published document. This repo carries it
+/// faithfully and cannot fix it — a rename here would be a second source of truth
+/// and the next `genproduct` run would erase it. The five foreign names in there
+/// today (PostHog, Prometheus, Stripe-Atlas, Casbin, one Claude plan example) are
+/// tracked where they can actually be changed.
+#[test]
+fn hand_written_help_names_no_outside_vendor() {
+    use clap::CommandFactory;
+    fn walk(cmd: &Command, path: &str, out: &mut Vec<(String, String)>) {
+        for text in [cmd.get_about(), cmd.get_long_about()].into_iter().flatten() {
+            out.push((path.to_string(), text.to_string()));
+        }
+        for arg in cmd.get_arguments() {
+            for text in [arg.get_help(), arg.get_long_help()].into_iter().flatten() {
+                out.push((format!("{path} --{}", arg.get_id()), text.to_string()));
+            }
+        }
+        for sub in cmd.get_subcommands() {
+            walk(sub, &format!("{path} {}", sub.get_name()), out);
+        }
+    }
+    let mut copy = Vec::new();
+    walk(&crate::Cli::command(), "hanzo", &mut copy);
+    assert!(copy.len() > 100, "walked {} strings — the walk is broken", copy.len());
+
+    let mut found = Vec::new();
+    for (where_, text) in &copy {
+        for v in FOREIGN {
+            if text.contains(v) {
+                found.push(format!("{where_}: {v:?} in {text:?}"));
+            }
+        }
+    }
+    assert!(found.is_empty(), "outside vendor named in customer-facing help:\n  {}", found.join("\n  "));
+}
+
+/// A command name says the thing; the METHOD-shaped word is the command's own
+/// position, not part of the noun. `hanzo iam run-casbin-command` says the verb
+/// twice and names an outside vendor once.
+///
+/// This reads the HAND-WRITTEN tree, for the same reason as above: a generated
+/// name is a path segment, and the fix for a bad one is a route move in the
+/// serving repo. hanzoai/iam moved nine of them and hanzoai/openapi's merge now
+/// keeps the legacy spellings out of the document; the rest follow their own
+/// repos.
+#[test]
+fn hand_written_command_names_are_not_verb_nouns() {
+    use clap::CommandFactory;
+    const VERBS: &[&str] = &[
+        "add", "get", "set", "put", "delete", "update", "create", "remove", "list",
+        "run", "check", "send", "mint", "issue", "revoke", "reset", "refresh",
+        "sync", "is", "place", "pay", "commit", "query", "upload", "resolve",
+    ];
+    fn walk(cmd: &Command, path: &str, out: &mut Vec<String>) {
+        for sub in cmd.get_subcommands() {
+            let name = sub.get_name();
+            if let Some((head, _)) = name.split_once('-') {
+                if VERBS.contains(&head) {
+                    out.push(format!("{path} {name}"));
+                }
+            }
+            walk(sub, &format!("{path} {name}"), out);
+        }
+    }
+    let mut bad = Vec::new();
+    walk(&crate::Cli::command(), "hanzo", &mut bad);
+    assert!(bad.is_empty(), "verb-noun command names — name the thing, let the position say the verb:\n  {}", bad.join("\n  "));
+}
