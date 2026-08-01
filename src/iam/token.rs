@@ -213,17 +213,41 @@ fn keychain_reachable() -> bool {
 
 /// The keychain key for one identity of one brand. `Identity` forbids `/` in
 /// both components, so this composition is unambiguous and non-spoofable.
-/// The path the credential lock guards.
+/// The subject the REFRESH CYCLE serializes on. Used even when the Keyring
+/// backend is active: the keychain has no cross-process lock of its own, and
+/// what must be serialized is the single-use refresh token, not the medium.
 ///
-/// The same file `FileVault` locks for its writes, so a refresh and a write
-/// serialize against each other rather than against two different locks — which
-/// would be no lock at all. Used even when the Keyring backend is active: the
-/// keychain has no cross-process lock of its own, and what must be serialized is
-/// the single-use refresh token, not the storage medium.
+/// A SIBLING of the credential file, deliberately never the file itself.
+/// `iam::store::active_token` holds this across read → refresh → store, and the
+/// store goes through `FileVault::set`, which locks the credential file for its
+/// own read-modify-write. `flock` is per OPEN FILE DESCRIPTION, so taking the
+/// same lock file twice — same process, same thread, one call inside the other —
+/// blocks forever against itself. That is measured, not theoretical: with both
+/// on `credentials.lock`, `hanzo auth token` refreshed, SPENT its single-use
+/// refresh token, and then hung in `set` before it could save the successor
+/// (`lsof` showed two fds on one lock file; the stack was
+/// active_token → store → set → Lock::acquire → flock). Killing it and running
+/// again replayed the spent token, IAM revoked the whole rotation family, and
+/// the user was back at a browser login — the exact hourly re-login this lock
+/// was added to prevent.
+///
+/// Two subjects because there are two invariants: this one keeps two PROCESSES
+/// from spending the same refresh token; the vault's keeps two WRITERS from
+/// interleaving a read-modify-write of the credential map. They compose rather
+/// than collide — a refresh ends IN a vault write, so it is still serialized
+/// against every other writer.
 pub fn lock_subject() -> std::path::PathBuf {
-    FileVault::resolve()
-        .map(|v| v.path)
-        .unwrap_or_else(|_| std::path::PathBuf::from("credentials"))
+    refresh_subject(
+        &FileVault::resolve()
+            .map(|v| v.path)
+            .unwrap_or_else(|_| std::path::PathBuf::from("credentials")),
+    )
+}
+
+/// The refresh-cycle lock subject beside a credential file. PURE, so the
+/// no-self-deadlock property is testable without touching the real data dir.
+pub fn refresh_subject(credentials: &std::path::Path) -> std::path::PathBuf {
+    credentials.with_file_name("refresh")
 }
 
 pub fn key(brand: &str, id: &Identity) -> String {
@@ -504,6 +528,41 @@ mod tests {
             );
         }
         let _ = std::fs::remove_file(&p);
+    }
+
+
+    /// THE hourly-re-login bug, as a deadlock rather than a 401.
+    ///
+    /// `iam::store::active_token` holds the refresh-cycle lock across
+    /// read → refresh → store, and the store goes through `FileVault::set`,
+    /// which takes its own lock. When both named `credentials.lock`, the inner
+    /// acquire blocked on the outer one FOREVER — same process, same thread —
+    /// after the single-use refresh token had already been spent. This asserts
+    /// the two nest, with a watchdog, because a regression here does not fail a
+    /// test, it hangs one.
+    #[test]
+    fn refresh_lock_nests_with_a_vault_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds = dir.path().join("credentials");
+        assert_ne!(
+            crate::config::lock_path(&refresh_subject(&creds)),
+            crate::config::lock_path(&creds),
+            "the refresh cycle and the vault write must not share one flock file"
+        );
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let c = creds.clone();
+        std::thread::spawn(move || {
+            // Exactly the nesting active_token performs.
+            let _guard = crate::config::Lock::acquire(&refresh_subject(&c)).unwrap();
+            FileVault::at(c.clone()).set("hanzo/hanzo/z", "AT").unwrap();
+            let _ = tx.send(FileVault::at(c).get("hanzo/hanzo/z").unwrap());
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(v) => assert_eq!(v.as_deref(), Some("AT"), "the refreshed credential was not saved"),
+            Err(_) => panic!("DEADLOCK: a vault write blocked on the refresh lock \
+                              — a refresh would spend its token and never save the successor"),
+        }
     }
 
     /// The store lives beside `machine-id`, at `…/hanzo/credentials`.
