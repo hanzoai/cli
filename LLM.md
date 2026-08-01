@@ -33,6 +33,13 @@ the live code; the INSTALL was old. So:
 > both must be this crate. An installer that ships one name, or ships two
 > different versions, produces a CLI whose surface nobody can explain.
 
+`hanzo version` now makes that skew LOUD (`commands/version.rs`): it resolves
+`hanzo-node` on PATH exactly the way a delegating caller would — first match
+wins, which is the precedence that let a stale build hide — and reports the
+mismatch. Same file (hardlink or symlink) or same version is silent; a different
+build prints `stale delegate: <path> is vX — this is vY`. It never repairs and
+never refuses; it only stops the failure from being invisible.
+
 Today they do not, and this is the open gap:
 - `curl hanzo.sh | sh` runs `uv tool install` over PyPI and maps `hanzo-cli` →
   the command `hanzo`. PyPI `hanzo-cli` is a SEPARATE pure-Python project
@@ -67,6 +74,17 @@ hanzo dev                  shorthand for `hanzo code dev`
 hanzo "fix the test"       bare session, default backend
 ```
 
+`hanzo desktop` is the SAME session pointed somewhere else — at a browser and
+desktop instead of the repo — and pins the Hanzo toolset on, because those tools
+ARE how an agent drives a desktop. It is a `Target`, a value passed to the one
+launcher, not a second command with its own flag.
+
+`hanzo agent run` is GONE. Its `--mode code` was a second spelling of `hanzo
+code` — the same options reaching the same `code::run`, differing in nothing —
+and its `--mode desktop` was the only thing it alone could do, which is now
+`hanzo desktop`. Two spellings of one implementation is the duplication this
+tree exists to avoid; `hanzo code` is what a person types.
+
 They differ in NOTHING but how the backend was written. `backend::select` is the only
 place a backend is resolved, from (positional | flag | `--backend` | default), and
 `main::code_session` is the only launcher; `hanzo dev`'s dispatch arm sets the backend
@@ -84,7 +102,7 @@ write for them must carry EVERY field their parser requires: it rejects the whol
 document on the first missing one, and that took the session down with it (a lost
 context window is survivable, a session that cannot start is not).
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage|billing|connector`
-- cloud: `hanzo agent|cluster|model serve|serve`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
+- cloud: `hanzo serve`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
 - fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 
