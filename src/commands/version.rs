@@ -124,7 +124,18 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// A stub binary that prints `body` on `--version`.
+    /// Writing an executable in one thread while another FORKS is a race the
+    /// kernel names: the forked child inherits the still-open write descriptor,
+    /// and the exec that follows fails ETXTBSY ("Text file busy"). These are the
+    /// only tests here that both write an executable and run it, so holding one
+    /// lock across write-then-exec removes the window rather than tolerating it.
+    /// Measured before: 2 of 5 full runs failed, alternating between
+    /// `a_version_is_read_from_the_binary` and `a_v_prefix_is_tolerated`. A gate
+    /// that fails at random is a gate people learn to re-run instead of read.
+    static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A stub binary that prints `body` on `--version`. Call it while holding
+    /// [`EXEC`]; [`probe`] is the one-shot form that does both.
     fn stub(dir: &Path, name: &str, body: &str) -> PathBuf {
         let p = dir.join(name);
         let mut f = std::fs::File::create(&p).unwrap();
@@ -138,19 +149,25 @@ mod tests {
         p
     }
 
+    /// Write a stub that prints `body`, then ask it its version — the write and
+    /// the exec under one lock, so no sibling test can fork between them.
+    fn probe(body: &str) -> Option<String> {
+        let g = EXEC.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let d = tempfile::tempdir().unwrap();
+        let v = version_of(&stub(d.path(), "twin", body));
+        drop(g);
+        v
+    }
+
     #[test]
     fn a_version_is_read_from_the_binary() {
-        let d = tempfile::tempdir().unwrap();
-        let p = stub(d.path(), "twin", "hanzo 1.2.3");
-        assert_eq!(version_of(&p).as_deref(), Some("1.2.3"));
+        assert_eq!(probe("hanzo 1.2.3").as_deref(), Some("1.2.3"));
     }
 
     /// A `v` prefix is the same version, not a different one.
     #[test]
     fn a_v_prefix_is_tolerated() {
-        let d = tempfile::tempdir().unwrap();
-        let p = stub(d.path(), "twin", "Hanzo CLI v9.9.9");
-        assert_eq!(version_of(&p).as_deref(), Some("9.9.9"));
+        assert_eq!(probe("Hanzo CLI v9.9.9").as_deref(), Some("9.9.9"));
     }
 
     /// Something that is not this CLI must read as unreadable, never as a
@@ -158,15 +175,15 @@ mod tests {
     /// nothing, because the whole point here is to be trusted about skew.
     #[test]
     fn a_non_version_is_not_mistaken_for_one() {
-        let d = tempfile::tempdir().unwrap();
-        assert_eq!(version_of(&stub(d.path(), "a", "usage: thing [opts]")), None);
-        assert_eq!(version_of(&stub(d.path(), "b", "")), None);
+        assert_eq!(probe("usage: thing [opts]"), None);
+        assert_eq!(probe(""), None);
     }
 
     /// PATH lookup finds the FIRST match, which is the one that would actually
     /// be exec'd — the precedence that let a stale build hide.
     #[test]
     fn which_finds_the_first_on_path() {
+        let _g = EXEC.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let d = tempfile::tempdir().unwrap();
         let (early, late) = (d.path().join("early"), d.path().join("late"));
         std::fs::create_dir_all(&early).unwrap();
