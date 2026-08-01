@@ -16,6 +16,8 @@ pub const AUTHORIZE: &str = "/v1/iam/oauth/authorize";
 pub const TOKEN: &str = "/v1/iam/oauth/token";
 /// UserInfo endpoint (OIDC Core §5.3).
 pub const USERINFO: &str = "/v1/iam/oauth/userinfo";
+/// Revocation endpoint (RFC 7009 §2.1) — what makes `logout` reach the server.
+pub const REVOKE: &str = "/v1/iam/oauth/revoke";
 
 /// Resolve a brand key to its canonical IAM `server_url` origin. White-label is
 /// host-based: one IAM deployment serves every brand and selects the tenant by

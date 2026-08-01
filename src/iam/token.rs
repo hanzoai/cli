@@ -267,9 +267,16 @@ pub fn load(v: &dyn Vault, brand: &str, id: &Identity) -> Result<Option<TokenSet
     }
 }
 
-/// Remove one identity's credential. Returns whether one existed.
-pub fn delete(v: &dyn Vault, brand: &str, id: &Identity) -> Result<bool> {
-    v.remove(&key(brand, id))
+/// Drop one identity's credential and hand back what was dropped.
+///
+/// THE one way a credential leaves the vault, and it RETURNS the token set
+/// because a caller that destroys the local copy is the last thing that can tell
+/// IAM to stop honouring it — deleting silently is how `logout` came to leave a
+/// live 30-day refresh token on the server.
+pub fn take(v: &dyn Vault, brand: &str, id: &Identity) -> Result<Option<TokenSet>> {
+    let held = load(v, brand, id)?;
+    v.remove(&key(brand, id))?;
+    Ok(held)
 }
 
 /// The pre-multi-identity keychain key: the bare brand, one token per brand.
@@ -399,14 +406,14 @@ mod tests {
         store(&v, "hanzo", &admin, &tokens("ADMIN_AT")).unwrap();
         store(&v, "hanzo", &org, &tokens("ORG_AT")).unwrap();
 
-        assert!(delete(&v, "hanzo", &admin).unwrap());
+        assert!(take(&v, "hanzo", &admin).unwrap().is_some());
         assert!(load(&v, "hanzo", &admin).unwrap().is_none());
         assert_eq!(
             load(&v, "hanzo", &org).unwrap().unwrap().access_token,
             "ORG_AT"
         );
         // Deleting what is already gone is not an error.
-        assert!(!delete(&v, "hanzo", &admin).unwrap());
+        assert!(take(&v, "hanzo", &admin).unwrap().is_none());
     }
 
     // ---- FileVault: the portable backend that makes "runs everywhere" true ----
@@ -496,7 +503,7 @@ mod tests {
         store(&v, "hanzo", &org, &tokens("ORG_AT")).unwrap();
         assert_eq!(load(&v, "hanzo", &admin).unwrap().unwrap().access_token, "ADMIN_AT");
         assert_eq!(load(&v, "hanzo", &org).unwrap().unwrap().access_token, "ORG_AT");
-        assert!(delete(&v, "hanzo", &admin).unwrap());
+        assert!(take(&v, "hanzo", &admin).unwrap().is_some());
         assert!(load(&v, "hanzo", &admin).unwrap().is_none());
         assert_eq!(load(&v, "hanzo", &org).unwrap().unwrap().access_token, "ORG_AT");
         let _ = std::fs::remove_file(&p);

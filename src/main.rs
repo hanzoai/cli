@@ -754,7 +754,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::auth::login(&mut config, &brand, provider, token).await?
             }
             AuthCommands::Logout { identity, brand, all } => {
-                commands::auth::logout(&mut config, &brand, identity, all)?
+                commands::auth::logout(&mut config, &brand, identity, all).await?
             }
             AuthCommands::Show { brand } => commands::auth::show(&mut config, &brand).await?,
             AuthCommands::List { brand } => commands::auth::list(&mut config, &brand).await?,

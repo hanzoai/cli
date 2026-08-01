@@ -12,7 +12,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-use super::paths::{self, AUTHORIZE, TOKEN, USERINFO};
+use super::paths::{self, AUTHORIZE, REVOKE, TOKEN, USERINFO};
 use super::pkce;
 use super::token::TokenSet;
 
@@ -163,6 +163,33 @@ pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
         bail!("token refresh failed ({status}): {body}");
     }
     serde_json::from_str::<TokenSet>(&body).context("parsing refresh response")
+}
+
+/// End the session AT THE SERVER (RFC 7009): revoking a refresh token deletes its
+/// whole rotation family, so nothing can be minted from it again.
+///
+/// `logout` deletes the local copy; only this makes the credential stop working.
+/// The distinction is not academic — the refresh token IAM issues this client
+/// lives 30 days (provision `refreshExpireInHours: 720`), so a logout that only
+/// forgets leaves a month of spendable access behind on a machine you signed out
+/// of. Public client: `client_id` and the token are the whole request, which is
+/// exactly what a client with no secret has to offer (RFC 6749 §3.2.1).
+pub async fn revoke(origin: &str, refresh_token: &str) -> Result<()> {
+    let resp = reqwest::Client::new()
+        .post(paths::iam_url(origin, REVOKE))
+        .form(&[
+            ("token", refresh_token),
+            ("token_type_hint", "refresh_token"),
+            ("client_id", CLIENT_ID),
+        ])
+        .send()
+        .await
+        .context("calling IAM revocation endpoint")?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("revocation failed ({status}): {}", resp.text().await.unwrap_or_default());
+    }
+    Ok(())
 }
 
 /// The OAuth parameters carried back on the loopback redirect.
