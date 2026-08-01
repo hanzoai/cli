@@ -229,9 +229,9 @@ never be checked.
   product the tree does not surface at its own bare name (`Instead::Nothing`), the
   ones another command answers to (`Instead::Claimed`), and the ones absorbed
   elsewhere (`Instead::Under("compute")` for machines+gpus) — plus
-  `METHOD_PRIORITY`, `VERBS` and the path→verb fold in `genproduct.rs`. Those are
-  POLICY — none of them may encode "the server 404s this", and that is now
-  ENFORCED, not promised (the curation law, below).
+  `METHOD_PRIORITY`, `VERBS`, `ELIDED` and the path→verb fold in `genproduct.rs`.
+  Those are POLICY — none of them may encode "the server 404s this", and that is
+  now ENFORCED, not promised (the curation law, below).
 - **The reason is DATA, and the gate falsifies it.** `DENY`/`REMAP` were two tables
   with their reasons in comments, and a comment cannot be checked. Each entry now
   carries a `why` sentence and, where it claims another spelling reaches the
@@ -248,14 +248,34 @@ never be checked.
   reached no one. `EXCLUDE` is gone; `product::mounted(&Cli::command())` is the ONE
   filter, shared by `augment` (which mounts) and `catalog` (which advertises), and
   `a_reservation_must_name_a_command_that_exists` is the gate.
-- **A shadow is a stated gap, never a silent one.** A local command that owns a bare
-  name hides that product's operations: `hanzo billing` reaches 2 of the 22
-  documented `/v1/billing/*` routes, `hanzo code` 0 of 6 `/v1/code/*`, `hanzo
-  engine` 0 of 4 `/v1/engine/*`. Closing a shadow means the local command ABSORBS
-  the operations — a UX decision per command, not a list edit. `agent` is denied for
-  a different reason and says so: `/v1/agent` (one tool-calling round) and
-  `/v1/agents` (the registry) are two products on one noun, and the fix is a route
-  move in hanzoai/agent.
+- **THE COLLISION LAW: a local command ABSORBS the product of its own name** — one
+  law, applied at every level, replacing the three-entry list that used to call the
+  clash a decision (1.9.23). `hanzo billing invoices list` is the document's
+  operation, `hanzo billing balance` is the hand-written one, and the rule that
+  settles both is the same: whoever was there first keeps the name. `augment`
+  mounts the product's remaining nodes into the local command; `resolve` reads the
+  SAME hand-written tree — which is why it takes it as an argument — so a node the
+  local command declares can never be routed to the cloud seam, and the two halves
+  cannot disagree. It used to DROP the collision, and the bill was 7 `/v1/code`,
+  25 `/v1/billing` and 4 `/v1/engine` operations served, described, and reachable
+  by nothing, each excused by an entry whose own `why` admitted it. `agent` is
+  still `Instead::Nothing` for a different reason and says so: `/v1/agent` (one
+  tool-calling round) and `/v1/agents` (the registry) are two products on one noun,
+  and the fix is a route move in hanzoai/agent.
+- **THE ELISION CEILING — the one remaining silent loss, now counted.** The fold
+  names a leaf after its own noun, so two methods at one address want one command:
+  `PUT` and `PATCH` on an item both read as `update`, `GET` and `POST` on
+  `/v1/billing/payment-methods` both read as `payment-methods`. The
+  higher-priority method takes the name and the other reached nobody, with no
+  number anywhere. `genproduct` now reports the loss every run and pins it:
+  **`ELIDED = 118`**, a CEILING — free to fall, and it cannot rise without somebody
+  naming the second command. Which name that is, is a verb decision this generator
+  cannot make (is a `PUT` beside a `PATCH` a different command or the same one?),
+  and the fold already shows the shape of the answer in its `has_child` branch: the
+  noun becomes a node and each method takes its `root_verb`. Worst products today:
+  `ai` 28, `iam` 7, `evals` 5, `tasks` 5, `download`/`files`/`store`/`websearch` 4
+  each. With the 11 that curation drops, that is the whole distance between the
+  spec's 1895 operations and the tree's 1766.
 - A capability missing from the CLI is missing from a document: author it in
   hanzoai/openapi, or serve it in hanzoai/cloud. There is no third place. `/v1/cd`
   is the worked example: it answers 200 with `<title>Hanzo CD</title>` and
@@ -301,12 +321,16 @@ neither can answer the other's.
   a door; `/v1/networks` is the org's Zero Trust overlay while the local `network`
   SELECTS one), and five relay-door products called enumeration artifacts, each
   with its own prose and 1–11 served operations (`files` `upload` `download`
-  `indexers` `settings`). What survives states a fact about what a COMMAND LINE is:
-  a CLI is not a browser (`csrf`), the document that decides the commands is not
-  one of them (`openapi.json`), `completions` names shell completion here (the
-  operation is `hanzo chat completions`), a local command owns its bare name
-  (`code` `help` `billing` `engine`), and one noun cannot name two products
-  (`agent` vs `agents`).
+  `indexers` `settings`). 1.9.23 struck the last three that were not facts about a
+  command line at all — `code` `billing` `engine`, held on the grounds that a local
+  command owns the name, which is now settled by ARRANGING the collision instead of
+  recording it. What survives — seven entries, all seven applied, `driftgate` says
+  so — states a fact about what a COMMAND LINE is: a CLI is not a browser (`csrf`),
+  the document that decides the commands is not one of them (`openapi.json`),
+  `completions` names shell completion here (the operation is `hanzo chat
+  completions`), clap's own builtin owns `help`, one noun cannot name two products
+  (`agent` vs `agents`), and the compute plane is one command (`machines` `gpus`
+  under `compute`).
 - **Refresh: `make spec`. Gate: `make spec-check`.** Both go through
   `scripts/generate.sh`, which is also what hanzoai/ci's `client:` lane calls, so
   a maintainer, the push gate and the release all run ONE derivation. `--check`

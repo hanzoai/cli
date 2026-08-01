@@ -633,10 +633,13 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
-    // ONE tree: the derive command, augmented with the generated first-class
-    // product commands. One parse, one dispatch — a matched cloud product goes
-    // through the product seam, everything else is a derive command (or bare).
-    let matches = commands::product::augment(Cli::command()).get_matches();
+    // ONE tree: the derive command, augmented with the generated products — each
+    // at its own name, or absorbed into the local command that owns that name.
+    // One parse, one dispatch. The hand-written tree is kept because it is the
+    // only thing that knows which names under an absorbed command are local, and
+    // `resolve` must ask exactly what `augment` asked.
+    let hand = Cli::command();
+    let matches = commands::product::augment(hand.clone()).get_matches();
 
     // `hanzo --version` and `hanzo -V` ARE `hanzo version` — one function, three
     // spellings. Answered before logging, config and every dispatch, so the
@@ -658,8 +661,8 @@ async fn main() -> Result<()> {
     let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
     let telemetry = telemetry::build(&config);
 
-    // A matched generated product dispatches first, through the shared seam.
-    if let Some(resolved) = commands::product::resolve(&matches) {
+    // A matched generated operation dispatches first, through the shared seam.
+    if let Some(resolved) = commands::product::resolve(&hand, &matches) {
         let started = std::time::Instant::now();
         let outcome = commands::product::dispatch(&mut config, resolved).await;
         telemetry.command("product", started.elapsed(), outcome.is_ok());
@@ -1089,11 +1092,92 @@ mod tests {
     /// does not (it dispatches through the derive tree).
     #[test]
     fn a_generated_product_resolves_and_a_local_command_does_not() {
-        let merged = commands::product::augment(Cli::command());
+        let hand = Cli::command();
+        let merged = commands::product::augment(hand.clone());
         let m = merged.clone().try_get_matches_from(["hanzo", "agents", "list"]).unwrap();
-        assert!(commands::product::resolve(&m).is_some(), "a cloud product resolves");
+        assert!(commands::product::resolve(&hand, &m).is_some(), "a cloud product resolves");
 
         let m = merged.try_get_matches_from(["hanzo", "version"]).unwrap();
-        assert!(commands::product::resolve(&m).is_none(), "a local command is not a product");
+        assert!(commands::product::resolve(&hand, &m).is_none(), "a local command is not a product");
+    }
+
+    /// THE COLLISION LAW, both halves, on the command where getting it wrong costs
+    /// money: `hanzo billing` is a hand-written wallet wrapper AND a served cloud
+    /// product. Its own verbs stay its own; the document's arrive beside them.
+    #[test]
+    fn a_local_command_absorbs_the_product_of_its_own_name() {
+        let hand = Cli::command();
+        let merged = commands::product::augment(hand.clone());
+        let billing = merged.find_subcommand("billing").expect("`billing` is a command");
+        for v in ["balance", "deposit", "invoices", "usage", "plans", "payouts", "alerts"] {
+            assert!(billing.find_subcommand(v).is_some(), "`hanzo billing {v}` must exist");
+        }
+
+        // The local one dispatches through the derive tree…
+        let m = merged.clone().try_get_matches_from(["hanzo", "billing", "balance"]).unwrap();
+        assert!(commands::product::resolve(&hand, &m).is_none(), "`balance` is the local command's");
+
+        // …and the absorbed one through the product seam, at its real route.
+        let m = merged.try_get_matches_from(["hanzo", "billing", "invoices", "list"]).unwrap();
+        let Some(commands::product::Resolved::Leaf { op, .. }) =
+            commands::product::resolve(&hand, &m)
+        else {
+            panic!("`hanzo billing invoices` must resolve to a cloud operation")
+        };
+        assert_eq!(op.path, "/v1/billing/invoices");
+    }
+
+    /// THE FRONT DOOR SURVIVES ABSORPTION. `hanzo code` gained six cloud verbs, so
+    /// its own grammar — a bare task, a backend name, a backend plus a task — is
+    /// now parsed against a command that has subcommands, and a token that is not
+    /// one of them must still reach the positional.
+    ///
+    /// Asserted on the AUGMENTED tree on purpose: every other `code` test parses
+    /// `Cli` directly, which is not the tree `main` parses and cannot see a
+    /// subcommand shadowing a positional.
+    #[test]
+    fn absorbing_a_product_does_not_shadow_the_local_grammar() {
+        let hand = Cli::command();
+        let merged = commands::product::augment(hand.clone());
+        for argv in [
+            ["hanzo", "code"].as_slice(),
+            ["hanzo", "code", "fix the failing test"].as_slice(),
+            ["hanzo", "code", "claude"].as_slice(),
+            ["hanzo", "code", "claude", "fix it"].as_slice(),
+            ["hanzo", "code", "--claude"].as_slice(),
+        ] {
+            let m = merged
+                .clone()
+                .try_get_matches_from(argv)
+                .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+            assert!(
+                commands::product::resolve(&hand, &m).is_none(),
+                "{argv:?} is the coding session, not a cloud operation"
+            );
+            let cli = Cli::from_arg_matches(&m).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+            assert!(matches!(cli.command, Some(Commands::Code(_))), "{argv:?} must be `code`");
+        }
+
+        // …and a token that IS one of them reaches the document's operation.
+        let m = merged.try_get_matches_from(["hanzo", "code", "search"]).expect("parses");
+        let Some(commands::product::Resolved::Leaf { op, .. }) =
+            commands::product::resolve(&hand, &m)
+        else {
+            panic!("`hanzo code search` must resolve to a cloud operation")
+        };
+        assert_eq!(op.path, "/v1/code/search");
+    }
+
+    /// A GLOBAL flag stays global under an absorbed command. `--config` is
+    /// documented as "valid on every subcommand", and the first shape of this
+    /// change broke that for exactly the commands it was meant to complete.
+    #[test]
+    fn a_global_flag_still_reaches_an_absorbed_subcommand() {
+        let hand = Cli::command();
+        let merged = commands::product::augment(hand.clone());
+        let m = merged
+            .try_get_matches_from(["hanzo", "billing", "--config", "/tmp/x", "invoices", "list"])
+            .expect("a global flag is valid before an absorbed subcommand");
+        assert!(commands::product::resolve(&hand, &m).is_some());
     }
 }
