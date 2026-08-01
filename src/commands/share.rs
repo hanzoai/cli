@@ -1,5 +1,7 @@
 //! `hanzo share <port>` — publish a local service to a public
-//! `https://<token>.share.hanzo.ai` URL: ngrok on our own zero-trust fabric.
+//! `https://<token>.share.hanzo.ai` URL over the Hanzo zero-trust fabric: the
+//! port stays bound to localhost and the fabric carries the traffic, so nothing
+//! is exposed to the network the machine sits on.
 //!
 //! DX: the per-org zrok account is provisioned SERVER-SIDE from your
 //! `hanzo auth login` identity (`POST /v1/share/enable`) — no separate signup, no
@@ -61,6 +63,21 @@ impl Share {
     }
 }
 
+/// What sits behind a share, in OUR words, and the helper's word for it.
+///
+/// The fabric helper's fourth mode is named after an outside web server. That name
+/// is the helper's business and not the customer's: what they are choosing is
+/// "serve a directory of files", and a Hanzo command should say so. One function
+/// translates, at the one place the value leaves for the helper — so the flag a
+/// person types and the flag `--help` prints are the same word, and the helper
+/// still gets the word it understands.
+fn wire_backend_mode(mode: &str) -> &str {
+    match mode {
+        "static" => "caddy",
+        other => other,
+    }
+}
+
 /// `hanzo share <target> [--backend-mode M] [--name N]`.
 pub async fn run(
     cfg: &mut Config,
@@ -113,7 +130,7 @@ pub async fn start(
         "public".into(),
         "--headless".into(),
         "--backend-mode".into(),
-        backend_mode,
+        wire_backend_mode(&backend_mode).to_string(),
     ];
     // --name-selection is OUR fork's flag. A machine with upstream zrok on PATH
     // has a binary that rejects it outright, which killed the share rather than

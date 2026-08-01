@@ -131,8 +131,8 @@ fn pick_provider() -> Result<Option<Choice>> {
 
     let items = [
         "Hanzo       unified billing, every model through the gateway  (recommended)",
-        "OpenAI      use your ChatGPT / OpenAI API key",
-        "Anthropic   use your Claude / Anthropic API key",
+        "OpenAI      use an OpenAI API key you already hold",
+        "Anthropic   use an Anthropic API key you already hold",
         "Paste key   auto-detect the provider from the key prefix",
     ];
 

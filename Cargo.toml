@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.9.25"
+version = "1.9.26"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"

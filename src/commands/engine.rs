@@ -1,8 +1,10 @@
-//! `hanzo model serve MODEL` — serve a model from THIS machine on an OpenAI-
-//! compatible local endpoint.
+//! `hanzo model serve MODEL` — serve a model from THIS machine on a local
+//! /v1 chat-completions endpoint.
 //!
 //! The backend is the Hanzo engine (`~/work/hanzo/engine`): its `serve` command
-//! exposes OpenAI `/v1` + an Anthropic `/v1/messages` endpoint for a local model.
+//! exposes `/v1/chat/completions` and `/v1/messages` for a local model — the two
+//! request shapes the ecosystem has settled on, stated as shapes rather than as
+//! somebody else's product name.
 //! We resolve an EXISTING engine binary and exec `serve -m <model>` through the
 //! shared launcher — we never BUILD here (CI/CD does). Extra engine flags (e.g.
 //! `--port`) pass through after `--`. ONE way to serve a model locally.
@@ -29,7 +31,7 @@ pub async fn serve(model: String, passthrough: Vec<String>) -> Result<()> {
         )
     })?;
     println!(
-        "{} serving {} on an OpenAI-compatible local endpoint",
+        "{} serving {} on a local /v1 chat-completions endpoint",
         "→".cyan(),
         model.cyan().bold()
     );
