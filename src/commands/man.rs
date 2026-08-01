@@ -37,6 +37,11 @@ const COMMANDS: &[(&str, &str)] = &[
     ("scan", "Scan local files for exposed secrets"),
     ("serve", "Run a Hanzo service: `cloud` for the whole API, or one service"),
     ("share", "Publish a local service to a public share.hanzo.ai URL"),
+    (
+        "status",
+        "Show the whole cloud in one screen: what is unhealthy first, then the \
+         clusters, the applications and the machines on the fleet",
+    ),
     ("version", "Print the CLI version"),
     ("help", "Print this page, or a subcommand's own help"),
 ];

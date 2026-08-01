@@ -13,6 +13,7 @@ pub mod fabric;
 pub mod engine;
 pub mod runner;
 pub mod scan;
+pub mod status;
 pub mod version;
 pub mod serve;
 
