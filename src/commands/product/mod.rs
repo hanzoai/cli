@@ -112,20 +112,23 @@ impl Op {
 
 // ---- build the clap tree (BUILDER api — 130 products can't be a derive enum) --
 
-/// Add every generated product to `cmd` as a first-class top-level command.
+/// The generated products this parser MOUNTS: every product whose bare name no
+/// local command has already claimed.
 ///
-/// Collisions resolve ONE way: a LOCAL command owns its bare name. The generator
-/// already omits the hand-written products (`billing`/`agent`/`deploy`), and this
-/// also skips any name the derive tree already took — so a future spec addition
-/// that collides is auto-excluded rather than clobbering an invariant.
-pub fn augment(mut cmd: Command) -> Command {
-    let taken: std::collections::HashSet<String> =
-        cmd.get_subcommands().map(|s| s.get_name().to_string()).collect();
+/// Collisions resolve ONE way and in ONE place: a LOCAL command owns its bare
+/// name, and the answer to "which names are local" is read off the parser itself
+/// rather than restated in a list. [`augment`] mounts exactly this set and
+/// [`catalog`] advertises exactly this set, so the man page cannot name a group
+/// the parser does not accept.
+pub(crate) fn mounted(cmd: &Command) -> Vec<&'static str> {
+    let taken: std::collections::HashSet<&str> =
+        cmd.get_subcommands().map(clap::Command::get_name).collect();
+    product_names().into_iter().filter(|p| !taken.contains(p)).collect()
+}
 
-    for product in product_names() {
-        if taken.contains(product) {
-            continue;
-        }
+/// Add every mounted generated product to `cmd` as a first-class top-level command.
+pub fn augment(mut cmd: Command) -> Command {
+    for product in mounted(&cmd) {
         cmd = cmd.subcommand(build_product(product));
     }
     cmd
@@ -139,8 +142,10 @@ fn product_names() -> Vec<&'static str> {
 
 /// Every generated product with its one-line prose, for the root man page —
 /// the SAME names the parser accepts and the SAME prose the group help shows.
-pub(crate) fn catalog() -> Vec<(&'static str, String)> {
-    product_names()
+/// `cmd` is the hand-written derive tree, before augmentation: a product whose
+/// name a local command owns is not mounted, so it is not advertised either.
+pub(crate) fn catalog(cmd: &Command) -> Vec<(&'static str, String)> {
+    mounted(cmd)
         .into_iter()
         .map(|n| {
             let about = product_about(n)

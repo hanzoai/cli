@@ -452,13 +452,81 @@ fn there_is_no_passthrough_or_raw_path_escape() {
 
 // ---- collisions: a local command always wins its bare name -------------------
 
-/// The hand-written products are omitted from the data outright. `kms` is NO
-/// LONGER among them — it is generated now (see `kms_is_generated_*`).
+/// A name a LOCAL command owns is not generated. `kms` is NO LONGER among them —
+/// it is generated now (see `kms_is_generated_*`) — and neither is `deploy`: it
+/// was a hand command once, was deleted, and the reservation outlived it. See
+/// [`a_reservation_must_name_a_command_that_exists`].
 #[test]
 fn hand_written_products_are_not_generated() {
-    for local in ["billing", "deploy", "code", "desktop"] {
+    for local in ["billing", "code", "desktop"] {
         assert!(!is_product(local), "{local} must be hand-written / a wrapper, not generated");
     }
+}
+
+/// A NAME MAY ONLY BE RESERVED BY A COMMAND THAT EXISTS.
+///
+/// `genproduct`'s DENY list withheld `deploy` and `agent` on the stated grounds
+/// that "a LOCAL hand-written command owns these names". Both had been deleted —
+/// `main.rs::old_top_level_verbs_are_removed` asserts `deploy` is not a top-level
+/// command — so the reservation was held for nobody and the 21 served
+/// `/v1/deploy/*` routes, the control plane behind the Hanzo CD console at
+/// `/v1/cd`, reached no one at all.
+///
+/// This is the gate, and it is a PROPERTY rather than a list: for every generated
+/// product, either it mounts, or the parser really does define that name. A future
+/// DENY entry that claims a local owner it does not have fails here.
+#[test]
+fn a_reservation_must_name_a_command_that_exists() {
+    use clap::CommandFactory;
+    let hand = crate::Cli::command();
+    let local: std::collections::HashSet<String> =
+        hand.get_subcommands().map(|s| s.get_name().to_string()).collect();
+    let merged = augment(crate::Cli::command());
+    for p in OPS.iter().map(|o| o.product).collect::<std::collections::BTreeSet<_>>() {
+        let mounted = merged.find_subcommand(p).is_some();
+        assert!(
+            mounted,
+            "generated product `{p}` mounts under no name — nothing shadows it"
+        );
+        if !local.contains(p) {
+            continue;
+        }
+        // Shadowed: the local command must genuinely exist, which `local` just
+        // proved. Its operations are then a STATED gap, not a silent one.
+        assert!(super::mounted(&hand).iter().all(|m| *m != p), "{p} is shadowed, not mounted");
+    }
+    // The reservation that had lost its owner: `deploy` is generated again, and it
+    // is the CD control plane, not a wrapper.
+    assert!(is_product("deploy"), "cloud serves /v1/deploy/* — `deploy` is a product");
+    assert!(!local.contains("deploy"), "no local `deploy` command may reclaim the name silently");
+    assert!(
+        OPS.iter().any(|o| o.product == "deploy" && o.path == "/v1/deploy/applications"),
+        "`hanzo deploy applications` must reach GET /v1/deploy/applications"
+    );
+}
+
+/// The man page is composed from the SAME filter the parser mounts, so a product
+/// a local command shadows can never be advertised as a group. `catalog` used to
+/// read every product name in `OPS`, which printed `share` twice — once as the
+/// hand command and once as the generated product `augment` had dropped.
+#[test]
+fn the_man_page_names_exactly_what_the_parser_mounts() {
+    use clap::CommandFactory;
+    let hand = crate::Cli::command();
+    let advertised: Vec<&str> = super::catalog(&hand).into_iter().map(|(n, _)| n).collect();
+    let merged = augment(crate::Cli::command());
+    for n in &advertised {
+        let sub = merged.find_subcommand(*n).expect("advertised group must parse");
+        assert!(sub.has_subcommands(), "`{n}` is advertised as a GROUP; it must take subcommands");
+    }
+    let page = crate::commands::man::page(&hand);
+    for local in hand.get_subcommands().map(clap::Command::get_name) {
+        assert!(
+            !advertised.contains(&local),
+            "`{local}` is a local command; the generated tree must not also advertise it"
+        );
+    }
+    assert!(page.contains("deploy"), "the CD control plane must appear on the page");
 }
 
 /// `kms` is a GENERATED product folded to EXACTLY the routes cloud mounts —

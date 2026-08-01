@@ -143,12 +143,34 @@ never be checked.
   table never mentions (the inference surface: `/v1/models`, `/v1/chat/completions`) is
   answered at the edge, not by that router, so nothing is refuted. Multi-segment path
   params come from the same reading: a fiber `*` arrives as `{wildcardN}`.
-- What still needs a HAND decision in `genproduct.rs`: `EXCLUDE`/`DENY` (products a
-  local command owns, or noise we choose not to surface), `REMAP` (machines+gpus →
-  `compute`), `METHOD_PRIORITY`, `VERBS`, and the path→verb fold. Those are POLICY —
-  none of them may encode "the server 404s this", which is the registry's job.
+- What still needs a HAND decision in `genproduct.rs`: `DENY` (noise, or a name a
+  local command owns), `REMAP` (machines+gpus → `compute`), `METHOD_PRIORITY`,
+  `VERBS`, and the path→verb fold. Those are POLICY — none of them may encode "the
+  server 404s this", which is the registry's job.
+- **A name may only be reserved by a command that EXISTS.** `EXCLUDE` used to sit
+  beside `DENY` holding `billing`/`agent`/`deploy` under "local commands own these
+  bare names" — a third statement of one fact (every entry was already in `DENY`,
+  and `product::augment` reads the real answer off the parser), and two thirds
+  false: `agent` and `deploy` had been DELETED as top-level commands, so the
+  reservation was held for nobody and the 21 documented `/v1/deploy/*` routes
+  reached no one. `EXCLUDE` is gone; `product::mounted(&Cli::command())` is the ONE
+  filter, shared by `augment` (which mounts) and `catalog` (which advertises), and
+  `a_reservation_must_name_a_command_that_exists` is the gate.
+- **A shadow is a stated gap, never a silent one.** A local command that owns a bare
+  name hides that product's operations: `hanzo billing` reaches 2 of the 22
+  documented `/v1/billing/*` routes, `hanzo code` 0 of 6 `/v1/code/*`, `hanzo
+  engine` 0 of 4 `/v1/engine/*`. Closing a shadow means the local command ABSORBS
+  the operations — a UX decision per command, not a list edit. `agent` is denied for
+  a different reason and says so: `/v1/agent` (one tool-calling round) and
+  `/v1/agents` (the registry) are two products on one noun, and the fix is a route
+  move in hanzoai/agent.
 - A capability missing from the CLI is missing from a document: author it in
-  hanzoai/openapi, or serve it in hanzoai/cloud. There is no third place.
+  hanzoai/openapi, or serve it in hanzoai/cloud. There is no third place. `/v1/cd`
+  is the worked example: it answers 200 with `<title>Hanzo CD</title>` and
+  contributes ZERO keys to the route table, because it is the Hanzo CD **console**,
+  not an API — its own noscript line says "Hanzo CD can be used with the Hanzo CD
+  CLI". Its API is `/v1/deploy/*`, and `hanzo deploy` is that CLI. `cd` is not a
+  product and must not become a command name — it is the shell's own builtin.
 
 **The lineage contract — which half is authoritative about what.** The two inputs
 are not redundant readings of one truth; each owns a different question, and
