@@ -13,14 +13,79 @@ the CLI; discovery/marketing repos link here, never copy it.
 - `curl -fsSL https://raw.githubusercontent.com/hanzoai/cli/main/install.sh | sh` (per-platform asset, sha256-verified; needs a GitHub token while the repo is private)
 - from source: `cargo install --path .` · build gate: `cargo build` / `cargo test` / `cargo clippy --bin hanzo`
 
+**This binary answers to TWO names, and that is by design.** cloud's Go control
+binary (`hanzoai/cloud`, `cmd/hanzo`) owns a small set of control verbs and
+delegates every other verb to US, through `cloud/cli/link.go` `fabricCLI()`,
+which resolves `hanzo-node` on PATH first and only then `hanzo` (with a
+self-exec guard). So a machine carrying the Go control binary installs THIS
+artifact as `hanzo-node`. Same build, two names — there is no third CLI
+codebase, and `hanzo-node` is not a separate product.
+
+The trap that follows from it: a stale `hanzo-node` is INVISIBLE. The user types
+`hanzo`, the Go binary delegates, and they get whatever old build is sitting
+under the other name — with no version in sight. That is not hypothetical: a
+v1.7.2 `hanzo-node` served roughly 150 phantom `/v1/cloud/<verb-noun>` commands,
+because it predates `genspec.rs` and the registry refutation seam and was built
+from the vendored `spec/products.json` (since deleted). Nothing was wrong with
+the live code; the INSTALL was old. So:
+
+> Whatever installs `hanzo` MUST install `hanzo-node` at the same version, and
+> both must be this crate. An installer that ships one name, or ships two
+> different versions, produces a CLI whose surface nobody can explain.
+
+Today they do not, and this is the open gap:
+- `curl hanzo.sh | sh` runs `uv tool install` over PyPI and maps `hanzo-cli` →
+  the command `hanzo`. PyPI `hanzo-cli` is a SEPARATE pure-Python project
+  (`py3-none-any`), not this crate — so that path puts a different program at
+  the name, into `~/.local/bin`, which outranks `/usr/local/bin` on a normal
+  PATH. It also never installs the `hanzo-node` name at all (it maps PyPI
+  `hanzo-node` to the command `hanzod`, the compute node, a third thing again).
+- the brew tap (`hanzoai/homebrew-tap`) has NO `hanzo` formula — only `Dev.rb` /
+  `hanzo-dev.rb` and a `hanzo-desktop` cask. `brew install hanzoai/tap/hanzo`
+  does not exist.
+- so the ONLY path that installs this crate as `hanzo` is our own `install.sh`.
+
 **Command surface** — resource-noun tree `hanzo <resource> <command>`, plus generated
 product subcommands `hanzo <product> …` (derived from the spec, below — the ONE
 interface to cloud; no `hanzo api` verb, no raw-path escape). Bare `hanzo [flags] [task]`
-is an AI coding session (Claude Code or `dev` backend, Hanzo MCP attached, routed +
-streamed to cloud when signed in).
+is an AI coding session (Hanzo MCP attached, routed + streamed to cloud when signed in).
+
+**The coding session, and its ONE resolver** — `hanzo code` starts it on one of three
+DISTINCT backends: our own `dev` agent (hanzoai/dev, the DEFAULT), `claude`, and
+`codex`. None is an alias of another — naming one runs THAT agent, or fails saying it
+is not installed; silently substituting a different agent than the one someone named
+would be worse than refusing.
+
+Four entry spellings, ONE implementation:
+
+```
+hanzo code                 the default backend (dev)
+hanzo code dev             hanzo code --dev        hanzo code --backend dev
+hanzo code claude          hanzo code --claude
+hanzo code codex           hanzo code --codex
+hanzo dev                  shorthand for `hanzo code dev`
+hanzo "fix the test"       bare session, default backend
+```
+
+They differ in NOTHING but how the backend was written. `backend::select` is the only
+place a backend is resolved, from (positional | flag | `--backend` | default), and
+`main::code_session` is the only launcher; `hanzo dev`'s dispatch arm sets the backend
+and hands straight to it. The one rule for the positional operand: it is the BACKEND if
+it is exactly a backend name, otherwise it is the TASK — so `hanzo code dev` and
+`hanzo code "fix it"` both work with no flag. Naming the backend twice
+(`hanzo code claude --codex`) is REFUSED rather than resolved by a precedence rule
+nobody could remember. If you are adding a spelling, add it to `select`; if you are
+adding a launch path, you are forking the command.
+
+`dev` and `codex` share one driver (`code/dev.rs` `Agent`) because ours began as a fork
+of the other and they speak the same `-c` overrides and JSONL stream — they differ only
+in the program exec'd, so a third is a const, not a file. The `model_catalog_json` we
+write for them must carry EVERY field their parser requires: it rejects the whole
+document on the first missing one, and that took the session down with it (a lost
+context window is survivable, a session that cannot start is not).
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage|billing|connector`
 - cloud: `hanzo agent|cluster|model serve|serve`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
-- fabric/fleet: `hanzo fabric|node|runner`; ship: `hanzo init|dev|share`, `hanzo secret scan`; tooling: `hanzo docs|mdx|ui|mcp`, `hanzo config`, `hanzo version`
+- fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 
 **Where the cloud surface comes from** — `hanzo <product> …` is DERIVED, never

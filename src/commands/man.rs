@@ -26,6 +26,13 @@ const GROUPS: &[(&str, &str)] = &[
 
 /// The terminal COMMANDS (they take no subcommand).
 const COMMANDS: &[(&str, &str)] = &[
+    (
+        "code",
+        "Start a coding session on our own `dev` agent — or name another: \
+         `code claude` / `code codex` (also `--dev` / `--claude` / `--codex`). \
+         A trailing task runs headless",
+    ),
+    ("dev", "Start a coding session on the `dev` backend: `hanzo code dev`, spelled shorter"),
     ("init", "Initialize a new Hanzo project"),
     ("scan", "Scan local files for exposed secrets"),
     ("serve", "Run a Hanzo service: `cloud` for the whole API, or one service"),
