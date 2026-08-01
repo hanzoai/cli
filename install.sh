@@ -1,26 +1,37 @@
 #!/bin/sh
-# Install the `hanzo` CLI.
+# Install a Hanzo native binary.
 #
 #   curl -fsSL https://raw.githubusercontent.com/hanzoai/cli/main/install.sh | sh
 #
-# Resolves the release asset for THIS machine, verifies its sha256, and installs
-# it. It refuses loudly on a platform we do not publish, because a script that
+# Downloads the prebuilt release asset for THIS machine, verifies its sha256, and
+# puts it on PATH. Nothing is built, and no package manager is involved. It
+# refuses loudly on a platform we do not publish, because a script that
 # half-works is worse than one that says why it cannot.
 #
-# WHILE hanzoai/cli IS PRIVATE this needs a token (GH_TOKEN, or gh's own):
-#   GH_TOKEN=... sh install.sh
-# Public `curl | sh` self-service starts working the moment the repo is public;
-# nothing else here has to change.
+# This is the ONE implementation of "fetch a Hanzo binary". It defaults to the
+# `hanzo` CLI, and hanzo.sh drives it once per tool by overriding three
+# variables rather than carrying a second copy of platform detection, asset
+# naming and checksum verification:
+#
+#   HANZO_INSTALL_REPO   owning repo            (default hanzoai/cli)
+#   HANZO_INSTALL_BIN    binary + asset prefix  (default hanzo)
+#   HANZO_INSTALL_ALIAS  second name, same build (default hanzo-node; "" = none)
+#   HANZO_INSTALL_PREFIX install dir            (default ~/.local/bin)
+#   HANZO_VERSION        pin a tag              (default: latest release)
+#
+# The convention every published Hanzo binary follows, and the only thing this
+# needs to know: the asset is <BIN>-<os>-<arch>.tar.gz, it is accompanied by
+# <asset>.sha256, and it unpacks to a single file named <BIN>.
 set -eu
 
-REPO="hanzoai/cli"
-BIN="hanzo"
+REPO="${HANZO_INSTALL_REPO:-hanzoai/cli}"
+BIN="${HANZO_INSTALL_BIN:-hanzo}"
 # The second name this same build installs under: what cloud's control binary
 # delegates to. One build, two names — never two versions.
-DELEGATE="hanzo-node"
+DELEGATE="${HANZO_INSTALL_ALIAS-hanzo-node}"
 PREFIX="${HANZO_INSTALL_PREFIX:-$HOME/.local/bin}"
 
-die() { printf '\nhanzo: %s\n' "$1" >&2; exit 1; }
+die() { printf '\n%s: %s\n' "$BIN" "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "need $1 on PATH"; }
 
 need curl
@@ -72,10 +83,10 @@ if [ -z "$TAG" ]; then
   TAG="$(get_stdout "https://api.github.com/repos/$REPO/releases/latest" \
         | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
   [ -n "$TAG" ] || die "could not resolve the latest release of $REPO.
-  $REPO is private: set GH_TOKEN (or run \`gh auth login\`), or pin HANZO_VERSION=vX.Y.Z."
+  If $REPO is private, set GH_TOKEN (or run \`gh auth login\`); or pin HANZO_VERSION=vX.Y.Z."
 fi
 
-asset="hanzo-${target}.tar.gz"
+asset="${BIN}-${target}.tar.gz"
 base="https://github.com/$REPO/releases/download/$TAG"
 
 # A private release's browser download URL is not fetchable with a token; assets
@@ -102,7 +113,7 @@ fetch() { # fetch <asset-name> <dest>
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-printf 'hanzo: %s %s\n' "$TAG" "$target"
+printf '%s: %s %s\n' "$BIN" "$TAG" "$target"
 fetch "$asset" "$tmp/$asset" \
   || die "no published build for $target at $TAG."
 fetch "$asset.sha256" "$tmp/$asset.sha256" \
@@ -122,35 +133,40 @@ mkdir -p "$PREFIX"
 mv "$tmp/$BIN$ext" "$PREFIX/$BIN$ext"
 chmod 755 "$PREFIX/$BIN$ext"
 
-# The SAME build under the second name. cloud's control binary hands every verb
-# it does not own to `hanzo-node` (it resolves that name before `hanzo`), so the
-# two names must never be two versions: install one and not the other, or
-# upgrade one and not the other, and a user types `hanzo`, gets delegated, and
-# runs an old build with no version anywhere on screen. That is not theoretical
-# — a stale twin served ~150 commands that no longer existed, silently.
+printf '%s: installed %s\n' "$BIN" "$PREFIX/$BIN$ext"
+
+# The SAME build under a second name. cloud's control binary hands every verb it
+# does not own to `hanzo-node` (it resolves that name before `hanzo`), so the two
+# names must never be two versions: install one and not the other, or upgrade one
+# and not the other, and a user types `hanzo`, gets delegated, and runs an old
+# build with no version anywhere on screen. That is not theoretical — a stale
+# twin served ~150 commands that no longer existed, silently.
 #
 # A symlink makes the skew impossible rather than merely unlikely; where links
-# are not available (Windows) a copy still matches by version.
-if ln -sf "$BIN$ext" "$PREFIX/$DELEGATE$ext" 2>/dev/null; then
-  :
-else
-  cp -f "$PREFIX/$BIN$ext" "$PREFIX/$DELEGATE$ext" && chmod 755 "$PREFIX/$DELEGATE$ext"
+# are not available (Windows) a copy still matches by version. A caller that
+# wants no second name passes HANZO_INSTALL_ALIAS=''.
+if [ -n "$DELEGATE" ]; then
+  if ln -sf "$BIN$ext" "$PREFIX/$DELEGATE$ext" 2>/dev/null; then
+    :
+  else
+    cp -f "$PREFIX/$BIN$ext" "$PREFIX/$DELEGATE$ext" && chmod 755 "$PREFIX/$DELEGATE$ext"
+  fi
+  [ -e "$PREFIX/$DELEGATE$ext" ] \
+    || die "could not install the second name $PREFIX/$DELEGATE$ext — a half-install is not an install"
+  printf '%s: installed %s (the same build, second name)\n' "$BIN" "$PREFIX/$DELEGATE$ext"
 fi
 
-printf 'hanzo: installed %s\n' "$PREFIX/$BIN$ext"
-printf 'hanzo: installed %s (the delegate name, same build)\n' "$PREFIX/$DELEGATE$ext"
-
+# Whatever PATH says, name the copy that would ACTUALLY run. An earlier entry
+# wins, and that precedence is exactly how a stale install hides: the user
+# upgrades here and keeps running something else, and re-running the installer
+# never fixes it because it keeps writing to a directory that never wins.
+found="$(command -v "$BIN" 2>/dev/null || true)"
+if [ -n "$found" ] && [ "$found" != "$PREFIX/$BIN$ext" ]; then
+  printf '%s: WARNING %s comes first on PATH and will run instead of the\n' "$BIN" "$found"
+  printf '       build just installed at %s. Remove it, or put %s first.\n' "$PREFIX/$BIN$ext" "$PREFIX"
+fi
 case ":$PATH:" in
-  *":$PREFIX:"*)
-    # On PATH, but is it the FIRST one? An earlier entry wins, and that
-    # precedence is exactly how a stale install hides: the user upgrades here
-    # and keeps running something else. Name the one that would actually run.
-    found="$(command -v "$BIN" 2>/dev/null || true)"
-    if [ -n "$found" ] && [ "$found" != "$PREFIX/$BIN$ext" ]; then
-      printf 'hanzo: WARNING %s comes first on PATH and will run instead of the\n' "$found"
-      printf '       build just installed at %s. Remove it, or put %s first.\n' "$PREFIX/$BIN$ext" "$PREFIX"
-    fi
-    ;;
-  *) printf 'hanzo: %s is not on PATH — add it:\n  export PATH="%s:$PATH"\n' "$PREFIX" "$PREFIX" ;;
+  *":$PREFIX:"*) ;;
+  *) printf '%s: %s is not on PATH — add it:\n  export PATH="%s:$PATH"\n' "$BIN" "$PREFIX" "$PREFIX" ;;
 esac
-printf 'hanzo: next → hanzo login\n'
+if [ "$BIN" = hanzo ]; then printf 'hanzo: next → hanzo login\n'; fi
