@@ -137,12 +137,19 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
 /// model-credentials (OpenAI/Anthropic/`hk-`) and resets the provider selection
 /// to the gateway default. Those keys are not brand-scoped, so only the default
 /// brand clears them — `hanzo code` uses the default brand.
-pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
+///
+/// Signing out ENDS THE SESSION, which means telling IAM: the refresh token this
+/// client holds lives 30 days, so a logout that only forgot the local copy left a
+/// month of spendable access on a machine you had signed out of. Every credential
+/// dropped here is revoked at the server (RFC 7009), which kills its whole
+/// rotation family.
+pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
     if all {
         if identity.is_some() {
             bail!("`hanzo auth logout --all` removes every identity; do not also name one");
         }
         let removed = store::remove_all(cfg, brand)?;
+        revoke_all(brand, &removed).await;
         let cleared = clear_providers(cfg, brand)?;
         if removed.is_empty() && cleared.is_empty() {
             println!("Not signed in to {brand}; nothing to do.");
@@ -153,7 +160,7 @@ pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool
                 "{} Signed out of {} ({})",
                 "✓".green(),
                 brand.cyan(),
-                removed.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ")
+                removed.iter().map(|r| r.id.to_string()).collect::<Vec<_>>().join(", ")
             );
         }
         if !cleared.is_empty() {
@@ -167,8 +174,9 @@ pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool
     }
 
     let sel = identity.map(|s| s.parse::<Selector>()).transpose()?;
-    let id = store::remove(cfg, brand, sel)?;
-    println!("{} Signed out of {} as {}", "✓".green(), brand.cyan(), id.to_string().bold());
+    let removed = store::remove(cfg, brand, sel)?;
+    revoke_all(brand, std::slice::from_ref(&removed)).await;
+    println!("{} Signed out of {} as {}", "✓".green(), brand.cyan(), removed.id.to_string().bold());
 
     // Say what is left and how to select it — never select it for them.
     match store::active(cfg, brand) {
@@ -183,6 +191,32 @@ pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool
         None => {}
     }
     Ok(())
+}
+
+/// Tell IAM to stop honouring the credentials `logout` just dropped.
+///
+/// BEST EFFORT, and loud when it fails: a signed-out laptop with no network still
+/// signs out locally, but the refresh token it forgot is spendable at IAM until
+/// this call lands, and the only person who can act on that is the one reading
+/// the output. Silence here is how "I logged out" comes to mean nothing.
+///
+/// A brand with no IAM origin has no session to end.
+async fn revoke_all(brand: &str, removed: &[store::Removed]) {
+    let Some(origin) = super::paths::server_url_for_brand(brand) else {
+        return;
+    };
+    for r in removed {
+        let Some(rt) = r.refresh_token.as_deref() else {
+            continue;
+        };
+        if let Err(e) = oauth::revoke(origin, rt).await {
+            crate::warn(&format!(
+                "signed out of {brand} locally, but {} is still live at the server ({e}) — \
+                 revoke it from your account's sessions",
+                r.id
+            ));
+        }
+    }
 }
 
 /// Drop every stored provider credential (OpenAI/Anthropic/`hk-`) and reset the

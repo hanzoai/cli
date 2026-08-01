@@ -183,13 +183,29 @@ pub fn switch(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Id
     switch_in(&*token::vault()?, cfg, brand, sel)
 }
 
+/// What a removal DROPPED: the identity, and the refresh token that was filed for
+/// it. The store is local-only — it never talks to IAM — so it hands the
+/// credential back to the caller, who is the last thing able to tell the server
+/// to stop honouring it. A `None` is an identity that held no refresh token.
+#[derive(Debug)]
+pub struct Removed {
+    pub id: Identity,
+    pub refresh_token: Option<String>,
+}
+
+impl From<(Identity, Option<TokenSet>)> for Removed {
+    fn from((id, held): (Identity, Option<TokenSet>)) -> Self {
+        Removed { id, refresh_token: held.and_then(|t| t.refresh_token) }
+    }
+}
+
 /// Remove ONE identity: its keychain entry and its index row.
-pub fn remove(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Identity> {
+pub fn remove(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Removed> {
     remove_in(&*token::vault()?, cfg, brand, sel)
 }
 
 /// Remove EVERY identity for `brand` (`hanzo auth logout --all`).
-pub fn remove_all(cfg: &mut Config, brand: &str) -> Result<Vec<Identity>> {
+pub fn remove_all(cfg: &mut Config, brand: &str) -> Result<Vec<Removed>> {
     remove_all_in(&*token::vault()?, cfg, brand)
 }
 
@@ -316,7 +332,7 @@ pub(crate) fn add_in(
 /// window. Switching stays instant and never prompts while holding the lock.
 ///
 /// Correctness does not need it in the transaction, because THE KEYCHAIN IS NOT
-/// IN THE TRANSACTION: `token::store` and `token::delete` all run outside the
+/// IN THE TRANSACTION: `token::store` and `token::take` all run outside the
 /// lock, so an in-lock read would be TOCTOU anyway — a concurrent `logout` can
 /// delete the credential the instant this releases. The real guarantee is the
 /// in-lock re-resolve below, which catches a concurrent change and fails closed.
@@ -483,7 +499,7 @@ pub(crate) fn remove_in(
     cfg: &mut Config,
     brand: &str,
     sel: Option<Selector>,
-) -> Result<Identity> {
+) -> Result<Removed> {
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     // Resolve + de-index atomically against fresh state, THEN drop the secret.
     // Index-first is the crash-safe order: the index is the only reference, so an
@@ -510,11 +526,11 @@ pub(crate) fn remove_in(
         }
         Ok(target)
     })?;
-    token::delete(v, brand, &target)?;
-    Ok(target)
+    let held = token::take(v, brand, &target)?;
+    Ok((target, held).into())
 }
 
-pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Vec<Identity>> {
+pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Vec<Removed>> {
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     let ids = cfg.update(|c| {
         let ids = list(c, brand);
@@ -522,12 +538,14 @@ pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Res
         c.auth.active.remove(brand);
         Ok(ids)
     })?;
-    for id in &ids {
-        token::delete(v, brand, id)?;
+    let mut removed = Vec::with_capacity(ids.len());
+    for id in ids {
+        let held = token::take(v, brand, &id)?;
+        removed.push((id, held).into());
     }
     // Leave nothing addressable behind, including a pre-multi-identity blob.
     v.remove(token::legacy_key(brand))?;
-    Ok(ids)
+    Ok(removed)
 }
 
 // ---- pure index + selection logic ------------------------------------------
@@ -1335,7 +1353,7 @@ mod tests {
         let doors = [
             "token::load",
             "token::store",
-            "token::delete",
+            "token::take",
             "token::keyring",
             "token::vault",
             "active_token_in",

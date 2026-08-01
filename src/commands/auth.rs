@@ -29,8 +29,8 @@ pub async fn login(cfg: &mut Config, brand: &str, provider: Option<String>, toke
 
 /// `hanzo auth logout [IDENTITY] [--all]` — sign out one identity (default: the
 /// active one) or all of them, removing the credential.
-pub fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
-    iam::logout(cfg, brand, identity, all)
+pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
+    iam::logout(cfg, brand, identity, all).await
 }
 
 /// `hanzo auth show` — the active identity and org.

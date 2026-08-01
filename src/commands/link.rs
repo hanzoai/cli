@@ -16,10 +16,18 @@
 //! — so a link that ends stops answering in its own frame rather than leaving a
 //! viewer holding a half-open stream.
 //!
+//! A LINK THAT ENDS SAYS SO. The registry has no heartbeat, so "running" means
+//! only that nobody said otherwise — which makes every unrecorded exit an
+//! immortal row and a live shell indistinguishable from a corpse. Every way out
+//! of this command therefore lands on one `finish`, and finishing is a single
+//! act: the status and the withdrawn terminal URL travel in the same request, so
+//! there is no window where the console can frame a dead tunnel.
+//!
 //! WHICH SHELL is a parameter, not three code paths. `$SHELL` by default (your
 //! zsh), or name any command: `bash`, or `tmux` for a session that survives a
 //! disconnect and can be attached locally at the same time.
 
+use crate::commands::code::event::Status;
 use crate::commands::code::session::SessionClient;
 use crate::commands::code::{context, target};
 use crate::commands::{network, share};
@@ -117,7 +125,7 @@ pub async fn run(
     // cloud write must never be on the critical path of getting a shell up.
     {
         let (api, token) = (api.clone(), tok.access_token.clone());
-        let host = hostname();
+        let host = context::hostname();
         tokio::spawn(async move {
             let machine = context::Machine::capture().await;
             target::sync(&api, &token, &context::machine_id(), &host, &machine).await;
@@ -141,52 +149,157 @@ pub async fn run(
     .await?;
 
     // Register the session LAST, so the row never advertises a URL that is not
-    // yet answering.
+    // yet answering. The host is the SAME value the run-target above registered
+    // under, which is what lets the console file this shell under that machine
+    // instead of under nothing.
     let client = SessionClient::new(&api, &tok.access_token)?;
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    let host = hostname();
+    let host = context::hostname();
     let reg = client
-        .register_shell(&cmd[0], title.as_deref().unwrap_or(&cwd), &host, &cwd)
+        .register(&cmd[0], title.as_deref().unwrap_or(&cwd), &host, &cwd)
         .await?;
-    client.set_terminal(&reg.id, Some(&sh.url)).await?;
+
+    // From here the registry holds a LIVE row, so every way out — including the
+    // ones that are errors — has to travel through `finish`.
+    let out = serve(&client, &reg.id, &mut sh).await;
+    finish(&client, &reg.id, out).await
+}
+
+/// Publish the shell and hold it until the link ends.
+///
+/// One function owns every ending so that one caller can record it: the shell
+/// exiting, the tunnel dying under it, a publish that never landed, or the OS
+/// asking this process to stop. None of those is "still running", and until now
+/// only the first two returned at all.
+async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Result<()> {
+    client.publish_terminal(id, &sh.url).await?;
 
     println!("\n  {}  →  live\n", sh.url.green().bold());
-    println!("  {} {}", "session".dimmed(), reg.id.dimmed());
+    println!("  {} {}", "session".dimmed(), id.dimmed());
 
     // Hand the caller a prompt on the SAME session ttyd is serving, rather than
     // making them wait on a tunnel they cannot type into. Both ends attach to one
-    // tmux session, so what is typed here appears there and the reverse.
-    let attached = tokio::process::Command::new("tmux")
-        .args(["new", "-A", "-s", "hanzo"])
-        .status()
-        .await;
-    let out = match attached {
-        // tmux is absent or refused: fall back to holding the tunnel, which is the
-        // old behaviour rather than a failure.
-        Err(_) => sh.wait().await,
-        Ok(_) => Ok(()),
+    // tmux session, so what is typed here appears there and the reverse. tmux
+    // absent or refusing is not a failure — fall back to holding the tunnel,
+    // which is the old behaviour.
+    let held = async {
+        match tokio::process::Command::new("tmux")
+            .args(["new", "-A", "-s", "hanzo"])
+            .status()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(_) => sh.wait().await,
+        }
     };
-    // Withdraw the URL on the way out. Best effort: the tunnel is already gone, so
-    // a failure here costs a stale row, not a reachable shell.
-    let _ = client.set_terminal(&reg.id, None).await;
+
+    tokio::select! {
+        r = held => r,
+        // Ctrl-C, a closed terminal window or a `kill` ends a link as surely as
+        // exiting the shell does, and it is the ending that went unrecorded: the
+        // process died before it could speak and left the row "running" for good.
+        // Returning normally also lets ttyd and the tunnel die with their handles
+        // rather than being orphaned by a signal.
+        _ = stopped() => Ok(()),
+    }
+}
+
+/// Record how this link ended, then hand the ending back unchanged.
+///
+/// THE one place a linked session is closed. Withdrawing the terminal URL is not
+/// a second step here — ending the session is what withdraws it (see
+/// `SessionClient::set_status`), so the row cannot end up closed-but-watchable or
+/// watchable-but-closed. Best effort: cloud being unreachable costs a stale row,
+/// not a failed command.
+async fn finish(client: &SessionClient, id: &str, out: Result<()>) -> Result<()> {
+    let _ = client.set_status(id, Status::of(out.is_ok())).await;
     out
 }
 
-fn hostname() -> String {
-    std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".into())
+/// Resolve when the OS asks this process to stop.
+///
+/// Ctrl-C is the portable one, but a link far more often ends by SIGHUP — the
+/// terminal window closed — or SIGTERM from a logout or a supervisor. A signal we
+/// cannot register for is one that simply never arrives, which is not the same as
+/// being asked to stop, so it waits forever instead of reporting a false ending.
+#[cfg(unix)]
+async fn stopped() {
+    use tokio::signal::unix::{signal, SignalKind};
+    async fn on(kind: SignalKind) {
+        match signal(kind) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    }
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = on(SignalKind::hangup()) => {}
+        _ = on(SignalKind::terminate()) => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn stopped() {
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::code::testmock::MockCloud;
+    use anyhow::anyhow;
+
+    /// A link that ended cleanly is DONE — and saying so is what stops the row
+    /// from outliving the shell. The ending is one PATCH carrying both facts, so
+    /// the console can never see a finished session still advertising a terminal.
+    #[tokio::test]
+    async fn a_clean_exit_closes_the_session_and_withdraws_the_terminal() {
+        let mock = MockCloud::start().await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+        finish(&client, "sess_1", Ok(())).await.unwrap();
+
+        let reqs = mock.requests();
+        assert_eq!(reqs.len(), 1, "one act, one request");
+        assert_eq!(reqs[0].method, "PATCH");
+        assert_eq!(reqs[0].path, "/v1/agents/sessions/sess_1");
+        assert_eq!(reqs[0].json()["status"], "done");
+        assert_eq!(reqs[0].json()["terminal"], "");
+    }
+
+    /// The failing exits are the ones that used to leak: a tunnel that died, a
+    /// publish that never landed, a shell that could not start. They END the
+    /// session too — as an error — and the caller still gets its error back
+    /// unchanged, because recording an ending must not swallow one.
+    #[tokio::test]
+    async fn a_failed_link_ends_as_an_error_and_still_reports_it() {
+        let mock = MockCloud::start().await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+        let err = finish(&client, "sess_1", Err(anyhow!("share ended: exit 1")))
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("share ended"), "got: {err}");
+        let reqs = mock.requests();
+        assert_eq!(reqs[0].json()["status"], "error");
+        assert_eq!(reqs[0].json()["terminal"], "");
+    }
+
+    /// Cloud being unreachable costs a stale row, never a failed command: the
+    /// shell already ran, and refusing to return its result because a PATCH 403'd
+    /// would be reporting the wrong thing.
+    #[tokio::test]
+    async fn a_control_plane_that_refuses_the_close_does_not_fail_the_link() {
+        let mock = MockCloud::start_status(403).await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+        assert!(finish(&client, "sess_1", Ok(())).await.is_ok());
+    }
 
     // The default is tmux, not $SHELL: only a multiplexed session can be driven
     // from the local terminal AND the browser at once, which is what linking is for.
