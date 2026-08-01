@@ -52,10 +52,40 @@ The remaining gaps are elsewhere:
   PATH. It now calls THIS installer instead, so there is one download path and
   one asset-naming rule, not two.
 - releases are what installers actually resolve, and they are cut by the
-  `Release Matrix` workflow on a self-hosted runner. With no runner registered
-  the tag queues and no assets appear — so main can be current while every
-  install path still serves an old build. A version bump that never becomes a
-  release ships nothing.
+  `Release Matrix` workflow. A version bump that never becomes a release ships
+  nothing — main can be current while every install path still serves an old
+  build. That is not hypothetical: v1.9.13, v1.9.15, v1.9.16 and v1.9.17 were
+  all tagged while users were still resolving v1.9.12, so `hanzo code` was
+  unreachable for everyone who had not built from source.
+
+**CI runs on the FORGE. This is the whole story, and both halves bit us.**
+- `runs-on: hanzo-build-linux-amd64` is a **git.hanzo.ai** label, advertised by
+  the `git-runner-0..9` pool (28 labels, every one mapping to
+  `docker://catthehacker/ubuntu:act-24.04`). **github.com has zero runners** at
+  org or repo level — the ARC scale set that once served this label is gone,
+  down to the `autoscalingrunnersets` CRD.
+- The forge reads BOTH `.hanzo/workflows` and `.github/workflows`; GitHub reads
+  only `.github/workflows`. So a pipeline left under `.github/` runs **twice** —
+  once on the forge, and once on GitHub where nothing can pick it up and the job
+  queues in silence (v1.9.13's GitHub copy sat 17 hours). Everything CI lives in
+  `.hanzo/workflows/` so there is exactly one build per tag.
+- **`github.token` is a FORGE token.** Publishing a GitHub Release with it fails,
+  and fails LAST — after checkout, the tag check, Zig, cargo-zigbuild, the macOS
+  SDK, the test gate and all five cross-builds have passed. The only symptom is
+  `could not create or find release <tag>`. Use `secrets.GH_PAT` (org secret at
+  git.hanzo.ai/hanzoai; repo-level secrets are empty and org secrets inherit).
+- The split to keep straight: **BUILD is the forge's, DISTRIBUTION is GitHub's.**
+  hanzo.sh resolves `api.github.com/repos/hanzoai/cli/releases/latest`, so assets
+  must land on GitHub Releases no matter where they were compiled. That crossing
+  is the one place this pipeline needs a credential.
+- **Never `runs-on: ubuntu-latest`.** That label was deliberately removed from the
+  pool after an upstream workflow wedged all ten runners; a job requesting it
+  queues for its full 24h timeout and reports no error at all.
+- All five platform assets come from that ONE linux/amd64 docker pool.
+  `cargo-zigbuild` makes Zig the cross-linker, so no macOS or Windows runner
+  exists or is needed — a docker-only, linux-only pool ships linux-{amd64,arm64},
+  windows-amd64 and darwin-{amd64,arm64}. Anyone proposing per-arch runners to
+  "fix" the release has misread the problem.
 
 **Command surface** — resource-noun tree `hanzo <resource> <command>`, plus generated
 product subcommands `hanzo <product> …` (derived from the spec, below — the ONE
