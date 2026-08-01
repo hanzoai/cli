@@ -146,10 +146,10 @@ hand-maintained, and the client links no cloud code: it reads a spec, which is w
 does over the wire anyway.
 
 ```
-hanzoai/openapi hanzo.yaml ─┐                        (shape: bodies, query params)
-                            ├─ genspec ─→ spec/cloud.json ─→ genproduct ─→ generated.rs
-hanzoai/cloud@<tag>         ┘                        (existence: the release's route table)
-  openapi.yaml
+hanzoai/cloud@<tag>        ─┐  THE SOURCE: it enumerates, and carries the shapes
+  openapi.yaml              ├─ genspec ─→ spec/cloud.json ─→ genproduct ─→ generated.rs
+hanzoai/openapi hanzo.yaml ─┘  the SUPPLEMENT: shape it has not typed, and only
+                               where the document is not the authority
 ```
 
 Both halves are PINNED, in `.spec-lock`, and only `make spec` moves either. The
@@ -167,16 +167,18 @@ never be checked.
 - `cargo run --bin genproduct` — offline, deterministic: `spec/cloud.json` → the clap
   tree. `--check` compares instead of writing; `tests/spec_drift.rs` runs it, so
   `cargo test` is the drift gate.
-- **The registry refutes at product granularity.** Cloud's route table is a projection
-  of its live fiber router, so a product it serves ANY route under is a product it is
-  complete for — an authored operation missing from the table is dropped. A product the
-  table never mentions (the inference surface: `/v1/models`, `/v1/chat/completions`) is
-  answered at the edge, not by that router, so nothing is refuted. Multi-segment path
-  params come from the same reading: a fiber `*` arrives as `{wildcardN}`.
-- What still needs a HAND decision in `genproduct.rs`: `DENY` (noise, or a name a
-  local command owns), `REMAP` (machines+gpus → `compute`), `METHOD_PRIORITY`,
-  `VERBS`, and the path→verb fold. Those are POLICY — none of them may encode "the
-  server 404s this", which is the registry's job.
+- **The document is the authority at product granularity.** Cloud's route table is the
+  weave of what each app binary emits from its own router, so a product it serves ANY
+  route under is a product it is complete for — an authored operation missing from the
+  table is dropped. A product the table never mentions (the inference surface:
+  `/v1/models`, `/v1/chat/completions`) is answered at the edge, not by that router, so
+  nothing is refuted. Multi-segment path params come from the same reading: a fiber `*`
+  arrives as `{wildcardN}`.
+- What still needs a HAND decision in `genproduct.rs`: `DENY` (a name a local command
+  owns, or that means something else on a command line), `REMAP` (machines+gpus →
+  `compute`), `METHOD_PRIORITY`, `VERBS`, and the path→verb fold. Those are POLICY —
+  none of them may encode "the server 404s this", and that is now ENFORCED, not
+  promised (the curation law, below).
 - **A name may only be reserved by a command that EXISTS.** `EXCLUDE` used to sit
   beside `DENY` holding `billing`/`agent`/`deploy` under "local commands own these
   bare names" — a third statement of one fact (every entry was already in `DENY`,
@@ -206,21 +208,45 @@ never be checked.
 are not redundant readings of one truth; each owns a different question, and
 neither can answer the other's.
 
-- **The AUTHORED master decides EXISTENCE.** `genspec` ITERATES `hanzo.yaml` and
-  nothing else. The registry never ADDS an operation — it only removes. So a route
-  the server serves perfectly is invisible to `hanzo` until hanzoai/openapi names
-  it. This is the direction people get backwards, and it is the expensive one: it
-  fails silently, with a working server and a CLI that has never heard of it.
-- **The REGISTRY decides SERVED-NESS, per owned product.** Any route under
-  `/v1/<product>/` makes cloud the authority for that product, and an authored
-  operation its table lacks is dropped. Silence about a product refutes nothing.
-- **The authored half is the SHAPE source only while handlers stay untyped.** Most
-  of cloud is raw fiber handlers with no Go type to read a body schema off, so
-  bodies and query params come from the authored spec. As handlers become zip
-  typed ops their schemas appear in the registry document with prose lifted from
-  the doc comments, and the authored half shrinks. It is a shrinking dependency,
-  not a permanent one — `/v1/admin/plugins` is what the end state looks like:
-  cloud emits the full schema, and the authored spec exists to make it REACHABLE.
+- **The DOCUMENT decides EXISTENCE, and carries the SHAPE.** `genspec` ITERATES
+  cloud's `openapi.yaml`. Every operation it carries is an operation the CLI has,
+  with that document's own prose and its own request body and parameters — zip
+  reflects them off the live Go type, so they ARE the shape, not an approximation
+  of it. Before this inverted (1.9.20) the master iterated and the document could
+  only delete: **0 of 1899 operations came from the document**, 244 took a
+  hand-written request body while cloud published the reflected one, and 66 more
+  carried no body at all because the master happened to be silent about an
+  operation the document types. A refuter can only answer about operations someone
+  thought to author; that is the expensive direction, because it fails silently —
+  a working server and a CLI that has never heard of it.
+- **The MASTER supplements.** It is joined at the document's own addresses to fill
+  in a body or query parameter the document has not typed yet, and it is read on
+  its own ONLY where the document is not the authority: a product the table never
+  mentions, or a route it answers through a `/v1/<product>/*` catch-all. A door
+  says the request REACHES the mounted service and says nothing about what the
+  service serves there, so the master may enumerate behind it — that is where the
+  iam and bot subtrees come from. When those services publish their own documents
+  the door becomes a list and the master's job there ends. A shrinking dependency,
+  not a permanent one: **1384 of 1895 operations (73%) are the document's today**,
+  and `/v1/admin/plugins` is what the end state looks like — cloud emits the full
+  schema and nothing else is consulted.
+- **THE CURATION LAW.** A `DENY`/`REMAP` entry may name ONLY a product the document
+  carries; `genproduct` refuses to generate otherwise, naming the stale entries. A
+  name no document mentions asserts one thing — that the server does not serve it —
+  and that is `genspec`'s answer by construction, not a list in the client. Under
+  that law 1.9.20 struck nine names no document had ever carried (`console`
+  `search-docs` `index-docs` `chat-docs` `embed-status` `account-bridge`
+  `agent-bindings` `provisioning` `do`), two "redundant plurals" the document shows
+  to be separate surfaces (`/v1/bots` is bot RUNS while `/v1/bot` is bot nodes plus
+  a door; `/v1/networks` is the org's Zero Trust overlay while the local `network`
+  SELECTS one), and five relay-door products called enumeration artifacts, each
+  with its own prose and 1–11 served operations (`files` `upload` `download`
+  `indexers` `settings`). What survives states a fact about what a COMMAND LINE is:
+  a CLI is not a browser (`csrf`), the document that decides the commands is not
+  one of them (`openapi.json`), `completions` names shell completion here (the
+  operation is `hanzo chat completions`), a local command owns its bare name
+  (`code` `help` `billing` `engine`), and one noun cannot name two products
+  (`agent` vs `agents`).
 - **Refresh: `make spec`. Gate: `make spec-check`.** Both go through
   `scripts/generate.sh`, which is also what hanzoai/ci's `client:` lane calls, so
   a maintainer, the push gate and the release all run ONE derivation. `--check`

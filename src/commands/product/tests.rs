@@ -384,13 +384,24 @@ fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     );
 }
 
-/// CURATION: noise/internal products are denied, singular/plural dupes removed,
-/// and the compute plane is unified as ONE `compute` with machines/gpus absorbed.
+/// CURATION states facts about what a COMMAND LINE is, never about what the server
+/// serves — that is the document's answer, made in `genspec`. Each denial here
+/// survives because it would still hold if its route were served perfectly; the ones
+/// that did not survive are now commands.
 #[test]
-fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
-    for noise in ["console", "download", "upload", "files", "completions", "settings",
-                  "provisioning", "do", "csrf", "indexers", "search-docs"] {
-        assert!(!is_product(noise), "{noise} must be denied as a top-level command");
+fn curation_speaks_only_of_what_a_command_line_is() {
+    // A command line is not a browser, and the document that decides the commands
+    // is not one of them. `completions` names shell completion here — the operation
+    // is reachable where it reads correctly, as `hanzo chat completions`.
+    for client_fact in ["csrf", "openapi.json", "completions"] {
+        assert!(!is_product(client_fact), "{client_fact} must be denied as a top-level command");
+    }
+    // …and what the document carries is a command, whatever a table used to say.
+    // These were denied as "noise: sub-operations or enumeration artifacts", which
+    // described the SHAPE of what cloud publishes for them (a relay door), not what
+    // a person wants to type. Each has its own prose and 1–11 served operations.
+    for served in ["download", "upload", "files", "indexers", "settings"] {
+        assert!(is_product(served), "{served} is served and described — it must be a command");
     }
     // `gateway` exists exactly as far as the registry DESCRIBES it — no more, no
     // less. The 27-op authored subtree stayed refuted (dead routes never come
@@ -405,9 +416,16 @@ fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
         OPS.iter().any(|o| o.path == "/v1/models" && o.verb == "list"),
         "`hanzo models list` (GET /v1/models) must remain"
     );
+    // The "redundant plural" dedupe was a claim about the SERVER, and the document
+    // refutes it: `/v1/bots` is bot RUNS while `/v1/bot` is bot nodes plus a relay
+    // door, and `/v1/networks` is the org's Zero Trust overlay while the local
+    // `network` SELECTS one. Three surfaces, three names, no redundancy to remove.
+    // (`agent` is a different case and stays denied: `/v1/agent` and `/v1/agents`
+    // are two products on ONE noun, which is a collision, not a duplication.)
     for plural in ["networks", "bots"] {
-        assert!(!is_product(plural), "cloud plural {plural} must be deduped away (local wins)");
+        assert!(is_product(plural), "{plural} is its own served surface, not a dupe of a singular");
     }
+    assert!(is_product("bot"), "…and the singular stays exactly as served");
     // The hand `cluster` proxy is deleted, so the SERVED clusters product is
     // the one way to reach dedicated clusters.
     assert!(is_product("clusters"), "`hanzo clusters` is the cloud product, no local shadow");

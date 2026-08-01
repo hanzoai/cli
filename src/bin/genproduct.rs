@@ -23,10 +23,24 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
-/// Curation — products NOT emitted as top-level commands. POLICY ONLY: whether a
-/// route EXISTS is decided upstream by `genspec` against cloud's live route table,
-/// so nothing here may encode "the server 404s this". Every entry states a choice
-/// that would still hold if the route were served perfectly.
+/// Curation — products NOT emitted as top-level commands. POLICY ONLY, and the
+/// test of an entry is ONE question: would it still hold if the route were served
+/// perfectly? Each one below answers yes, because each states a fact about what a
+/// COMMAND LINE is — never a fact about what the server does. Whether a route
+/// exists is the document's answer, made upstream by `genspec` against cloud's own
+/// API document.
+///
+/// That is now enforced rather than promised: THE CURATION LAW (search that phrase
+/// in `main`) refuses to generate at all while any entry names a product
+/// `spec/cloud.json` does not carry, so an entry cannot decay into "the server 404s
+/// this" without failing the build. Under it went nine names no document has ever
+/// carried (`console` `search-docs` `index-docs` `chat-docs` `embed-status`
+/// `account-bridge` `agent-bindings` `provisioning` `do`), two "redundant plurals"
+/// the document shows to be separate surfaces (`/v1/bots` is bot RUNS while
+/// `/v1/bot` is bot nodes plus a door; `/v1/networks` is the org's Zero Trust
+/// overlay while the local `network` SELECTS a network), and five relay-door
+/// products called enumeration artifacts, each with its own prose and 1–11 served
+/// operations (`files` `upload` `download` `indexers` `settings`).
 ///
 /// `EXCLUDE` used to sit beside this list holding `billing`/`agent`/`deploy` with
 /// the note "local commands own these bare names". It was a THIRD statement of one
@@ -37,20 +51,14 @@ const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// list reserved names for commands that no longer existed and 21 served routes —
 /// the whole `/v1/deploy` control plane behind the Hanzo CD console — reached no one.
 const DENY: &[&str] = &[
-    // Noise: sub-operations, UI/config surfaces, or enumeration artifacts — not
-    // first-class products a person reaches for.
-    "download", "upload", "files", "completions", "console", "settings",
-    "search-docs", "index-docs", "chat-docs", "indexers", "embed-status",
-    "csrf", "openapi.json", "account-bridge", "agent-bindings",
-    // Singular/plural dedupe: the LOCAL hand-written command owns `network`
-    // (network selection), and `bot` is the canonical cloud product — so the
-    // redundant cloud PLURALS are dropped. `clusters` is served again: the hand
-    // `cluster` proxy is deleted (it discarded its own name argument).
-    "networks", "bots",
-    // Internal control planes, not user commands: `provisioning` is the internal
-    // provisioner (you provision via the concrete `hanzo vector|kv|s3 create`),
-    // and `do` is the DigitalOcean PROVIDER backend.
-    "provisioning", "do",
+    // A command line is not a browser: `/v1/csrf` mints the anti-CSRF token a
+    // browser echoes back with a form POST, and nothing a person types has a form.
+    "csrf",
+    // The document that decides the commands is not one of them.
+    "openapi.json",
+    // In a command line `completions` names SHELL completion. The operation is
+    // already reachable where it reads correctly: `hanzo chat completions`.
+    "completions",
     // A LOCAL hand-written command owns these names, whatever the server serves:
     // `code` is the AI coding session, `billing` is the prepaid-wallet wrapper with
     // its own UX, and `help` is clap's own builtin — a generated `help` product
@@ -78,12 +86,6 @@ const DENY: &[&str] = &[
     // this entry goes when that lands. It is NOT here because a local command owns
     // the name: no local `agent` command exists.
     "agent",
-    // `gateway` USED TO BE HERE, with a comment noting its whole `/v1/gateway/*`
-    // subtree was unmounted. That was a fact about the server kept in a list in the
-    // client — exactly the drift this file no longer owns. `genspec` refutes those
-    // 27 operations against the live route table, so the entry is gone and the
-    // curation test still passes. The real inference surface is TOP-LEVEL and
-    // unaffected: `hanzo models`, `hanzo chat completions`, `hanzo embeddings`.
 ];
 /// Curation — absorb a product's ops UNDER another command as a sub-namespace, so
 /// the compute plane is ONE `hanzo compute` (machines + gpus + regions/sizes)
@@ -478,6 +480,29 @@ fn main() {
     // group from a leaf. It is the SERVED surface, so a sibling route that cloud
     // does not answer can no longer shape a command that it does.
     let all: BTreeSet<String> = paths.keys().filter(|p| p.starts_with("/v1/")).cloned().collect();
+
+    // THE CURATION LAW: the tables may speak ONLY of products the document carries.
+    // A name the spec does not mention states one thing and one thing only — that
+    // the server does not serve it — and that is `genspec`'s answer against cloud's
+    // own API document, arrived at by construction, not a list kept here. Without
+    // this, every entry decays into the "this one 404s" knowledge deleting it cost
+    // a release.
+    let carried: BTreeSet<&str> = all.iter().filter_map(|p| segs(p).get(1).copied()).collect();
+    let stale: Vec<&str> = DENY
+        .iter()
+        .chain(REMAP.iter().map(|(from, _)| from))
+        .copied()
+        .filter(|n| !carried.contains(n))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "curation names {} product(s) spec/cloud.json does not carry: {}\n\n\
+         A curation entry is a choice about what a COMMAND is, and must still hold if the route were \
+         served perfectly. A name no document mentions asserts only that the server does not serve it \
+         — which `genspec` decides against cloud's own API document. Delete the entry.",
+        stale.len(),
+        stale.join(" ")
+    );
 
     let mut raw: BTreeMap<(String, Vec<String>, String), Vec<Op>> = BTreeMap::new();
     for (path, item) in paths {
