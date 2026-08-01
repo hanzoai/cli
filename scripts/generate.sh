@@ -13,9 +13,11 @@
 #               sha256, into the spec's provenance — so `spec/cloud.json` can
 #               always answer "which release am I?".
 #
-# One optional input: CHECK=1 re-asks instead of rewriting (exit 1 on any delta).
-# That is the same binary and the same derivation, which is what keeps the gate
-# from testing a different generation than the one that writes the file.
+# One optional argument: `--check` re-asks instead of rewriting (exit 1 on any
+# delta). Same binary, same derivation — which is what keeps the gate from
+# testing a different generation than the one that writes the file. It is an
+# argument and not an env var because that is the spelling every other client
+# repo's call site already uses, and one spelling of one idea is the point.
 #
 # The authored master (hanzoai/openapi `hanzo.yaml`) is still the only source of
 # request-body and query SHAPE for cloud's untyped handlers, so it is cloned when
@@ -28,7 +30,9 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
-: "${SPEC:?SPEC must name the cloud API document (hanzoai/ci's client: lane sets it)}"
+# An apostrophe inside ${VAR:?word} opens a quote the parser never closes, and
+# the whole script then fails to parse rather than this line failing to run.
+[ -n "${SPEC:-}" ] || { echo "generate.sh: SPEC must name the cloud API document; the client lane in hanzoai/ci sets it" >&2; exit 1; }
 
 MASTER="${HANZO_OPENAPI_DIR:-$PWD/.openapi}"
 if [ ! -d "$MASTER/.git" ]; then
@@ -50,7 +54,7 @@ fi
 LOCK="$PWD/.spec-lock"
 PINNED=$(sed -n 's/^master=//p' "$LOCK" 2>/dev/null || true)
 
-if [ "${CHECK:-0}" = "1" ]; then
+if [ "${1:-}" = "--check" ]; then
   [ -n "$PINNED" ] || { echo "generate.sh: .spec-lock records no master= — run 'make spec' to pin one" >&2; exit 1; }
   git -C "$MASTER" cat-file -e "$PINNED^{commit}" 2>/dev/null || git -C "$MASTER" fetch --quiet origin "$PINNED"
   git -C "$MASTER" checkout --quiet --detach "$PINNED"
