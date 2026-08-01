@@ -42,7 +42,7 @@ spec: ## Regenerate spec/cloud.json + the product tree from the document in .spe
 	@$(fetch_spec); ./scripts/generate.sh
 
 spec-check: ## Refuse a capture that is no longer the projection of its own document. The D1 gate.
-	@$(fetch_spec); CHECK=1 ./scripts/generate.sh
+	@$(fetch_spec); ./scripts/generate.sh --check
 
 verify: ## Refuse a capture whose commands the LIVE server does not serve. The release gate.
 	@cargo run --quiet --features genspec --bin genspec --locked -- --verify
