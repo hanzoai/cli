@@ -73,8 +73,10 @@ fn entry(out: &mut String, name: &str, about: &str) {
 }
 
 /// Render the page. Composed live so the GROUPS section is always exactly the
-/// commands the parser accepts.
-pub fn page() -> String {
+/// commands the parser accepts — `cmd` is the hand-written derive tree, the same
+/// value `product::augment` is given, so `product::catalog` drops exactly the
+/// generated products augmentation drops.
+pub fn page(cmd: &clap::Command) -> String {
     let mut o = String::with_capacity(16 * 1024);
 
     o.push_str(&format!("{}\n", b("NAME")));
@@ -121,7 +123,7 @@ pub fn page() -> String {
     // does not care which half of the binary answers.
     let mut groups: Vec<(&str, String)> =
         GROUPS.iter().map(|(n, a)| (*n, (*a).to_string())).collect();
-    for (name, about) in product::catalog() {
+    for (name, about) in product::catalog(cmd) {
         groups.push((name, about));
     }
     groups.sort_by_key(|(n, _)| *n);

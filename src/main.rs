@@ -612,7 +612,7 @@ async fn main() -> Result<()> {
     {
         let argv: Vec<String> = std::env::args().skip(1).collect();
         if argv.is_empty() || argv == ["--help"] || argv == ["help"] {
-            print!("{}", commands::man::page());
+            print!("{}", commands::man::page(&Cli::command()));
             return Ok(());
         }
     }

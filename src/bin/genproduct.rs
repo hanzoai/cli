@@ -23,12 +23,19 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
-/// Local commands own these bare names; the generated tree never claims them.
-const EXCLUDE: [&str; 3] = ["billing", "agent", "deploy"];
 /// Curation — products NOT emitted as top-level commands. POLICY ONLY: whether a
 /// route EXISTS is decided upstream by `genspec` against cloud's live route table,
 /// so nothing here may encode "the server 404s this". Every entry states a choice
 /// that would still hold if the route were served perfectly.
+///
+/// `EXCLUDE` used to sit beside this list holding `billing`/`agent`/`deploy` with
+/// the note "local commands own these bare names". It was a THIRD statement of one
+/// fact — every entry was already in DENY, and `product::augment` reads the real
+/// answer off the parser (`cmd.get_subcommands()`) rather than off any list. Two of
+/// its three names had ALSO stopped being true: `agent` and `deploy` were deleted as
+/// top-level commands (`main.rs::old_top_level_verbs_are_removed` asserts it), so the
+/// list reserved names for commands that no longer existed and 21 served routes —
+/// the whole `/v1/deploy` control plane behind the Hanzo CD console — reached no one.
 const DENY: &[&str] = &[
     // Noise: sub-operations, UI/config surfaces, or enumeration artifacts — not
     // first-class products a person reaches for.
@@ -45,16 +52,32 @@ const DENY: &[&str] = &[
     // and `do` is the DigitalOcean PROVIDER backend.
     "provisioning", "do",
     // A LOCAL hand-written command owns these names, whatever the server serves:
-    // `code` is the AI coding session, `agent`/`billing`/`deploy` are wrappers
-    // with their own UX, and `help` is clap's own builtin — a generated `help`
-    // product panics the parser with a duplicate command. These became reachable
-    // when genspec started trusting registry-described ops for existence; the
-    // choice that a local command wins its bare name predates that and stands.
-    "code", "help", "agent", "billing", "deploy",
+    // `code` is the AI coding session, `billing` is the prepaid-wallet wrapper with
+    // its own UX, and `help` is clap's own builtin — a generated `help` product
+    // panics the parser with a duplicate command.
+    //
+    // Each of these SHADOWS served operations, and the shadow is a stated gap, not
+    // a claim that the routes are absent: `hanzo billing` reaches 2 of the 22 live
+    // `/v1/billing/*` routes, and `hanzo code` reaches none of the 6 live
+    // `/v1/code/*` ones. Closing a shadow means the local command ABSORBS the
+    // product's operations — a UX decision per command, not a list edit here.
+    "code", "help", "billing",
     // `engine` is the LOCAL `hanzo engine serve <model>` (launches hanzo-engine on
     // this machine). The cloud engine product manages engine CLUSTERS; when its
-    // revival lands it needs its own noun or a nested home, not this name.
+    // revival lands it needs its own noun or a nested home, not this name. It has
+    // revived — `/v1/engine/{model,models,status,system}` are served — so this is a
+    // shadow of 4 operations on the same terms as `billing` above.
     "engine",
+    // Singular/plural: `/v1/agent` (one tool-calling round + its conversation log,
+    // registered by github.com/hanzoai/agent) and `/v1/agents` (the agent registry,
+    // sessions and targets) are two products sharing one noun. Mounting both would
+    // ship `hanzo agent` beside `hanzo agents`, which is the collision the house
+    // rule forbids, so the plural — the larger, cloud-owned surface — keeps the
+    // name. The fix is a route move in hanzoai/agent (`/v1/agent` →
+    // `/v1/agents/run`, `/v1/agent/{presets,conversations}` → `/v1/agents/…`), and
+    // this entry goes when that lands. It is NOT here because a local command owns
+    // the name: no local `agent` command exists.
+    "agent",
     // `gateway` USED TO BE HERE, with a comment noting its whole `/v1/gateway/*`
     // subtree was unmounted. That was a fact about the server kept in a list in the
     // client — exactly the drift this file no longer owns. `genspec` refutes those
@@ -464,7 +487,7 @@ fn main() {
             continue;
         }
         let product0 = segs(path)[1];
-        if EXCLUDE.contains(&product0) || DENY.contains(&product0) || is_wild(product0) {
+        if DENY.contains(&product0) || is_wild(product0) {
             continue;
         }
         for (m, op) in item.as_object().into_iter().flatten() {
