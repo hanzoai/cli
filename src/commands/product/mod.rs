@@ -257,16 +257,17 @@ fn leaf(op: &'static Op) -> Command {
 /// a control, because the clap id is namespaced and `--data` is added only when
 /// no field already claims that long.
 fn leaf_named(name: &'static str, op: &'static Op) -> Command {
-    // The prose IS the help when the op has any — the same sentence the OpenAPI
-    // description, the MCP tool and the SDK docstring carry, because all four are
-    // projections of one doc comment. The route stays visible in long help.
-    let mut c = if op.sum.is_empty() {
-        Command::new(name).about(format!("{} {}", op.method, op.path))
-    } else {
-        Command::new(name)
-            .about(op.sum)
-            .long_about(format!("{}\n\n{} {}", op.sum, op.method, op.path))
-    };
+    // The prose IS the help — the same sentence the OpenAPI description, the MCP
+    // tool and the SDK docstring carry, because all four are projections of one Go
+    // doc comment. There is no second rendering: `genproduct` refuses to emit an op
+    // with no summary, so an undescribed op never reaches a `Command`. A projection
+    // cannot repair its source, and every branch that handles "the source didn't
+    // say" hides a defect at the one place it could be fixed. The route stays in
+    // LONG help — reference detail, and what a user quotes when filing a bug —
+    // never in prose's place.
+    let mut c = Command::new(name)
+        .about(op.sum)
+        .long_about(format!("{}\n\n{} {}", op.sum, op.method, op.path));
     for &p in op.params {
         c = c.arg(Arg::new(p).required(true).help(format!("path parameter {{{p}}}")));
     }

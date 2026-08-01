@@ -58,6 +58,45 @@ fn generated_data_carries_no_host_url_or_auth() {
     }
 }
 
+// ---- prose is not optional ---------------------------------------------------
+
+/// Every command states what it does for the person running it, and the route is
+/// never allowed to stand in for that sentence.
+///
+/// `genproduct` already refuses to emit an undescribed op, so this is the pin
+/// that keeps the refusal honest against a hand-edited tree: the two together
+/// mean an empty `sum` cannot exist, which is why `leaf_named` has no branch for
+/// one. The remedy for a failure here is never in this repo — the sentence is the
+/// Go doc comment on the handler in hanzoai/cloud, lifted by zipdoc into the
+/// published route table and joined in by `genspec`.
+#[test]
+fn every_command_says_what_it_does() {
+    let bare: Vec<String> = OPS
+        .iter()
+        .filter(|o| o.sum.trim().is_empty())
+        .map(|o| format!("  hanzo {} … {} <- {} {}", o.product, o.verb, o.method, o.path))
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "{} command(s) have no prose:\n{}\nWrite the Go doc comment in hanzoai/cloud, \
+         `make openapi`, then re-run genspec + genproduct.",
+        bare.len(),
+        bare.join("\n"),
+    );
+    // …and it is prose, not the implementation detail wearing prose's clothes. A
+    // help line that IS the route is the exact failure this rules out; a summary
+    // may still mention a route inside a sentence.
+    for o in OPS {
+        assert_ne!(
+            o.sum.trim(),
+            format!("{} {}", o.method, o.path),
+            "`hanzo {} … {}` prints its route where its description belongs",
+            o.product,
+            o.verb
+        );
+    }
+}
+
 // ---- the fold is total: every op fills to a concrete path --------------------
 
 /// The generator and `fill_path` must agree on which templated segment is the
@@ -297,23 +336,43 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
     assert!(query.contains(&"product=gateway".to_string()), "{query:?}");
     assert!(query.contains(&"limit=50".to_string()), "{query:?}");
-    // The required query param is enforced.
-    assert!(augment(Command::new("hanzo"))
-        .try_get_matches_from(["hanzo", "o11y", "logs"])
-        .is_err());
+    // Required-ness rides through to clap. Which PARAMETERS are required is the
+    // spec's answer, not this test's, so it takes whichever op carries a required
+    // query flag rather than pinning one — pinning is how a test starts asserting
+    // a snapshot instead of a property.
+    let req = OPS
+        .iter()
+        .find(|o| o.params.is_empty() && o.fields.iter().any(|f| f.query && f.required))
+        .expect("some op takes a required query parameter");
+    let mut argv = vec!["hanzo".to_string(), req.product.to_string()];
+    argv.extend(req.nodes.iter().map(|n| n.to_string()));
+    argv.push(req.verb.to_string());
+    assert!(
+        augment(Command::new("hanzo")).try_get_matches_from(&argv).is_err(),
+        "`{}` must refuse to run without its required query flag",
+        argv.join(" ")
+    );
 }
 
-/// A friendly top-level alias dispatches to the SAME generated op (`hanzo logs`
-/// == `hanzo o11y logs`), no duplicated logic.
+/// A friendly top-level alias mounts only while NO generated product claims its
+/// name — the served surface owns its own nouns, and the curated table yields
+/// rather than shadowing it. Cloud now serves `/v1/logs/*` as a product of its
+/// own, so `logs` is the product; the alias to `o11y logs` stands down on its own
+/// and reappears if cloud ever stops serving that noun.
 #[test]
-fn a_friendly_alias_dispatches_to_the_same_generated_op() {
-    let m = matches_of(&["hanzo", "logs", "--product", "gateway"]);
-    let Some(Resolved::Leaf { op, query, .. }) = resolve(&m) else { panic!("alias leaf") };
+fn a_generated_product_wins_its_name_from_a_friendly_alias() {
+    assert!(is_product("logs"), "cloud serves /v1/logs/* — `logs` is a product");
+    let tree = augment(Command::new("hanzo"));
+    let logs = tree.get_subcommands().find(|s| s.get_name() == "logs").expect("`hanzo logs` exists");
+    assert!(
+        logs.get_subcommands().any(|s| s.get_name() == "query"),
+        "`hanzo logs` is the generated product, not the o11y alias leaf"
+    );
+    // The o11y op the alias pointed at is still reachable under its own product —
+    // one capability, one place, never duplicated to keep a nickname alive.
+    let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
+    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
-    assert!(query.contains(&"product=gateway".to_string()));
-    let m2 = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
-    let Some(Resolved::Leaf { op: op2, .. }) = resolve(&m2) else { panic!() };
-    assert_eq!(op.path, op2.path, "the alias and the product path resolve to one op");
 }
 
 /// CURATION: noise/internal products are denied, singular/plural dupes removed,
@@ -328,14 +387,10 @@ fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
     // less. The 27-op authored subtree stayed refuted (dead routes never come
     // back), and the one route cloud genuinely serves and documents
     // (/v1/gateway/config, typed 2026-07-30) came in through the registry side of
-    // genspec. Every gateway op therefore carries prose, because being described
-    // is WHY it exists — an undescribed gateway op here would mean the dead
-    // subtree leaked back through the authored master.
+    // genspec. (That every gateway op carries prose was once asserted here; it is
+    // now the fleet-wide invariant `every_command_says_what_it_does` enforces.)
     let gw: Vec<_> = OPS.iter().filter(|o| o.path.starts_with("/v1/gateway")).collect();
     assert!(!gw.is_empty(), "the served /v1/gateway/config must surface");
-    for o in &gw {
-        assert!(!o.sum.is_empty(), "{} {} is undescribed — only registry-described gateway ops may exist", o.method, o.path);
-    }
     // The real gateway surface stays reachable at its TOP-LEVEL served paths.
     assert!(
         OPS.iter().any(|o| o.path == "/v1/models" && o.verb == "list"),
@@ -360,15 +415,15 @@ fn curation_denies_noise_dedupes_plurals_and_unifies_compute() {
 /// the literal `org`, not the `orgs/{org}` scope pair, so it stays a positional).
 #[test]
 fn a_deep_nested_leaf_resolves_and_fills_in_order() {
-    let m = matches_of(&["hanzo", "commerce", "store", "listing", "get", "store_1", "sku_9"]);
+    let m = matches_of(&["hanzo", "platform", "projects", "apps", "get", "site", "web"]);
     let Some(Resolved::Leaf { op, values, .. }) = resolve(&m) else {
         panic!("expected a leaf");
     };
-    assert_eq!(op.path, "/v1/commerce/store/{storeid}/listing/{key}");
-    assert_eq!(values, vec!["store_1", "sku_9"]);
+    assert_eq!(op.path, "/v1/platform/projects/{project}/apps/{app}");
+    assert_eq!(values, vec!["site", "web"]);
     assert_eq!(
         fill_path(op.path, op.rest, Some("acme"), &values).unwrap(),
-        "/v1/commerce/store/store_1/listing/sku_9"
+        "/v1/platform/projects/site/apps/web"
     );
 }
 
@@ -416,6 +471,7 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
         r#"DELETE ["secrets"] rm"#.to_string(),
         r#"GET ["secrets"] get"#.to_string(),
         r#"GET ["secrets"] list"#.to_string(),
+        r#"GET [] config"#.to_string(),
         r#"GET [] health"#.to_string(),
         r#"POST ["auth"] login"#.to_string(),
         r#"POST ["secrets"] create"#.to_string(),

@@ -576,6 +576,37 @@ fn main() {
         assert!(seen_coord.insert(c), "DUP COORD: {} {:?} {} <- {}", o.product, o.nodes, o.verb, o.path);
     }
 
+    // Guard: prose is not optional, and there is no substitute for it. A command
+    // whose help line would be blank is a MISSING GO DOC COMMENT on the handler in
+    // hanzoai/cloud — zipdoc lifts that comment into the published route table,
+    // genspec joins it in, and this generator only carries it. Printing something
+    // else (the route, the verb, a manufactured phrase) would convert a fixable
+    // gap at the source into a shipped help line that reads deliberate, and nobody
+    // files a bug against a design choice. So the generator REFUSES to emit the
+    // command at all: the gap stays visible at the one place it can be closed.
+    let bare: Vec<String> = coords
+        .iter()
+        .filter(|o| o.sum.trim().is_empty())
+        .map(|o| {
+            let mut c = vec![o.product.clone()];
+            c.extend(o.nodes.iter().cloned());
+            c.push(o.verb.clone());
+            format!("  hanzo {}\n      <- {} {}", c.join(" "), o.method, o.path)
+        })
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "{} operation(s) in spec/cloud.json carry no summary, so these commands would have \
+         nothing to say:\n{}\n\n\
+         Every command states what it does for the person running it. That sentence is the Go \
+         doc comment on the handler in hanzoai/cloud: zipdoc lifts it into the published route \
+         table, genspec joins it into spec/cloud.json, and genproduct carries it here. NOTHING \
+         IN THIS REPO CAN SUPPLY IT — write the doc comment where the handler lives, run `make \
+         openapi` in hanzoai/cloud, then re-run `cargo run --features genspec --bin genspec`.",
+        bare.len(),
+        bare.join("\n"),
+    );
+
     // ---- emit ----
     // `spec/cloud.json` is the ONLY source: every cloud capability is a real
     // `hanzo <product> <resource> <verb>`. A product the spec does not carry —
