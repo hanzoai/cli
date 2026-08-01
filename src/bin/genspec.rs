@@ -13,11 +13,22 @@
 //!     route that is not mounted cannot appear in it. Same move as zip's
 //!     `CommandsFromSpec`: ask a running service what it can do.
 //!
-//!     `--registry <path>` reads a captured table instead — the drop the binary
-//!     publishes into hanzoai/openapi (`generated/hanzo.json`, written by
-//!     `make openapi OPENAPI_DIR=…`) is the pinned, offline form. Prefer the wire:
-//!     the drop is only as current as the last run of that target, and today it is
-//!     a strict SUBSET of what api.hanzo.ai answers (26 products short).
+//!     `--registry <url|path>` reads somewhere else, and may be given MORE THAN
+//!     ONCE: the readings are unioned, first one wins every conflict, and every
+//!     source is named in the spec's `info.description`. That is the rollout case
+//!     — mid-deploy a route lives in cloud `main` before api.hanzo.ai answers it,
+//!     so `--registry <wire> --registry <cloud-main drop>` keeps it from being
+//!     refuted, while the wire stays first and stays on the record.
+//!     A COMMITTED spec must have the wire among its sources (`tests/spec_drift.rs`
+//!     asserts it): a table captured to a local file cannot refute what the live
+//!     one would, and cannot carry prose the live one has since gained. That is
+//!     how 149 phantom `/v1/cloud/*` commands survived, and how 41 platform
+//!     commands came to print their HTTP route where their description belonged.
+//!     A lone `--registry <path>` is for experiments and air-gapped runs; the
+//!     pinned drop hanzoai/openapi carries (`generated/hanzo.json`, written by
+//!     `make openapi OPENAPI_DIR=…`) is only as current as the last run of that
+//!     target, and today it is a strict SUBSET of what api.hanzo.ai answers
+//!     (26 products short).
 //!   * WHAT IT TAKES — the authored master `hanzo.yaml` from hanzoai/openapi
 //!     (itself merged from the per-service specs by that repo's `merge.py`).
 //!     It is the only source of request-body and query-parameter SHAPE, because
@@ -249,14 +260,14 @@ fn reachable(paths: &Map<String, Value>, schemas: &Map<String, Value>) -> BTreeS
 }
 
 struct Args {
-    registry: String,
+    registry: Vec<String>,
     openapi: PathBuf,
     out: PathBuf,
 }
 
 fn args() -> Args {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut registry = std::env::var("HANZO_REGISTRY").ok();
+    let mut registry: Vec<String> = std::env::var("HANZO_REGISTRY").ok().into_iter().collect();
     let mut openapi = std::env::var("HANZO_OPENAPI_DIR").map(PathBuf::from).unwrap_or_else(|_| {
         manifest.parent().map(|p| p.join("openapi")).unwrap_or_else(|| PathBuf::from("../openapi"))
     });
@@ -267,35 +278,106 @@ fn args() -> Args {
     while i < argv.len() {
         let val = || argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{} needs a value", argv[i]));
         match argv[i].as_str() {
-            "--registry" => registry = Some(val()),
+            "--registry" => registry.push(val()),
             "--openapi" => openapi = PathBuf::from(val()),
             "--out" => out = PathBuf::from(val()),
-            other => panic!("usage: genspec [--registry <url|path>] [--openapi <dir>] [--out <path>]\nunknown: {other}"),
+            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>]\nunknown: {other}"),
         }
         i += 2;
     }
-    let registry = registry.unwrap_or_else(|| DEFAULT_REGISTRY.to_string());
+    if registry.is_empty() {
+        registry.push(DEFAULT_REGISTRY.to_string());
+    }
     Args { registry, openapi, out }
+}
+
+/// Read one route table: a URL is the normal case (the registry answers for
+/// itself), a path is a checkout or an air-gapped run against a captured table.
+async fn read_registry(src: &str) -> Value {
+    if src.starts_with("http") {
+        let body = reqwest::get(src)
+            .await
+            .and_then(|r| r.error_for_status())
+            .unwrap_or_else(|e| panic!("GET {src}: {e}"))
+            .text()
+            .await
+            .expect("read registry");
+        serde_json::from_str(&body).unwrap_or_else(|e| panic!("{src} is not the JSON route table: {e}"))
+    } else {
+        serde_json::from_str(&std::fs::read_to_string(src).expect("read registry")).expect("parse registry")
+    }
+}
+
+/// Union of several readings of ONE router at different commits — the shape the
+/// rollout case actually has. During a deploy a route can live in cloud `main`
+/// and not yet on api.hanzo.ai; refutation needs a product owned AND no matching
+/// route, so a union treats a route as served if EITHER reading has it, which is
+/// the truth mid-rollout.
+///
+/// The FIRST reading wins every conflict: later ones may only ADD. Pass the wire
+/// first and an extra reading cannot quietly rewrite what production says. This
+/// is why a union is expressed as several `--registry` values rather than one
+/// pre-merged file: the sources stay named, and `info.description` records them —
+/// a spec that erased the wire from its own provenance is what let 41 undescribed
+/// operations ship their HTTP route as their help line.
+fn union(docs: Vec<Value>) -> Value {
+    let mut out = Map::new();
+    let mut merge = |key: &str, doc: &Value, nested: bool| {
+        let src = match nested {
+            true => doc.get("components").and_then(|c| c.get(key)),
+            false => doc.get(key),
+        };
+        let Some(src) = src.and_then(Value::as_object) else { return };
+        let dst = out.entry(key.to_string()).or_insert_with(|| Value::Object(Map::new()));
+        let dst = dst.as_object_mut().expect("object");
+        for (k, v) in src {
+            match (dst.get_mut(k), v.as_object()) {
+                // Same path key in two readings: keep the earlier reading's
+                // methods and add only the ones it did not have.
+                (Some(have), Some(add)) if have.is_object() => {
+                    let have = have.as_object_mut().expect("object");
+                    for (m, op) in add {
+                        have.entry(m.clone()).or_insert_with(|| op.clone());
+                    }
+                }
+                (Some(_), _) => {}
+                (None, _) => {
+                    dst.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    };
+    for doc in &docs {
+        merge("paths", doc, false);
+        merge("schemas", doc, true);
+    }
+    let paths = out.remove("paths").unwrap_or_else(|| Value::Object(Map::new()));
+    let schemas = out.remove("schemas").unwrap_or_else(|| Value::Object(Map::new()));
+    // `tags` is a LIST keyed by name; first description wins, same rule.
+    let mut tags: Map<String, Value> = Map::new();
+    for doc in &docs {
+        for t in doc.get("tags").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(n) = t.get("name").and_then(Value::as_str) {
+                tags.entry(n.to_string()).or_insert_with(|| t.clone());
+            }
+        }
+    }
+    json!({
+        "paths": paths,
+        "components": {"schemas": schemas},
+        "tags": tags.into_values().collect::<Vec<_>>(),
+    })
 }
 
 #[tokio::main]
 async fn main() {
     let a = args();
 
-    // A URL is the normal case — the registry answers for itself. A path is for
-    // a checkout or an air-gapped run against a captured table.
-    let registry: Value = if a.registry.starts_with("http") {
-        let body = reqwest::get(&a.registry)
-            .await
-            .and_then(|r| r.error_for_status())
-            .unwrap_or_else(|e| panic!("GET {}: {e}", a.registry))
-            .text()
-            .await
-            .expect("read registry");
-        serde_json::from_str(&body).unwrap_or_else(|e| panic!("{} is not the JSON route table: {e}", a.registry))
-    } else {
-        serde_json::from_str(&std::fs::read_to_string(&a.registry).expect("read registry")).expect("parse registry")
-    };
+    let mut docs = Vec::new();
+    for src in &a.registry {
+        docs.push(read_registry(src).await);
+    }
+    let registry = if docs.len() == 1 { docs.remove(0) } else { union(docs) };
     let reg = Registry::read(&registry);
 
     let master_path = a.openapi.join("hanzo.yaml");
@@ -402,7 +484,7 @@ async fn main() {
                  from hanzoai/openapi hanzo.yaml, keeping only what the live cloud route table at \
                  {} does not refute. Never hand-edited: `genproduct` derives src/commands/product/\
                  generated.rs from this and nothing else.",
-                a.registry
+                a.registry.join(" ∪ ")
             ),
         },
         "paths": paths,

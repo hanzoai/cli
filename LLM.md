@@ -160,19 +160,56 @@ neither can answer the other's.
   fails the build).
 
   ```
-  cargo run --features genspec --bin genspec -- \
-      --openapi ../openapi --registry <route-table.json>
+  cargo run --features genspec --bin genspec -- --openapi ../openapi
   cargo run --bin genproduct
   cargo test
   ```
 
-  Prefer the wire for `--registry`. Use a captured table when the deployed build
-  is BEHIND the one whose routes you are adding — a route in cloud `main` but not
-  yet on api.hanzo.ai is refuted by the live table and silently dropped. The
-  capture that answers this is the UNION of the live table and cloud main's own
-  `openapi.yaml`: refutation needs a product owned AND no matching route, so a
-  union treats a route as served if EITHER reading has it, which is exactly the
-  truth during a rollout. Both are readings of one router at two commits.
+  **`--registry` defaults to the wire, and a COMMITTED spec must have the wire
+  among its sources** — `tests/spec_drift.rs` asserts it against the provenance
+  `genspec` writes into `info.description`. A table captured to a local file
+  cannot refute what the live one would, and cannot carry prose the live one has
+  since gained; that is how 149 phantom `/v1/cloud/*` commands survived a version,
+  and how 41 `platform` commands came to print their HTTP route where their
+  description belonged.
+
+  Mid-rollout a route lives in cloud `main` before api.hanzo.ai answers it, and
+  the live table alone would refute it. Pass `--registry` MORE THAN ONCE: the
+  readings are unioned (a route is served if EITHER has it — the truth during a
+  rollout, both being readings of one router at two commits), the FIRST wins every
+  conflict, and every source is named in the provenance. Put the wire first.
+
+  ```
+  cargo run --features genspec --bin genspec -- --openapi ../openapi \
+      --registry https://api.hanzo.ai/v1/openapi.json \
+      --registry <cloud-main route table>
+  ```
+- **PROSE IS NOT OPTIONAL, and there is no substitute for it.** Every command
+  states what it does for the person running it. That sentence is the Go doc
+  comment on the handler in hanzoai/cloud, lifted by zipdoc into the published
+  route table and joined in by `genspec` — so a command with nothing to say is a
+  missing doc comment in cloud, not a hole this repo may fill. `genproduct`
+  therefore REFUSES to emit an undescribed op, naming the commands and the remedy;
+  `every_command_says_what_it_does` pins the same rule against a hand-edited tree;
+  and `leaf_named` has no branch for an empty summary, because the state cannot
+  exist. The `METHOD /path` fallback that used to fill the column is deleted, not
+  made conditional: a projection cannot repair its source, and every branch that
+  handles "the source didn't say" turns a fixable gap into a shipped help line
+  that reads deliberate. Nobody files a bug against a design choice. The route
+  still appears in LONG help — reference detail, and what a user quotes when
+  filing a bug — never in prose's place.
+
+  Two content-free channels remain, both for want of a channel rather than a
+  fallback, and neither may be papered over here. A product group with no `tags`
+  description prints ``` `x` cloud operations ``` (20 products): 10 have a live
+  tag whose description is EMPTY, so the missing thing is a Go PACKAGE doc comment
+  in cloud; 10 are the gateway/edge inference surface with no tag in either
+  document, which needs a tag authored in hanzoai/openapi AND `genspec` taught to
+  read product tags from the master as well as the registry. A resource NODE
+  (`agents sessions`, `admin infra`) has no channel at all — the seam is a tag per
+  node emitted by zipdoc from the Go sub-router's doc comment, the same lift as
+  the package doc. Until those exist this is a stated gap; a stated gap beats an
+  invented sentence.
 - **A refuted operation is REMOVED, never repaired.** When a served route changes
   SHAPE, the authored path stops matching, the whole operation is dropped, and the
   command disappears rather than pointing somewhere new. `/v1/kms/orgs/{org}/secrets`
