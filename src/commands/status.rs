@@ -16,10 +16,14 @@
 //!
 //! ## Two laws
 //!
-//! **Most important first.** Anything unhealthy leads the page — an application
-//! that is not `Healthy`+`Synced`, a cluster that is not running, a node that is
-//! not online. The rest is grouped and COUNTED, so 336 healthy applications are
-//! three lines instead of 336.
+//! **Most important first, and drift is not breakage.** What is BROKEN leads —
+//! an application whose HEALTH is not `Healthy`, a cluster that is not running, a
+//! node that is not online — enumerated and named. An application that is
+//! `Healthy` but not `Synced` has merely DRIFTED from the tag the universe
+//! declares; on this fleet that is 193 of 339, so it gets ONE counted line under
+//! the alarms. Collapsing the two buried the single `Missing` application under
+//! 193 that were serving fine. The rest is grouped and COUNTED, so 339
+//! applications are four lines instead of 339.
 //!
 //! **A surface that did not answer is UNAVAILABLE, never zero.** A 403 rendered
 //! as "0 applications" is a lie that reads exactly like a healthy fleet — the
@@ -131,6 +135,14 @@ fn state(c: &Value) -> String {
 /// UNKNOWN and prints as nothing — a node count the server never sent must never
 /// appear as a zero.
 fn node_count(c: &Value) -> Option<usize> {
+    // The cluster list states its own total, and the server's number beats one
+    // this tree re-derives: a cluster can report a total with its pools elided,
+    // and summing an absent `nodePools` would answer UNKNOWN about a count we
+    // were just handed.
+    let stated = ["/nodeCount", "/node_count"].iter().find_map(|p| c.pointer(p));
+    if let Some(n) = stated.and_then(Value::as_u64) {
+        return Some(n as usize);
+    }
     let pools = ["/nodePools", "/node_pools"]
         .iter()
         .find_map(|p| c.pointer(p))
@@ -449,6 +461,16 @@ mod tests {
         );
         // The drifted one is counted, not alarmed about.
         assert_eq!(drift(&apps), 1);
+    }
+
+    /// A cluster's own stated total wins over a re-derivation, and a cluster
+    /// that states neither a total nor pools is UNKNOWN — never a zero.
+    #[test]
+    fn a_cluster_reports_its_own_node_total() {
+        assert_eq!(node_count(&json!({"nodeCount": 21, "nodePools": []})), Some(21));
+        assert_eq!(node_count(&json!({"nodePools": [{"count": 3}, {"count": 2}]})), Some(5));
+        assert_eq!(node_count(&json!({"nodePools": [{"nodes": [{}, {}]}]})), Some(2));
+        assert_eq!(node_count(&json!({"name": "silent"})), None);
     }
 
     /// Drift is HEALTH-gated: an app that is both unhealthy AND out of sync is
