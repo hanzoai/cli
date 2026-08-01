@@ -27,27 +27,16 @@ client:
   # rather than the release that sent us.
   spec: { repo: hanzoai/cloud, path: openapi.yaml }
   generate: ./scripts/generate.sh
-  # G3 — a spec change that produces a CLI that does not compile blocks the
-  # release. `cargo test` is in it because the derivation gates live in tests/:
-  # generated.rs must be exactly what spec/cloud.json derives, and the spec must
-  # name a release. A regeneration that builds but breaks those has changed the
-  # command tree out from under every user.
-  build: cargo build --release --bin hanzo --locked && cargo test --locked
   # PATCH only, derived. The command surface is the document's; this crate only
   # restates it, so it never earns a minor or a major.
   version: "Cargo.toml:grep -m1 '^version' Cargo.toml | sed -E 's/.*\"(.*)\".*/\\1/'"
 
+# The drift gate is NOT here, and that is the point: hanzoai/ci's `client:` lane
+# asks it for all eight client repos in one place, on every push — fetch the
+# document .spec-lock names, refuse if the ref moved under it, re-run the
+# derivation, refuse any delta, write nothing. `make spec-check` is the same
+# question a human asks locally, through the same script.
 test:
-  - name: spec-drift-check
-    # THE D1 GATE. Re-fetch the document this tree names, prove the ref has not
-    # moved under it (digest), and re-run the SAME derivation the writer runs —
-    # refusing on any delta and writing nothing. A check that repairs what it
-    # measures reports success for a tree that was wrong when the job started.
-    #
-    # It answers a different question from `verify` in release-matrix.yml, and
-    # both have to hold: this one says the capture still equals its inputs, that
-    # one says the running server still serves it.
-    run: make spec-check
   - name: cargo-test
     run: cargo test --locked
   - name: clippy
