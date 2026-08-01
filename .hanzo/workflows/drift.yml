@@ -1,0 +1,31 @@
+name: Drift Gate
+
+# The command tree and the live server, held against each other in BOTH
+# directions — a command whose route the server does not serve, and a served
+# product no command reaches. `make verify` → `src/bin/driftgate.rs`.
+#
+# It is in `hanzo.yml`'s `test:` list too, so it runs on every push and PR. THIS
+# file exists for the SCHEDULE, which is the half that matters most: this drift is
+# almost never introduced by a commit here. The route table moves when
+# hanzoai/cloud deploys, and a repo that only checks itself when it changes learns
+# about that at the next release, from a user.
+#
+# `workflow_dispatch` is here so the answer is one click away when somebody asks
+# "is the tree still true?" without having to push anything to find out.
+#
+# `.hanzo/`, not `.github/`: the runners belong to git.hanzo.ai and github.com has
+# none, so a pipeline under `.github/` queues forever instead of building.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: The live server contradicts this command tree in neither direction
+    runs-on: hanzo-build-linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: make verify

@@ -1,9 +1,13 @@
-# hanzo — the CLI. Two commands matter here and both are about ONE question:
-# is the committed command surface still a faithful projection of the cloud API
-# document it names?
+# hanzo — the CLI. Three commands matter here, and the first two are about ONE
+# question: is the committed command surface still a faithful projection of the
+# cloud API document it names?
 #
 # `spec`       moves the projection forward onto a new document.
 # `spec-check` refuses a tree where it has stopped being one.
+# `verify`     asks the OTHER question — is the document still true of the running
+#              server, in both directions? A capture can equal its inputs exactly
+#              and still describe a surface production stopped serving, or miss a
+#              product production started.
 #
 # Both go through scripts/generate.sh, which is also what hanzoai/ci's `client:`
 # lane calls — so a maintainer, the push gate and the release all run the same
@@ -44,8 +48,15 @@ spec: ## Regenerate spec/cloud.json + the product tree from the document in .spe
 spec-check: ## Refuse a capture that is no longer the projection of its own document. The D1 gate.
 	@$(fetch_spec); ./scripts/generate.sh --check
 
-verify: ## Refuse a capture whose commands the LIVE server does not serve. The release gate.
-	@cargo run --quiet --features genspec --bin genspec --locked -- --verify
+# THE DRIFT GATE. `spec-check` asks whether the capture still equals its inputs;
+# this asks whether the inputs are still true of production, in BOTH directions —
+# a command whose route the server does not serve, and a served product no command
+# reaches. It needs the built `hanzo` because reachability is a fact about the
+# BINARY: a generated product that collides with a local command, or a relocation
+# that stopped relocating, is invisible to any re-derivation of the same data.
+verify: ## Refuse a tree the LIVE server contradicts, in either direction. The drift gate.
+	@cargo build --quiet --bin hanzo --bin driftgate --locked
+	@./target/debug/driftgate
 
 test: ## Everything, including the derivation gates in tests/.
 	@cargo test --locked

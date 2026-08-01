@@ -95,16 +95,18 @@
 //!     surface. Nothing is written — a check that repairs what it measures
 //!     reports success for a tree that was wrong when the job started.
 //!
-//!   `--verify` IS THE SPEC STILL TRUE OF PRODUCTION? Re-reads the committed
-//!     spec and applies the SAME `owned` + `find` predicate against the LIVE
-//!     table, so "no command addresses a route the server does not serve" can be
-//!     re-asked at any moment, by anyone, without the authored master. That is
-//!     what the release gate runs — a `hanzo` whose command tree the server
-//!     refutes is never minted — and it is what bounds the union above: a
-//!     reading that let an undeployed route through must become true before it
-//!     ships.
+//!   IS THE SPEC STILL TRUE OF PRODUCTION? is the OTHER question, and it is not
+//!     asked here. `--verify` used to ask half of it — the same `owned` + `find`
+//!     predicate pointed at the committed spec — and it was deleted rather than
+//!     kept beside a stronger gate asking the same thing. It could only refute
+//!     inside a product the live table OWNS, which leaves everything behind a `*`
+//!     relay door and the whole edge-answered inference plane un-refutable, and it
+//!     never asked the other direction at all. `driftgate` applies that predicate
+//!     AND asks the running host wherever the table can only answer with a door or
+//!     a silence, in BOTH directions. One predicate, one place; `make verify`.
 //!
-//! One document, two questions, and a capture has to survive both.
+//! One document, two questions, and a capture has to survive both. This binary
+//! answers the first; `src/bin/driftgate.rs` answers the second.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -331,35 +333,11 @@ fn reachable(paths: &Map<String, Value>, schemas: &Map<String, Value>) -> BTreeS
     seen
 }
 
-/// Every operation the spec claims that the route table refutes — the SAME rule
-/// `main` generates by (`owned` decides authority, `find` decides service),
-/// pointed at an ARTIFACT instead of at the authored master. One predicate, two
-/// call sites: generate, then re-check what was generated.
-fn refuted(reg: &Registry, spec: &Value) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for (path, item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
-        let s = segs(path);
-        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) {
-            continue;
-        }
-        for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
-            if !VERBS.contains(&m.to_ascii_lowercase().as_str()) {
-                continue;
-            }
-            let m = m.to_ascii_uppercase();
-            if reg.find(&m, &s).is_none() && reg.owned.contains(s[1]) {
-                out.push((m, path.clone()));
-            }
-        }
-    }
-    out
-}
 
 struct Args {
     registry: Vec<String>,
     openapi: PathBuf,
     out: PathBuf,
-    verify: bool,
     check: bool,
 }
 
@@ -370,15 +348,14 @@ fn args() -> Args {
         manifest.parent().map(|p| p.join("openapi")).unwrap_or_else(|| PathBuf::from("../openapi"))
     });
     let mut out = manifest.join("spec/cloud.json");
-    let mut verify = false;
     let mut check = false;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < argv.len() {
         let flag = argv[i].clone();
-        if flag == "--verify" || flag == "--check" {
-            *(if flag == "--verify" { &mut verify } else { &mut check }) = true;
+        if flag == "--check" {
+            check = true;
             i += 1;
             continue;
         }
@@ -387,17 +364,14 @@ fn args() -> Args {
             "--registry" => registry.push(val),
             "--openapi" => openapi = PathBuf::from(val),
             "--out" => out = PathBuf::from(val),
-            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>] [--verify|--check]\nunknown: {other}"),
+            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>] [--check]\nunknown: {other}"),
         }
         i += 2;
-    }
-    if verify && check {
-        panic!("--verify and --check ask different questions of different documents; run them separately");
     }
     if registry.is_empty() {
         registry.push(DEFAULT_REGISTRY.to_string());
     }
-    Args { registry, openapi, out, verify, check }
+    Args { registry, openapi, out, check }
 }
 
 /// Read one route table: a URL is the normal case (the registry answers for
@@ -518,35 +492,6 @@ async fn main() {
     let spec_ref = std::env::var("HANZO_SPEC_REF").unwrap_or_else(|_| "unpinned".into());
     let provenance = format!("hanzoai/cloud@{spec_ref} sha256:{}", digests.join("+"));
 
-    // Re-check an artifact instead of writing one. Needs no authored master — the
-    // spec already carries every operation and the table already answers which of
-    // them are served — which is what lets the release gate run this with nothing
-    // but a checkout and the network.
-    if a.verify {
-        let spec: Value = serde_json::from_slice(
-            &std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display())),
-        )
-        .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.out.display()));
-        let bad = refuted(&reg, &spec);
-        for (m, p) in &bad {
-            eprintln!("  refuted  {m} {p}");
-        }
-        eprintln!(
-            "genspec --verify: {} of {} operations in {} address routes {} does not serve",
-            bad.len(),
-            spec.get("paths")
-                .and_then(Value::as_object)
-                .map(|p| p.values().filter_map(Value::as_object).map(Map::len).sum())
-                .unwrap_or(0usize),
-            a.out.display(),
-            a.registry.join(" ∪ "),
-        );
-        if !bad.is_empty() {
-            eprintln!("Regenerate: genspec, then genproduct.");
-            std::process::exit(1);
-        }
-        return;
-    }
 
     let master_path = a.openapi.join("hanzo.yaml");
     let master: Value = serde_norway::from_str(
@@ -691,10 +636,10 @@ async fn main() {
     // repairs what it measures reports success for a tree that was wrong when
     // the job started. It reads the document from `HANZO_REGISTRY` (the
     // client: lane sets it to `openapi.yaml` at the release's sha), so it asks
-    // about a PINNED document — which is a different question from `--verify`,
-    // and both are worth asking. Provenance says where the spec came from;
-    // --check says the spec still equals its inputs; --verify says the running
-    // server still serves it.
+    // about a PINNED document — which is a different question from the one
+    // `driftgate` asks, and both are worth asking. Provenance says where the spec
+    // came from; --check says the spec still equals its inputs; `driftgate` says
+    // the running server still serves it, and still commands everything it serves.
     if a.check {
         let have = std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display()));
         if have == bytes {

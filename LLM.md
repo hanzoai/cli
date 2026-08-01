@@ -204,11 +204,14 @@ never be checked.
   Underneath: `genspec` reads the document from `HANZO_REGISTRY` (JSON or YAML)
   and the shapes from `--openapi <hanzoai/openapi checkout>`, and stamps
   `hanzoai/cloud@<ref> sha256:<digest>` into the spec's provenance.
-  `--check` re-runs the whole derivation and refuses a delta without writing;
-  `--verify` re-asks the LIVE table instead. Different questions, both required.
+  `--check` re-runs the whole derivation and refuses a delta without writing.
+- `make verify` — THE DRIFT GATE (`src/bin/driftgate.rs`). The other question: is
+  the document still TRUE of the running server, in BOTH directions? On every push
+  and PR (`hanzo.yml` `test:`), NIGHTLY (`.hanzo/workflows/drift.yml`) and before a
+  release mints anything. See "The drift gate" below.
 - `cargo run --bin genproduct` — offline, deterministic: `spec/cloud.json` → the clap
   tree. `--check` compares instead of writing; `tests/spec_drift.rs` runs it, so
-  `cargo test` is the drift gate.
+  `cargo test` pins the tree to its spec.
 - **The document is the authority at product granularity.** Cloud's route table is the
   weave of what each app binary emits from its own router, so a product it serves ANY
   route under is a product it is complete for — an authored operation missing from the
@@ -216,11 +219,20 @@ never be checked.
   `/v1/models`, `/v1/chat/completions`) is answered at the edge, not by that router, so
   nothing is refuted. Multi-segment path params come from the same reading: a fiber `*`
   arrives as `{wildcardN}`.
-- What still needs a HAND decision in `genproduct.rs`: `DENY` (a name a local command
-  owns, or that means something else on a command line), `REMAP` (machines+gpus →
-  `compute`), `METHOD_PRIORITY`, `VERBS`, and the path→verb fold. Those are POLICY —
-  none of them may encode "the server 404s this", and that is now ENFORCED, not
-  promised (the curation law, below).
+- What still needs a HAND decision: `src/curation.rs` — ONE table naming every
+  product the tree does not surface at its own bare name (`Instead::Nothing`), the
+  ones another command answers to (`Instead::Claimed`), and the ones absorbed
+  elsewhere (`Instead::Under("compute")` for machines+gpus) — plus
+  `METHOD_PRIORITY`, `VERBS` and the path→verb fold in `genproduct.rs`. Those are
+  POLICY — none of them may encode "the server 404s this", and that is now
+  ENFORCED, not promised (the curation law, below).
+- **The reason is DATA, and the gate falsifies it.** `DENY`/`REMAP` were two tables
+  with their reasons in comments, and a comment cannot be checked. Each entry now
+  carries a `why` sentence and, where it claims another spelling reaches the
+  surface, that spelling — which `make verify` RUNS. `genproduct` applies the table;
+  `driftgate` excuses gaps with it and counts how many times it had to. One list,
+  two readers: a product dropped there and a product excused here can never be two
+  different lists.
 - **A name may only be reserved by a command that EXISTS.** `EXCLUDE` used to sit
   beside `DENY` holding `billing`/`agent`/`deploy` under "local commands own these
   bare names" — a third statement of one fact (every entry was already in `DENY`,
@@ -272,7 +284,7 @@ neither can answer the other's.
   not a permanent one: **1384 of 1895 operations (73%) are the document's today**,
   and `/v1/admin/plugins` is what the end state looks like — cloud emits the full
   schema and nothing else is consulted.
-- **THE CURATION LAW.** A `DENY`/`REMAP` entry may name ONLY a product the document
+- **THE CURATION LAW.** A `CURATED` entry may name ONLY a product the document
   carries; `genproduct` refuses to generate otherwise, naming the stale entries. A
   name no document mentions asserts one thing — that the server does not serve it —
   and that is `genspec`'s answer by construction, not a list in the client. Under
@@ -298,7 +310,7 @@ neither can answer the other's.
   ```
   make spec         # regenerate onto the document .spec-lock names
   make spec-check   # refuse a capture that is no longer its projection
-  make verify       # refuse a capture the LIVE server does not serve
+  make verify       # refuse a tree the LIVE server contradicts, either direction
   ```
 
   **THE CAPTURE NAMES A RELEASE, and `.spec-lock` is where it says so.** Four
@@ -340,23 +352,56 @@ neither can answer the other's.
       --registry <cloud-main route table>
   ```
 
-  **And provenance is not freshness. `--verify` asks the live table again.**
+  **And provenance is not freshness — that is what `make verify` is for.**
   Recording the source says WHERE a spec came from; it says nothing about whether
-  it is still true. A spec generated from the wire keeps naming the wire forever
-  while the router moves underneath it — one such spec shipped 129 operations
-  across 9 products (commerce 109, admin 7, billing 5, …) addressing routes
-  api.hanzo.ai does not serve, and its provenance was impeccable. So the rule is
-  also a property of the ARTIFACT: `--verify` re-reads the committed spec and
-  applies the same `owned` + `find` predicate against the live table, listing what
-  it refutes and exiting non-zero. One predicate, two call sites. It needs no
-  hanzoai/openapi checkout, so the release job runs it — a `hanzo` whose command
-  tree the server refutes is never minted, which is also what bounds the union
-  above: a reading that let an undeployed route through must become true before it
-  can ship.
+  it is still true. One spec shipped 129 operations across 9 products (commerce
+  109, admin 7, billing 5, …) addressing routes api.hanzo.ai does not serve, and
+  its provenance was impeccable. `genspec --verify` used to re-ask the table here
+  and was DELETED, not kept beside a stronger gate asking the same question: it
+  could only refute inside a product the table OWNS, which leaves roughly a third
+  of the surface un-refutable, and it never asked the other direction at all.
 
-  ```
-  cargo run --features genspec --bin genspec -- --verify
-  ```
+  **THE DRIFT GATE — `make verify` (`src/bin/driftgate.rs`).** The shipped surface
+  and the live server, held against each other in BOTH directions, with the host as
+  the arbiter wherever the table cannot answer. `make spec-check` proves the capture
+  still equals its inputs; only this proves the inputs are still true.
+
+  - **404 IS NOT 403, and one 404 is not a 404.** `401`/`403` mean the route is
+    there and wants a caller; `404` means nothing is at that address; `405` means
+    the path is routed and the verb is not. Conflating them is how a hand analysis
+    of this surface reported three production breaks that were not breaks. And a
+    single 404 is not evidence either — fourteen `/v1/pricing` paths answered 404
+    to one concurrent sweep and 200 to every serial re-ask a minute later, so a 404
+    is confirmed three times, serially, before it counts. A 404 that does not
+    repeat is FLAPPING: present, printed, never drift.
+  - **Only a `GET` on a LITERAL path can be asked of a host.** A `{param}` makes
+    404 mean "no route" or "no such id"; and cloud's router answers 404, not 405,
+    to a verb it lacks at a path it has (`POST /v1/admin/credits` is in the live
+    table and a GET of it 404s). Everything else is UNDECIDABLE and is COUNTED — a
+    stated gap beats a guessed answer. The probe is only ever a GET: a gate that
+    DELETEs to find out whether something is there is not a gate.
+  - **A `*` door is not an answer.** The table names the route → served (asked
+    anyway where it can be: a route can be registered with a dead mount behind it).
+    It owns the product and names no such route → REFUTED, decided without asking.
+    It offers only `/v1/iam/*`, or is silent → ask the host. Roughly a third of the
+    operations sit behind a door or in a namespace the table never mentions.
+  - **Whose defect it is turns on who claimed the route.** No document claimed it
+    and the host 404s → the CLI's phantom, hard failure. The LIVE TABLE claimed it
+    and the host 404s → cloud's table and cloud's server disagree, which no edit
+    here can settle: reported against `CONTRADICTED`, a CEILING that may not grow in
+    silence and is free to fall when somebody redeploys. Today it is 3, all
+    `/v1/billing` (`gpu-eligibility`, `payment-config`, `payment-methods`).
+  - **The other direction asks the BINARY.** `hanzo <product> --help` — whether a
+    person can reach a product is a fact about the built CLI, and a generated
+    product that collides with a local command, or a relocation that stopped
+    relocating, is invisible to any re-derivation and obvious to one exec.
+  - **A served product with no command is drift unless `src/curation.rs` says
+    otherwise**, and every entry naming a spelling gets that spelling RUN, so an
+    excuse that stopped being true turns CI red. The applied count is pinned
+    EXACTLY (`EXCUSED`, today 7): an exception nobody counts is how 21 served
+    `/v1/deploy` operations came to be reachable by nothing while the table
+    dropping them still called it a decision.
+  - **BLIND fails.** No answer at all is not "no drift" — it is "I could not look".
 
   **Run `cargo test`, never `cargo test --bin hanzo`.** That selector takes only
   the binary's unit tests, so everything under `tests/` compiles and never runs.
@@ -576,11 +621,15 @@ a projection that repairs its source hides the defect at the one place it can be
 - **`/v1/logs` and `/v1/o11y/logs` are two doors onto one noun** — "Search your org's
   logs by label, time and substring" vs "a page of one product's logs for the caller's
   org". One should win in hanzoai/cloud; the CLI follows whichever does.
-- **The registry lists routes the server 404s.** Some products (pricing is the bulk)
-  appear as literal path keys in `api.hanzo.ai/v1/openapi.json` while the server
-  answers 404 — a route registered whose mount or handler is dead. `--verify` cannot
-  catch these: it trusts the table, and there the table is wrong. The fix is in
-  cloud's router, never a list here.
+- **The registry lists routes the server 404s** — 3 of them, all `/v1/billing`
+  (`gpu-eligibility`, `payment-config`, `payment-methods`): a route registered whose
+  mount or handler is dead, so the router knows it, the table it projects claims it,
+  and nothing runs. `make verify` MEASURES this instead of leaving it a known hole
+  (`CONTRADICTED`, a ceiling). Pricing was previously named here as "the bulk" of the
+  class; it is not — its 14 paths answer 200 on every serial re-ask, and a concurrent
+  sweep reading transient 404s as fact is exactly why the gate confirms a 404 three
+  times before believing it. The fix for the real 3 is in cloud's router, never a
+  list here.
 - **`version::tests::a_v_prefix_is_tolerated` is flaky** — 1 failure observed in ~10
   full `cargo test` runs on this box, 0 in 8 consecutive runs after. It writes a stub
   script and execs it, so it races other tests' spawns. It is now in the release gate;

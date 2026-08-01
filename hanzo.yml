@@ -31,13 +31,26 @@ client:
   # restates it, so it never earns a minor or a major.
   version: "Cargo.toml:grep -m1 '^version' Cargo.toml | sed -E 's/.*\"(.*)\".*/\\1/'"
 
-# The drift gate is NOT here, and that is the point: hanzoai/ci's `client:` lane
+# THE CAPTURE GATE is NOT here, and that is the point: hanzoai/ci's `client:` lane
 # asks it for all eight client repos in one place, on every push — fetch the
 # document .spec-lock names, refuse if the ref moved under it, re-run the
 # derivation, refuse any delta, write nothing. `make spec-check` is the same
 # question a human asks locally, through the same script.
+#
+# THE DRIFT GATE is a different question and it IS here, because it is this repo's
+# alone: a capture can equal its inputs exactly and still describe a surface
+# production stopped serving, or miss a product production started. `make verify`
+# puts the tree to the running server in both directions. It also runs nightly
+# (.hanzo/workflows/drift.yml) — this drift is introduced by a cloud deploy, not by
+# a commit here, and a repo that only checks itself when it changes learns about it
+# at the next release, from a user.
+#
+# Correctness before style, deliberately: a lint failure must never be the reason
+# nobody found out the shipped surface stopped matching the server.
 test:
   - name: cargo-test
     run: cargo test --locked
+  - name: drift
+    run: make verify
   - name: clippy
     run: cargo clippy --locked --all-targets -- -D warnings

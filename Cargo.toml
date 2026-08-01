@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.9.21"
+version = "1.9.22"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -20,6 +20,14 @@ path = "src/main.rs"
 name = "genspec"
 path = "src/bin/genspec.rs"
 required-features = ["genspec"]
+
+# driftgate is the GATE, not a generator: it reads the committed spec, the live
+# route table and — where neither can answer — the running host, and it reads the
+# built `hanzo` to ask what a person can actually reach. No YAML, no authored
+# master, so CI runs it with nothing but a checkout, a build and the network.
+[[bin]]
+name = "driftgate"
+path = "src/bin/driftgate.rs"
 
 [features]
 genspec = ["dep:serde_norway"]
