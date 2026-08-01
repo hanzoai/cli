@@ -37,20 +37,19 @@ client:
 # derivation, refuse any delta, write nothing. `make spec-check` is the same
 # question a human asks locally, through the same script.
 #
-# THE DRIFT GATE is a different question and it IS here, because it is this repo's
-# alone: a capture can equal its inputs exactly and still describe a surface
-# production stopped serving, or miss a product production started. `make verify`
-# puts the tree to the running server in both directions. It also runs nightly
-# (.hanzo/workflows/drift.yml) — this drift is introduced by a cloud deploy, not by
-# a commit here, and a repo that only checks itself when it changes learns about it
-# at the next release, from a user.
-#
-# Correctness before style, deliberately: a lint failure must never be the reason
-# nobody found out the shipped surface stopped matching the server.
+# THE DRIFT GATE is a different question — a capture can equal its inputs exactly
+# and still describe a surface production stopped serving, or miss a product
+# production started — and it is NOT here either, for a reason the first draft of
+# this file got wrong. `make verify` sat in the list below, ordered before clippy so
+# a lint failure could not hide it. But this list runs inside hanzoai/ci's ONE lane,
+# after the client step, the KMS login and the toolchain provisioning, and a gate
+# that runs last in a shared job does not report on the server: it reports on
+# everything ahead of it. It was never asked once that way. So the drift gate owns
+# its own job — clone, compiler, network, nothing else — in
+# .hanzo/workflows/drift.yml, which now carries all four ways of asking (push, PR,
+# the nightly schedule, and a click). One predicate, one place.
 test:
   - name: cargo-test
     run: cargo test --locked
-  - name: drift
-    run: make verify
   - name: clippy
     run: cargo clippy --locked --all-targets -- -D warnings
