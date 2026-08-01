@@ -1,0 +1,17 @@
+# The canonical fleet pipeline, driven by this repo's root hanzo.yml. Every
+# real detail lives there; this file is the trigger set and nothing else.
+#
+# `repository_dispatch: spec-update` is the coupling that did not exist: it is
+# how ONE hanzoai/cloud release reaches this repo, hands it the document at the
+# sha it just deployed, and gets a regenerated command surface and a CLI patch
+# back. Without it the capture only ever moved when a maintainer remembered.
+name: CI/CD
+on:
+  push: { branches: [main] }
+  pull_request:
+  repository_dispatch: { types: [spec-update] }
+  workflow_dispatch:
+jobs:
+  cicd:
+    uses: hanzoai/ci/.github/workflows/build.yml@v1
+    secrets: inherit

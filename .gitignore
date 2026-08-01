@@ -1,3 +1,4 @@
 /target
 /.usage-*
 .claude/
+/.openapi
