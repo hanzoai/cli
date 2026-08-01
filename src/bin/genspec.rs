@@ -148,6 +148,28 @@ struct Registry {
     products: BTreeMap<String, String>,
 }
 
+/// Does the serving binary call this address a legacy spelling of another one?
+///
+/// SERVED and PUBLISHED are different questions, and this is the only place the
+/// answers differ. `/v1/iam/get-users` and `/v1/iam/users` are two live routes on
+/// ONE handler; nothing in a route table relates them, so hanzoai/iam tags the
+/// older spelling `compat` and hanzoai/cloud's weave carries the tag out. Twenty-
+/// three of them today, plus the untyped read aliases as they gain the tag.
+///
+/// A compat op still counts as SERVED — it is real, and a legacy address that
+/// stopped counting would refute the canonical twin sitting beside it — but it
+/// does not become a command. Publishing both would put two spellings of one
+/// operation in `hanzo iam --help`, with nothing telling a customer which to use;
+/// the whole point of the tag is that somebody already decided.
+///
+/// hanzoai/openapi's merge.py and audit.py read the same tag the same way. One
+/// declaration, made once, honored by every projection of the document.
+fn is_compat(op: &Value) -> bool {
+    op.get("tags")
+        .and_then(Value::as_array)
+        .is_some_and(|t| t.iter().any(|x| x.as_str() == Some("compat")))
+}
+
 /// One spelling for "the same route whatever the params are named": a literal
 /// matches itself, any `{param}` is `{}`, a fiber catch-all is `{*}`.
 fn norm(s: &[&str]) -> String {
@@ -189,8 +211,11 @@ impl Registry {
             let pat: Vec<String> = s.iter().map(|x| x.to_string()).collect();
             for (m, op) in item.as_object().into_iter().flatten() {
                 if VERBS.contains(&m.to_ascii_lowercase().as_str()) {
+                    // The route EXISTS whatever its tags say — this is the
+                    // evidence refutation reads, and a legacy address that stops
+                    // counting as served would refute its own canonical twin.
                     routes.entry(m.to_ascii_uppercase()).or_default().push(pat.clone());
-                    if product {
+                    if product && !is_compat(op) {
                         ops.insert((m.to_ascii_uppercase(), norm(&s)), (path.clone(), op.clone()));
                     }
                 }
@@ -697,5 +722,45 @@ async fn main() {
     }
     if worst.len() > 12 {
         eprintln!("  … and {} more products", worst.len() - 12);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// SERVED and PUBLISHED are different questions, and Registry::read is the
+    /// only place the answers may differ.
+    ///
+    /// A legacy address must stay in `routes` — that is the evidence refutation
+    /// reads, and an address that stopped counting as served would refute the
+    /// canonical twin sitting beside it on the same handler — while staying out
+    /// of `ops`, which is what becomes a command.
+    #[test]
+    fn a_compat_address_is_served_but_never_a_command() {
+        let doc = json!({"paths": {
+            "/v1/iam/users":     {"get": {"summary": "List users", "tags": ["iam"]}},
+            "/v1/iam/get-users": {"get": {"summary": "List users (legacy verb)", "tags": ["iam", "compat"]}},
+        }});
+        let reg = Registry::read(&doc);
+
+        let commands: Vec<&String> = reg.ops.values().map(|(p, _)| p).collect();
+        assert_eq!(commands, vec!["/v1/iam/users"], "the legacy spelling became a command");
+
+        // Both routes are evidence: `iam` is owned, and both addresses are served.
+        assert!(reg.owned.contains("iam"));
+        let served: Vec<Vec<String>> = reg.routes["GET"].clone();
+        assert_eq!(served.len(), 2, "a compat address stopped counting as served: {served:?}");
+    }
+
+    /// The tag is read off the operation, not guessed from the path shape: a
+    /// verb-noun address with no declaration is somebody's real surface, and
+    /// dropping it on looks alone would silently delete a command.
+    #[test]
+    fn only_a_declaration_makes_an_address_compat() {
+        assert!(is_compat(&json!({"tags": ["iam", "compat"]})));
+        assert!(!is_compat(&json!({"tags": ["iam"]})));
+        assert!(!is_compat(&json!({})));
     }
 }
