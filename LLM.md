@@ -184,6 +184,40 @@ neither can answer the other's.
       --registry https://api.hanzo.ai/v1/openapi.json \
       --registry <cloud-main route table>
   ```
+
+  **And provenance is not freshness. `--verify` asks the live table again.**
+  Recording the source says WHERE a spec came from; it says nothing about whether
+  it is still true. A spec generated from the wire keeps naming the wire forever
+  while the router moves underneath it — one such spec shipped 129 operations
+  across 9 products (commerce 109, admin 7, billing 5, …) addressing routes
+  api.hanzo.ai does not serve, and its provenance was impeccable. So the rule is
+  also a property of the ARTIFACT: `--verify` re-reads the committed spec and
+  applies the same `owned` + `find` predicate against the live table, listing what
+  it refutes and exiting non-zero. One predicate, two call sites. It needs no
+  hanzoai/openapi checkout, so the release job runs it — a `hanzo` whose command
+  tree the server refutes is never minted, which is also what bounds the union
+  above: a reading that let an undeployed route through must become true before it
+  can ship.
+
+  ```
+  cargo run --features genspec --bin genspec -- --verify
+  ```
+
+  **Run `cargo test`, never `cargo test --bin hanzo`.** That selector takes only
+  the binary's unit tests, so everything under `tests/` compiles and never runs.
+  The release workflow said `--bin hanzo` from the day `spec_drift.rs` was written,
+  which is how a spec built off a scratchpad capture passed every build it ever saw.
+- **Top-level names come from two places and no third: a generated product, or a
+  hand-written local command.** There was a curated ALIAS table (one entry, `hanzo
+  logs` → `hanzo o11y logs`) for a nicer spelling of a nested op. It was a
+  hand-kept claim about the route surface — the same shape of defect as a captured
+  route table, one layer up — and cloud began serving `/v1/logs/{query,write,health}`.
+  Yielding the name was not enough: `augment` skipped the shadowed alias while
+  `resolve` still preferred it, so the parser MOUNTED the product and dispatch sent
+  it to the o11y op, and `hanzo logs query` PANICKED on an argument id its own
+  command never defined. A test that asserted only the MOUNT never saw it; the two
+  halves disagreed in the gap between them. The mechanism is deleted and the test
+  now walks parse → resolve → op.
 - **PROSE IS NOT OPTIONAL, and there is no substitute for it.** Every command
   states what it does for the person running it. That sentence is the Go doc
   comment on the handler in hanzoai/cloud, lifted by zipdoc into the published
@@ -372,3 +406,27 @@ positioned vs LiteLLM. `/v1/` paths only, never `/api/`. Zen models (`enso`, `ze
 are our own family — never name upstream models.
 
 **Spec**: `~/work/hanzo/SDK-ARCHITECTURE.md` — the canonical one-way SDK/CLI model.
+
+**Stated gaps — upstream, and NOT to be patched here.** The CLI is a projection, and
+a projection that repairs its source hides the defect at the one place it can be fixed.
+
+- **Required-ness of query parameters is being lost in cloud's own document.** Four
+  shipped operations declare `required: false` on a parameter whose own description
+  reads "Required.": `GET /v1/o11y/{logs,metrics,status}` (`product`) and
+  `DELETE /v1/clusters/{clusterId}/pools/{poolId}` (`provider`). The live table and
+  the authored master agree, so this is zip's parameter projection in hanzoai/cloud
+  dropping the flag. Until it is fixed clap cannot enforce those four, and the CLI
+  must not restate the constraint by hand — a client that knows a rule the document
+  does not is exactly the drift this pipeline exists to end.
+- **`/v1/logs` and `/v1/o11y/logs` are two doors onto one noun** — "Search your org's
+  logs by label, time and substring" vs "a page of one product's logs for the caller's
+  org". One should win in hanzoai/cloud; the CLI follows whichever does.
+- **The registry lists routes the server 404s.** Some products (pricing is the bulk)
+  appear as literal path keys in `api.hanzo.ai/v1/openapi.json` while the server
+  answers 404 — a route registered whose mount or handler is dead. `--verify` cannot
+  catch these: it trusts the table, and there the table is wrong. The fix is in
+  cloud's router, never a list here.
+- **`version::tests::a_v_prefix_is_tolerated` is flaky** — 1 failure observed in ~10
+  full `cargo test` runs on this box, 0 in 8 consecutive runs after. It writes a stub
+  script and execs it, so it races other tests' spawns. It is now in the release gate;
+  an intermittent red gate teaches people to re-run, which is how a gate dies.

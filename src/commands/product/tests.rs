@@ -354,25 +354,34 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
     );
 }
 
-/// A friendly top-level alias mounts only while NO generated product claims its
-/// name — the served surface owns its own nouns, and the curated table yields
-/// rather than shadowing it. Cloud now serves `/v1/logs/*` as a product of its
-/// own, so `logs` is the product; the alias to `o11y logs` stands down on its own
-/// and reappears if cloud ever stops serving that noun.
+/// A top-level name means the product cloud serves at that name — there is no
+/// second source of top-level names.
+///
+/// `hanzo logs` was a curated alias for `hanzo o11y logs` while nothing was mounted
+/// at `/v1/logs`. Cloud serves `/v1/logs/{query,write,health}` now, so the name is
+/// the product's, and the alias table — a hand-kept claim about the route surface,
+/// the same shape of defect as a captured route table one layer up — is gone.
+///
+/// It had to go rather than "stand down": `augment` skipped the shadowed alias but
+/// `resolve` still preferred it, so the parser MOUNTED the product and dispatch
+/// sent it to the o11y op, and `hanzo logs query` PANICKED on an argument id its
+/// own command never defined. Asserting the mount alone never saw that — the two
+/// halves disagreed in the gap between them. So this walks all the way to the op.
 #[test]
-fn a_generated_product_wins_its_name_from_a_friendly_alias() {
+fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     assert!(is_product("logs"), "cloud serves /v1/logs/* — `logs` is a product");
-    let tree = augment(Command::new("hanzo"));
-    let logs = tree.get_subcommands().find(|s| s.get_name() == "logs").expect("`hanzo logs` exists");
-    assert!(
-        logs.get_subcommands().any(|s| s.get_name() == "query"),
-        "`hanzo logs` is the generated product, not the o11y alias leaf"
-    );
+    let m = matches_of(&["hanzo", "logs", "query"]);
+    let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("expected a leaf") };
+    assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
     // The o11y op the alias pointed at is still reachable under its own product —
     // one capability, one place, never duplicated to keep a nickname alive.
     let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
     let Some(Resolved::Leaf { op, .. }) = resolve(&m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
+    assert!(
+        !include_str!("mod.rs").contains("ALIASES"),
+        "no second source of top-level names may come back"
+    );
 }
 
 /// CURATION: noise/internal products are denied, singular/plural dupes removed,

@@ -97,12 +97,29 @@ jobs:
           tar -xf macsdk.tar.xz -C "$HOME"
           echo "SDKROOT=$HOME/MacOSX11.3.sdk" >> "$GITHUB_ENV"
 
+      # The command tree is a CLAIM about what the server serves, and a release is
+      # the moment that claim reaches users. Re-ask the live route table with the
+      # same rule that generated the spec: `--verify` fails on any operation the
+      # table refutes. Recording the source (`info.description`, asserted offline in
+      # spec_drift) says WHERE the spec came from; only this says whether it is
+      # still TRUE — a spec built from the wire keeps naming the wire forever while
+      # the router moves underneath it. v1.7.2 shipped 149 `/v1/cloud/<verb-noun>`
+      # commands the server has never served; a later spec carried 129 more.
+      # Needs no hanzoai/openapi checkout, so it costs a clone and a GET.
+      - name: The live route table still serves this command tree
+        if: matrix.target.host
+        run: cargo run --features genspec --bin genspec --locked -- --verify
+
       # Tests GATE the artifact. They run on the HOST arch only — a cross-built
       # binary cannot execute here; the cross targets are the same source through
       # the same compiler.
+      #
+      # ALL targets, not `--bin hanzo`: that selector runs only the binary's unit
+      # tests, so `tests/spec_drift.rs` — the gate pinning `generated.rs` to the
+      # spec and the spec to the wire — compiled here and never once executed.
       - name: Test
         if: matrix.target.host
-        run: cargo test --bin hanzo --locked
+        run: cargo test --locked
 
       - name: Build
         run: cargo zigbuild --release --bin hanzo --locked --target ${{ matrix.target.rust }}
