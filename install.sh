@@ -169,4 +169,8 @@ case ":$PATH:" in
   *":$PREFIX:"*) ;;
   *) printf '%s: %s is not on PATH — add it:\n  export PATH="%s:$PATH"\n' "$BIN" "$PREFIX" "$PREFIX" ;;
 esac
-if [ "$BIN" = hanzo ]; then printf 'hanzo: next → hanzo login\n'; fi
+# `hanzo login` is not a command. An unrecognised first word is read as a task
+# for the coding agent, so telling someone to run it starts a session about the
+# word "login" instead of signing them in — and this was the LAST line the
+# installer printed.
+if [ "$BIN" = hanzo ]; then printf 'hanzo: next → hanzo auth login\n'; fi

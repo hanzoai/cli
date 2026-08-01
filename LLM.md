@@ -10,7 +10,10 @@ flagship = `hanzoai/python-sdk`, Node `@hanzo/ai`). This repo is the canonical i
 the CLI; discovery/marketing repos link here, never copy it.
 
 **Install / run**:
-- `curl -fsSL https://raw.githubusercontent.com/hanzoai/cli/main/install.sh | sh` (per-platform asset, sha256-verified; needs a GitHub token while the repo is private)
+- `curl -fsSL https://hanzo.sh | sh` — the ONE published install line, on every surface.
+  hanzo.sh drives THIS repo's `install.sh` once per tool (`hanzo`, `hanzo-mcp`, `dev`);
+  `install.sh` is the one implementation of "fetch a Hanzo binary" (per-platform asset,
+  sha256-verified, second-name symlink). No token: the repo is public.
 - from source: `cargo install --path .` · build gate: `cargo build` / `cargo test` / `cargo clippy --bin hanzo`
 
 **This binary answers to TWO names, and that is by design.** cloud's Go control
