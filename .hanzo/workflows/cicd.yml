@@ -1,6 +1,17 @@
 # The canonical fleet pipeline, driven by this repo's root hanzo.yml. Every
 # real detail lives there; this file is the trigger set and nothing else.
 #
+# It lives in `.hanzo/workflows/` because the runners are the FORGE's. The pool
+# that answers `hanzo-build-linux-amd64` is registered to git.hanzo.ai;
+# github.com has zero runners at any level. The forge reads BOTH
+# `.hanzo/workflows` and `.github/workflows`, so a caller left under `.github/`
+# runs twice — once here, and once on GitHub where nothing can ever pick it up
+# and the job simply queues. `.hanzo/` is the half that runs.
+#
+# The `uses:` pin below is correct as written: hanzoai/ci keeps its reusable at
+# `.github/workflows/build.yml@v1` (verified on the forge), which is a different
+# question from where THIS caller lives.
+#
 # `repository_dispatch: spec-update` is the coupling that did not exist: it is
 # how ONE hanzoai/cloud release reaches this repo, hands it the document at the
 # sha it just deployed, and gets a regenerated command surface and a CLI patch

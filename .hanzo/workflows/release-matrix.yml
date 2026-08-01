@@ -1,9 +1,32 @@
 name: Release Matrix (CLI)
 
-# Every `hanzo` platform binary, cross-built from the ONE self-hosted Linux pool
-# (`hanzo-build-linux-amd64`) — NO GitHub-hosted builders. `cargo-zigbuild` uses
-# Zig as the cross-linker, so a single amd64 host emits linux-{amd64,arm64},
-# windows-amd64 and macos-{amd64,arm64} without a per-arch runner pool.
+# THIS FILE RUNS ON THE FORGE (git.hanzo.ai), and that is why it lives in
+# `.hanzo/workflows/` rather than `.github/workflows/`.
+#
+# `runs-on: hanzo-build-linux-amd64` was always a FORGE label. It is one of 28
+# advertised by the git-runner pool (hanzo/git-runner-0..9, registered to
+# http://hanzo-git.hanzo.svc), every one mapping to
+# docker://catthehacker/ubuntu:act-24.04. github.com has never had a runner
+# carrying it — the org has zero runners at any level, because the ARC scale set
+# that once served this label is gone (no `autoscalingrunnersets` CRD remains in
+# the cluster).
+#
+# While this file sat in `.github/workflows/`, BOTH forges ran it: the forge
+# reads `.hanzo/workflows` AND `.github/workflows`, so every tag started two
+# builds — one that worked and one that could never start. The GitHub copy
+# queued against a label nothing offered and sat there (v1.9.13 waited 17 hours
+# before it was cancelled). Moving the file leaves exactly one execution, on the
+# forge, because GitHub reads only `.github/workflows`. One tag, one build.
+#
+# NEVER set `runs-on: ubuntu-latest` here. That label was removed from the pool
+# deliberately after an upstream workflow wedged all 10 runners; a job asking for
+# it queues for its full 24h timeout and reports NO error. Use the fleet labels.
+#
+# Every `hanzo` platform binary is cross-built from that ONE Linux pool — no
+# macOS or Windows runner exists, or is needed. `cargo-zigbuild` uses Zig as the
+# cross-linker, so a single amd64 host emits linux-{amd64,arm64}, windows-amd64
+# and macos-{amd64,arm64}. That is what makes a docker-only, linux-only runner
+# pool sufficient to ship all five targets.
 #
 # What made the matrix build "everywhere" finally possible:
 #   - reqwest on rustls (OpenSSL gone) — no per-arch OpenSSL headers.
@@ -140,11 +163,27 @@ jobs:
       # it failed builds that had already succeeded. The artifact was only ever a
       # courier; the release is the destination.
       #
-      # curl, not `gh`: the ARC image ships no gh CLI. curl+jq is what the runner
-      # actually has, so publish depends on nothing beyond what the build needs.
+      # curl, not `gh`: the runner image ships no gh CLI. curl+jq is what the
+      # runner actually has, so publish depends on nothing beyond what the build
+      # needs.
+      #
+      # GH_PAT, not `github.token`. This job runs on git.hanzo.ai, so
+      # `github.token` is a FORGE token — and these two URLs are github.com.
+      # api.github.com rejected it, both the GET and the POST returned no `.id`,
+      # and the step died on its own diagnostic: `could not create or find
+      # release v1.9.16`. Every step above it had already passed; the release
+      # was built and then dropped on the floor at the last line. v1.9.13,
+      # v1.9.15 and v1.9.16 all failed exactly here, which is why users are
+      # still on v1.9.12.
+      #
+      # GH_PAT is an org secret at git.hanzo.ai/hanzoai (repo-level secrets are
+      # empty; org secrets inherit) — the same one cloud publishes with. BUILD
+      # happens on the forge; DISTRIBUTION stays on GitHub Releases because
+      # hanzo.sh resolves api.github.com/repos/hanzoai/cli/releases/latest.
+      # Crossing that boundary is the one thing this step needs a credential for.
       - name: Publish
         env:
-          TOKEN: ${{ github.token }}
+          TOKEN: ${{ secrets.GH_PAT }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
