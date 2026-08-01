@@ -47,6 +47,17 @@
 //! That rule is what retires the hand-maintained "this one 404s" knowledge: the
 //! `gateway` subtree drops out because the registry serves none of it, not
 //! because a list in `genproduct` says so.
+//!
+//! THE RULE IS ALSO A PROPERTY OF THE ARTIFACT, not only of a generator run.
+//! `--verify` re-reads the committed spec (`--out`) and applies the SAME `owned` +
+//! `find` predicate to it, so "no command addresses a route the server does not
+//! serve" can be re-asked of the live table at any moment, by anyone, without the
+//! authored master. Provenance and freshness are different questions: a spec
+//! generated from the wire keeps naming the wire forever, while the router moves
+//! underneath it. Recording the source answers the first; only re-asking answers
+//! the second. That is what the release gate runs — a `hanzo` whose command tree
+//! the server refutes is never minted — and it is what bounds the union above: a
+//! reading that let an undeployed route through must become true before it ships.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -259,10 +270,35 @@ fn reachable(paths: &Map<String, Value>, schemas: &Map<String, Value>) -> BTreeS
     seen
 }
 
+/// Every operation the spec claims that the route table refutes — the SAME rule
+/// `main` generates by (`owned` decides authority, `find` decides service),
+/// pointed at an ARTIFACT instead of at the authored master. One predicate, two
+/// call sites: generate, then re-check what was generated.
+fn refuted(reg: &Registry, spec: &Value) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (path, item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
+        let s = segs(path);
+        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) {
+            continue;
+        }
+        for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
+            if !VERBS.contains(&m.to_ascii_lowercase().as_str()) {
+                continue;
+            }
+            let m = m.to_ascii_uppercase();
+            if reg.find(&m, &s).is_none() && reg.owned.contains(s[1]) {
+                out.push((m, path.clone()));
+            }
+        }
+    }
+    out
+}
+
 struct Args {
     registry: Vec<String>,
     openapi: PathBuf,
     out: PathBuf,
+    verify: bool,
 }
 
 fn args() -> Args {
@@ -272,23 +308,30 @@ fn args() -> Args {
         manifest.parent().map(|p| p.join("openapi")).unwrap_or_else(|| PathBuf::from("../openapi"))
     });
     let mut out = manifest.join("spec/cloud.json");
+    let mut verify = false;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < argv.len() {
-        let val = || argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{} needs a value", argv[i]));
-        match argv[i].as_str() {
-            "--registry" => registry.push(val()),
-            "--openapi" => openapi = PathBuf::from(val()),
-            "--out" => out = PathBuf::from(val()),
-            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>]\nunknown: {other}"),
+        let flag = argv[i].clone();
+        if flag == "--verify" {
+            verify = true;
+            i += 1;
+            continue;
+        }
+        let val = argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{flag} needs a value"));
+        match flag.as_str() {
+            "--registry" => registry.push(val),
+            "--openapi" => openapi = PathBuf::from(val),
+            "--out" => out = PathBuf::from(val),
+            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>] [--verify]\nunknown: {other}"),
         }
         i += 2;
     }
     if registry.is_empty() {
         registry.push(DEFAULT_REGISTRY.to_string());
     }
-    Args { registry, openapi, out }
+    Args { registry, openapi, out, verify }
 }
 
 /// Read one route table: a URL is the normal case (the registry answers for
@@ -379,6 +422,36 @@ async fn main() {
     }
     let registry = if docs.len() == 1 { docs.remove(0) } else { union(docs) };
     let reg = Registry::read(&registry);
+
+    // Re-check an artifact instead of writing one. Needs no authored master — the
+    // spec already carries every operation and the table already answers which of
+    // them are served — which is what lets the release gate run this with nothing
+    // but a checkout and the network.
+    if a.verify {
+        let spec: Value = serde_json::from_slice(
+            &std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display())),
+        )
+        .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.out.display()));
+        let bad = refuted(&reg, &spec);
+        for (m, p) in &bad {
+            eprintln!("  refuted  {m} {p}");
+        }
+        eprintln!(
+            "genspec --verify: {} of {} operations in {} address routes {} does not serve",
+            bad.len(),
+            spec.get("paths")
+                .and_then(Value::as_object)
+                .map(|p| p.values().filter_map(Value::as_object).map(Map::len).sum())
+                .unwrap_or(0usize),
+            a.out.display(),
+            a.registry.join(" ∪ "),
+        );
+        if !bad.is_empty() {
+            eprintln!("Regenerate: genspec, then genproduct.");
+            std::process::exit(1);
+        }
+        return;
+    }
 
     let master_path = a.openapi.join("hanzo.yaml");
     let master: Value = serde_norway::from_str(

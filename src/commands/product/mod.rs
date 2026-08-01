@@ -128,38 +128,7 @@ pub fn augment(mut cmd: Command) -> Command {
         }
         cmd = cmd.subcommand(build_product(product));
     }
-    // Friendly top-level aliases → a generated coordinate. Curated, explicit; the
-    // alias mounts the SAME generated leaf under a nicer name (no logic dup).
-    for a in ALIASES {
-        if taken.contains(a.name) || is_product(a.name) {
-            continue;
-        }
-        if let Some(op) = alias_op(a.name) {
-            cmd = cmd.subcommand(leaf_named(a.name, op));
-        }
-    }
     cmd
-}
-
-/// A friendly top-level name that maps to a generated (product, nodes, verb).
-struct Alias {
-    name: &'static str,
-    product: &'static str,
-    nodes: &'static [&'static str],
-    verb: &'static str,
-}
-
-/// The curated alias table — small and explicit. Each alias dispatches to the
-/// SAME generated op; there is no duplicated behavior.
-static ALIASES: &[Alias] = &[
-    // `hanzo logs` == `hanzo o11y logs` (tenant-scoped product log stream).
-    Alias { name: "logs", product: "o11y", nodes: &[], verb: "logs" },
-];
-
-/// The generated op an alias targets, if it still exists.
-fn alias_op(name: &str) -> Option<&'static Op> {
-    let a = ALIASES.iter().find(|a| a.name == name)?;
-    OPS.iter().find(|o| o.product == a.product && o.nodes == a.nodes && o.verb == a.verb)
 }
 
 /// Distinct product names in `OPS`, stable order.
@@ -375,14 +344,10 @@ pub enum LeafBody {
     None,
 }
 
-/// If `matches` selected a GENERATED product (or a friendly alias), resolve it;
-/// otherwise `None` so the derive tree handles it (a local command, or bare).
+/// If `matches` selected a GENERATED product, resolve it; otherwise `None` so the
+/// derive tree handles it (a local command, or bare).
 pub fn resolve(matches: &ArgMatches) -> Option<Resolved> {
     let (top, sub) = matches.subcommand()?;
-    // A friendly top-level alias (`logs`) is a leaf reusing a generated op.
-    if let Some(op) = alias_op(top) {
-        return Some(resolve_leaf(op, sub));
-    }
     if !is_product(top) {
         return None;
     }
