@@ -242,24 +242,52 @@ enum Probe {
     Blind,
 }
 
-/// Ask the host whether anything is routed at this path. Read-only by
-/// construction: a `GET`, and a `405` is a PRESENT answer, not a failure.
+/// How many serial `404`s confirm one.
+const CONFIRM: usize = 3;
+
+/// THE RULE OF THIS GATE, and it is a pure function of the answers so that it can
+/// be stated as a test rather than only as a paragraph — see the tests at the foot
+/// of this file. It is kept apart from the transport for exactly that reason.
 ///
-/// A SINGLE 404 IS NOT EVIDENCE. Measured on this surface: fourteen `/v1/pricing`
-/// paths answered 404 to one concurrent sweep and 200 to every serial re-ask a
-/// minute later. A gate that condemned on the first answer would have reported
-/// fourteen production breaks that were not breaks — the same class of mistake as
-/// reading 403 as absent, one layer down. So a 404 is CONFIRMED before it counts:
-/// re-asked serially, and only a 404 that holds three times is an answer.
+/// `401`/`403` say the route is THERE and wants a caller who is signed in; `405`
+/// says the path is routed and the verb is not; only `404` says there is nothing at
+/// that address. An earlier hand analysis of this exact surface conflated them and
+/// reported three production breaks that were not breaks.
+///
+/// And A SINGLE 404 IS NOT EVIDENCE. Measured on this surface: fourteen
+/// `/v1/pricing` paths answered 404 to one concurrent sweep and 200 to every serial
+/// re-ask a minute later. So a 404 counts only once it has held [`CONFIRM`] times;
+/// one that did not hold is [`Probe::Flapping`] — present, reported, never drift.
+/// A sequence that ran out before confirming, or that went silent, is
+/// [`Probe::Blind`]: no answer is not "no drift", it is "I could not look".
+fn verdict(answers: &[Option<u16>]) -> Probe {
+    let mut seen404 = 0;
+    for a in answers {
+        match *a {
+            Some(404) => seen404 += 1,
+            Some(code) if seen404 > 0 => return Probe::Flapping(code),
+            Some(code) => return Probe::Present(code),
+            None => return Probe::Blind,
+        }
+    }
+    if seen404 >= CONFIRM {
+        Probe::Absent
+    } else {
+        Probe::Blind
+    }
+}
+
+/// Ask the host whether anything is routed at this path, and hand the answers to
+/// [`verdict`]. Read-only by construction: a `GET`, and a `405` is a PRESENT
+/// answer, not a failure.
 async fn probe(client: &reqwest::Client, host: &str, path: &str) -> Probe {
     let url = format!("{}{}", host.trim_end_matches('/'), path);
-    let mut seen404 = 0;
-    // Three rounds; each tolerates one transport failure, because a dropped
-    // connection is not evidence about a route. Silence all the way down is
-    // evidence that the gate cannot see, which is a different and reportable
-    // thing from evidence that the route is gone.
-    for round in 0..3 {
-        if round > 0 {
+    let mut answers = Vec::with_capacity(CONFIRM);
+    // Up to CONFIRM rounds, serially; each tolerates one transport failure, because
+    // a dropped connection is not evidence about a route. Only a 404 is re-asked —
+    // every other answer has already settled the question.
+    while answers.len() < CONFIRM {
+        if !answers.is_empty() {
             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         }
         let mut answer = None;
@@ -273,14 +301,12 @@ async fn probe(client: &reqwest::Client, host: &str, path: &str) -> Probe {
                 Err(_) => break,
             }
         }
-        match answer {
-            Some(404) => seen404 += 1,
-            Some(code) if seen404 > 0 => return Probe::Flapping(code),
-            Some(code) => return Probe::Present(code),
-            None => return Probe::Blind,
+        answers.push(answer);
+        if answer != Some(404) {
+            break;
         }
     }
-    Probe::Absent
+    verdict(&answers)
 }
 
 // ---- reachability ------------------------------------------------------------
@@ -314,6 +340,9 @@ fn claim(c: &Curated) -> Option<String> {
 
 // ---- arguments ---------------------------------------------------------------
 
+const USAGE: &str =
+    "usage: driftgate [--registry <url|path>] [--host <url>] [--spec <path>] [--hanzo <path>]";
+
 struct Args {
     registry: String,
     host: String,
@@ -335,19 +364,24 @@ fn args() -> Args {
         spec: manifest.join("spec/cloud.json"),
         hanzo: sibling,
     };
+    // The flag is decided BEFORE its value is required, so an unknown flag says so
+    // and `--help` is answered rather than told it needs a value.
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < argv.len() {
-        let val = argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{} needs a value", argv[i]));
-        match argv[i].as_str() {
-            "--registry" => a.registry = val,
-            "--host" => a.host = val,
-            "--spec" => a.spec = PathBuf::from(val),
-            "--hanzo" => a.hanzo = PathBuf::from(val),
-            other => panic!(
-                "usage: driftgate [--registry <url|path>] [--host <url>] [--spec <path>] [--hanzo <path>]\nunknown: {other}"
-            ),
-        }
+        let flag = argv[i].clone();
+        let set: fn(&mut Args, String) = match flag.as_str() {
+            "--registry" => |a, v| a.registry = v,
+            "--host" => |a, v| a.host = v,
+            "--spec" => |a, v| a.spec = PathBuf::from(v),
+            "--hanzo" => |a, v| a.hanzo = PathBuf::from(v),
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                std::process::exit(0)
+            }
+            other => panic!("{USAGE}\nunknown: {other}"),
+        };
+        set(&mut a, argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{flag} needs a value\n{USAGE}")));
         i += 2;
     }
     a
@@ -649,4 +683,73 @@ async fn main() {
         std::process::exit(1);
     }
     println!("\ndriftgate: no drift.");
+}
+
+/// The gate's two predicates, pinned. Both are pure — that is why they were
+/// separated from the network and from the report — and both encode a rule this
+/// gate exists to keep, which is a rule a paragraph cannot enforce.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// THE rule, and the reason this gate is worth having. `401`/`403` say the
+    /// route is THERE and wants a caller; `405` says the path is routed and the
+    /// verb is not; only `404` says nothing is at that address. An earlier hand
+    /// analysis of this exact surface conflated them and reported three production
+    /// breaks that were not breaks — a red build that teaches people the build
+    /// lies. Anything that ever makes this test fail has reintroduced that.
+    #[test]
+    fn an_auth_refusal_is_a_route_that_exists_and_only_a_confirmed_404_is_absent() {
+        for code in [200, 201, 204, 302, 400, 401, 403, 405, 409, 429, 500, 502, 503] {
+            assert!(
+                matches!(verdict(&[Some(code)]), Probe::Present(c) if c == code),
+                "{code} is an answer FROM a route — a router with nothing at that address \
+                 cannot produce it, so it is never absence"
+            );
+        }
+        assert!(matches!(verdict(&[Some(404); CONFIRM]), Probe::Absent));
+    }
+
+    /// A SINGLE 404 IS NOT EVIDENCE — the same mistake one layer down. Fourteen
+    /// `/v1/pricing` paths answered 404 to one concurrent sweep and 200 to every
+    /// serial re-ask a minute later; condemning on the first answer would have
+    /// reported fourteen more breaks that were not breaks.
+    #[test]
+    fn a_404_that_does_not_hold_is_flapping_and_never_drift() {
+        assert!(matches!(verdict(&[Some(404), Some(200)]), Probe::Flapping(200)));
+        assert!(matches!(verdict(&[Some(404), Some(404), Some(403)]), Probe::Flapping(403)));
+        assert!(
+            matches!(verdict(&[Some(404), Some(404)]), Probe::Blind),
+            "two 404s are not the {CONFIRM} that confirm one"
+        );
+    }
+
+    /// No answer is not "no drift" — it is "I could not look". A gate that cannot
+    /// see must not pass, so silence is its own verdict and never absence.
+    #[test]
+    fn silence_is_never_read_as_an_answer() {
+        assert!(matches!(verdict(&[None]), Probe::Blind));
+        assert!(matches!(verdict(&[Some(404), None]), Probe::Blind));
+        assert!(matches!(verdict(&[]), Probe::Blind));
+    }
+
+    /// What the table may and may not settle on its own. It is complete for a
+    /// product it OWNS, so a missing route there is refuted without asking anyone;
+    /// a `*` door and a silence are NOT answers and carry a probe instead. The bare
+    /// `/v1/*` fallthrough is evidence of nothing — counting it would make every
+    /// conceivable path "served" and this gate a no-op.
+    #[test]
+    fn the_table_refutes_only_inside_a_product_it_owns_and_a_door_is_not_an_answer() {
+        let t = Table::read(&serde_json::json!({"paths": {
+            "/v1/billing/usage": {"get": {}},
+            "/v1/iam/{wildcard1}": {"get": {}},
+            "/v1/{wildcard1}": {"get": {}}
+        }}));
+        assert!(matches!(t.says("GET", &segs("/v1/billing/usage")), Says::Serves));
+        assert!(matches!(t.says("GET", &segs("/v1/billing/no-such-route")), Says::Refutes));
+        assert!(matches!(t.says("GET", &segs("/v1/iam/anything/at/all")), Says::Door));
+        assert!(matches!(t.says("GET", &segs("/v1/nosuchproduct/x")), Says::Silent));
+        assert!(matches!(t.says("POST", &segs("/v1/billing/usage")), Says::Refutes), "a verb is part of the route");
+        assert_eq!(t.products(), ["billing", "iam"].iter().map(ToString::to_string).collect());
+    }
 }

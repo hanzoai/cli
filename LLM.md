@@ -373,7 +373,10 @@ neither can answer the other's.
     single 404 is not evidence either — fourteen `/v1/pricing` paths answered 404
     to one concurrent sweep and 200 to every serial re-ask a minute later, so a 404
     is confirmed three times, serially, before it counts. A 404 that does not
-    repeat is FLAPPING: present, printed, never drift.
+    repeat is FLAPPING: present, printed, never drift. THIS RULE IS A TEST, not
+    only a paragraph: it lives in one pure function (`verdict`), held apart from
+    the transport so it can be stated as one — 13 status codes asserted PRESENT,
+    and the classic "any non-2xx is absence" mutation turns two tests red.
   - **Only a `GET` on a LITERAL path can be asked of a host.** A `{param}` makes
     404 mean "no route" or "no such id"; and cloud's router answers 404, not 405,
     to a verb it lacks at a path it has (`POST /v1/admin/credits` is in the live
