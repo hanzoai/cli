@@ -24,7 +24,12 @@ pub fn warn(msg: &str) {
 #[derive(Parser)]
 #[command(name = "hanzo")]
 #[command(author = "Hanzo AI")]
-#[command(version)]  // = CARGO_PKG_VERSION; Cargo.toml is the ONE source
+// Clap's own `--version` is DISABLED and replaced by the flag below, so the
+// version has ONE implementation (`commands::version::run`) behind all three of
+// its spellings. Clap's would print its own line and exit before that function
+// ran, which is exactly how `hanzo --version` came to disagree with `hanzo
+// version` AND to lose the install-skew report that only the function carries.
+#[command(disable_version_flag = true)]
 #[command(about = "Unified CLI for Hanzo AI development tools", long_about = None)]
 // Bare `hanzo` IS a coding session, WITH flags: the code args are flattened at the
 // top level, so `hanzo --resume <id>`, `hanzo --model enso`, and `hanzo "fix the
@@ -43,6 +48,14 @@ struct Cli {
     /// Increase logging verbosity
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
+
+    /// Print the CLI version (identical to `hanzo version`)
+    ///
+    /// Declared HERE rather than left to clap so it is one flag among the others
+    /// — the flattened coding-session args below cannot swallow it, and `main`
+    /// routes it to the same function the subcommand runs.
+    #[arg(short = 'V', long = "version", action = clap::ArgAction::SetTrue)]
+    version: bool,
 
     /// The coding-session args, flattened so a bare `hanzo [flags] [task]` is a
     /// coding session with them. Ignored when an explicit subcommand is given.
@@ -287,6 +300,10 @@ enum Commands {
         #[arg(last = true, allow_hyphen_values = true)]
         passthrough: Vec<String>,
     },
+
+    /// Show the whole cloud: what is unhealthy first, then clusters,
+    /// applications and the machines on the fleet
+    Status,
 
     /// Print the CLI version
     Version,
@@ -621,6 +638,15 @@ async fn main() -> Result<()> {
     // through the product seam, everything else is a derive command (or bare).
     let matches = commands::product::augment(Cli::command()).get_matches();
 
+    // `hanzo --version` and `hanzo -V` ARE `hanzo version` — one function, three
+    // spellings. Answered before logging, config and every dispatch, so the
+    // version can never depend on state a broken install fails to load, and so
+    // the flag can never fall through to the bare coding session.
+    if matches.get_flag("version") {
+        commands::version::run();
+        return Ok(());
+    }
+
     let log_level = match matches.get_count("verbose") {
         0 => "warn",
         1 => "info",
@@ -763,6 +789,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::serve::service(service, passthrough).await?
             }
         }
+        Commands::Status => commands::status::run(&mut config).await?,
         Commands::Version => commands::version::run(),
         Commands::Fabric { command } => match command {
             FabricCommands::Up { foreground, with_cloud } => {

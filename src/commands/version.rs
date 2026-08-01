@@ -1,19 +1,30 @@
-//! `hanzo version` — our own version, and whether the OTHER name this binary is
-//! installed under agrees with it.
+//! `hanzo version` — our own version, and whether the names this binary is
+//! installed under agree with it. THE one implementation behind `hanzo version`,
+//! `hanzo --version` and `hanzo -V` (see `main`).
 //!
 //! This CLI ships under two names. `hanzo` is what a person types; `hanzo-node`
 //! is what cloud's Go control binary delegates to (`cloud/cli/link.go`
 //! `fabricCLI()` resolves `hanzo-node` on PATH first, then `hanzo`). Same build,
 //! two names — by design.
 //!
-//! The failure that design allows is INVISIBLE: install one name and not the
-//! other, or upgrade one and not the other, and a user types `hanzo`, gets
-//! delegated, and runs a different build with no version anywhere on screen. A
-//! v1.7.2 `hanzo-node` sitting behind a current `hanzo` is what served ~150
-//! commands that no longer exist. Nothing announced it.
+//! The failure that design allows is INVISIBLE, and it has TWO directions:
 //!
-//! So `hanzo version` looks for the twin and reports the skew. It never repairs
-//! it and never refuses to run — it makes a silent thing loud.
+//! * a stale `hanzo-node` BEHIND us — install one name and not the other, or
+//!   upgrade one and not the other, and a user types `hanzo`, gets delegated,
+//!   and runs a different build with no version anywhere on screen. A v1.7.2
+//!   `hanzo-node` sitting behind a current `hanzo` is what served ~150 commands
+//!   that no longer exist.
+//! * a different file AHEAD of us holding the name `hanzo` — an earlier PATH
+//!   entry wins every bare `hanzo`, so the build a user upgraded is not the
+//!   build that answers. Same silence, opposite direction.
+//!
+//! So this reports both. It never repairs either and never refuses to run — it
+//! makes a silent thing loud.
+//!
+//! THE VERSION IS THE ONLY THING ON STDOUT: one line, `hanzo <semver>`, which is
+//! the shape the Go control binary's delegate parser reads and the shape every
+//! other `--version` in the world prints. A skew is a WARNING, not the answer,
+//! so it goes to stderr and a caller piping the version gets exactly one line.
 
 use colored::Colorize;
 use std::path::{Path, PathBuf};
@@ -21,12 +32,15 @@ use std::path::{Path, PathBuf};
 /// The name cloud's control binary delegates to.
 const DELEGATE: &str = "hanzo-node";
 
+/// The name a person types — the one an earlier PATH entry can steal.
+const NAME: &str = "hanzo";
+
 /// What we found at the other name.
 enum Twin {
     /// No `hanzo-node` on PATH. Nothing delegates here, nothing to skew.
     Absent,
     /// The same file as us — a link or a copy of this build. The healthy install.
-    Same(PathBuf),
+    Same,
     /// A different build. THIS is the invisible failure, so it is reported loudly.
     Skewed { path: PathBuf, version: String },
     /// Present, but it would not say what it is.
@@ -34,33 +48,47 @@ enum Twin {
 }
 
 pub fn run() {
-    println!("{} v{}", "Hanzo CLI".bold(), env!("CARGO_PKG_VERSION"));
+    println!("hanzo {}", env!("CARGO_PKG_VERSION"));
 
     match twin() {
-        Twin::Absent | Twin::Same(_) => {}
+        Twin::Absent | Twin::Same => {}
         Twin::Skewed { path, version } => {
-            println!();
-            println!(
+            eprintln!();
+            eprintln!(
                 "{} {} is v{} — this is v{}",
                 "stale delegate:".yellow().bold(),
                 path.display(),
                 version,
                 env!("CARGO_PKG_VERSION"),
             );
-            println!(
+            eprintln!(
                 "  Verbs handed to `{DELEGATE}` run THAT build, not this one, so the \n  \
                  command surface you see may not be the one that answers. Reinstall so \n  \
                  both names are the same build."
             );
         }
         Twin::Unreadable(path) => {
-            println!();
-            println!(
+            eprintln!();
+            eprintln!(
                 "{} {} did not report a version — it may not be this CLI",
                 "stale delegate:".yellow().bold(),
                 path.display(),
             );
         }
+    }
+
+    if let Some((wins, ours)) = shadow(which(NAME).as_deref().map(real), me()) {
+        eprintln!();
+        eprintln!(
+            "{} `{NAME}` on PATH is {} — this is {}",
+            "shadowed name:".yellow().bold(),
+            wins.display(),
+            ours.display(),
+        );
+        eprintln!(
+            "  The PATH entry WINS: typing `{NAME}` runs that file, not this one. Remove \n  \
+             it or reorder PATH so one build owns the name."
+        );
     }
 }
 
@@ -71,19 +99,39 @@ fn twin() -> Twin {
     // Same inode (a hardlink) or same resolved target (a symlink, or literally
     // us) is the healthy install: one build, two names. Compare canonically so
     // a symlink chain does not read as a skew.
-    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(&path), std::env::current_exe()) {
-        if let Ok(b) = std::fs::canonicalize(b) {
-            if a == b {
-                return Twin::Same(path);
-            }
-        }
+    if me().is_some_and(|m| real(&path) == m) {
+        return Twin::Same;
     }
 
     match version_of(&path) {
-        Some(v) if v == env!("CARGO_PKG_VERSION") => Twin::Same(path),
+        Some(v) if v == env!("CARGO_PKG_VERSION") => Twin::Same,
         Some(v) => Twin::Skewed { path, version: v },
         None => Twin::Unreadable(path),
     }
+}
+
+/// Who OWNS the name, when it is not us: `(the file that wins, us)`.
+///
+/// `first` is the first `hanzo` on PATH — the file a shell actually execs — and
+/// `me` is this executable, both already canonical. `None` when they are the
+/// same file (the healthy install) or when the OS will not say which we are, so
+/// silence always means "nothing is in front of you". Pure, so the rule is a
+/// test rather than a comment.
+fn shadow(first: Option<PathBuf>, me: Option<PathBuf>) -> Option<(PathBuf, PathBuf)> {
+    let (first, me) = (first?, me?);
+    (first != me).then_some((first, me))
+}
+
+/// This executable, canonically — the identity every skew is measured against.
+fn me() -> Option<PathBuf> {
+    std::env::current_exe().ok().map(|p| real(&p))
+}
+
+/// Resolve a path through its symlinks. An unresolvable path is ITSELF: a file
+/// we cannot canonicalize is still a real candidate, and dropping it would turn
+/// a skew into silence — the one outcome this module exists to prevent.
+fn real(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
 /// First executable named `name` on PATH. We do our own lookup rather than
@@ -177,6 +225,24 @@ mod tests {
     fn a_non_version_is_not_mistaken_for_one() {
         assert_eq!(probe("usage: thing [opts]"), None);
         assert_eq!(probe(""), None);
+    }
+
+    /// The OTHER skew direction: a DIFFERENT file holding the name `hanzo` ahead
+    /// of us on PATH. The same file under two spellings is the healthy install
+    /// and must stay silent; only a genuinely different file is reported, and
+    /// never on a system that will not say which executable we are.
+    #[test]
+    fn a_different_file_holding_our_name_is_reported_and_our_own_is_not() {
+        let (us, them) = (PathBuf::from("/home/z/.local/bin/hanzo"), PathBuf::from("/usr/local/bin/hanzo"));
+
+        assert_eq!(
+            shadow(Some(them.clone()), Some(us.clone())),
+            Some((them, us.clone())),
+            "the PATH winner and us are named, in that order"
+        );
+        assert_eq!(shadow(Some(us.clone()), Some(us.clone())), None, "one file, no skew");
+        assert_eq!(shadow(None, Some(us.clone())), None, "nothing on PATH is not a skew");
+        assert_eq!(shadow(Some(us), None), None, "unknown self is never a skew");
     }
 
     /// PATH lookup finds the FIRST match, which is the one that would actually
