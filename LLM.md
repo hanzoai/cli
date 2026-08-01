@@ -206,9 +206,15 @@ never be checked.
   `hanzoai/cloud@<ref> sha256:<digest>` into the spec's provenance.
   `--check` re-runs the whole derivation and refuses a delta without writing.
 - `make verify` — THE DRIFT GATE (`src/bin/driftgate.rs`). The other question: is
-  the document still TRUE of the running server, in BOTH directions? On every push
-  and PR (`hanzo.yml` `test:`), NIGHTLY (`.hanzo/workflows/drift.yml`) and before a
-  release mints anything. See "The drift gate" below.
+  the document still TRUE of the running server, in BOTH directions? It has ONE
+  home, `.hanzo/workflows/drift.yml`, carrying all four ways of asking — push, PR,
+  the nightly schedule, a click — plus the same command in the release matrix
+  before an artifact is minted. It is its own JOB, needing only a clone, a compiler
+  and the network, because it lived in `hanzo.yml`'s `test:` list first and that
+  list runs inside hanzoai/ci's shared lane behind the client step, the KMS login
+  and the toolchain: a gate that runs last in a shared job reports on everything
+  ahead of it, not on the server, and that one was never asked once. See "The drift
+  gate" below.
 - `cargo run --bin genproduct` — offline, deterministic: `spec/cloud.json` → the clap
   tree. `--check` compares instead of writing; `tests/spec_drift.rs` runs it, so
   `cargo test` pins the tree to its spec.
