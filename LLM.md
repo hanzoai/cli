@@ -118,13 +118,22 @@ does over the wire anyway.
 ```
 hanzoai/openapi hanzo.yaml ─┐                        (shape: bodies, query params)
                             ├─ genspec ─→ spec/cloud.json ─→ genproduct ─→ generated.rs
-api.hanzo.ai/v1/openapi.json┘                        (existence: the live route table)
+hanzoai/cloud@<tag>         ┘                        (existence: the release's route table)
+  openapi.yaml
 ```
 
-- `cargo run --features genspec --bin genspec` — the REFRESH seam. Joins the two
-  documents and writes `spec/cloud.json`. `--registry <url|path>` (default
-  `https://api.hanzo.ai/v1/openapi.json`, or `<openapi>/generated/hanzo.json` for an
-  offline run), `--openapi <hanzoai/openapi checkout>` (default `../openapi`).
+Both halves are PINNED, in `.spec-lock`, and only `make spec` moves either. The
+right-hand input used to be `api.hanzo.ai/v1/openapi.json`, a host — which cannot
+say which deploy it was, so a capture taken from it could never be re-derived and
+never be checked.
+
+- `make spec` / `make spec-check` — the refresh seam and its gate, both through
+  `scripts/generate.sh` (the same call site hanzoai/ci's `client:` lane uses).
+  Underneath: `genspec` reads the document from `HANZO_REGISTRY` (JSON or YAML)
+  and the shapes from `--openapi <hanzoai/openapi checkout>`, and stamps
+  `hanzoai/cloud@<ref> sha256:<digest>` into the spec's provenance.
+  `--check` re-runs the whole derivation and refuses a delta without writing;
+  `--verify` re-asks the LIVE table instead. Different questions, both required.
 - `cargo run --bin genproduct` — offline, deterministic: `spec/cloud.json` → the clap
   tree. `--check` compares instead of writing; `tests/spec_drift.rs` runs it, so
   `cargo test` is the drift gate.
@@ -160,23 +169,44 @@ neither can answer the other's.
   the doc comments, and the authored half shrinks. It is a shrinking dependency,
   not a permanent one — `/v1/admin/plugins` is what the end state looks like:
   cloud emits the full schema, and the authored spec exists to make it REACHABLE.
-- **Refresh:** `genspec` then `genproduct`, in that order, then `cargo test`
-  (`tests/spec_drift.rs` re-runs `genproduct --check`, so a stale `generated.rs`
-  fails the build).
+- **Refresh: `make spec`. Gate: `make spec-check`.** Both go through
+  `scripts/generate.sh`, which is also what hanzoai/ci's `client:` lane calls, so
+  a maintainer, the push gate and the release all run ONE derivation. `--check`
+  only decides write-vs-compare; a gate that runs a different generation than the
+  writer tests something nobody ships.
 
   ```
-  cargo run --features genspec --bin genspec -- --openapi ../openapi
-  cargo run --bin genproduct
-  cargo test
+  make spec         # regenerate onto the document .spec-lock names
+  make spec-check   # refuse a capture that is no longer its projection
+  make verify       # refuse a capture the LIVE server does not serve
   ```
 
-  **`--registry` defaults to the wire, and a COMMITTED spec must have the wire
-  among its sources** — `tests/spec_drift.rs` asserts it against the provenance
-  `genspec` writes into `info.description`. A table captured to a local file
-  cannot refute what the live one would, and cannot carry prose the live one has
-  since gained; that is how 149 phantom `/v1/cloud/*` commands survived a version,
-  and how 41 `platform` commands came to print their HTTP route where their
-  description belonged.
+  **THE CAPTURE NAMES A RELEASE, and `.spec-lock` is where it says so.** Four
+  lines the release writes (`repo`, `path`, `ref`, `sha256` of
+  hanzoai/cloud's `openapi.yaml` at the tag it deployed) plus one
+  `generate.sh` writes (`master`, the hanzoai/openapi commit it read shapes
+  from). Every input pinned; two runs of one commit cannot disagree.
+
+  This replaced "the spec must name the wire", which was half right and caught
+  nothing. A URL names a HOST, and a host cannot say which deploy it was — so a
+  capture built from the wire keeps claiming the wire forever while the router
+  moves underneath it, and every stale spec ever committed satisfied that
+  assertion. `spec/cloud.json` now carries `hanzoai/cloud@<tag> sha256:<digest>`,
+  computed over the bytes actually read, and `spec_drift.rs` refuses any
+  disagreement between the spec, the lock, and a release-shaped tag.
+
+  **THE SEAM IS WIRED — that is the whole point.** `genspec` used to be reachable
+  only by a maintainer typing it: `grep -rn genspec` over this repo's CI returned
+  nothing, and there was no `hanzo.yml` and no `Makefile` at all. Now
+  `hanzo.yml`'s `spec-drift-check` runs it on every push, and hanzoai/cloud's
+  release sends `repository_dispatch: spec-update` carrying `(version, sha,
+  spec_sha256)` — the lane fetches that exact document, regenerates, compiles,
+  and cuts a CLI patch. The capture cannot go stale silently because a cloud
+  release is what moves it.
+
+  Measured when it was wired: the committed capture was 7 operations short and 8
+  wrong against a document cloud had already committed — the `/v1/billing/*`
+  compound-word renames, published-dead and served-undocumented.
 
   Mid-rollout a route lives in cloud `main` before api.hanzo.ai answers it, and
   the live table alone would refute it. Pass `--registry` MORE THAN ONCE: the

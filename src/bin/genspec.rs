@@ -7,11 +7,25 @@
 //! point: a CLI that must import cloud to know its commands is the thing being
 //! eliminated.
 //!
-//!   * WHAT IS SERVED — cloud's own route table, over the wire from
-//!     `<api>/v1/openapi.json`. That document is a projection of the LIVE fiber
-//!     router (hanzoai/cloud `openapi.Spec` reads `app.Fiber().GetRoutes()`), so a
-//!     route that is not mounted cannot appear in it. Same move as zip's
-//!     `CommandsFromSpec`: ask a running service what it can do.
+//!   * WHAT IS SERVED — cloud's own route table, either over the wire from
+//!     `<api>/v1/openapi.json` or as the `openapi.yaml` committed at a release
+//!     tag. Same document, two encodings; `read_registry` takes either.
+//!
+//!     WHAT THAT DOCUMENT IS, precisely, because the rule below rests on it and
+//!     the earlier answer here was wrong: it is the weave of the per-app subsets
+//!     each app binary emits FROM ITS OWN ROUTER (`<app> openapi`, embedded by
+//!     `plugin/embed.go`), not a read of the serving process's router. The light
+//!     host mounts no subsystem, so it cannot read one. That makes the document
+//!     a projection of the routers AT BUILD TIME — true of the binary that was
+//!     released, and true of production only because hanzoai/cloud's release
+//!     gate regenerates every subset from source and refuses to ship a tree
+//!     where they disagree (`make -f mk/fleet.mk surface-check`). The claim is
+//!     no weaker for being indirect, but it is a different claim, and stating it
+//!     as "the live router" is how three renamed billing routes shipped
+//!     published-dead and served-undocumented from one binary.
+//!
+//!     So a route absent from the document was absent from the router of the
+//!     binary that emitted it — which is what the refutation rule needs.
 //!
 //!     `--registry <url|path>` reads somewhere else, and may be given MORE THAN
 //!     ONCE: the readings are unioned, first one wins every conflict, and every
@@ -48,16 +62,29 @@
 //! `gateway` subtree drops out because the registry serves none of it, not
 //! because a list in `genproduct` says so.
 //!
-//! THE RULE IS ALSO A PROPERTY OF THE ARTIFACT, not only of a generator run.
-//! `--verify` re-reads the committed spec (`--out`) and applies the SAME `owned` +
-//! `find` predicate to it, so "no command addresses a route the server does not
-//! serve" can be re-asked of the live table at any moment, by anyone, without the
-//! authored master. Provenance and freshness are different questions: a spec
-//! generated from the wire keeps naming the wire forever, while the router moves
-//! underneath it. Recording the source answers the first; only re-asking answers
-//! the second. That is what the release gate runs — a `hanzo` whose command tree
-//! the server refutes is never minted — and it is what bounds the union above: a
-//! reading that let an undeployed route through must become true before it ships.
+//! THE RULE IS ALSO A PROPERTY OF THE ARTIFACT, not only of a generator run —
+//! and there are TWO properties, because there are two ways for a capture to
+//! stop being true. Recording the source in `info.description` answers neither;
+//! provenance is not freshness.
+//!
+//!   `--check`  IS THE SPEC STILL ITS INPUTS? Re-runs the whole generation
+//!     against a PINNED document and refuses if the bytes differ from `--out`.
+//!     This is the gate that fires when cloud ships: a release hands this repo
+//!     `openapi.yaml` at its own sha (`HANZO_REGISTRY`), and a capture that no
+//!     longer projects it goes red instead of silently describing last week's
+//!     surface. Nothing is written — a check that repairs what it measures
+//!     reports success for a tree that was wrong when the job started.
+//!
+//!   `--verify` IS THE SPEC STILL TRUE OF PRODUCTION? Re-reads the committed
+//!     spec and applies the SAME `owned` + `find` predicate against the LIVE
+//!     table, so "no command addresses a route the server does not serve" can be
+//!     re-asked at any moment, by anyone, without the authored master. That is
+//!     what the release gate runs — a `hanzo` whose command tree the server
+//!     refutes is never minted — and it is what bounds the union above: a
+//!     reading that let an undeployed route through must become true before it
+//!     ships.
+//!
+//! One document, two questions, and a capture has to survive both.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -299,6 +326,7 @@ struct Args {
     openapi: PathBuf,
     out: PathBuf,
     verify: bool,
+    check: bool,
 }
 
 fn args() -> Args {
@@ -309,13 +337,14 @@ fn args() -> Args {
     });
     let mut out = manifest.join("spec/cloud.json");
     let mut verify = false;
+    let mut check = false;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < argv.len() {
         let flag = argv[i].clone();
-        if flag == "--verify" {
-            verify = true;
+        if flag == "--verify" || flag == "--check" {
+            *(if flag == "--verify" { &mut verify } else { &mut check }) = true;
             i += 1;
             continue;
         }
@@ -324,31 +353,48 @@ fn args() -> Args {
             "--registry" => registry.push(val),
             "--openapi" => openapi = PathBuf::from(val),
             "--out" => out = PathBuf::from(val),
-            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>] [--verify]\nunknown: {other}"),
+            other => panic!("usage: genspec [--registry <url|path>]… [--openapi <dir>] [--out <path>] [--verify|--check]\nunknown: {other}"),
         }
         i += 2;
+    }
+    if verify && check {
+        panic!("--verify and --check ask different questions of different documents; run them separately");
     }
     if registry.is_empty() {
         registry.push(DEFAULT_REGISTRY.to_string());
     }
-    Args { registry, openapi, out, verify }
+    Args { registry, openapi, out, verify, check }
 }
 
 /// Read one route table: a URL is the normal case (the registry answers for
-/// itself), a path is a checkout or an air-gapped run against a captured table.
-async fn read_registry(src: &str) -> Value {
-    if src.starts_with("http") {
-        let body = reqwest::get(src)
+/// itself), a path is a checkout, a release's pinned `openapi.yaml`, or an
+/// air-gapped run against a captured table.
+///
+/// JSON or YAML — the SAME document is served as `/v1/openapi.json` and
+/// committed as `openapi.yaml`, and which encoding a reading arrives in says
+/// nothing about what it means. Try JSON, fall back to YAML: cheap, and it is
+/// what lets `HANZO_REGISTRY` name a git object at a release tag instead of a
+/// live host.
+async fn read_registry(src: &str) -> (Value, String) {
+    let body = if src.starts_with("http") {
+        reqwest::get(src)
             .await
             .and_then(|r| r.error_for_status())
             .unwrap_or_else(|e| panic!("GET {src}: {e}"))
             .text()
             .await
-            .expect("read registry");
-        serde_json::from_str(&body).unwrap_or_else(|e| panic!("{src} is not the JSON route table: {e}"))
+            .expect("read registry")
     } else {
-        serde_json::from_str(&std::fs::read_to_string(src).expect("read registry")).expect("parse registry")
-    }
+        std::fs::read_to_string(src).unwrap_or_else(|e| panic!("read {src}: {e}"))
+    };
+    let digest = {
+        use sha2::Digest;
+        format!("{:x}", sha2::Sha256::digest(body.as_bytes()))
+    };
+    let doc = serde_json::from_str(&body)
+        .or_else(|_| serde_norway::from_str(&body))
+        .unwrap_or_else(|e| panic!("{src} is not the route table as JSON or YAML: {e}"));
+    (doc, digest)
 }
 
 /// Union of several readings of ONE router at different commits — the shape the
@@ -417,11 +463,26 @@ async fn main() {
     let a = args();
 
     let mut docs = Vec::new();
+    let mut digests = Vec::new();
     for src in &a.registry {
-        docs.push(read_registry(src).await);
+        let (doc, digest) = read_registry(src).await;
+        docs.push(doc);
+        digests.push(digest);
     }
     let registry = if docs.len() == 1 { docs.remove(0) } else { union(docs) };
     let reg = Registry::read(&registry);
+
+    // WHAT the document is, not WHERE this run happened to read it. A provenance
+    // line naming a file path or a URL makes the artifact's bytes a function of
+    // the reader — the same document read from a checkout and from the wire
+    // produced two different specs, so `--check` could never be byte-exact — and
+    // it cannot answer the question that matters: WHICH DEPLOY IS THIS? A digest
+    // and a release ref answer both. The digest is computed here, over the bytes
+    // actually read, so the artifact self-verifies; the ref comes from
+    // HANZO_SPEC_REF, which is the one thing a reader cannot derive from bytes
+    // (hanzoai/cloud's release sets it when it hands this repo its document).
+    let spec_ref = std::env::var("HANZO_SPEC_REF").unwrap_or_else(|_| "unpinned".into());
+    let provenance = format!("hanzoai/cloud@{spec_ref} sha256:{}", digests.join("+"));
 
     // Re-check an artifact instead of writing one. Needs no authored master — the
     // spec already carries every operation and the table already answers which of
@@ -553,11 +614,10 @@ async fn main() {
             "title": "Hanzo Cloud — the CLI's command surface",
             "version": master.pointer("/info/version").and_then(Value::as_str).unwrap_or("unknown"),
             "description": format!(
-                "Generated by `cargo run --features genspec --bin genspec`. The authored shapes \
-                 from hanzoai/openapi hanzo.yaml, keeping only what the live cloud route table at \
-                 {} does not refute. Never hand-edited: `genproduct` derives src/commands/product/\
-                 generated.rs from this and nothing else.",
-                a.registry.join(" ∪ ")
+                "Generated by `cargo run --features genspec --bin genspec` from the Hanzo Cloud \
+                 API document {provenance}. The authored shapes from hanzoai/openapi hanzo.yaml, \
+                 keeping only what that document does not refute. Never hand-edited: `genproduct` \
+                 derives src/commands/product/generated.rs from this and nothing else."
             ),
         },
         "paths": paths,
@@ -569,6 +629,61 @@ async fn main() {
     }
 
     let bytes = serde_json::to_vec(&doc).expect("encode");
+
+    // FRESHNESS OF THE PROJECTION — the same generation, asked of the artifact
+    // instead of written over it. `spec/cloud.json` is a projection of one
+    // document; re-projecting that document and finding different bytes means
+    // the committed capture is not what its inputs say it is, and every command
+    // `genproduct` derives from it inherits the lie.
+    //
+    // This is D1's gate and it is why nothing is written here: a check that
+    // repairs what it measures reports success for a tree that was wrong when
+    // the job started. It reads the document from `HANZO_REGISTRY` (the
+    // client: lane sets it to `openapi.yaml` at the release's sha), so it asks
+    // about a PINNED document — which is a different question from `--verify`,
+    // and both are worth asking. Provenance says where the spec came from;
+    // --check says the spec still equals its inputs; --verify says the running
+    // server still serves it.
+    if a.check {
+        let have = std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display()));
+        if have == bytes {
+            eprintln!(
+                "genspec --check: {} is current with {} ({} bytes)",
+                a.out.display(),
+                a.registry.join(" ∪ "),
+                bytes.len()
+            );
+            return;
+        }
+        let ops = |v: &Value| -> BTreeSet<(String, String)> {
+            let mut s = BTreeSet::new();
+            for (p, item) in v.get("paths").and_then(Value::as_object).into_iter().flatten() {
+                for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
+                    s.insert((m.to_ascii_uppercase(), p.clone()));
+                }
+            }
+            s
+        };
+        let now = ops(&doc);
+        let then = serde_json::from_slice::<Value>(&have).map(|v| ops(&v)).unwrap_or_default();
+        for (m, p) in now.difference(&then).take(20) {
+            eprintln!("  + {m} {p}");
+        }
+        for (m, p) in then.difference(&now).take(20) {
+            eprintln!("  - {m} {p}");
+        }
+        eprintln!(
+            "genspec --check: STALE — {} would gain {} operations and lose {} ({} bytes vs {})",
+            a.out.display(),
+            now.difference(&then).count(),
+            then.difference(&now).count(),
+            bytes.len(),
+            have.len(),
+        );
+        eprintln!("Regenerate: genspec, then genproduct, and commit both.");
+        std::process::exit(1);
+    }
+
     std::fs::write(&a.out, &bytes).unwrap_or_else(|e| panic!("write {}: {e}", a.out.display()));
 
     let total: usize = refuted.values().sum();
