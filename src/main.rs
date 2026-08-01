@@ -60,9 +60,25 @@ struct Cli {
 /// `hanzo …` (flattened onto [`Cli`]), so both accept exactly the same flags.
 #[derive(clap::Args, Clone)]
 struct CodeArgs {
-    /// Coding backend: claude | dev
-    #[arg(long, default_value = "claude")]
-    backend: String,
+    /// Coding backend: dev | claude | codex (default: dev, our own agent)
+    ///
+    /// Equivalent to naming it positionally (`hanzo code claude`) or as its own
+    /// flag (`hanzo code --claude`). Every spelling resolves in ONE place —
+    /// `commands::code::backend::select`.
+    #[arg(long, value_name = "BACKEND", group = "backend_name")]
+    backend: Option<String>,
+
+    /// Use our own `dev` agent (same as `--backend dev`). This is the default.
+    #[arg(long, group = "backend_name")]
+    dev: bool,
+
+    /// Use the `claude` backend (same as `--backend claude`).
+    #[arg(long, group = "backend_name")]
+    claude: bool,
+
+    /// Use the `codex` backend (same as `--backend codex`).
+    #[arg(long, group = "backend_name")]
+    codex: bool,
 
     /// Force streaming this session to Hanzo cloud (mission-control) on. Already
     /// the default for a signed-in run; `--link` only overrides a persisted
@@ -118,8 +134,15 @@ struct CodeArgs {
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
 
-    /// Task to run headless. If omitted, launches an interactive session.
-    task: Option<String>,
+    /// A backend name (`dev`, `claude`, `codex`) OR the task to run headless.
+    /// Exactly a backend name selects the backend; anything else is the task.
+    /// Omit both for an interactive session on the default backend.
+    #[arg(value_name = "BACKEND|TASK")]
+    positional: Option<String>,
+
+    /// The task, when a backend was named positionally: `hanzo code dev "fix it"`.
+    #[arg(value_name = "TASK")]
+    tail: Option<String>,
 
     /// Extra args passed verbatim to the backend (after `--`).
     #[arg(last = true, allow_hyphen_values = true)]
@@ -127,11 +150,34 @@ struct CodeArgs {
 }
 
 impl CodeArgs {
+    /// Collapse the flag spellings and `--backend` into the one name the resolver
+    /// reads. clap's `backend_name` group already guarantees at most one is set,
+    /// so this chain never arbitrates — it only transcribes.
+    fn named_backend(&self) -> Option<String> {
+        if self.dev {
+            Some("dev".into())
+        } else if self.claude {
+            Some("claude".into())
+        } else if self.codex {
+            Some("codex".into())
+        } else {
+            self.backend.clone()
+        }
+    }
+
     /// Map the parsed args to the code runner's [`Options`]. The `no_*` flags become
-    /// their positive sense here, in exactly ONE place.
-    fn into_options(self) -> commands::code::Options {
-        commands::code::Options {
-            backend: self.backend,
+    /// their positive sense here, and the backend is resolved here — both in exactly
+    /// ONE place, shared by `hanzo code …`, a bare `hanzo …`, `hanzo dev` and
+    /// `hanzo agent run`.
+    fn into_options(self) -> Result<commands::code::Options> {
+        let named = self.named_backend();
+        let (backend, task) = commands::code::backend::select(commands::code::backend::Selection {
+            positional: self.positional,
+            tail: self.tail,
+            named,
+        })?;
+        Ok(commands::code::Options {
+            backend,
             link: self.link,
             no_link: self.no_link,
             route: !self.no_route,
@@ -143,9 +189,9 @@ impl CodeArgs {
             brand: self.brand,
             theme: self.theme,
             model: self.model,
-            task: self.task,
+            task,
             passthrough: self.passthrough,
-        }
+        })
     }
 }
 
@@ -159,6 +205,33 @@ enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+
+    /// Start a coding session: a coding agent with the Hanzo MCP toolset
+    /// attached, its model calls metered through the Hanzo cloud, and the
+    /// session streamed live to mission control
+    ///
+    /// Runs our own `dev` agent by default. Name another positionally or as a
+    /// flag — the two spellings are the same thing:
+    ///
+    ///   hanzo code dev         hanzo code --dev        (the default)
+    ///   hanzo code claude      hanzo code --claude
+    ///   hanzo code codex       hanzo code --codex
+    ///   hanzo dev              shorthand for `hanzo code dev`
+    ///
+    /// A trailing task runs headless (`hanzo code "fix the failing test"`);
+    /// omit it for an interactive session.
+    #[command(verbatim_doc_comment)]
+    Code(CodeArgs),
+
+    /// Start a coding session on the `dev` backend — shorthand for
+    /// `hanzo code dev`, and the identical run
+    ///
+    /// A SPELLING, not a second implementation. Its dispatch arm sets the
+    /// backend and hands straight to [`code_session`], the one launcher every
+    /// other spelling uses. If you are adding behaviour here that `hanzo code
+    /// dev` would not do, you are forking the command — put it in
+    /// `commands::code::run` instead.
+    Dev(CodeArgs),
 
     /// Manage identities and credentials
     Auth {
@@ -593,19 +666,32 @@ async fn main() -> Result<()> {
             outcome
         }
         None => {
-            // A truly-bare `hanzo` (no subcommand): greet a fresh machine, then run
-            // a cloud-linked coding session from the flattened top-level code args
-            // (link forced on, exactly as `hanzo agent run` does when signed in).
-            iam::onboarding::first_run(&mut config, iam::paths::DEFAULT_BRAND).await;
+            // A truly-bare `hanzo [flags] [task]`: the front door, so linking is
+            // forced on. Everything past that is the SAME session path `hanzo
+            // code` takes — `code_session`, not a second launcher.
             let mut code = cli.code;
             code.link = true;
             let started = std::time::Instant::now();
-            let outcome = commands::code::run(&mut config, code.into_options()).await;
+            let outcome = code_session(&mut config, code).await;
             telemetry.command("code", started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
             outcome
         }
     }
+}
+
+/// THE coding-session launcher. Every spelling the CLI offers — a bare
+/// `hanzo [flags] [task]`, `hanzo code …`, `hanzo code <backend> …`,
+/// `hanzo code --<backend> …` and `hanzo dev …` — arrives here, and they differ
+/// in NOTHING but how the backend was named (resolved once, in
+/// `commands::code::backend::select`) and whether the bare front door forced
+/// linking on.
+///
+/// Do not add a second launcher for a new spelling: add the spelling to
+/// `select` and let it land here like the rest.
+async fn code_session(config: &mut config::Config, args: CodeArgs) -> Result<()> {
+    iam::onboarding::first_run(config, iam::paths::DEFAULT_BRAND).await;
+    commands::code::run(config, args.into_options()?).await
 }
 
 /// Run one resolved top-level command.
@@ -615,12 +701,29 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             AgentCommands::Run { mode, code } => {
                 commands::agent::run(
                     &mut config,
-                    code.into_options(),
+                    code.into_options()?,
                     commands::agent::Mode::parse(&mode),
                 )
                 .await?
             }
         },
+
+        Commands::Code(args) => code_session(&mut config, args).await?,
+
+        // `hanzo dev …` IS `hanzo code dev …`. It names the backend and hands to
+        // the one launcher — no behaviour of its own. Naming a backend as well
+        // (`hanzo dev --claude`) is a contradiction, so it is refused here
+        // rather than silently resolved.
+        Commands::Dev(mut args) => {
+            if let Some(named) = args.named_backend() {
+                anyhow::bail!(
+                    "`hanzo dev` already names the backend, so `--{named}` contradicts it \
+                     — use `hanzo code {named}`"
+                );
+            }
+            args.dev = true;
+            code_session(&mut config, args).await?
+        }
         Commands::Auth { command } => match command {
             AuthCommands::Login { brand, provider, token } => {
                 commands::auth::login(&mut config, &brand, provider, token).await?
@@ -781,7 +884,7 @@ mod tests {
         let cli = Cli::try_parse_from(["hanzo", "--model", "enso", "fix the bug"]).expect("parses");
         assert!(cli.command.is_none());
         assert_eq!(cli.code.model.as_deref(), Some("enso"));
-        assert_eq!(cli.code.task.as_deref(), Some("fix the bug"));
+        assert_eq!(cli.code.positional.as_deref(), Some("fix the bug"));
 
         // `--safe` opts out of auto-approve; `--no-sandbox` escalates; they conflict.
         let cli = Cli::try_parse_from(["hanzo", "--safe"]).expect("parses");
@@ -799,7 +902,7 @@ mod tests {
             panic!("expected agent run");
         };
         assert_eq!(mode, "desktop");
-        assert_eq!(code.task.as_deref(), Some("browse docs"));
+        assert_eq!(code.positional.as_deref(), Some("browse docs"));
 
         // Default mode is code, and the code flags flatten in.
         let cli = Cli::try_parse_from(["hanzo", "agent", "run", "--model", "enso", "fix it"]).unwrap();
@@ -813,30 +916,99 @@ mod tests {
         assert!(Cli::try_parse_from(["hanzo", "agent", "run", "--mode", "wat"]).is_err());
     }
 
+    /// Every entry spelling reaches the SAME resolved session. `hanzo code`,
+    /// `hanzo code <backend>`, `hanzo code --<backend>` and `hanzo dev` differ
+    /// in nothing but how the backend was written — so this asserts the RESOLVED
+    /// options, which is the only place a fork could hide.
+    #[test]
+    fn every_entry_spelling_resolves_to_one_session() {
+        use commands::code::backend::BackendKind;
+
+        // The resolved backend for an argv, whichever spelling it used.
+        fn resolved(argv: &[&str]) -> BackendKind {
+            let cli = Cli::try_parse_from(argv).expect("parses");
+            let args = match cli.command {
+                Some(Commands::Code(a)) => a,
+                Some(Commands::Dev(mut a)) => {
+                    a.dev = true;
+                    a
+                }
+                None => cli.code,
+                _ => panic!("expected a coding session for {argv:?}"),
+            };
+            args.into_options().expect("resolves").backend
+        }
+
+        // Our own agent is the default, however the session was entered.
+        assert_eq!(resolved(&["hanzo", "code"]), BackendKind::Dev);
+        assert_eq!(resolved(&["hanzo", "fix the bug"]), BackendKind::Dev);
+
+        // `hanzo dev` IS `hanzo code dev` IS `hanzo code --dev`.
+        for argv in [
+            ["hanzo", "dev"].as_slice(),
+            ["hanzo", "code", "dev"].as_slice(),
+            ["hanzo", "code", "--dev"].as_slice(),
+        ] {
+            assert_eq!(resolved(argv), BackendKind::Dev, "{argv:?}");
+        }
+        for argv in [["hanzo", "code", "claude"].as_slice(), ["hanzo", "code", "--claude"].as_slice()]
+        {
+            assert_eq!(resolved(argv), BackendKind::Claude, "{argv:?}");
+        }
+        for argv in [["hanzo", "code", "codex"].as_slice(), ["hanzo", "code", "--codex"].as_slice()]
+        {
+            assert_eq!(resolved(argv), BackendKind::Codex, "{argv:?}");
+        }
+    }
+
+    /// Two spellings in one invocation is refused — clap rejects two flags, and
+    /// the resolver rejects a positional plus a flag.
+    #[test]
+    fn contradictory_backend_spellings_are_refused() {
+        // clap's arg group catches flag-vs-flag before we ever resolve.
+        assert!(Cli::try_parse_from(["hanzo", "code", "--claude", "--codex"]).is_err());
+        assert!(Cli::try_parse_from(["hanzo", "code", "--dev", "--backend", "claude"]).is_err());
+
+        // Positional-vs-flag is the resolver's own refusal.
+        let cli = Cli::try_parse_from(["hanzo", "code", "claude", "--codex"]).expect("parses");
+        let Some(Commands::Code(args)) = cli.command else { panic!("expected code") };
+        let err = match args.into_options() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("`code claude --codex` must be refused, not resolved"),
+        };
+        assert!(err.contains("named twice"), "got: {err}");
+    }
+
     /// The old top-level verbs are GONE from the derive tree — relocated under
     /// their resource nouns. (`kms` is NOT here: it is a generated cloud product,
     /// not a removed local verb, so it stays reachable.)
+    ///
+    /// `code` and `dev` are NOT in these lists: starting a coding session is the
+    /// CLI's front door, so it keeps its own name. Both are spellings of the one
+    /// session path, not a second way to run an agent — see [`code_session`].
     #[test]
     fn old_top_level_verbs_are_removed() {
         let names: Vec<String> =
             Cli::command().get_subcommands().map(|s| s.get_name().to_string()).collect();
-        for gone in ["login", "logout", "whoami", "switch", "code", "deploy", "build"] {
+        for gone in ["login", "logout", "whoami", "switch", "deploy", "build"] {
             assert!(
                 !names.iter().any(|n| n == gone),
                 "`{gone}` must no longer be a top-level subcommand"
             );
         }
-        // `cluster`/`model`/`node`/`secret`/`usage`/`dev`/`docs`/`mdx`/`ui`/`mcp`
-        // are DELETED hand commands: proxies, npx passthroughs, and shadows of
+        // `cluster`/`model`/`node`/`secret`/`usage`/`docs`/`mdx`/`ui`/`mcp` are
+        // DELETED hand commands: proxies, npx passthroughs, and shadows of
         // generated cloud products (the org-review verdicts). `engine` and
         // `scan` are their surviving local halves.
-        for gone in ["cluster", "model", "node", "secret", "usage", "dev", "docs", "mdx", "ui"] {
+        for gone in ["cluster", "model", "node", "secret", "usage", "docs", "mdx", "ui"] {
             assert!(
                 !names.iter().any(|n| n == gone),
                 "`{gone}` is a deleted hand command and must not be a top-level"
             );
         }
-        for present in ["agent", "auth", "config", "engine", "runner", "scan", "serve"] {
+        for present in
+            ["agent", "auth", "code", "config", "dev", "engine", "runner", "scan", "serve"]
+        {
             assert!(names.iter().any(|n| n == present), "`{present}` must be a resource noun");
         }
     }
