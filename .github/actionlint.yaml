@@ -1,7 +1,11 @@
 # actionlint knows GitHub's hosted images and nothing else, so every `runs-on:`
-# in this repo reads as "unknown label" and the sanity gate fails on all of them.
-# Our runners are ARC scale sets registered to the hanzoai org; declaring them
-# here is what makes the linter check the labels against reality.
+# in this repo reads as "unknown label"; declaring ours here is what makes the
+# linter check the labels against reality.
+#
+# These are FORGE labels. They are advertised by the git-runner pool registered
+# to git.hanzo.ai (hanzo/git-runner-0..9), NOT by an ARC scale set on the hanzoai
+# GitHub org — that scale set is gone, and github.com now has zero runners at any
+# level. The pipeline that uses this label lives in `.hanzo/workflows/`.
 self-hosted-runner:
   labels:
     - hanzo-build-linux-amd64
