@@ -2,8 +2,22 @@
 //! cloud command surface from. This is the refresh seam: run it to pull the
 //! surface forward, commit the result, then run `genproduct`.
 //!
-//! It joins the two documents that are each authoritative about half an
-//! operation. The client links NEITHER — it reads a spec, which is the whole
+//! THE SOURCE IS ONE DOCUMENT: cloud's own `openapi.yaml`. It ENUMERATES — every
+//! operation it carries is an operation the CLI has — and its own shape is the
+//! shape, because zip reflects that off the live Go type. The authored master is
+//! a SUPPLEMENT: it is read at the document's own addresses to fill in a request
+//! body or a query parameter the document does not yet carry, and it is read on
+//! its own only where the document is NOT the authority (below). It no longer
+//! decides that anything exists that the document describes.
+//!
+//! That is the whole difference from a refuter. A refuter is asked "is this
+//! authored operation real?" and can only answer about operations someone thought
+//! to author; 244 operations took their request body from a hand-written
+//! approximation while cloud published the shape reflected off the Go type, and 66
+//! more carried no body at all because the master was silent about an operation
+//! the document types. Asking the document FIRST makes both cases the same case.
+//!
+//! The client links NEITHER document — it reads a spec, which is the whole
 //! point: a CLI that must import cloud to know its commands is the thing being
 //! eliminated.
 //!
@@ -43,20 +57,26 @@
 //!     `make openapi OPENAPI_DIR=…`) is only as current as the last run of that
 //!     target, and today it is a strict SUBSET of what api.hanzo.ai answers
 //!     (26 products short).
-//!   * WHAT IT TAKES — the authored master `hanzo.yaml` from hanzoai/openapi
+//!   * WHAT IT SUPPLEMENTS — the authored master `hanzo.yaml` from hanzoai/openapi
 //!     (itself merged from the per-service specs by that repo's `merge.py`).
-//!     It is the only source of request-body and query-parameter SHAPE, because
-//!     most of cloud's handlers are still raw fiber handlers and the registry
-//!     has no Go type to read a schema off. As handlers become zip typed ops
-//!     their schemas appear in the registry document and this half shrinks.
+//!     It carries request-body and query-parameter SHAPE for operations whose
+//!     handlers are still raw fiber handlers, so the registry has no Go type to
+//!     read a schema off. As handlers become zip typed ops their schemas appear
+//!     in the document and this half shrinks toward nothing.
 //!
-//! THE RULE — the registry refutes at PRODUCT granularity. If cloud's table has
-//! any route under `/v1/<product>/`, cloud owns that product and its table is
-//! complete for it: an authored operation the table lacks is not served, and is
-//! dropped. If the table is silent about a product, cloud is not the authority
-//! over it — the inference surface (`/v1/models`, `/v1/chat/completions`) is
-//! answered at the edge by the gateway, not by this router — so nothing is
-//! refuted and the authored operation stands.
+//! THE RULE — the document is the authority at PRODUCT granularity. If it has any
+//! route under `/v1/<product>/`, cloud owns that product and its table is complete
+//! for it: an authored operation the table lacks is not served, and is dropped. If
+//! the table is silent about a product, cloud is not the authority over it — the
+//! inference surface (`/v1/models`, `/v1/chat/completions`) is answered at the edge,
+//! not by this router — so nothing is refuted and the authored operation stands.
+//!
+//! One consequence worth naming, because it is the reason the master is still
+//! read at all: a `/v1/<product>/*` catch-all says everything under that prefix
+//! REACHES the mounted service, and says nothing about what the service serves
+//! there. `find` matches through the door, so the master may enumerate behind it —
+//! that is where the iam and bot subtrees come from. The day those services publish
+//! their own documents, the door becomes a list and the master's job there ends.
 //!
 //! That rule is what retires the hand-maintained "this one 404s" knowledge: the
 //! `gateway` subtree drops out because the registry serves none of it, not
@@ -112,8 +132,10 @@ struct Registry {
     routes: BTreeMap<String, Vec<Vec<String>>>,
     owned: BTreeSet<String>,
     /// (METHOD, normalized path) -> (registry's own path key, the op object).
-    /// Only ops carrying a summary or description are held: prose is what marks
-    /// an operation as authored-in-code rather than an accident of the router.
+    /// EVERY served operation, described or not: existence is the router's
+    /// answer, and whether an operation also has a sentence to its name is a
+    /// separate question, asked by whoever projects it. (`genproduct` refuses to
+    /// build a command with nothing to say — see its bare-summary assert.)
     ops: BTreeMap<(String, String), (String, Value)>,
     /// The registry document's own component schemas — the shapes zip reflected
     /// from the live Go types, which described ops' $refs resolve against.
@@ -155,18 +177,19 @@ impl Registry {
             if s.len() < 2 || s[0] != "v1" || (s.len() == 2 && is_wild(s[1])) {
                 continue;
             }
-            if !is_param(s[1]) {
+            // A parameterised first segment is not a product, so nothing under it
+            // is an operation OF one — it is the global fallthrough wearing a
+            // longer path.
+            let product = !is_param(s[1]);
+            if product {
                 owned.insert(s[1].to_string());
             }
             let pat: Vec<String> = s.iter().map(|x| x.to_string()).collect();
             for (m, op) in item.as_object().into_iter().flatten() {
                 if VERBS.contains(&m.to_ascii_lowercase().as_str()) {
                     routes.entry(m.to_ascii_uppercase()).or_default().push(pat.clone());
-                    if prose(op).is_some() {
-                        ops.insert(
-                            (m.to_ascii_uppercase(), norm(&s)),
-                            (path.clone(), op.clone()),
-                        );
+                    if product {
+                        ops.insert((m.to_ascii_uppercase(), norm(&s)), (path.clone(), op.clone()));
                     }
                 }
             }
@@ -236,12 +259,28 @@ impl Registry {
     }
 }
 
+/// An operation's query/path parameters, if it declares any.
+fn params(op: &Value) -> Option<&Value> {
+    op.get("parameters").filter(|v| !v.as_array().is_none_or(|a| a.is_empty()))
+}
+/// An operation's JSON request-body schema, if it declares one.
+fn body(op: &Value) -> Option<&Value> {
+    op.pointer("/requestBody/content/application~1json/schema")
+}
+
 /// Keep only what the derivation reads: query/path parameters, the JSON request
-/// body, and the router's catch-all marking. Everything else in an authored
-/// operation (responses, security, summaries) describes the API to a human or an
-/// SDK, not a command line, and carrying it would bloat a committed artifact
-/// nobody edits.
-fn prune(op: &Value, catch_all: Option<String>, summary: Option<String>) -> Value {
+/// body, the router's catch-all marking, and the one line a command needs to say
+/// what it does. Everything else (responses, security, examples) describes the API
+/// to a human or an SDK, not a command line, and carrying it would bloat a
+/// committed artifact nobody edits.
+///
+/// Two documents may describe one operation. `op` is the AUTHORITY and `alt` the
+/// supplement, consulted only for a field the authority does not carry — the same
+/// rule the schema namespace below already runs on, applied to the operation
+/// instead of only to the `#/components` it points at. Where both speak, the shape
+/// reflected from the Go type wins over the hand-written approximation this
+/// pipeline exists to retire.
+fn prune(op: &Value, alt: Option<&Value>, catch_all: Option<String>, summary: Option<String>) -> Value {
     let mut out = Map::new();
     if let Some(s) = summary.filter(|s| !s.is_empty()) {
         out.insert("summary".into(), json!(s));
@@ -249,15 +288,10 @@ fn prune(op: &Value, catch_all: Option<String>, summary: Option<String>) -> Valu
     if let Some(p) = catch_all {
         out.insert("x-catch-all".into(), json!([p]));
     }
-    if let Some(p) = op.get("parameters").filter(|v| !v.as_array().is_none_or(|a| a.is_empty())) {
+    if let Some(p) = params(op).or_else(|| alt.and_then(params)) {
         out.insert("parameters".into(), p.clone());
     }
-    if let Some(schema) = op
-        .get("requestBody")
-        .and_then(|rb| rb.get("content"))
-        .and_then(|c| c.get("application/json"))
-        .and_then(|m| m.get("schema"))
-    {
+    if let Some(schema) = body(op).or_else(|| alt.and_then(body)) {
         out.insert("requestBody".into(), json!({"content": {"application/json": {"schema": schema}}}));
     }
     Value::Object(out)
@@ -521,62 +555,76 @@ async fn main() {
     )
     .expect("parse hanzo.yaml");
 
-    let mut paths = Map::new();
-    let mut emitted: BTreeSet<(String, String)> = BTreeSet::new();
-    let (mut kept, mut refuted) = (0usize, BTreeMap::<String, usize>::new());
-    for (path, item) in master.get("paths").and_then(Value::as_object).into_iter().flatten() {
-        let s = segs(path);
-        // A `?query` path key (S3-style sub-resource selectors) is not a distinct
-        // resource, and a parameterised first segment is not a product.
-        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) || path.contains('?') || path.contains('#') {
-            continue;
-        }
-        let mut item_out = Map::new();
-        for (m, op) in item.as_object().into_iter().flatten() {
-            if !VERBS.contains(&m.to_ascii_lowercase().as_str()) {
-                continue;
-            }
-            let route = reg.find(&m.to_ascii_uppercase(), &s);
-            // Only a product the registry OWNS can be refuted at all.
-            if route.is_none() && reg.owned.contains(s[1]) {
-                *refuted.entry(s[1].to_string()).or_default() += 1;
-                continue;
-            }
-            kept += 1;
-            let catch_all = route.and_then(|r| Registry::catch_all(r, &s));
-            // Prose: the registry's own (generated from the Go doc comment) when
-            // the op is typed, else whatever the authored master says.
-            let key = (m.to_ascii_uppercase(), norm(&s));
-            let summary = reg.ops.get(&key).and_then(|(_, rop)| prose(rop)).or_else(|| prose(op));
-            emitted.insert(key);
-            item_out.insert(m.to_ascii_lowercase(), prune(op, catch_all, summary));
-        }
-        if !item_out.is_empty() {
-            paths.insert(path.clone(), Value::Object(item_out));
-        }
-    }
+    // The master, indexed by the SAME address the document uses, so two readings
+    // of one operation can be JOINED instead of chosen between. A `?query` path
+    // key (S3-style sub-resource selectors) is not a distinct resource, and a
+    // parameterised first segment is not a product.
+    let authored: BTreeMap<(String, String), (&String, &Value)> = master
+        .get("paths")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(path, _)| {
+            let s = segs(path);
+            s.len() >= 2 && s[0] == "v1" && !is_param(s[1]) && !path.contains('?') && !path.contains('#')
+        })
+        .flat_map(|(path, item)| {
+            let s = segs(path);
+            item.as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(m, _)| VERBS.contains(&m.to_ascii_lowercase().as_str()))
+                .map(move |(m, op)| ((m.to_ascii_uppercase(), norm(&s)), (path, op)))
+        })
+        .collect();
 
-    // THE INVERSION, and the end state of the lineage contract: an operation the
-    // REGISTRY describes exists, authored or not. A described op is a zip typed
-    // op — its prose and schema are generated from the Go code, which makes the
-    // registry the author. The hand-maintained hanzo.yaml stops deciding
-    // existence for these; it remains only the shape source for ops the registry
-    // cannot yet describe. As typing reaches 100%, hanzo.yaml's job goes to zero.
-    let mut added = 0usize;
+    let mut paths = Map::new();
+
+    // WHAT IS SERVED. The document enumerates. Each of its operations exists, and
+    // carries its own prose and its own shape; the master is joined in at the same
+    // address to fill in a body or a parameter list the document has not typed yet.
     for ((method, key), (rpath, rop)) in &reg.ops {
-        if emitted.contains(&(method.clone(), key.clone())) {
-            continue;
-        }
         let s = segs(rpath);
         let pat: Vec<String> = s.iter().map(|x| x.to_string()).collect();
-        let catch_all = Registry::catch_all(&pat, &s);
-        added += 1;
+        let alt = authored.get(&(method.clone(), key.clone())).map(|(_, op)| *op);
+        let summary = prose(rop).or_else(|| alt.and_then(prose));
         paths
             .entry(rpath.clone())
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .expect("path item")
-            .insert(method.to_ascii_lowercase(), prune(rop, catch_all, prose(rop)));
+            .insert(
+                method.to_ascii_lowercase(),
+                prune(rop, alt, Registry::catch_all(&pat, &s), summary),
+            );
+    }
+    let served = reg.ops.len();
+
+    // WHAT THE DOCUMENT DOES NOT DESCRIBE. An authored operation stands only where
+    // the document is not the authority over it: a product it never mentions, or a
+    // route it answers through a `/v1/<product>/*` door, which says the request
+    // reaches the service and nothing about what the service does with it. Anywhere
+    // else, silence from a product the document owns is a refusal.
+    let (mut kept, mut refuted) = (0usize, BTreeMap::<String, usize>::new());
+    for ((method, key), (path, op)) in &authored {
+        if reg.ops.contains_key(&(method.clone(), key.clone())) {
+            continue;
+        }
+        let s = segs(path);
+        let route = reg.find(method, &s);
+        // Only a product the document OWNS can be refuted at all.
+        if route.is_none() && reg.owned.contains(s[1]) {
+            *refuted.entry(s[1].to_string()).or_default() += 1;
+            continue;
+        }
+        kept += 1;
+        let catch_all = route.and_then(|r| Registry::catch_all(r, &s));
+        paths
+            .entry((*path).clone())
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+            .expect("path item")
+            .insert(method.to_ascii_lowercase(), prune(op, None, catch_all, prose(op)));
     }
 
     let empty = Map::new();
@@ -614,10 +662,13 @@ async fn main() {
             "title": "Hanzo Cloud — the CLI's command surface",
             "version": master.pointer("/info/version").and_then(Value::as_str).unwrap_or("unknown"),
             "description": format!(
-                "Generated by `cargo run --features genspec --bin genspec` from the Hanzo Cloud \
-                 API document {provenance}. The authored shapes from hanzoai/openapi hanzo.yaml, \
-                 keeping only what that document does not refute. Never hand-edited: `genproduct` \
-                 derives src/commands/product/generated.rs from this and nothing else."
+                "Generated by `cargo run --features genspec --bin genspec`. The SOURCE is the Hanzo \
+                 Cloud API document {provenance} — it enumerates the operations and carries their \
+                 reflected shapes. The authored master hanzoai/openapi hanzo.yaml supplements it: \
+                 joined at the same address for a body or parameter the document has not typed, and \
+                 read on its own only where the document is not the authority (a product it never \
+                 mentions, or a route it answers through a catch-all door). Never hand-edited: \
+                 `genproduct` derives src/commands/product/generated.rs from this and nothing else."
             ),
         },
         "paths": paths,
@@ -690,8 +741,8 @@ async fn main() {
     let mut worst: Vec<_> = refuted.iter().collect();
     worst.sort_by_key(|(p, n)| (std::cmp::Reverse(**n), (*p).clone()));
     eprintln!(
-        "genspec: {kept} authored kept, {added} added from the registry (described ops), {total} refuted \
-         ({} owned products) -> {} ({} bytes)",
+        "genspec: {served} served by the document, {kept} authored kept (unowned products and \
+         catch-all doors), {total} refuted ({} owned products) -> {} ({} bytes)",
         reg.owned.len(),
         a.out.display(),
         bytes.len()
