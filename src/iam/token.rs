@@ -1,19 +1,23 @@
 //! Secure persistence of IAM token sets — the PORTABLE credential store.
 //!
 //! A credential must be reachable EVERYWHERE `hanzo` runs: a desktop, but also a
-//! container, a headless server, an SSH session and CI. So the store is a seam
-//! ([`Vault`]) with two implementations, chosen at runtime by [`vault`]:
+//! container, a headless server, an SSH session and CI. ONE store serves all of
+//! them — [`FileVault`], an owner-only (`0600`) file — reached through the
+//! [`Vault`] seam by [`vault`].
 //!
-//! - [`Keyring`] — the native OS keychain (macOS Keychain, Windows Credential
-//!   Manager), used when one is present and answering. Compiled ONLY on those
-//!   targets, so nothing else links a keychain C library.
-//! - [`FileVault`] — an owner-only (`0600`) file, used everywhere else and as the
-//!   fallback when a keychain is unreachable. It has NO native dependency, so it
-//!   works in a container and cross-compiles cleanly to every target. On Linux
-//!   the OS keychain is secret-service over D-Bus, which does not exist in a
-//!   container / over SSH / in CI and whose C `libdbus` binding does not
-//!   cross-compile — so Linux uses the file, at the SAME `0600` protection
-//!   secret-service would have given.
+//! There is no OS-keychain backend, and its absence is the design. macOS prompts
+//! for the login password on every read from a binary it does not recognise, and
+//! a CLI re-signs on each release, so the prompt returns forever; one command can
+//! read the store twice (a refresh re-reads under its lock), so it returned twice
+//! per invocation. On Linux the equivalent is secret-service over D-Bus, which
+//! does not exist in a container / over SSH / in CI and whose C binding does not
+//! cross-compile. A native store that has to be fallen back from on every
+//! platform is not a store, it is a second path to maintain.
+//!
+//! What is held is a one-hour bearer token, not a signing key. `0600` under the
+//! user's own home is the proportionate place for it — the same protection
+//! `~/.ssh/id_*` relies on — and it behaves identically headless, over ssh, and
+//! in CI.
 //!
 //! One entry per IDENTITY: the key is `{brand}/{owner}/{name}`, so holding both
 //! `admin/z` and `hanzo/z` is the normal case and nothing clobbers. WHICH of
@@ -27,15 +31,8 @@ use serde::{Deserialize, Serialize};
 
 use super::identity::Identity;
 
-/// Store namespace under which every Hanzo CLI credential is filed — the keychain
-/// service name, and (as the file's own identity) the reason wallet keys and IAM
-/// tokens share one store without colliding: their key strings are disjoint
-/// (`wallet:0x…` vs `{brand}/{owner}/{name}`).
-#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-const SERVICE: &str = "ai.hanzo.cli";
-
 /// An OAuth2/OIDC token response (RFC 6749 §5.1). Stored verbatim as the
-/// keychain secret so the refresh and id tokens survive for the session.
+/// stored value so the refresh and id tokens survive for the session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenSet {
     pub access_token: String,
@@ -57,10 +54,10 @@ fn default_token_type() -> String {
 
 /// The credential store, as a seam. Get/set/remove a secret by key — nothing
 /// more, so the same seam serves IAM tokens ([`store`]/[`load`]/[`delete`]) and
-/// wallet keys (`commands::wallet`). Two production implementations ([`Keyring`],
-/// [`FileVault`]) are chosen by [`vault`]; the multi-identity LOGIC is written
-/// against the trait and unit-tested against an in-memory vault, since a real
-/// keychain prompts / needs a session keyring.
+/// wallet keys (`commands::wallet`). [`FileVault`] is the one production
+/// implementation; the seam survives because the multi-identity LOGIC is written
+/// against the trait and unit-tested against an in-memory vault, which is what
+/// makes filing, clobber-freedom and eviction testable without touching a disk.
 pub trait Vault {
     fn get(&self, key: &str) -> Result<Option<String>>;
     fn set(&self, key: &str, value: &str) -> Result<()>;
@@ -69,15 +66,15 @@ pub trait Vault {
 }
 
 /// An owner-only file holding the credentials, `key -> value`. The portable
-/// backend: no native dependency, so it works in a container / headless / CI and
-/// cross-compiles to every target.
+/// ONLY backend: no native dependency, so it works in a container / headless / CI
+/// and cross-compiles to every target.
 ///
 /// Protection is filesystem permissions — mode `0600`, written atomically through
 /// [`crate::private::write`], the SAME primitive (and the same guarantee) behind
 /// `config.toml`, `machine-id` and the run-target records, and the same
 /// protection `~/.ssh/id_*` relies on. Encrypting the bytes would need a key, and
-/// on the platforms that USE this backend there is no OS keychain to hold it — so
-/// the key would sit beside the ciphertext, which is obfuscation, not security.
+/// there is no OS keychain to hold that key — so it would sit beside the
+/// ciphertext, which is obfuscation, not security.
 /// `0600` is the honest floor.
 ///
 /// Concurrency is the config's law: several `hanzo` processes may write at once,
@@ -148,74 +145,19 @@ impl Vault for FileVault {
     }
 }
 
-/// The native OS keychain. Compiled only where one exists as a first-class,
-/// dependency-free-to-cross-compile backend: macOS Keychain and Windows
-/// Credential Manager. Linux secret-service is deliberately absent — see the
-/// module doc and [`vault`].
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-pub struct Keyring;
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-impl Vault for Keyring {
-    fn get(&self, key: &str) -> Result<Option<String>> {
-        match entry(key)?.get_password() {
-            Ok(json) => Ok(Some(json)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e).context("reading credential from OS keychain"),
-        }
-    }
-
-    fn set(&self, key: &str, value: &str) -> Result<()> {
-        entry(key)?
-            .set_password(value)
-            .context("writing credential to OS keychain")
-    }
-
-    fn remove(&self, key: &str) -> Result<bool> {
-        match entry(key)?.delete_credential() {
-            Ok(()) => Ok(true),
-            Err(keyring::Error::NoEntry) => Ok(false),
-            Err(e) => Err(e).context("deleting credential from OS keychain"),
-        }
-    }
-}
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn entry(key: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, key).context("opening OS keychain entry")
-}
-
 /// Resolve the credential store for THIS run — THE one place the backend is
 /// chosen, so identity tokens and wallet keys reach secrets identically.
 ///
-/// ALWAYS the file. The macOS keychain prompts for the login password on every
-/// read from a binary it does not recognise, and a CLI re-signs on each release,
-/// so the prompt returns forever. Worse, one command can read the store more than
-/// once (a refresh re-reads under its lock), so the dialog appeared twice for a
-/// single invocation. What is stored is a one-hour bearer token, not a signing
-/// key: an owner-only 0600 file under the user's own home is the proportionate
-/// place for it, and it works identically headless, over ssh, and in CI.
+/// The file, on every platform — see the module doc for why there is no second
+/// one to choose between.
 pub fn vault() -> Result<Box<dyn Vault>> {
     Ok(Box::new(FileVault::resolve()?))
 }
 
-/// Whether the native keychain is present and answering. A read of a name that
-/// cannot exist must come back `NoEntry`; any OTHER error means the backend
-/// itself is unreachable (locked / headless), so we fall back to the file rather
-/// than fail every command.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn keychain_reachable() -> bool {
-    match entry("__hanzo_probe__") {
-        Ok(e) => matches!(e.get_password(), Ok(_) | Err(keyring::Error::NoEntry)),
-        Err(_) => false,
-    }
-}
-
-/// The keychain key for one identity of one brand. `Identity` forbids `/` in
+/// The store key for one identity of one brand. `Identity` forbids `/` in
 /// both components, so this composition is unambiguous and non-spoofable.
-/// The subject the REFRESH CYCLE serializes on. Used even when the Keyring
-/// backend is active: the keychain has no cross-process lock of its own, and
-/// what must be serialized is the single-use refresh token, not the medium.
+/// The subject the REFRESH CYCLE serializes on. What must be serialized is the
+/// single-use refresh token, not the medium that holds it.
 ///
 /// A SIBLING of the credential file, deliberately never the file itself.
 /// `iam::store::active_token` holds this across read → refresh → store, and the
@@ -279,7 +221,7 @@ pub fn take(v: &dyn Vault, brand: &str, id: &Identity) -> Result<Option<TokenSet
     Ok(held)
 }
 
-/// The pre-multi-identity keychain key: the bare brand, one token per brand.
+/// The pre-multi-identity store key: the bare brand, one token per brand.
 /// Read exactly once, by the forwards-only migration in `store`, which re-files
 /// it and deletes it. Nothing else may read this — there is no dual-read path.
 pub(super) fn legacy_key(brand: &str) -> &str {
@@ -292,7 +234,7 @@ pub(crate) mod memvault {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    /// An in-memory [`Vault`] standing in for the OS keychain in tests.
+    /// An in-memory [`Vault`] standing in for the file in tests.
     #[derive(Default)]
     pub struct MemVault {
         entries: Mutex<BTreeMap<String, String>>,
