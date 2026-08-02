@@ -125,12 +125,7 @@ pub async fn run(
     // that announced itself once and went quiet reads offline while the shell it
     // published is still serving. The guard beats until this command returns —
     // detached and best-effort, never on the critical path of getting a shell up.
-    let _machine = target::beat(
-        &api,
-        &tok.access_token,
-        &context::machine_id(),
-        &context::hostname(),
-    );
+    let _machine = target::beat(cfg, &api, &context::machine_id(), &context::hostname());
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
