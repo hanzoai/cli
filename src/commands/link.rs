@@ -175,6 +175,9 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
     // Wear the URL. Part of PUBLISHING, not of attaching — see `pin`.
     pin(Some(&url)).await;
 
+    // Follow the shell. Held for exactly this session's lifetime.
+    let _where = follow(client.clone(), id.to_string());
+
     println!("\n  {}  →  live\n", sh.url.green().bold());
     println!("  {} {}", "session".dimmed(), id.dimmed());
 
@@ -206,6 +209,73 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
         // rather than being orphaned by a signal.
         _ = stopped() => Ok(()),
     }
+}
+
+/// How often the link asks tmux where the shell has got to.
+///
+/// A person changes directory in seconds and reads the console in minutes, so
+/// this is about being RIGHT rather than instant. It is one `tmux
+/// display-message` — no process spawned per window, no watcher on the
+/// filesystem — and a PATCH goes out only when the answer actually changed.
+const WHERE_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// A watcher that keeps the session's `cwd` true, for as long as it is held.
+struct Where(tokio::task::JoinHandle<()>);
+
+impl Drop for Where {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Keep telling cloud where the shell is.
+///
+/// `cwd` is registered once, and for a run that starts in a directory and stays
+/// there that is the whole truth. A linked shell is not that: it is a place a
+/// person moves around in, so the console went on naming the directory `hanzo
+/// link` happened to start in long after the shell had walked away.
+///
+/// The answer comes from tmux, which already knows it — `#{pane_current_path}` of
+/// the active pane — rather than from anything this process tracks itself. Only a
+/// CHANGE is reported: an unchanged path is not news, and a PATCH per tick would
+/// be a write loop that says nothing.
+fn follow(client: SessionClient, id: String) -> Where {
+    Where(tokio::spawn(async move {
+        let mut last = String::new();
+        loop {
+            if let Some(now) = active_path().await.filter(|p| worth_reporting(&last, p)) {
+                // Best-effort, exactly like the heartbeat: a console showing a
+                // slightly stale directory is not worth failing a shell over.
+                if client.set_cwd(&id, &now).await.is_ok() {
+                    last = now;
+                }
+            }
+            tokio::time::sleep(WHERE_EVERY).await;
+        }
+    }))
+}
+
+/// Whether a path is news.
+///
+/// Only a CHANGE is reported. Ticking a PATCH every interval regardless would be
+/// a write loop that says nothing, and it would move the row's `updatedAt`
+/// forever — making a long-idle session look busy to anything reading recency.
+fn worth_reporting(last: &str, now: &str) -> bool {
+    !now.is_empty() && now != last
+}
+
+/// Where the shared session's active pane is, as tmux reports it.
+async fn active_path() -> Option<String> {
+    let out = Command::new("tmux")
+        .args(["display-message", "-p", "-t", "hanzo", "#{pane_current_path}"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!p.is_empty()).then_some(p)
 }
 
 /// Show the live URL on the shared session's own status line — or clear it.
@@ -402,6 +472,17 @@ mod tests {
     fn names_a_shell_verbatim() {
         assert_eq!(shell_command(Some("bash")), vec!["bash"]);
         assert_eq!(shell_command(Some("zsh")), vec!["zsh"]);
+    }
+
+    // Silence is the normal case: a shell sits in one directory for long stretches,
+    // and a PATCH per tick would say nothing while dragging `updatedAt` forward —
+    // making an idle session look busy to anything that reads recency.
+    #[test]
+    fn only_a_change_is_news() {
+        assert!(worth_reporting("", "/Users/z"), "the first path is always news");
+        assert!(worth_reporting("/Users/z", "/Users/z/work/hanzo/cli"));
+        assert!(!worth_reporting("/Users/z", "/Users/z"), "standing still is not news");
+        assert!(!worth_reporting("/Users/z", ""), "tmux saying nothing is not a move to nowhere");
     }
 
     // The bar belongs to the ONE shared session, never to the server.
