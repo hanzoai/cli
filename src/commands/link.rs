@@ -172,6 +172,9 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
     client.publish_terminal(id, &sh.url).await?;
     let url = sh.url.clone();
 
+    // Wear the URL. Part of PUBLISHING, not of attaching — see `pin`.
+    pin(Some(&url)).await;
+
     println!("\n  {}  →  live\n", sh.url.green().bold());
     println!("  {} {}", "session".dimmed(), id.dimmed());
 
@@ -182,7 +185,7 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
     // When tmux will not take the terminal, the link is NOT over — the tunnel is
     // still serving and the browser can still drive it — so hold it instead.
     let held = async {
-        if took_over(attach(&url).await) {
+        if took_over(attach().await) {
             Ok(()) // the caller had the shell and left it: the link is done
         } else {
             println!(
@@ -205,32 +208,58 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
     }
 }
 
+/// Show the live URL on the shared session's own status line — or clear it.
+///
+/// tmux clears the screen on attach, so anything printed before it — including the
+/// one thing the caller needs to copy — scrolls away the moment the shell appears.
+/// The status line survives that, and every clear after it.
+///
+/// THIS IS PART OF PUBLISHING, NOT OF ATTACHING. It used to ride along on the
+/// local `tmux new -A` invocation, so it only happened when tmux took the caller's
+/// terminal — which is precisely the case that does NOT happen headless, or from
+/// inside tmux. Meanwhile the tmux SERVER outlives every link, so the bar went on
+/// advertising whichever URL was last pinned successfully: a link from hours ago,
+/// pointing at a tunnel that no longer exists.
+///
+/// Session-scoped (`-t hanzo`), never `-g`. The global form writes the server-wide
+/// default and leaks this link's URL into every other tmux session on the machine.
+///
+/// The session is created DETACHED first so there is something to set the option
+/// on: ttyd does not run its command until a browser connects, so at publish time
+/// the session may not exist yet. Creating it is idempotent — an existing session
+/// makes `new-session` fail, which is exactly the outcome that needs no action.
+async fn pin(url: Option<&str>) {
+    let _ = Command::new("tmux")
+        .args(["new-session", "-d", "-s", "hanzo"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+    for args in bar_args(url) {
+        let _ = Command::new("tmux")
+            .args(&args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+}
+
+/// The tmux options that put `url` on the bar, or clear it when there is none.
+fn bar_args(url: Option<&str>) -> [Vec<String>; 2] {
+    let bar = url.map(|u| format!(" {u} ")).unwrap_or_default();
+    [
+        vec!["set-option".into(), "-t".into(), "hanzo".into(), "status-right".into(), bar],
+        vec!["set-option".into(), "-t".into(), "hanzo".into(), "status-right-length".into(), "80".into()],
+    ]
+}
+
 /// Put the caller on the same tmux session ttyd serves, and report how it exited.
 ///
-/// The URL is pinned into tmux's own status line: tmux clears the screen on attach,
-/// so anything printed before it — including the one thing the caller needs to copy
-/// — scrolls away the moment the shell appears. The status line survives that, and
-/// survives every clear after it.
-///
 /// `None` means tmux could not be spawned at all.
-async fn attach(url: &str) -> Option<i32> {
+async fn attach() -> Option<i32> {
     Command::new("tmux")
-        .args([
-            "new",
-            "-A",
-            "-s",
-            "hanzo",
-            ";",
-            "set-option",
-            "-g",
-            "status-right",
-            &format!(" {url} "),
-            ";",
-            "set-option",
-            "-g",
-            "status-right-length",
-            "80",
-        ])
+        .args(["new", "-A", "-s", "hanzo"])
         .status()
         .await
         .ok()
@@ -262,6 +291,9 @@ fn took_over(code: Option<i32>) -> bool {
 /// not a failed command.
 async fn finish(client: &SessionClient, id: &str, out: Result<()>) -> Result<()> {
     let _ = client.set_status(id, Status::of(out.is_ok())).await;
+    // The tmux session outlives the link. Leaving the URL up would advertise a
+    // tunnel that stopped answering the moment this returned.
+    pin(None).await;
     out
 }
 
@@ -370,6 +402,29 @@ mod tests {
     fn names_a_shell_verbatim() {
         assert_eq!(shell_command(Some("bash")), vec!["bash"]);
         assert_eq!(shell_command(Some("zsh")), vec!["zsh"]);
+    }
+
+    // The bar belongs to the ONE shared session, never to the server.
+    //
+    // `-g` writes the server-wide default: it leaks this link's URL into every
+    // other tmux session on the machine, and — because the tmux server outlives
+    // links — it is what left a bar advertising a tunnel from hours earlier.
+    #[test]
+    fn the_bar_is_scoped_to_the_session_not_the_server() {
+        for args in bar_args(Some("https://x.share.hanzo.ai")) {
+            assert!(args.contains(&"-t".to_string()) && args.contains(&"hanzo".to_string()));
+            assert!(!args.contains(&"-g".to_string()), "global leaks into other sessions: {args:?}");
+        }
+    }
+
+    // A link that ended must stop advertising its tunnel — the session stays, the
+    // URL does not.
+    #[test]
+    fn ending_a_link_clears_the_bar() {
+        let set = &bar_args(Some("https://x.share.hanzo.ai"))[0];
+        let cleared = &bar_args(None)[0];
+        assert_eq!(set[4], " https://x.share.hanzo.ai ");
+        assert_eq!(cleared[4], "", "a dead link leaves no URL up");
     }
 
     // A clean exit is the caller leaving a shell they HAD. That ends the link.
