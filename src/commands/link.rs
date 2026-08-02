@@ -175,6 +175,7 @@ pub async fn run(
 /// only the first two returned at all.
 async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Result<()> {
     client.publish_terminal(id, &sh.url).await?;
+    let url = sh.url.clone();
 
     println!("\n  {}  →  live\n", sh.url.green().bold());
     println!("  {} {}", "session".dimmed(), id.dimmed());
@@ -186,7 +187,26 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
     // which is the old behaviour.
     let held = async {
         match tokio::process::Command::new("tmux")
-            .args(["new", "-A", "-s", "hanzo"])
+            // Pin the URL into tmux's own status line. tmux clears the screen on
+            // attach, so anything printed before it — including the one thing the
+            // caller needs to copy — scrolls away the moment the shell appears.
+            // The status line survives that, and survives every clear after it.
+            .args([
+                "new",
+                "-A",
+                "-s",
+                "hanzo",
+                ";",
+                "set-option",
+                "-g",
+                "status-right",
+                &format!(" {url} "),
+                ";",
+                "set-option",
+                "-g",
+                "status-right-length",
+                "80",
+            ])
             .status()
             .await
         {
