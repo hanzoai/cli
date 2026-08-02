@@ -152,14 +152,34 @@ pub async fn run(
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     let host = context::hostname();
-    let reg = client
+    // A registry that cannot take the row does not take the SHELL with it.
+    //
+    // The tunnel is up and serving by now; the row is how the console FINDS it,
+    // not what makes it work. Failing here handed back nothing at all — no
+    // terminal, no URL — for an outage in a different process, which is the one
+    // outcome that helps nobody. The machine's own heartbeat has always degraded
+    // this way (`sync` swallows every failure); the session did not, and the
+    // difference was never a decision.
+    //
+    // Unlisted is said out loud, because a link the console cannot show is a
+    // different thing from a link, and finding that out later is worse.
+    let listing = match client
         .register(&cmd[0], title.as_deref().unwrap_or(&cwd), &host, &cwd)
-        .await?;
+        .await
+    {
+        Ok(reg) => Some(reg.id),
+        Err(e) => {
+            crate::warn(&format!(
+                "could not register this session ({e}); the terminal below works,                  but the console cannot list it"
+            ));
+            None
+        }
+    };
 
-    // From here the registry holds a LIVE row, so every way out — including the
-    // ones that are errors — has to travel through `finish`.
-    let out = serve(&client, &reg.id, &mut sh).await;
-    finish(&client, &reg.id, out).await
+    // From here the registry may hold a LIVE row, so every way out — including
+    // the ones that are errors — has to travel through `finish`.
+    let out = serve(&client, listing.as_deref(), &mut sh).await;
+    finish(&client, listing.as_deref(), out).await
 }
 
 /// Publish the shell and hold it until the link ends.
@@ -168,18 +188,33 @@ pub async fn run(
 /// exiting, the tunnel dying under it, a publish that never landed, or the OS
 /// asking this process to stop. None of those is "still running", and until now
 /// only the first two returned at all.
-async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Result<()> {
-    client.publish_terminal(id, &sh.url).await?;
+/// `id` is `None` when the registry refused the row: everything the console needs
+/// is skipped and everything the SHELL needs still happens.
+async fn serve(client: &SessionClient, id: Option<&str>, sh: &mut share::Share) -> Result<()> {
     let url = sh.url.clone();
 
     // Wear the URL. Part of PUBLISHING, not of attaching — see `pin`.
     pin(Some(&url)).await;
 
-    // Follow the shell. Held for exactly this session's lifetime.
-    let _where = follow(client.clone(), id.to_string());
+    let _where = match id {
+        Some(id) => {
+            // Publishing the terminal is best-effort for the same reason the row
+            // is: the tunnel already answers at this URL whether or not cloud
+            // records it.
+            if let Err(e) = client.publish_terminal(id, &url).await {
+                crate::warn(&format!("could not publish the terminal URL ({e})"));
+            }
+            // Follow the shell. Held for exactly this session's lifetime.
+            Some(follow(client.clone(), id.to_string()))
+        }
+        None => None,
+    };
 
     println!("\n  {}  →  live\n", sh.url.green().bold());
-    println!("  {} {}", "session".dimmed(), id.dimmed());
+    match id {
+        Some(id) => println!("  {} {}", "session".dimmed(), id.dimmed()),
+        None => println!("  {}", "unlisted — the console cannot show this one".dimmed()),
+    }
 
     // Hand the caller a prompt on the SAME session ttyd is serving, rather than
     // making them wait on a tunnel they cannot type into. Both ends attach to one
@@ -359,8 +394,10 @@ fn took_over(code: Option<i32>) -> bool {
 /// `SessionClient::set_status`), so the row cannot end up closed-but-watchable or
 /// watchable-but-closed. Best effort: cloud being unreachable costs a stale row,
 /// not a failed command.
-async fn finish(client: &SessionClient, id: &str, out: Result<()>) -> Result<()> {
-    let _ = client.set_status(id, Status::of(out.is_ok())).await;
+async fn finish(client: &SessionClient, id: Option<&str>, out: Result<()>) -> Result<()> {
+    if let Some(id) = id {
+        let _ = client.set_status(id, Status::of(out.is_ok())).await;
+    }
     // The tmux session outlives the link. Leaving the URL up would advertise a
     // tunnel that stopped answering the moment this returned.
     pin(None).await;
@@ -410,7 +447,7 @@ mod tests {
         let mock = MockCloud::start().await;
         let client = SessionClient::new(&mock.base_url(), "T").unwrap();
 
-        finish(&client, "sess_1", Ok(())).await.unwrap();
+        finish(&client, Some("sess_1"), Ok(())).await.unwrap();
 
         let reqs = mock.requests();
         assert_eq!(reqs.len(), 1, "one act, one request");
@@ -429,7 +466,7 @@ mod tests {
         let mock = MockCloud::start().await;
         let client = SessionClient::new(&mock.base_url(), "T").unwrap();
 
-        let err = finish(&client, "sess_1", Err(anyhow!("share ended: exit 1")))
+        let err = finish(&client, Some("sess_1"), Err(anyhow!("share ended: exit 1")))
             .await
             .unwrap_err();
 
@@ -447,7 +484,7 @@ mod tests {
         let mock = MockCloud::start_status(403).await;
         let client = SessionClient::new(&mock.base_url(), "T").unwrap();
 
-        assert!(finish(&client, "sess_1", Ok(())).await.is_ok());
+        assert!(finish(&client, Some("sess_1"), Ok(())).await.is_ok());
     }
 
     // The default is tmux, not $SHELL: only a multiplexed session can be driven
@@ -506,6 +543,30 @@ mod tests {
         let cleared = &bar_args(None)[0];
         assert_eq!(set[4], " https://x.share.hanzo.ai ");
         assert_eq!(cleared[4], "", "a dead link leaves no URL up");
+    }
+
+    // An unlisted link has no row to close, and must not invent one. The registry
+    // being unreachable is exactly when a stray PATCH would be aimed at nothing.
+    #[tokio::test]
+    async fn an_unlisted_link_closes_nothing() {
+        let mock = MockCloud::start().await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+        finish(&client, None, Ok(())).await.unwrap();
+
+        assert!(mock.requests().is_empty(), "no row, no request");
+    }
+
+    // …and it still hands the caller's own result back untouched.
+    #[tokio::test]
+    async fn an_unlisted_link_still_reports_how_it_ended() {
+        let mock = MockCloud::start().await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+
+        let err = finish(&client, None, Err(anyhow!("share ended: exit 1")))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("share ended"), "got: {err}");
     }
 
     // A clean exit is the caller leaving a shell they HAD. That ends the link.
