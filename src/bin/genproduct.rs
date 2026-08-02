@@ -41,7 +41,7 @@ const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 /// the same address. A CEILING, not an equality — it is free to fall, and it may
 /// not rise without a person deciding what the second command is called. Measured
 /// where it is applied, at the end of the collapse.
-const ELIDED: usize = 118;
+const ELIDED: usize = 87;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
@@ -139,7 +139,17 @@ struct Folded {
     params: Vec<String>,
 }
 
-fn fold(method: &str, path: &str, all: &BTreeSet<String>) -> Option<Folded> {
+/// `multi` is the set of paths carrying MORE THAN ONE verb. A terminal noun
+/// normally becomes the command's verb (`GET /v1/websearch/search` →
+/// `websearch search`), which is right for an address with one method and lossy
+/// for an address with several: every method folds to the same coordinate and all
+/// but one reach nobody. Those addresses take the `has_child` shape instead.
+fn fold(
+    method: &str,
+    path: &str,
+    all: &BTreeSet<String>,
+    multi: &BTreeSet<String>,
+) -> Option<Folded> {
     let sg = segs(path);
     let sg = &sg[1..]; // drop v1
     if sg.is_empty() || is_wild(sg[0]) {
@@ -180,7 +190,16 @@ fn fold(method: &str, path: &str, all: &BTreeSet<String>) -> Option<Folded> {
             _ => "update",
         }
         .into()
-    } else if has_child(&p, all) {
+    } else if has_child(&p, all) || multi.contains(&p) {
+        // Two reasons for the SAME shape. A noun with children is a group, so it
+        // cannot also be a verb. A noun answering several methods is not one
+        // command either — `GET` lists and `POST` creates — and letting the noun
+        // be the verb makes them one coordinate, of which only the first survives.
+        //
+        // `root_verb` is the decision, and it is the existing one: no new naming
+        // judgement is made here. It does NOT separate `PUT` from `PATCH` (both
+        // read `replace`) — whether those are one command or two is a question
+        // about the API, not the fold, and it stays counted rather than guessed.
         let v = root_verb(method, is_collection(&p, all));
         nodes.push(last.clone());
         v.into()
@@ -428,6 +447,20 @@ fn main() {
     // does not answer can no longer shape a command that it does.
     let all: BTreeSet<String> = paths.keys().filter(|p| p.starts_with("/v1/")).cloned().collect();
 
+    // Addresses answering more than one verb. A terminal noun at one of these
+    // cannot be the command's verb without collapsing every method onto one
+    // coordinate — see `fold`.
+    let multi: BTreeSet<String> = paths
+        .iter()
+        .filter(|(p, _)| p.starts_with("/v1/"))
+        .filter(|(_, item)| {
+            item.as_object()
+                .map(|o| o.keys().filter(|m| VERBS.contains(&m.as_str())).count() > 1)
+                .unwrap_or(false)
+        })
+        .map(|(p, _)| p.trim_end_matches('/').to_string())
+        .collect();
+
     // THE CURATION LAW: the tables may speak ONLY of products the document carries.
     // A name the spec does not mention states one thing and one thing only — that
     // the server does not serve it — and that is `genspec`'s answer against cloud's
@@ -463,7 +496,7 @@ fn main() {
                 continue;
             }
             let method = m.to_uppercase();
-            let Some(f) = fold(&method, path, &all) else { continue };
+            let Some(f) = fold(&method, path, &all, &multi) else { continue };
             // Curation remap: absorb a product UNDER another as a sub-namespace
             // (e.g. `machines list` → `compute machines list`). The PATH is
             // unchanged — only the command coordinate moves.
