@@ -119,18 +119,18 @@ pub async fn run(
         .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
 
-    // Register this machine as a run-target first, so the fleet knows its CPU and
-    // GPUs and the console has a machine to group the shell under. DETACHED and
-    // best-effort, exactly as `hanzo code` does it: capability probing and the
-    // cloud write must never be on the critical path of getting a shell up.
-    {
-        let (api, token) = (api.clone(), tok.access_token.clone());
-        let host = context::hostname();
-        tokio::spawn(async move {
-            let machine = context::Machine::capture().await;
-            target::sync(&api, &token, &context::machine_id(), &host, &machine).await;
-        });
-    }
+    // Hold this machine open as a run-target, so the fleet knows its CPU and GPUs
+    // and the console has a machine to group the shell under. A BEAT, not a single
+    // register: cloud decides liveness from when a machine last wrote, so a link
+    // that announced itself once and went quiet reads offline while the shell it
+    // published is still serving. The guard beats until this command returns —
+    // detached and best-effort, never on the critical path of getting a shell up.
+    let _machine = target::beat(
+        &api,
+        &tok.access_token,
+        &context::machine_id(),
+        &context::hostname(),
+    );
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
@@ -182,36 +182,20 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
 
     // Hand the caller a prompt on the SAME session ttyd is serving, rather than
     // making them wait on a tunnel they cannot type into. Both ends attach to one
-    // tmux session, so what is typed here appears there and the reverse. tmux
-    // absent or refusing is not a failure — fall back to holding the tunnel,
-    // which is the old behaviour.
+    // tmux session, so what is typed here appears there and the reverse.
+    //
+    // When tmux will not take the terminal, the link is NOT over — the tunnel is
+    // still serving and the browser can still drive it — so hold it instead.
     let held = async {
-        match tokio::process::Command::new("tmux")
-            // Pin the URL into tmux's own status line. tmux clears the screen on
-            // attach, so anything printed before it — including the one thing the
-            // caller needs to copy — scrolls away the moment the shell appears.
-            // The status line survives that, and survives every clear after it.
-            .args([
-                "new",
-                "-A",
-                "-s",
-                "hanzo",
-                ";",
-                "set-option",
-                "-g",
-                "status-right",
-                &format!(" {url} "),
-                ";",
-                "set-option",
-                "-g",
-                "status-right-length",
-                "80",
-            ])
-            .status()
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(_) => sh.wait().await,
+        if took_over(attach(&url).await) {
+            Ok(()) // the caller had the shell and left it: the link is done
+        } else {
+            println!(
+                "  {} attach here with {}",
+                "no local terminal —".dimmed(),
+                "tmux attach -t hanzo".cyan()
+            );
+            sh.wait().await
         }
     };
 
@@ -224,6 +208,54 @@ async fn serve(client: &SessionClient, id: &str, sh: &mut share::Share) -> Resul
         // rather than being orphaned by a signal.
         _ = stopped() => Ok(()),
     }
+}
+
+/// Put the caller on the same tmux session ttyd serves, and report how it exited.
+///
+/// The URL is pinned into tmux's own status line: tmux clears the screen on attach,
+/// so anything printed before it — including the one thing the caller needs to copy
+/// — scrolls away the moment the shell appears. The status line survives that, and
+/// survives every clear after it.
+///
+/// `None` means tmux could not be spawned at all.
+async fn attach(url: &str) -> Option<i32> {
+    Command::new("tmux")
+        .args([
+            "new",
+            "-A",
+            "-s",
+            "hanzo",
+            ";",
+            "set-option",
+            "-g",
+            "status-right",
+            &format!(" {url} "),
+            ";",
+            "set-option",
+            "-g",
+            "status-right-length",
+            "80",
+        ])
+        .status()
+        .await
+        .ok()
+        .and_then(|s| s.code())
+}
+
+/// Whether tmux TOOK OVER the caller's terminal.
+///
+/// Only a clean exit means it did. Every other outcome means it never had the
+/// terminal: a non-zero exit ("open terminal failed: not a terminal" when there is
+/// no tty, "sessions should be nested with care" when `hanzo link` is run from
+/// INSIDE tmux), a tmux that is not installed, or one killed by a signal.
+///
+/// This distinction is the whole difference between a link and a one-second link.
+/// `Command::status()` answers `Ok` for a FAILED exit as readily as a successful
+/// one, so treating "it returned" as "the shell exited" ended the link immediately
+/// on every machine that could not attach — while the tunnel it had just published
+/// was serving perfectly well.
+fn took_over(code: Option<i32>) -> bool {
+    code == Some(0)
 }
 
 /// Record how this link ended, then hand the ending back unchanged.
@@ -343,6 +375,23 @@ mod tests {
     fn names_a_shell_verbatim() {
         assert_eq!(shell_command(Some("bash")), vec!["bash"]);
         assert_eq!(shell_command(Some("zsh")), vec!["zsh"]);
+    }
+
+    // A clean exit is the caller leaving a shell they HAD. That ends the link.
+    #[test]
+    fn leaving_the_shell_ends_the_link() {
+        assert!(took_over(Some(0)));
+    }
+
+    // Everything else means tmux never had the terminal, and the link must go on
+    // holding the tunnel the browser is already using. This is the regression that
+    // made `hanzo link` exit one second after printing its URL: run from inside
+    // tmux, or anywhere without a tty, tmux exits non-zero and the old code read
+    // that as the shell exiting normally.
+    #[test]
+    fn a_terminal_tmux_never_took_does_not_end_the_link() {
+        assert!(!took_over(Some(1)), "no tty / nested tmux");
+        assert!(!took_over(None), "not installed, or killed by a signal");
     }
 
     // tmux is attach-or-create so a dropped link comes back to the SAME shell
