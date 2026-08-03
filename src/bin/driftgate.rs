@@ -110,8 +110,17 @@
 //! `/v1/deploy` operations came to be reachable by nothing while the table that
 //! dropped them still called it a decision.
 //!
-//! Usage: `driftgate [--registry <url|path>] [--host <url>] [--spec <path>]
-//!                   [--hanzo <path>]`
+//! # THE HALF THAT NEEDS NOTHING BUT THE DOCUMENT
+//!
+//! Both questions above need the network. NAMING does not: whether a path says
+//! its own word twice is decidable from the document alone. `--lint` runs that
+//! half and exits, so `cargo test` can enforce it on every push from a bare
+//! checkout — see tests/spec_drift.rs. Same binary, same rules, same exit code;
+//! a gate that runs a different derivation than the one that ships is a gate
+//! about nothing.
+//!
+//! Usage: `driftgate [--lint] [--registry <url|path>] [--host <url>]
+//!                   [--spec <path>] [--hanzo <path>]`
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -162,6 +171,136 @@ const EXCUSED: usize = 7;
 /// landing page's 404 against the callback's name. Fixed where the client is
 /// built; a redirect is an answer.
 const CONTRADICTED: usize = 6;
+
+// ---- naming ------------------------------------------------------------------
+//
+// THE THIRD THING THIS GATE RULES ON, and it belongs here rather than in a linter
+// of its own for one reason: a name is only wrong on the WIRE. `/v1/index/indexes`
+// is a perfectly good Go package and a bad URL, so the only place the rule can be
+// checked is the emitted document — the same artifact the phantom check already
+// reads, at the same moment, with the same exit code. A second tool over the same
+// file would be a second authority about the same question.
+//
+// It is pure and needs NO network, which is what lets it run in `make verify` and
+// in `cargo test` beside the derivation gates rather than in a nightly nobody
+// watches. Three rules, and they are not the same rule twice:
+//
+//   (a) a child never repeats its parent — ADJACENT literal segments, at any
+//       depth. `/v1/index/indexes`, `/v1/traces/trace`. A `{param}` between two
+//       words separates them and resets the comparison.
+//   (b) a collection root never repeats the product — the ONE segment directly
+//       under the product namespace, because that is where a collection is
+//       named. `/v1/domain/domains`.
+//   (c) no upstream brand on our surface. `meili`, `minio` — the vendor we happen
+//       to run is not the product a customer types, and a brand in a path
+//       outlives the vendor. The upstream CRATE name (`milli`) is a real
+//       dependency and is not in this list: the rule is about our surface.
+//
+// (b) OVERLAPS (a) at the collection root and that is deliberate, not an
+// oversight: the two report the same path with different reasons and different
+// fixes ("rename this collection" vs "this segment repeats the one above it"),
+// and the message is what a person acts on.
+//
+// (b) IS DELIBERATELY NARROW. The first draft read "the product word anywhere
+// below the product", which is a rule this surface genuinely breaks three times
+// for good reasons — `/v1/search/indexes/{uid}/search` (a verb),
+// `/v1/dataroom/analytics/dataroom/{id}` (which rollup), `/v1/books/scan/book`
+// (what a scan posts). Those are not collection roots and the repeat carries
+// meaning. A lint that condemns them is one people learn to route around, so it
+// judges the collection root and nothing else.
+
+/// Upstream vendor names that may not appear in a path we serve.
+const BRANDS: [&str; 2] = ["meili", "minio"];
+
+/// A path we still publish that breaks a rule above, with WHO can fix it. A
+/// violation is only excused here when the fix is in another repo — this gate
+/// reads hanzoai/cloud's document and cannot edit hanzoai/metrics — and the
+/// entry has to name that repo, because an exception whose owner is unnamed is
+/// how a "temporary" one becomes permanent. Pinned by `NAMED` so it cannot grow
+/// in silence; a violation OWNED BY CLOUD belongs in cloud, never here.
+const NAMED: [(&str, &str); 1] = [(
+    "/v1/traces/trace",
+    "hanzoai/metrics mount.go:164 — a trace is addressed by ?id=, so the fix is \
+     /v1/traces/{id}; needs a metrics release and a cloud dep bump",
+)];
+
+/// Crude English singular, enough to see a plural child beside its singular
+/// parent. `indexes`->`index`, `datarooms`->`dataroom`, `policies`->`policy`.
+/// It only ever has to make two segments of OUR OWN vocabulary compare equal.
+fn singular(s: &str) -> String {
+    let s = s.to_ascii_lowercase();
+    if s.len() > 4 && s.ends_with("ies") {
+        return format!("{}y", &s[..s.len() - 3]);
+    }
+    if s.len() > 3 && s.ends_with("es") {
+        let stem = &s[..s.len() - 2];
+        if ["s", "x", "z", "ch", "sh"].iter().any(|s| stem.ends_with(s)) {
+            return stem.to_string();
+        }
+    }
+    if s.len() > 2 && s.ends_with('s') && !s.ends_with("ss") {
+        return s[..s.len() - 1].to_string();
+    }
+    s
+}
+
+/// The three rules, over the document's own paths. Returns (a, b, c) as report
+/// rows. Pure: same input, same answer, no clock and no socket.
+fn naming(paths: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+    let excused: std::collections::BTreeSet<&str> = NAMED.iter().map(|(p, _)| *p).collect();
+    for p in paths {
+        if excused.contains(p.as_str()) {
+            continue;
+        }
+        // (a) ADJACENCY. A `{param}` is a value, not a word, and it genuinely does
+        // separate the two words either side of it — `/v1/domain/{id}/domains` is
+        // "the domains OF this domain", which reads fine and is rule (b)'s to
+        // judge, not this one's. So a param RESETS the comparison rather than
+        // being skipped over; collapsing params here is what made this rule
+        // silently do (b)'s job and report the wrong reason.
+        let mut prev: Option<String> = None;
+        for s in segs(p).into_iter().filter(|s| *s != "v1") {
+            if is_param(s) {
+                prev = None;
+                continue;
+            }
+            let cur = singular(s);
+            if prev.as_deref() == Some(cur.as_str()) {
+                a.push(format!("{p:<48}`{cur}` repeats its parent"));
+                break;
+            }
+            prev = Some(cur);
+        }
+        // (b) THE COLLECTION ROOT, and only that — the one segment directly under
+        // the product, which is where a collection is named. Not "the product word
+        // anywhere below", which is a different and much weaker rule: it condemned
+        // `/v1/search/indexes/{uid}/search` (search is a VERB on an index),
+        // `/v1/dataroom/analytics/dataroom/{id}` (which of the two analytics
+        // rollups this is) and `/v1/books/scan/book` (the bookkeeping entry a
+        // scan posts) — three names where the repeat carries meaning and the
+        // collection root is innocent. A lint that cries on those is one people
+        // route around.
+        // Positional in the PATH, not in the literals: the collection root is the
+        // segment immediately after the product. If a `{param}` sits there, the
+        // product's collection root is unnamed and there is nothing to judge.
+        let raw: Vec<&str> = segs(p).into_iter().filter(|s| *s != "v1").collect();
+        if let [product, root, ..] = raw[..] {
+            if !is_param(product) && !is_param(root) && singular(product) == singular(root) {
+                b.push(format!(
+                    "{p:<48}`{root}` under `{product}` — the product namespace IS the collection"
+                ));
+            }
+        }
+        for s in segs(p).into_iter().filter(|s| !is_param(s)) {
+            let low = s.to_ascii_lowercase();
+            if let Some(brand) = BRANDS.iter().find(|b| low.contains(**b)) {
+                c.push(format!("{p:<48}`{brand}` is an upstream vendor, not our product"));
+            }
+        }
+    }
+    (a, b, c)
+}
 
 // ---- the route table ---------------------------------------------------------
 
@@ -380,13 +519,19 @@ fn claim(c: &Curated) -> Option<String> {
 // ---- arguments ---------------------------------------------------------------
 
 const USAGE: &str =
-    "usage: driftgate [--registry <url|path>] [--host <url>] [--spec <path>] [--hanzo <path>]";
+    "usage: driftgate [--lint] [--registry <url|path>] [--host <url>] [--spec <path>] [--hanzo <path>]";
 
 struct Args {
     registry: String,
     host: String,
     spec: PathBuf,
     hanzo: PathBuf,
+    /// Run ONLY the naming rules and exit. No network, no `hanzo` binary, no
+    /// registry — just the document. This is the half of the gate that can be
+    /// answered from a checkout alone, and `cargo test` runs it that way (see
+    /// tests/spec_drift.rs) so a stutter is refused on every push rather than
+    /// only when somebody runs the full gate against a live host.
+    lint: bool,
 }
 
 fn args() -> Args {
@@ -402,6 +547,7 @@ fn args() -> Args {
         host: DEFAULT_HOST.to_string(),
         spec: manifest.join("spec/cloud.json"),
         hanzo: sibling,
+        lint: false,
     };
     // The flag is decided BEFORE its value is required, so an unknown flag says so
     // and `--help` is answered rather than told it needs a value.
@@ -414,6 +560,11 @@ fn args() -> Args {
             "--host" => |a, v| a.host = v,
             "--spec" => |a, v| a.spec = PathBuf::from(v),
             "--hanzo" => |a, v| a.hanzo = PathBuf::from(v),
+            "--lint" => {
+                a.lint = true;
+                i += 1;
+                continue;
+            }
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0)
@@ -477,6 +628,42 @@ async fn main() {
     }
 
     let a = args();
+
+    // NAMING FIRST, and it returns before anything reaches for a socket or for
+    // the built `hanzo`: this half is a fact about the document and nothing else,
+    // which is exactly what lets `cargo test` run it from a bare checkout.
+    if a.lint {
+        let spec: Value = serde_json::from_slice(
+            &std::fs::read(&a.spec).unwrap_or_else(|e| panic!("read {}: {e}", a.spec.display())),
+        )
+        .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.spec.display()));
+        let paths: Vec<String> = spec
+            .get("paths")
+            .and_then(Value::as_object)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        let (child, root, brand) = naming(&paths);
+        for (title, rows) in [
+            ("NAMING — a child repeats its parent. The path says the word twice", &child),
+            ("NAMING — a collection root repeats its product. The namespace IS the collection", &root),
+            ("NAMING — an upstream vendor's brand is on our surface. It outlives the vendor", &brand),
+        ] {
+            if !rows.is_empty() {
+                println!("\n!! {title}");
+                for r in rows.iter() {
+                    println!("   {r}");
+                }
+            }
+        }
+        for (path, why) in NAMED {
+            println!("   {path:<24}{why}");
+        }
+        if child.is_empty() && root.is_empty() && brand.is_empty() {
+            println!("driftgate --lint: {} paths, no naming violation.", paths.len());
+            std::process::exit(0);
+        }
+        std::process::exit(1);
+    }
     assert!(a.hanzo.is_file(), "no `hanzo` at {} — build it first (`cargo build --bin hanzo`), \
          because whether a product is reachable is a fact about the built CLI", a.hanzo.display());
 
@@ -675,6 +862,35 @@ async fn main() {
         stale.iter().map(|(p, s)| format!("{p:<16}claims `hanzo {s}`")).collect(),
     );
 
+    // NAMING, over the same document the phantom check just read. Same gate, same
+    // exit code, no network: a name is only wrong on the wire, so the emitted
+    // document is the only place the rule can be put, and putting it anywhere
+    // else would be a second authority about the same question.
+    let (stutter_child, stutter_root, branded) = naming(&paths.keys().cloned().collect::<Vec<_>>());
+    bad(
+        "NAMING — a child repeats its parent. The path says the word twice",
+        stutter_child,
+    );
+    bad(
+        "NAMING — a collection root repeats its product. The namespace IS the collection",
+        stutter_root,
+    );
+    bad(
+        "NAMING — an upstream vendor's brand is on our surface. It outlives the vendor",
+        branded,
+    );
+    // A named violation is still a violation; it is excused only because its fix
+    // is in another repo, and it is printed every run so it cannot go quiet.
+    if !NAMED.is_empty() {
+        println!(
+            "\n   {} naming violation(s) owned by another repo, each with the repo that fixes it:",
+            NAMED.len()
+        );
+        for (p, why) in NAMED {
+            println!("   {p:<24}{why}");
+        }
+    }
+
     // Cloud's table and cloud's server disagreeing is REAL and it is not ours: no
     // edit in this repo makes `GET /v1/billing/payment-config` answer, and a gate
     // that turns this build red for it is a gate people learn to switch off. So
@@ -759,6 +975,80 @@ mod tests {
             );
         }
         assert!(matches!(verdict(&[Some(404); CONFIRM]), Probe::Absent));
+    }
+
+    /// THE NAMING LINT BITES. A gate is worth exactly what it refuses, so the
+    /// rules are asserted against paths that BREAK them — the stutters this
+    /// rename just removed, put back one at a time. A lint that only ever sees a
+    /// clean document has never been shown to fail.
+    #[test]
+    fn naming_refuses_a_stutter_a_repeated_product_and_a_vendor_brand() {
+        let (a, _, _) = naming(&["/v1/index/indexes".into()]);
+        assert_eq!(a.len(), 1, "index/indexes is a child repeating its parent");
+
+        let (a, _, _) = naming(&["/v1/dataroom/datarooms/{id}/documents".into()]);
+        assert_eq!(a.len(), 1, "a param between them does not separate the words");
+
+        // Both rules see a collection root that repeats its product, and report it
+        // with different reasons. That overlap is the design.
+        let (a, b, _) = naming(&["/v1/domain/domains".into()]);
+        assert_eq!((a.len(), b.len()), (1, 1), "one path, two reasons, two fixes");
+
+        // A param separates the words either side of it: "the domains OF this
+        // domain" is a legitimate sub-collection, and `domains` is not the
+        // collection root. Neither rule fires.
+        let (a, b, _) = naming(&["/v1/domain/{id}/domains".into()]);
+        assert!(a.is_empty() && b.is_empty(), "{a:?} {b:?}");
+
+        // (b) judges the COLLECTION ROOT and nothing deeper. These three are real
+        // paths where the product word repeats and MEANS something — a verb, a
+        // discriminator, an object. A lint that condemns them gets switched off.
+        for innocent in [
+            "/v1/search/indexes/{uid}/search",
+            "/v1/dataroom/analytics/dataroom/{dataroomId}",
+            "/v1/books/scan/book",
+        ] {
+            let (_, b, _) = naming(&[innocent.into()]);
+            assert!(b.is_empty(), "{innocent} is not a collection root repeating its product");
+        }
+
+        let (_, _, c) = naming(&["/v1/search/meilisearch/health".into()]);
+        assert_eq!(c.len(), 1, "an upstream vendor may not be on our surface");
+
+        // The upstream CRATE name is a dependency, not a brand leak: the rule is
+        // about the surface a customer types, and `milli` never appears in it.
+        let (_, _, c) = naming(&["/v1/search/milli".into()]);
+        assert!(c.is_empty(), "milli is a real dependency, not a brand on our surface");
+    }
+
+    /// And it PASSES the names the rename produced — otherwise the test above
+    /// would be satisfied by a lint that fails on everything.
+    #[test]
+    fn naming_admits_the_names_this_rename_produced() {
+        let clean = [
+            "/v1/search/indexes/{uid}/documents",
+            "/v1/ai/evals/datasets/{name}/items",
+            "/v1/zt/networks/routers",
+            "/v1/dataroom/{id}/documents",
+            "/v1/domain",
+            "/v1/payments/{id}",
+            "/v1/integrations/cloudflare/zones/{zone}/purge",
+            "/v1/visor/balancers/{id}",
+            "/v1/admin/search/indexes",
+        ]
+        .map(String::from);
+        let (a, b, c) = naming(&clean);
+        assert!(a.is_empty() && b.is_empty() && c.is_empty(), "{a:?} {b:?} {c:?}");
+    }
+
+    /// The excuse is keyed by the EXACT path, so it cannot quietly cover a
+    /// sibling that breaks the same rule for a reason nobody wrote down.
+    #[test]
+    fn a_named_exception_excuses_only_itself() {
+        let (a, ..) = naming(&[NAMED[0].0.into()]);
+        assert!(a.is_empty(), "the declared path is excused");
+        let (a, ..) = naming(&["/v1/traces/trace/{id}/trace".into()]);
+        assert_eq!(a.len(), 1, "a different path is not");
     }
 
     /// A SINGLE 404 IS NOT EVIDENCE — the same mistake one layer down. Fourteen

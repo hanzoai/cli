@@ -53,7 +53,15 @@ const ELIDED: usize = 81;
 /// its type is a regression at the source rather than a number to raise here.
 /// It counts ONLY that cause — a schema that is freeform BY CONSTRUCTION (`{}`,
 /// `additionalProperties`, `oneOf`, a bare array) is not a gap and is not pinned.
-const NO_SCHEMA: usize = 459;
+/// 459 -> 460 for ONE operation, and not because a handler lost its type. The
+/// coordinated rename re-ran cloud's describe pass over every app, and
+/// `plugin/ai/openapi.json` had gone stale: `POST /v1/index` — documentation
+/// ingestion, served by hanzoai/ai all along — was missing from the committed
+/// subset. Regenerating surfaced it, and it declares no requestBody. So the
+/// document gained a write that was always served and never described, which is
+/// the one shape of rise this ceiling exists to let through only with a reason
+/// attached. It falls again when hanzoai/ai types that handler.
+const NO_SCHEMA: usize = 460;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')

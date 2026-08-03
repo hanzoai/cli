@@ -591,13 +591,24 @@ fn curation_speaks_only_of_what_a_command_line_is() {
     );
     // The "redundant plural" dedupe was a claim about the SERVER, and the document
     // refutes it: `/v1/bots` is bot RUNS while `/v1/bot` is bot nodes plus a relay
-    // door, and `/v1/networks` is the org's Zero Trust overlay while the local
-    // `network` SELECTS one. Three surfaces, three names, no redundancy to remove.
-    // (`agent` is a different case and stays denied: `/v1/agent` and `/v1/agents`
-    // are two products on ONE noun, which is a collision, not a duplication.)
-    for plural in ["networks", "bots"] {
-        assert!(is_product(plural), "{plural} is its own served surface, not a dupe of a singular");
-    }
+    // door. Two surfaces, two names, no redundancy to remove. (`agent` is a
+    // different case and stays denied: `/v1/agent` and `/v1/agents` are two
+    // products on ONE noun, which is a collision, not a duplication.)
+    assert!(is_product("bots"), "bots is its own served surface, not a dupe of a singular");
+
+    // `networks` USED TO BE the third of those, defended on the grounds that
+    // `/v1/networks` is the org's Zero Trust overlay while the local `network`
+    // SELECTS one — two different things wearing one noun, told apart only by a
+    // plural. The coordinated rename dissolved that argument instead of restating
+    // it: the overlay is served at /v1/zt/networks now, so the PRODUCT is `zt`,
+    // `networks` is a resource beneath it, and the noun no longer has to carry the
+    // distinction. `hanzo zt networks list` says which one it means.
+    assert!(!is_product("networks"), "the overlay is `zt`; networks is a resource under it");
+    assert!(is_product("zt"), "Hanzo ZT is the product");
+    assert!(
+        OPS.iter().any(|o| o.product == "zt" && o.nodes == ["networks"] && o.verb == "list"),
+        "`hanzo zt networks list` (GET /v1/zt/networks) must be reachable"
+    );
     assert!(is_product("bot"), "…and the singular stays exactly as served");
     // The hand `cluster` proxy is deleted, so the SERVED clusters product is
     // the one way to reach dedicated clusters.

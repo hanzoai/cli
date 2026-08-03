@@ -1,4 +1,4 @@
-ref=v1.801.383
-sha256=3549c5f093c353addaa8a08f920babdaed188f68fed43c94a1b7f9b852777ff8
+ref=feat/coordinated-rename
+sha256=98b10371cbdfa3975af463718094bcb74c414f7965990ff103fa393061c50f3e
 repo=hanzoai/cloud
 path=openapi.yaml
