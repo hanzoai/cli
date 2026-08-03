@@ -737,18 +737,75 @@ a projection that repairs its source hides the defect at the one place it can be
   full `cargo test` runs on this box, 0 in 8 consecutive runs after. It writes a stub
   script and execs it, so it races other tests' spawns. It is now in the release gate;
   an intermittent red gate teaches people to re-run, which is how a gate dies.
-- **65 COMMANDS LOST THEIR TYPED FLAGS when the master went, and every one is an
-  UNTYPED HANDLER in hanzoai/cloud.** Measured at one fixed document (v1.801.360),
-  so the number is the architecture change alone and not a re-pin: 65 commands that
-  survive went from typed flags to `--data` or to no query flags —
-  `agents` 7, `iam` 6, `admin`/`evals`/`integrations`/`o11y` 4 each, `functions`/
-  `kms`/`notify`/`security` 3 each, `affiliates`/`billing` 2, then a long tail. The
-  worked example is `hanzo authz check`: it took `--sub --obj --act`, and cloud's
-  document declares `POST /v1/authz/check` with **no requestBody at all** — the
-  shape was a hand-written approximation of a body nobody published. This is the
-  typed-op migration's remaining bill (#67, #92–#158), and it is the honest price
-  of one authority: a client that knows a shape the server never stated is a client
-  nobody can check. It comes back the moment the handler is typed.
+- **469 WRITE COMMANDS TAKE `--data`, AND 459 OF THEM ARE AN UNTYPED HANDLER IN
+  hanzoai/cloud.** That split is the whole point: a `--data` blob is the CLI
+  admitting it does not know the shape, and until 1.9.35 the only number anywhere
+  was one aggregate that could not say WHOSE gap it was. `genproduct` now decides
+  the cause where the decision is made and prints it every run:
+
+  ```
+  genproduct: 469 write command(s) take --data — 459 because the handler declares
+  no requestBody in hanzoai/cloud (ai 72, iam 43, store 19, admin 14, platform 13,
+  billing 11, captable 11, o11y 10, …), 10 because the schema is freeform by
+  construction
+  ```
+
+  `NO_SCHEMA = 459` is a CEILING beside `ELIDED`: free to fall as cloud types
+  handlers (#67, #92–#158), and it may not rise, because a handler that LOST its
+  type is a regression at the source rather than a number to raise here. The 10
+  freeform are not a gap and are not pinned — `{}` (5), `additionalProperties`
+  (2, incl. `POST /v1/admin/credits`, whose Go input type genuinely IS
+  `map[string]any`), a bare `type: array` (2), and `oneOf` (1, `POST /v1/event`,
+  which really does accept four shapes). `--data -` still reads the body from
+  stdin, so none of these forces a secret into argv.
+
+  The worked example is still `hanzo authz check`: it took `--sub --obj --act`,
+  and cloud's document declares `POST /v1/authz/check` with **no requestBody at
+  all** — the shape was a hand-written approximation of a body nobody published.
+  A client that knows a shape the server never stated is a client nobody can
+  check. It comes back the moment the handler is typed, with no edit here.
+
+  Held against cloud's tree, 458 of the 459 pin to a file: **227** to Go source
+  (an `openapi.Describe(…)` beside a raw `g.Post(…)` — prose hand-written,
+  shape never reflected: `apps/commerce/describe.go` 39, `apps/captable/captable.go`
+  11, `apps/platform/platform.go` 9, `apps/integrations/integrations.go` 9,
+  `apps/projects/projects.go` 8, …), and **231** only to a committed
+  `plugin/<x>/openapi.json` subset (`ai` 118, `iam` 43, `exec` 12, `company` 8,
+  `git` 6, …) — the same seam #146 names, where the published names come from a
+  file rather than the mounted plugin's live registry. One (`POST
+  /v1/risk/state/snapshot`) resolves to neither.
+- **TYPED MEANS ALL THE WAY DOWN — arrays repeat, objects dot (1.9.35).** A flag
+  typed `JSON` is a `--data` blob wearing a type: the document stated a shape and
+  the CLI made the caller hand-write it anyway. `genproduct` now reads a property
+  schema to its leaves — `classify` DEREFS first (a `$ref` to an enum used to be
+  as opaque as a nested object), an ARRAY becomes a REPEATABLE flag over its
+  ELEMENT, and an OBJECT WITH PROPERTIES becomes DOTTED flags rebuilt into the
+  declared object by `insert_path`. Measured on the same document, before → after:
+  opaque JSON-blob flags **382 → 119**, commands carrying one **218 → 149**;
+  **167** repeatable scalar flags and **1056** dotted flags exist where there were
+  none; total typed fields **3157 → 4102**.
+
+  ```
+  hanzo admin promos replace --plans pro --plans team     # was --plans '["pro","team"]'
+  hanzo agents targets create --metrics.load1 0.4         # was --metrics '{"load1":0.4}'
+  ```
+
+  Two termination guarantees, both necessary: a `$ref` CYCLE GUARD (a
+  self-referencing schema would expand forever) and `MAX_NEST = 3`. The cap
+  SATURATES — 3, 4 and 8 derive the identical field set, because the cycle guard
+  stops the recursive schemas first — so it is a guarantee, not a policy about the
+  surface. A branch that expands to nothing falls back to one JSON flag rather
+  than losing the property, and a nested leaf is required only when EVERY step to
+  it is required (clap demanding `--a.b` inside an optional `a` would refuse a
+  call the server accepts).
+- **A LONE BODY PROPERTY SURVIVES A PATH PARAMETER OF THE SAME NAME.** A body key
+  echoing a path param is normally dropped — same value, already a positional.
+  Not when it is the body's ONLY property: dropping it there types the whole write
+  away for a schema that stated a shape. `POST /v1/o11y/service_accounts/{id}/roles`
+  is the case cloud serves — its `{id}` is the service account and its body `id`
+  is the ROLE being assigned — and it was the ONE `--data` write in the tree that
+  no cloud typing gap explained. It is the one command that moved from `--data` to
+  a typed flag in 1.9.35; every other `--data` write is upstream, by construction.
 - **THE STDIN-SECRET CHANNEL BINDS TO ZERO OPERATIONS, and that is security-
   relevant.** `format: password` marks a body property the CLI reads from stdin and
   gives no flag and no positional, so it can never land in argv, `ps` or shell
