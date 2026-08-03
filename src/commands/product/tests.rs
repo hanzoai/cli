@@ -258,26 +258,53 @@ fn a_simple_leaf_resolves_and_fills() {
     );
 }
 
-/// THE headline: a write op with an authored schema takes TYPED flags, and the
-/// JSON body is assembled from them at their schema types — never `--data`.
+/// THE headline: a write op whose body the DOCUMENT types takes TYPED flags, and
+/// the JSON body is assembled from them at their schema types — never `--data`.
+///
+/// The op is CHOSEN from the spec, not named here. It used to be `authz check
+/// --sub --obj --act`, and that shape came from the hand-authored master: cloud's
+/// own document declares `POST /v1/authz/check` with no requestBody at all, so
+/// naming it pinned a snapshot of a second authority rather than the property.
+/// Pick whichever write the document actually types and assert the property on it.
 #[test]
 fn a_typed_write_assembles_a_json_body_from_flags() {
-    // `hanzo authz check --sub alice --obj doc:1 --act read`
-    let m = matches_of(&["hanzo", "authz", "check", "--sub", "alice", "--obj", "doc:1", "--act", "read"]);
-    let Some(Resolved::Leaf { op, body, .. }) = resolve(&hand(), &m) else {
-        panic!("expected a leaf");
+    let op = OPS
+        .iter()
+        .find(|o| {
+            o.method == "POST"
+                && o.params.is_empty()
+                && !o.fields.is_empty()
+                && o.fields.iter().all(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str))
+        })
+        .expect("cloud types at least one bodied POST with only string properties");
+
+    let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.to_string());
+    for f in op.fields {
+        argv.push(format!("--{}", f.flag));
+        argv.push(format!("v-{}", f.key));
+    }
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+
+    let m = matches_of(&argv);
+    let Some(Resolved::Leaf { op: got, body, .. }) = resolve(&hand(), &m) else {
+        panic!("expected a leaf for {argv:?}");
     };
-    assert_eq!(op.method, "POST");
-    assert_eq!(op.path, "/v1/authz/check");
-    assert!(!op.fields.is_empty(), "authz check must be typed, not --data");
+    assert_eq!(got.path, op.path);
     let LeafBody::Typed(v) = body else { panic!("typed leaf must build a JSON body") };
-    assert_eq!(v["sub"], "alice");
-    assert_eq!(v["obj"], "doc:1");
-    assert_eq!(v["act"], "read");
+    for f in op.fields {
+        assert_eq!(v[f.key], format!("v-{}", f.key), "{} did not reach the body", f.key);
+    }
+
     // A typed leaf exposes NO `--data` — the flags ARE the body.
-    assert!(matches_of(&["hanzo", "authz", "check", "--sub", "a", "--obj", "b", "--act", "c"])
-        .subcommand()
-        .is_some());
+    let mut leaky = argv.clone();
+    leaky.push("--data");
+    leaky.push("{}");
+    assert!(
+        augment(hand()).try_get_matches_from(&leaky).is_err(),
+        "a typed write must not also accept --data: {leaky:?}"
+    );
 }
 
 /// An INTEGER-typed flag reaches the body as a JSON number (not a string), and an
@@ -339,7 +366,10 @@ fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
 /// URL query (not the body), required-ness enforced by clap.
 #[test]
 fn a_query_param_becomes_a_typed_flag_in_the_url() {
-    let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway", "--limit", "50"]);
+    // `logs` is a NODE, not a verb: cloud typed `/v1/o11y/logs/{aggregate,fields,
+    // livetail,pipelines,promote_paths}` beside it, so the noun cannot also be the
+    // command — the fold's `has_child` branch gives the read its own `get`.
+    let m = matches_of(&["hanzo", "o11y", "logs", "get", "--product", "gateway", "--limit", "50"]);
     let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&hand(), &m) else { panic!("leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
@@ -384,7 +414,7 @@ fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
     // The o11y op the alias pointed at is still reachable under its own product —
     // one capability, one place, never duplicated to keep a nickname alive.
-    let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
+    let m = matches_of(&["hanzo", "o11y", "logs", "get", "--product", "gateway"]);
     let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(
@@ -622,48 +652,71 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
     }
 }
 
-/// THE invariant of a secrets CLI, now on the GENERATED path: the `value` is a
-/// stdin-secret (`format: password`), so it has NO flag and NO positional. A
-/// value-bearing argv is a PARSE ERROR — a property of the grammar, not the
-/// handler's discipline — and `resolve` never sees the value (it is injected
-/// from stdin only at dispatch).
+/// How many body properties the document marks `format: password`. A stdin-secret
+/// has no flag and no positional, so it can never land in argv, `ps` or shell
+/// history.
+///
+/// **It is ZERO, and that is a stated upstream gap, not a design choice.** The
+/// marker used to reach exactly one op — `kms secrets create --value` — and it
+/// came from the hand-authored master, which carried `format: password` twice.
+/// hanzoai/cloud's own emitted document carries it **0 times** (`grep -c 'format:
+/// password' openapi.yaml` at v1.801.383), because `POST /v1/kms/secrets` is still
+/// an untyped fiber handler with no Go struct for zip to reflect — it declares no
+/// requestBody at all. So the CLI was enforcing a rule the server's own contract
+/// never stated, which is exactly the drift this pipeline exists to end; the
+/// enforcement has to come back from the source, by typing that handler in
+/// hanzoai/cloud with `format:"password"` on the value.
+///
+/// Until then `hanzo kms secrets create` takes `--data`, and `--data -` reads the
+/// body from stdin — so a secret CAN still be kept out of argv, it just is not
+/// FORCED out. Do not restate the rule here: a client that knows a constraint the
+/// document does not is the second authority wearing a different hat.
+const SECRET_FIELDS: usize = 0;
+
+/// THE invariant of a secrets CLI, on the GENERATED path: a `format: password`
+/// body property has NO flag and NO positional, so a value-bearing argv is a PARSE
+/// ERROR — a property of the grammar, not of the handler's discipline — and
+/// `resolve` never sees the value (it is injected from stdin at dispatch).
+///
+/// Asserted over every op that declares one, and the COUNT is pinned so the day
+/// cloud types one this test starts doing its real work instead of passing
+/// vacuously forever.
 #[test]
-fn kms_secret_value_can_never_reach_argv() {
-    // The `create` op carries a `value` field explicitly marked secret.
-    let create = OPS.iter().find(|o| o.product == "kms" && o.verb == "create").expect("kms create");
-    let value = create.fields.iter().find(|f| f.key == "value").expect("value field");
-    assert!(value.secret, "the value field must be a stdin-secret");
-    assert!(!value.query, "a secret is a body field, never a query param");
-
-    // No flag or positional can carry it: every value-bearing argv is rejected.
-    let base = || augment(Command::new("hanzo"));
-    let leaky: &[&[&str]] = &[
-        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "--value", "hunter2"],
-        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "--secret", "hunter2"],
-        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "hunter2"],
-    ];
-    for argv in leaky {
-        assert!(base().try_get_matches_from(*argv).is_err(), "value-bearing argv must not parse: {argv:?}");
-    }
-
-    // What DOES parse carries only the address + env; the body OMITS the secret
-    // (it is read from stdin at dispatch, never assembled from a flag).
-    let m = matches_of(&["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod"]);
-    let Some(Resolved::Leaf { op, body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
-        panic!("typed leaf");
-    };
-    assert_eq!(op.path, "/v1/kms/secrets");
-    assert_eq!(v["name"], "DB");
-    assert_eq!(v["env"], "prod");
-    assert!(v.get("value").is_none(), "the secret must NOT be assembled from flags: {v}");
-
-    // `--env` is required on the write (the server refuses to guess a default).
-    assert!(
-        base().try_get_matches_from(["hanzo", "kms", "secrets", "create", "--name", "DB"]).is_err(),
-        "create must require --env"
+fn a_stdin_secret_can_never_reach_argv() {
+    let secrets: Vec<(&Op, &Field)> =
+        OPS.iter().flat_map(|o| o.fields.iter().filter(|f| f.secret).map(move |f| (o, f))).collect();
+    assert_eq!(
+        secrets.len(),
+        SECRET_FIELDS,
+        "the number of stdin-secret fields moved. If it ROSE, cloud typed a secret body — good: \
+         drop the SECRET_FIELDS pin to the new number and this test now enforces the law on it. \
+         If it FELL to 0 again, a typed secret body stopped being typed upstream, which is a \
+         hanzoai/cloud regression, not something to paper over here."
     );
 
-    // No `--org` on any kms verb — the org binds to the active identity's owner.
+    let base = || augment(Command::new("hanzo"));
+    for (op, f) in &secrets {
+        assert!(!f.query, "{}: a secret is a body field, never a query param", op.path);
+        let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+        argv.extend(op.nodes.iter().map(|n| n.to_string()));
+        argv.push(op.verb.to_string());
+        for p in op.params {
+            argv.push(format!("v-{p}"));
+        }
+        for leak in [f.flag, "secret", "value"] {
+            let mut a = argv.clone();
+            a.push(format!("--{leak}"));
+            a.push("hunter2".into());
+            assert!(base().try_get_matches_from(&a).is_err(), "value-bearing argv must not parse: {a:?}");
+        }
+    }
+}
+
+/// The org binds to the active identity's owner and is never an argument: kms
+/// moved the org out of the URL, and no verb may take it back as a flag.
+#[test]
+fn no_kms_verb_takes_an_org() {
+    let base = || augment(Command::new("hanzo"));
     let orged: &[&[&str]] = &[
         &["hanzo", "kms", "secrets", "list", "--org", "other"],
         &["hanzo", "kms", "secrets", "get", "DB", "--org", "other"],

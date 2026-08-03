@@ -191,22 +191,19 @@ hand-maintained, and the client links no cloud code: it reads a spec, which is w
 does over the wire anyway.
 
 ```
-hanzoai/cloud@<tag>        ─┐  THE SOURCE: it enumerates, and carries the shapes
-  openapi.yaml              ├─ genspec ─→ spec/cloud.json ─→ genproduct ─→ generated.rs
-hanzoai/openapi hanzo.yaml ─┘  the SUPPLEMENT: shape it has not typed, and only
-                               where the document is not the authority
+hanzoai/cloud@<tag>            THE DOCUMENT, and the only input. It enumerates,
+  openapi.yaml  ── genspec ─→ spec/cloud.json ─→ genproduct ─→ generated.rs
+                               and carries the prose and the reflected shapes.
 ```
 
-Both halves are PINNED, in `.spec-lock`, and only `make spec` moves either. The
-right-hand input used to be `api.hanzo.ai/v1/openapi.json`, a host — which cannot
-say which deploy it was, so a capture taken from it could never be re-derived and
-never be checked.
+ONE input, PINNED in `.spec-lock`, and only `make spec` moves it. It used to be
+`api.hanzo.ai/v1/openapi.json`, a host — which cannot say which deploy it was, so
+a capture taken from it could never be re-derived and never be checked.
 
 - `make spec` / `make spec-check` — the refresh seam and its gate, both through
   `scripts/generate.sh` (the same call site hanzoai/ci's `client:` lane uses).
   Underneath: `genspec` reads the document from `HANZO_REGISTRY` (JSON or YAML)
-  and the shapes from `--openapi <hanzoai/openapi checkout>`, and stamps
-  `hanzoai/cloud@<ref> sha256:<digest>` into the spec's provenance.
+  and stamps `hanzoai/cloud@<ref> sha256:<digest>` into the spec's provenance.
   `--check` re-runs the whole derivation and refuses a delta without writing.
 - `make verify` — THE DRIFT GATE (`src/bin/driftgate.rs`). The other question: is
   the document still TRUE of the running server, in BOTH directions? It has ONE
@@ -221,13 +218,13 @@ never be checked.
 - `cargo run --bin genproduct` — offline, deterministic: `spec/cloud.json` → the clap
   tree. `--check` compares instead of writing; `tests/spec_drift.rs` runs it, so
   `cargo test` pins the tree to its spec.
-- **The document is the authority at product granularity.** Cloud's route table is the
-  weave of what each app binary emits from its own router, so a product it serves ANY
-  route under is a product it is complete for — an authored operation missing from the
-  table is dropped. A product the table never mentions (the inference surface:
-  `/v1/models`, `/v1/chat/completions`) is answered at the edge, not by that router, so
-  nothing is refuted. Multi-segment path params come from the same reading: a fiber `*`
-  arrives as `{wildcardN}`.
+- **The document is the authority, full stop — not "at product granularity".** It is
+  the weave of what each app binary emits from its OWN router, so what it carries is
+  what some router registered and what it omits is what none did. There is no
+  granularity to the rule and nothing left for it to arbitrate between, because there
+  is no second reading to arbitrate with. Multi-segment path params come from the same
+  reading: a fiber `*` arrives as `{wildcardN}`, and a `{wildcardN}` at
+  `/v1/<product>/` is a DOOR (counted, below) rather than a parameter.
 - What still needs a HAND decision: `src/curation.rs` — ONE table naming every
   product the tree does not surface at its own bare name (`Instead::Nothing`), the
   ones another command answers to (`Instead::Claimed`), and the ones absorbed
@@ -271,48 +268,92 @@ never be checked.
   `/v1/billing/payment-methods` both read as `payment-methods`. The
   higher-priority method takes the name and the other reached nobody, with no
   number anywhere. `genproduct` now reports the loss every run and pins it:
-  **`ELIDED = 118`**, a CEILING — free to fall, and it cannot rise without somebody
+  **`ELIDED = 81`**, a CEILING — free to fall, and it cannot rise without somebody
   naming the second command. Which name that is, is a verb decision this generator
   cannot make (is a `PUT` beside a `PATCH` a different command or the same one?),
   and the fold already shows the shape of the answer in its `has_child` branch: the
   noun becomes a node and each method takes its `root_verb`. Worst products today:
-  `ai` 28, `iam` 7, `evals` 5, `tasks` 5, `download`/`files`/`store`/`websearch` 4
-  each. With the 11 that curation drops, that is the whole distance between the
-  spec's 1895 operations and the tree's 1766.
-- A capability missing from the CLI is missing from a document: author it in
-  hanzoai/openapi, or serve it in hanzoai/cloud. There is no third place. `/v1/cd`
+  `ai` 26, `iam` 15, `router` 5, `store` 4, `collections`/`download`/`exec`/`files`
+  3 each. With the 11 that curation drops (`agent` 4, `help` 4, `completions`
+  `csrf` `openapi.json` 1 each) that is the WHOLE distance, exactly:
+  **2219 spec operations − 81 elided − 11 curated = 2127 commands.** Nothing else
+  is lost anywhere in the derivation, and the arithmetic closing is the check.
+- **A capability missing from the CLI is missing from the SERVER. There is no
+  second place, and that is the change.** It used to read "author it in
+  hanzoai/openapi, or serve it in hanzoai/cloud", and the first half was the
+  loophole: authoring was how 71 operations entered the surface with no router
+  behind them. Serve it, and type it, in hanzoai/cloud — that is the only door.
+  `/v1/cd`
   is the worked example: it answers 200 with `<title>Hanzo CD</title>` and
   contributes ZERO keys to the route table, because it is the Hanzo CD **console**,
   not an API — its own noscript line says "Hanzo CD can be used with the Hanzo CD
   CLI". Its API is `/v1/deploy/*`, and `hanzo deploy` is that CLI. `cd` is not a
   product and must not become a command name — it is the shell's own builtin.
 
-**The lineage contract — which half is authoritative about what.** The two inputs
-are not redundant readings of one truth; each owns a different question, and
-neither can answer the other's.
+**The lineage contract — ONE authority (1.9.34).** There is no longer a "which
+half is authoritative about what", because there is no second half. This section
+used to describe a document that decided existence and a hand-authored master that
+supplemented it; that arrangement is deleted, and what follows is what replaced it
+and why.
 
-- **The DOCUMENT decides EXISTENCE, and carries the SHAPE.** `genspec` ITERATES
-  cloud's `openapi.yaml`. Every operation it carries is an operation the CLI has,
-  with that document's own prose and its own request body and parameters — zip
-  reflects them off the live Go type, so they ARE the shape, not an approximation
-  of it. Before this inverted (1.9.20) the master iterated and the document could
-  only delete: **0 of 1899 operations came from the document**, 244 took a
-  hand-written request body while cloud published the reflected one, and 66 more
-  carried no body at all because the master happened to be silent about an
-  operation the document types. A refuter can only answer about operations someone
-  thought to author; that is the expensive direction, because it fails silently —
-  a working server and a CLI that has never heard of it.
-- **The MASTER supplements.** It is joined at the document's own addresses to fill
-  in a body or query parameter the document has not typed yet, and it is read on
-  its own ONLY where the document is not the authority: a product the table never
-  mentions, or a route it answers through a `/v1/<product>/*` catch-all. A door
-  says the request REACHES the mounted service and says nothing about what the
-  service serves there, so the master may enumerate behind it — that is where the
-  iam and bot subtrees come from. When those services publish their own documents
-  the door becomes a list and the master's job there ends. A shrinking dependency,
-  not a permanent one: **1384 of 1895 operations (73%) are the document's today**,
-  and `/v1/admin/plugins` is what the end state looks like — cloud emits the full
-  schema and nothing else is consulted.
+- **The DOCUMENT decides EXISTENCE, and carries the PROSE and the SHAPE.**
+  `genspec` iterates hanzoai/cloud's `openapi.yaml` at a release ref and reads
+  nothing else. Every operation it carries is an operation the CLI has; every
+  operation it lacks is an operation the CLI does not have. The request body,
+  the query parameters, the summary and the catch-all marking all come from that
+  one reading — zip reflects the shapes off the live Go type and zipdoc lifts the
+  handler's doc comment, so they ARE the contract, not an approximation of it.
+- **A PHANTOM IS NOW STRUCTURALLY IMPOSSIBLE, which is the entire point.** A
+  phantom is a command addressing a route no code registers. It can exist only if
+  something other than the code gets to say what exists. Nothing does. Measured on
+  the cutover, against `api.hanzo.ai/v1/openapi.json` re-fetched the same hour:
+  **2127 of 2127 generated commands match a live route; 0 match nothing.** Before,
+  it was 1812 of 1823 with **11 phantoms**. That zero is a property of the wiring,
+  not the result of a cleanup pass — there is no input left that could reintroduce
+  one.
+- **WHAT WAS DELETED, and what it actually cost.** The master
+  (hanzoai/openapi `hanzo.yaml`) contributed **71** operations to `spec/cloud.json`
+  on its own word. Held against the live router: **2 addressed nothing at all**
+  (`GET /v1/o11y/services`, `POST /v1/o11y/ingestion`), **66 "matched" only a
+  `{wildcardN}` relay door** — which answers identically for a real path and an
+  invented one, so their evidence was unfalsifiable by construction — and **3**
+  matched a literal route the pinned document simply had not caught up with, which
+  re-pinning fixes. A door is not a list. Enumerating behind one is guessing with a
+  citation.
+- **WHAT REPLACED IT — a DOOR CENSUS, derived, counted, and pinned.** The doors are
+  the one place the CLI knowingly under-reaches: `/v1/<product>/{wildcardN}` says a
+  subtree is relayed through here without naming what is in it. `genspec` counts
+  them off the document every run, prints them, and pins the count as a ceiling
+  (`DOORS`, today **11**: `bot collections dns download exec files licensing sbom
+  sentry tasks upload`). A number derived from the document, that falls on its own
+  as cloud types those relays, beats a 3.5MB parallel file guessing at their
+  contents. The ceiling has already proved itself: regenerating against the older
+  v1.801.360 document trips it at 12, because `/v1/o11y/*` was still a door there
+  and is now 363 typed operations.
+- **THERE IS NO EDGE EXCEPTION — and that claim was the load-bearing lie.** Prose
+  in this file, in `genspec.rs` and in `driftgate.rs` all said the inference surface
+  (`/v1/models`, `/v1/chat/completions`) is "answered at the edge, not by that
+  router, so nothing is refuted". It is false, and it was the stated justification
+  for keeping a second authority alive over a whole plane of the API. Measured
+  2026-08-03, every probe with a nonsense sibling under the same prefix as its
+  control:
+
+  ```
+  GET  /v1/models            200  |  GET  /v1/models-zzq            404
+  POST /v1/chat/completions  401  |  POST /v1/chat/completions-zzq  404
+  POST /v1/embeddings        401  |  POST /v1/embeddings-zzq        404
+  GET  /v1/tools             403  |  GET  /v1/tools-zzq             404
+  POST /v1/event             401  |  POST /v1/event-zzq             404
+  ```
+
+  All `server: hanzo`, all `x-api-version: v1.801.383` — the same router that
+  answers the 404s — and all of them are in the emitted document and in
+  `spec/cloud.json`. The category never existed.
+- **The document IS the deploy, and that is checkable.** `hanzoai/cloud@v1.801.383`
+  `openapi.yaml` and `api.hanzo.ai/v1/openapi.json` carry the IDENTICAL 2333
+  operations, zero either way, and the host stamps that exact tag in
+  `x-api-version`. Generate from the git object, never the URL: the object says
+  which deploy it is and a host cannot.
 - **THE CURATION LAW.** A `CURATED` entry may name ONLY a product the document
   carries; `genproduct` refuses to generate otherwise, naming the stale entries. A
   name no document mentions asserts one thing — that the server does not serve it —
@@ -346,11 +387,12 @@ neither can answer the other's.
   make verify       # refuse a tree the LIVE server contradicts, either direction
   ```
 
-  **THE CAPTURE NAMES A RELEASE, and `.spec-lock` is where it says so.** Four
-  lines the release writes (`repo`, `path`, `ref`, `sha256` of
-  hanzoai/cloud's `openapi.yaml` at the tag it deployed) plus one
-  `generate.sh` writes (`master`, the hanzoai/openapi commit it read shapes
-  from). Every input pinned; two runs of one commit cannot disagree.
+  **THE CAPTURE NAMES A RELEASE, and `.spec-lock` is where it says so.** FOUR
+  lines, ONE writer — hanzoai/ci's `client:` lane: `repo`, `path`, `ref` and
+  `sha256` of hanzoai/cloud's `openapi.yaml` at the tag it deployed. There used to
+  be a fifth (`master`, the hanzoai/openapi commit `generate.sh` read shapes from)
+  and a second writer to go with it; both are gone with the second input. One input
+  pinned by digest; two runs of one commit cannot disagree.
 
   This replaced "the spec must name the wire", which was half right and caught
   nothing. A URL names a HOST, and a host cannot say which deploy it was — so a
@@ -373,16 +415,19 @@ neither can answer the other's.
   wrong against a document cloud had already committed — the `/v1/billing/*`
   compound-word renames, published-dead and served-undocumented.
 
-  Mid-rollout a route lives in cloud `main` before api.hanzo.ai answers it, and
-  the live table alone would refute it. Pass `--registry` MORE THAN ONCE: the
-  readings are unioned (a route is served if EITHER has it — the truth during a
-  rollout, both being readings of one router at two commits), the FIRST wins every
-  conflict, and every source is named in the provenance. Put the wire first.
+  **`--registry` TAKES ONE VALUE, and the union is gone with the refutation it
+  served.** It used to be repeatable, so that mid-rollout a route living in cloud
+  `main` before api.hanzo.ai answered it would not be REFUTED by the wire. Nothing
+  refutes anything now — no second reading proposes an operation for a first one to
+  strike down — so the hedge has no job. A newer route means re-pinning
+  `.spec-lock`, which is one line and leaves a record. There is also no default
+  value: a default would have to name a host, and every stale capture ever
+  committed satisfied "provenance names the wire".
 
   ```
-  cargo run --features genspec --bin genspec -- --openapi ../openapi \
-      --registry https://api.hanzo.ai/v1/openapi.json \
-      --registry <cloud-main route table>
+  make spec                                    # the only spelling anyone should type
+  cargo run --features genspec --bin genspec \
+      -- --registry <hanzoai/cloud@<tag>:openapi.yaml>   # what it runs underneath
   ```
 
   **And provenance is not freshness — that is what `make verify` is for.**
@@ -425,8 +470,17 @@ neither can answer the other's.
     and the host 404s → the CLI's phantom, hard failure. The LIVE TABLE claimed it
     and the host 404s → cloud's table and cloud's server disagree, which no edit
     here can settle: reported against `CONTRADICTED`, a CEILING that may not grow in
-    silence and is free to fall when somebody redeploys. Today it is 3, all
-    `/v1/billing` (`gpu-eligibility`, `payment-config`, `payment-methods`).
+    silence and is free to fall when somebody redeploys. Today it is 6, all
+    `/v1/ai` (`applications`, `permissions`, `sessions`, `sessions/duplicated`,
+    `users`, `users/table-infos`) — one rename, half-landed. The old 3 `/v1/billing`
+    ones are gone, fixed in cloud's router.
+  - **A REDIRECT IS AN ANSWER.** The transport followed redirects by default, so
+    `GET /v1/o11y/complete/google` — a 303 OAuth callback — was followed to
+    `/v1/o11y/login?…` and that page's 404 was recorded against the callback's
+    name. Two live routes reported as cloud contradicting itself. Same class as
+    reading a 403 as absence: the status this gate reasons about has to be the
+    status of the address it asked about. `Policy::none()`, and 303 is now in
+    `verdict`'s asserted list beside 302.
   - **The other direction asks the BINARY.** `hanzo <product> --help` — whether a
     person can reach a product is a fact about the built CLI, and a generated
     product that collides with a local command, or a relocation that stopped
@@ -473,19 +527,24 @@ neither can answer the other's.
   fallback, and neither may be papered over here. A product group with no `tags`
   description prints ``` `x` cloud operations ``` (20 products): 10 have a live
   tag whose description is EMPTY, so the missing thing is a Go PACKAGE doc comment
-  in cloud; 10 are the gateway/edge inference surface with no tag in either
-  document, which needs a tag authored in hanzoai/openapi AND `genspec` taught to
-  read product tags from the master as well as the registry. A resource NODE
+  in cloud; 10 are the inference products (`models` `chat` `embeddings` and their
+  siblings) whose operations the document carries but for which it emits no `tags`
+  entry — so this too is a missing Go PACKAGE doc comment in hanzoai/cloud, not a
+  second document to consult. (It was written up as "the gateway/edge inference
+  surface with no tag in either document", needing "a tag authored in
+  hanzoai/openapi"; the surface is cloud's, the routes are in cloud's document, and
+  so is the only place its prose can come from.) A resource NODE
   (`agents sessions`, `admin infra`) has no channel at all — the seam is a tag per
   node emitted by zipdoc from the Go sub-router's doc comment, the same lift as
   the package doc. Until those exist this is a stated gap; a stated gap beats an
   invented sentence.
-- **A refuted operation is REMOVED, never repaired.** When a served route changes
-  SHAPE, the authored path stops matching, the whole operation is dropped, and the
-  command disappears rather than pointing somewhere new. `/v1/kms/orgs/{org}/secrets`
-  → `/v1/kms/secrets` (the org moved into the token) did exactly this: `hanzo kms
-  secrets` addressed a 404 until the contract was corrected. So a 404 from a
-  generated command is a bug in hanzoai/openapi, and the fix is never in this repo.
+- **A MOVED route MOVES the command, and nothing is repaired in place.** When a
+  served route changes shape the document changes with it, the old coordinate stops
+  existing, and the command disappears rather than pointing somewhere new.
+  `/v1/kms/orgs/{org}/secrets` → `/v1/kms/secrets` (the org moved into the token)
+  did exactly this. A 404 from a generated command is therefore a bug in
+  hanzoai/cloud — its document claiming a route its router does not serve — and the
+  fix is never in this repo. (`make verify` counts that class as `CONTRADICTED`.)
 - **Why build-time and not a spec fetched at run time**: cloud's lazy `cmd/host`
   serves no fleet-wide document. zip installs `/.well-known/openapi.json` only when
   an app registers typed ops, and the host registers none — it links zip and the
@@ -649,24 +708,81 @@ a projection that repairs its source hides the defect at the one place it can be
 - **Required-ness of query parameters is being lost in cloud's own document.** Four
   shipped operations declare `required: false` on a parameter whose own description
   reads "Required.": `GET /v1/o11y/{logs,metrics,status}` (`product`) and
-  `DELETE /v1/clusters/{clusterId}/pools/{poolId}` (`provider`). The live table and
-  the authored master agree, so this is zip's parameter projection in hanzoai/cloud
-  dropping the flag. Until it is fixed clap cannot enforce those four, and the CLI
+  `DELETE /v1/clusters/{clusterId}/pools/{poolId}` (`provider`). The prose says
+  required and the flag says otherwise in the SAME operation object, so this is
+  zip's parameter projection in hanzoai/cloud dropping the flag between the Go
+  struct tag and the emitted document. Until it is fixed clap cannot enforce those
+  four, and the CLI
   must not restate the constraint by hand — a client that knows a rule the document
   does not is exactly the drift this pipeline exists to end.
 - **`/v1/logs` and `/v1/o11y/logs` are two doors onto one noun** — "Search your org's
   logs by label, time and substring" vs "a page of one product's logs for the caller's
   org". One should win in hanzoai/cloud; the CLI follows whichever does.
-- **The registry lists routes the server 404s** — 3 of them, all `/v1/billing`
-  (`gpu-eligibility`, `payment-config`, `payment-methods`): a route registered whose
-  mount or handler is dead, so the router knows it, the table it projects claims it,
-  and nothing runs. `make verify` MEASURES this instead of leaving it a known hole
-  (`CONTRADICTED`, a ceiling). Pricing was previously named here as "the bulk" of the
-  class; it is not — its 14 paths answer 200 on every serial re-ask, and a concurrent
-  sweep reading transient 404s as fact is exactly why the gate confirms a 404 three
-  times before believing it. The fix for the real 3 is in cloud's router, never a
-  list here.
+- **cloud's document names 6 routes cloud's own server 404s, and it is a SECOND
+  AUTHORITY INSIDE CLOUD** — the same disease this pipeline just cured on its side.
+  `/v1/ai/{applications,permissions,sessions,sessions/duplicated,users,
+  users/table-infos}`: cloud renamed those resources (applications→deployments,
+  sessions→signin-sessions, users→usages, permissions back to IAM) and the DEPLOYED
+  binary serves the new nouns while the document that SAME binary publishes still
+  advertises the old ones. Measured with controls: `GET /v1/ai/deployments` 401
+  (routed), `GET /v1/ai/applications` 404, both `x-api-version: v1.801.383`. The
+  cause: `apps/ai` projects from the committed `plugin/ai/openapi.json` subset
+  rather than from the mounted plugin's live registry, so its published names lag
+  its routes. Fix is in hanzoai/cloud (#146's seam); `make verify` MEASURES it
+  (`CONTRADICTED`, a ceiling, 3 → 6 — the old three `/v1/billing` ones are fixed).
+  Pricing was once named here as "the bulk" of the class; it is not — its 14 paths
+  answer 200 on every serial re-ask, and a concurrent sweep reading transient 404s
+  as fact is why the gate confirms a 404 three times before believing it.
 - **`version::tests::a_v_prefix_is_tolerated` is flaky** — 1 failure observed in ~10
   full `cargo test` runs on this box, 0 in 8 consecutive runs after. It writes a stub
   script and execs it, so it races other tests' spawns. It is now in the release gate;
   an intermittent red gate teaches people to re-run, which is how a gate dies.
+- **65 COMMANDS LOST THEIR TYPED FLAGS when the master went, and every one is an
+  UNTYPED HANDLER in hanzoai/cloud.** Measured at one fixed document (v1.801.360),
+  so the number is the architecture change alone and not a re-pin: 65 commands that
+  survive went from typed flags to `--data` or to no query flags —
+  `agents` 7, `iam` 6, `admin`/`evals`/`integrations`/`o11y` 4 each, `functions`/
+  `kms`/`notify`/`security` 3 each, `affiliates`/`billing` 2, then a long tail. The
+  worked example is `hanzo authz check`: it took `--sub --obj --act`, and cloud's
+  document declares `POST /v1/authz/check` with **no requestBody at all** — the
+  shape was a hand-written approximation of a body nobody published. This is the
+  typed-op migration's remaining bill (#67, #92–#158), and it is the honest price
+  of one authority: a client that knows a shape the server never stated is a client
+  nobody can check. It comes back the moment the handler is typed.
+- **THE STDIN-SECRET CHANNEL BINDS TO ZERO OPERATIONS, and that is security-
+  relevant.** `format: password` marks a body property the CLI reads from stdin and
+  gives no flag and no positional, so it can never land in argv, `ps` or shell
+  history. `grep -c 'format: password'` is **2** in the deleted master and **0** in
+  hanzoai/cloud's emitted document, so the marker reached exactly one command —
+  `kms secrets create --value` — on the strength of a hand file. `POST
+  /v1/kms/secrets` is an untyped fiber handler declaring no requestBody, so it is
+  now `hanzo kms secrets create --data`. **`--data -` still reads the body from
+  stdin**, so a secret CAN be kept off argv; it is no longer FORCED off. The
+  mechanism is intact and `a_stdin_secret_can_never_reach_argv` pins the count at
+  `SECRET_FIELDS = 0` so the day cloud types that handler with
+  `format:"password"` the law starts enforcing itself again. Do not restate the
+  rule here — a client that knows a constraint the document does not is the second
+  authority wearing a different hat.
+- **ELEVEN RELAY DOORS are the whole remaining under-reach, and they are the
+  worklist.** `bot collections dns download exec files licensing sbom sentry tasks
+  upload` — each is a `/v1/<product>/{wildcardN}` in cloud's own document, so the
+  CLI can offer `get`/`rm`/`update` at the door and nothing past it. `genspec`
+  prints the list every run and `DOORS` pins the count. The fix is one of two
+  things, both upstream: type the relay's routes as zip ops in hanzoai/cloud (what
+  `/v1/o11y` did — it was a door at v1.801.360 and is 363 typed operations at
+  v1.801.383), or have the mounted service publish its own document for the weave
+  to carry. `bot` is the odd one: hanzoai/bot-hub implements the subtree but is
+  served on its own host with an `/api/` prefix, and cloud's `/v1/bot/*` relay
+  targets a different service and strips the prefix — so that one is a routing
+  decision before it is a typing one. **Do NOT close any of these by re-authoring a
+  file here.** That is what was just deleted, and a door is exactly where it caused
+  the damage: 66 of the master's 71 operations were "confirmed" by a door that
+  answers the same for a real path and an invented one.
+- **A catch-all positional is named `wildcard1`, and it shows in `--help`.**
+  `openapi.translate` names an unnamed fiber `*` `{wildcardN}`, so `hanzo kms
+  secrets get <WILDCARD1>` is what a person now sees where it used to read
+  `<REST>` — that spelling came from the hand-authored master and went with it.
+  The name is honest (the router really has a nameless catch-all there) and the fix
+  is upstream in zip's translate, which should give the artifact a conventional
+  name. The CLI must not rename it locally: a projection that improves its source's
+  vocabulary is a projection nobody can check against the source.
