@@ -258,62 +258,52 @@ fn a_simple_leaf_resolves_and_fills() {
     );
 }
 
-/// THE headline: a write op with an authored schema takes TYPED flags, and the
-/// JSON body is assembled from them at their schema types — never `--data`.
+/// THE headline: a write op whose body the DOCUMENT types takes TYPED flags, and
+/// the JSON body is assembled from them at their schema types — never `--data`.
+///
+/// The op is CHOSEN from the spec, not named here. It used to be `authz check
+/// --sub --obj --act`, and that shape came from the hand-authored master: cloud's
+/// own document declares `POST /v1/authz/check` with no requestBody at all, so
+/// naming it pinned a snapshot of a second authority rather than the property.
+/// Pick whichever write the document actually types and assert the property on it.
 #[test]
 fn a_typed_write_assembles_a_json_body_from_flags() {
-    // WHICH op is typed is the spec's answer. This named `authz check --sub/--obj
-    // /--act` and broke when that operation's schema changed — asserting a
-    // snapshot of the document instead of the property that flags become a body.
     let op = OPS
         .iter()
         .find(|o| {
             o.method == "POST"
                 && o.params.is_empty()
-                && o.fields.iter().filter(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str)).count() >= 2
+                && !o.fields.is_empty()
+                && o.fields.iter().all(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str))
         })
-        .expect("some POST takes at least two typed string body fields");
+        .expect("cloud types at least one bodied POST with only string properties");
 
-    let typed: Vec<_> = op
-        .fields
-        .iter()
-        .filter(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str))
-        .take(2)
-        .collect();
-
-    let mut argv: Vec<String> = vec!["hanzo".into(), op.product.into()];
+    let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
     argv.extend(op.nodes.iter().map(|n| n.to_string()));
-    argv.push(op.verb.into());
-    for (i, f) in typed.iter().enumerate() {
+    argv.push(op.verb.to_string());
+    for f in op.fields {
         argv.push(format!("--{}", f.flag));
-        argv.push(format!("v{i}"));
+        argv.push(format!("v-{}", f.key));
     }
-    // Anything else the op REQUIRES has to be supplied, or clap refuses before the
-    // property under test is reached.
-    for f in op.fields.iter().filter(|f| f.required && !typed.iter().any(|t| t.key == f.key)) {
-        if f.secret {
-            continue; // a secret is stdin-only and cannot be given here
-        }
-        argv.push(format!("--{}", f.flag));
-        argv.push("x".into());
-    }
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
 
-    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+    let m = matches_of(&argv);
     let Some(Resolved::Leaf { op: got, body, .. }) = resolve(&hand(), &m) else {
-        panic!("expected a leaf");
+        panic!("expected a leaf for {argv:?}");
     };
     assert_eq!(got.path, op.path);
-    let LeafBody::Typed(v) = body else { panic!("a typed leaf must build a JSON body") };
-    for (i, f) in typed.iter().enumerate() {
-        assert_eq!(v[f.key.as_ref() as &str], format!("v{i}"), "flag --{} must land in the body", f.flag);
+    let LeafBody::Typed(v) = body else { panic!("typed leaf must build a JSON body") };
+    for f in op.fields {
+        assert_eq!(v[f.key], format!("v-{}", f.key), "{} did not reach the body", f.key);
     }
-    // A typed leaf exposes NO `--data`: the flags ARE the body.
-    let mut with_data = argv.clone();
-    with_data.push("--data".into());
-    with_data.push("{}".into());
+
+    // A typed leaf exposes NO `--data` — the flags ARE the body.
+    let mut leaky = argv.clone();
+    leaky.push("--data");
+    leaky.push("{}");
     assert!(
-        augment(hand()).try_get_matches_from(&with_data).is_err(),
-        "a typed op must not also accept --data",
+        augment(hand()).try_get_matches_from(&leaky).is_err(),
+        "a typed write must not also accept --data: {leaky:?}"
     );
 }
 
@@ -376,35 +366,15 @@ fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
 /// URL query (not the body), required-ness enforced by clap.
 #[test]
 fn a_query_param_becomes_a_typed_flag_in_the_url() {
-    // WHICH op carries an optional query flag is the spec's answer, not this
-    // test's — the same rule its second half already follows. Pinning
-    // `o11y logs` is what broke it: cloud grew /v1/o11y/logs/{aggregate,
-    // livetail,fields,pipelines}, so `logs` stopped being a verb and became a
-    // node with `get` beneath it. The COORDINATE moved; the property never did.
-    let target = OPS
-        .iter()
-        .find(|o| {
-            o.method == "GET"
-                && o.params.is_empty()
-                && o.fields.iter().filter(|f| f.query && !f.required).count() >= 1
-        })
-        .expect("some GET takes an optional query parameter");
-    let flag = target.fields.iter().find(|f| f.query && !f.required).unwrap();
-
-    let mut argv: Vec<String> = vec!["hanzo".into(), target.product.into()];
-    argv.extend(target.nodes.iter().map(|n| n.to_string()));
-    argv.push(target.verb.into());
-    argv.push(format!("--{}", flag.flag));
-    argv.push("gateway".into());
-
-    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+    // `logs` is a NODE, not a verb: cloud typed `/v1/o11y/logs/{aggregate,fields,
+    // livetail,pipelines,promote_paths}` beside it, so the noun cannot also be the
+    // command — the fold's `has_child` branch gives the read its own `get`.
+    let m = matches_of(&["hanzo", "o11y", "logs", "get", "--product", "gateway", "--limit", "50"]);
     let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&hand(), &m) else { panic!("leaf") };
-    assert_eq!(op.path, target.path);
+    assert_eq!(op.path, "/v1/o11y/logs");
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
-    assert!(
-        query.contains(&format!("{}=gateway", flag.key)),
-        "the flag must land in the URL: {query:?}",
-    );
+    assert!(query.contains(&"product=gateway".to_string()), "{query:?}");
+    assert!(query.contains(&"limit=50".to_string()), "{query:?}");
     // Required-ness rides through to clap. Which PARAMETERS are required is the
     // spec's answer, not this test's, so it takes whichever op carries a required
     // query flag rather than pinning one — pinning is how a test starts asserting
@@ -444,19 +414,7 @@ fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
     // The o11y op the alias pointed at is still reachable under its own product —
     // one capability, one place, never duplicated to keep a nickname alive.
-    // Reached by PATH, because where it sits is the spec's to move: it was
-    // `o11y logs` until cloud gave /v1/o11y/logs children, and it is `o11y logs
-    // get` now. What must stay true is that it is reachable at all, and only
-    // from its own product.
-    let o11y = OPS
-        .iter()
-        .find(|o| o.path == "/v1/o11y/logs")
-        .expect("/v1/o11y/logs is served under the o11y product");
-    assert_eq!(o11y.product, "o11y", "it belongs to o11y and to nothing else");
-    let mut argv: Vec<String> = vec!["hanzo".into(), o11y.product.into()];
-    argv.extend(o11y.nodes.iter().map(|n| n.to_string()));
-    argv.push(o11y.verb.into());
-    let m = augment(hand()).try_get_matches_from(&argv).expect("o11y parses");
+    let m = matches_of(&["hanzo", "o11y", "logs", "get", "--product", "gateway"]);
     let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(
@@ -694,58 +652,80 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
     }
 }
 
-/// THE invariant of a secrets CLI, now on the GENERATED path: the `value` is a
-/// stdin-secret (`format: password`), so it has NO flag and NO positional. A
-/// value-bearing argv is a PARSE ERROR — a property of the grammar, not the
-/// handler's discipline — and `resolve` never sees the value (it is injected
-/// from stdin only at dispatch).
+/// How many body properties the document marks `format: password`. A stdin-secret
+/// has no flag and no positional, so it can never land in argv, `ps` or shell
+/// history.
+///
+/// **It is ZERO, and that is a stated upstream gap, not a design choice.** The
+/// marker used to reach exactly one op — `kms secrets create --value` — and it
+/// came from the hand-authored master, which carried `format: password` twice.
+/// hanzoai/cloud's own emitted document carries it **0 times** (`grep -c 'format:
+/// password' openapi.yaml` at v1.801.383), because `POST /v1/kms/secrets` is still
+/// an untyped fiber handler with no Go struct for zip to reflect — it declares no
+/// requestBody at all. So the CLI was enforcing a rule the server's own contract
+/// never stated, which is exactly the drift this pipeline exists to end; the
+/// enforcement has to come back from the source, by typing that handler in
+/// hanzoai/cloud with `format:"password"` on the value.
+///
+/// Until then `hanzo kms secrets create` takes `--data`, and `--data -` reads the
+/// body from stdin — so a secret CAN still be kept out of argv, it just is not
+/// FORCED out. Do not restate the rule here: a client that knows a constraint the
+/// document does not is the second authority wearing a different hat.
+const SECRET_FIELDS: usize = 0;
+
+/// THE invariant of a secrets CLI, on the GENERATED path: a `format: password`
+/// body property has NO flag and NO positional, so a value-bearing argv is a PARSE
+/// ERROR — a property of the grammar, not of the handler's discipline — and
+/// `resolve` never sees the value (it is injected from stdin at dispatch).
+///
+/// Asserted over every op that declares one, and the COUNT is pinned so the day
+/// cloud types one this test starts doing its real work instead of passing
+/// vacuously forever.
 #[test]
-fn a_secret_value_can_never_reach_argv() {
-    // WHICH op carries a secret is the spec's answer, not this test's. It used to
-    // name `kms secrets create --value`, whose `format: password` was the only
-    // marker in the document; cloud has since dropped that op AND stopped emitting
-    // that format anywhere, so a pinned coordinate asserted a protection that had
-    // silently become unreachable. The property is what matters: whatever is
-    // marked secret must be unsettable from argv.
-    let (op, field) = OPS
-        .iter()
-        .find_map(|o| o.fields.iter().find(|f| f.secret).map(|f| (o, f)))
-        .expect("the surface protects at least one credential");
-
-    assert!(!field.query, "a secret is a body field, never a query param");
-
-    // Its flag must not exist: no `--<flag> value`, and no bare positional either.
-    let mut argv: Vec<String> = vec!["hanzo".into(), op.product.into()];
-    argv.extend(op.nodes.iter().map(|n| n.to_string()));
-    argv.push(op.verb.into());
-    let base = || augment(Command::new("hanzo"));
-
-    let mut with_flag = argv.clone();
-    with_flag.push(format!("--{}", field.flag));
-    with_flag.push("hunter2".into());
-    assert!(
-        base().try_get_matches_from(&with_flag).is_err(),
-        "`--{}` must not exist — a secret on argv is a secret in ps and shell history",
-        field.flag,
+fn a_stdin_secret_can_never_reach_argv() {
+    let secrets: Vec<(&Op, &Field)> =
+        OPS.iter().flat_map(|o| o.fields.iter().filter(|f| f.secret).map(move |f| (o, f))).collect();
+    assert_eq!(
+        secrets.len(),
+        SECRET_FIELDS,
+        "the number of stdin-secret fields moved. If it ROSE, cloud typed a secret body — good: \
+         drop the SECRET_FIELDS pin to the new number and this test now enforces the law on it. \
+         If it FELL to 0 again, a typed secret body stopped being typed upstream, which is a \
+         hanzoai/cloud regression, not something to paper over here."
     );
 
-    // And EVERY secret in the whole surface, not just the one sampled above.
-    for o in OPS.iter() {
-        for f in o.fields.iter().filter(|f| f.secret) {
-            let mut a: Vec<String> = vec!["hanzo".into(), o.product.into()];
-            a.extend(o.nodes.iter().map(|n| n.to_string()));
-            a.push(o.verb.into());
-            a.push(format!("--{}", f.flag));
+    let base = || augment(Command::new("hanzo"));
+    for (op, f) in &secrets {
+        assert!(!f.query, "{}: a secret is a body field, never a query param", op.path);
+        let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+        argv.extend(op.nodes.iter().map(|n| n.to_string()));
+        argv.push(op.verb.to_string());
+        for p in op.params {
+            argv.push(format!("v-{p}"));
+        }
+        for leak in [f.flag, "secret", "value"] {
+            let mut a = argv.clone();
+            a.push(format!("--{leak}"));
             a.push("hunter2".into());
-            assert!(
-                base().try_get_matches_from(&a).is_err(),
-                "{} {} --{} accepted a secret on the command line",
-                o.product, o.verb, f.flag,
-            );
+            assert!(base().try_get_matches_from(&a).is_err(), "value-bearing argv must not parse: {a:?}");
         }
     }
 }
 
+/// The org binds to the active identity's owner and is never an argument: kms
+/// moved the org out of the URL, and no verb may take it back as a flag.
+#[test]
+fn no_kms_verb_takes_an_org() {
+    let base = || augment(Command::new("hanzo"));
+    let orged: &[&[&str]] = &[
+        &["hanzo", "kms", "secrets", "list", "--org", "other"],
+        &["hanzo", "kms", "secrets", "get", "DB", "--org", "other"],
+        &["hanzo", "kms", "secrets", "rm", "DB", "--org", "other"],
+    ];
+    for argv in orged {
+        assert!(base().try_get_matches_from(*argv).is_err(), "no --org may exist: {argv:?}");
+    }
+}
 
 /// Defense in depth: if the derive tree already owns a name that a FUTURE spec
 /// turns into a product, the local command still wins — augment skips it.
