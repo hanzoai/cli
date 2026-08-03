@@ -51,8 +51,21 @@
 //!     the router cannot know and the table therefore cannot say. Ask anyway.
 //!   * it names only a DOOR (`/v1/iam/*`)    → a door is not an answer. A `*`
 //!     catch-all says something is mounted behind it, never what. Ask.
-//!   * it is silent about the product        → the router is not the authority
-//!     (the inference surface is answered at the edge). Ask.
+//!   * it is silent about the product        → the table this gate holds is one
+//!     RELEASE's projection and the host is whatever is deployed, so silence can
+//!     be skew rather than absence. Ask.
+//!
+//! THERE IS NO EDGE EXCEPTION, and the sentence that used to sit in the last
+//! bullet — "the inference surface is answered at the edge" — was false. Measured
+//! 2026-08-03 against api.hanzo.ai, every probe with a nonsense sibling under the
+//! same prefix as its control: `GET /v1/models` 200 vs `/v1/models-zzq` 404;
+//! `POST /v1/chat/completions` 401 vs `-zzq` 404 (and `GET` of it 405, POST-only);
+//! `POST /v1/embeddings` 401 vs 404; `GET /v1/tools` 403 vs 404; `POST /v1/event`
+//! 401 vs 404 — all `server: hanzo`, all `x-api-version: v1.801.383`, the same
+//! router that answers the 404. All of them are in the emitted document and in
+//! `spec/cloud.json`. A rationalization in a doc comment is how a whole false
+//! category of "answered somewhere this pipeline cannot see" stayed alive, and it
+//! was the stated reason a second authority was allowed to describe it.
 //!
 //! Roughly a third of this spec's operations sit behind a door or in a namespace
 //! the table never mentions — a surface on which the document is constitutionally
@@ -124,7 +137,31 @@ const EXCUSED: usize = 7;
 /// Routes cloud's own live table names and cloud's own host answers 404 to — a
 /// route registered with a dead mount behind it. A CEILING, not an equality, and
 /// the asymmetry is deliberate: see where it is applied.
-const CONTRADICTED: usize = 3;
+///
+/// 3 -> 6 at v1.801.383, and both halves of the move are worth reading.
+///
+/// The old 3 are GONE: `/v1/billing/{gpu-eligibility,payment-config,
+/// payment-methods}` were fixed in cloud's router. The new 6 are ONE event —
+/// `/v1/ai/{applications,permissions,sessions,sessions/duplicated,users,
+/// users/table-infos}`. cloud renamed those resources (applications→deployments,
+/// sessions→signin-sessions, users→usages, permissions back to IAM) and the
+/// deployed binary's ROUTER serves the new nouns while the DOCUMENT that same
+/// binary publishes still advertises the old ones. Measured, with controls:
+/// `GET /v1/ai/deployments` 401 (routed, wants a caller) and
+/// `GET /v1/ai/applications` 404, both `x-api-version: v1.801.383`.
+///
+/// The cause is a second authority INSIDE cloud, which is the same disease this
+/// pipeline just cured on its own side: `apps/ai` projects from the committed
+/// `plugin/ai/openapi.json` subset instead of the mounted plugin's live registry,
+/// so its published names lag its routes. Nothing in this repo can settle it — the
+/// fix is in hanzoai/cloud (task #146's seam), and the number is here so it cannot
+/// be settled by forgetting.
+///
+/// TWO MORE WERE NOT REAL and are not counted: `/v1/o11y/complete/{google,oidc}`
+/// answer `303`, and the transport used to follow the redirect and record the
+/// landing page's 404 against the callback's name. Fixed where the client is
+/// built; a redirect is an answer.
+const CONTRADICTED: usize = 6;
 
 // ---- the route table ---------------------------------------------------------
 
@@ -214,9 +251,11 @@ impl Table {
     }
 }
 
-/// Every product either document names — the universe the ORPHAN direction asks
-/// about. The table's own products plus the spec's, because a product answered
-/// at the edge (`/v1/models`) is in no route table and is served all the same.
+/// Every product either reading names — the universe the ORPHAN direction asks
+/// about. The live table's products plus the spec's, because the two are one
+/// document at two commits: a product cloud typed after the pinned release is in
+/// the live table and not the spec, and one retired since is in the spec and not
+/// the table. Neither is a category of route this pipeline cannot see.
 fn products(doc: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for path in doc.get("paths").and_then(Value::as_object).into_iter().flatten().map(|(p, _)| p) {
@@ -448,8 +487,17 @@ async fn main() {
     .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.spec.display()));
     let paths = spec.get("paths").and_then(Value::as_object).cloned().unwrap_or_else(Map::new);
 
+    // A REDIRECT IS AN ANSWER, and following it asks a different question about a
+    // different address. reqwest follows up to 10 by default, and that turned two
+    // live routes into false 404s: `GET /v1/o11y/complete/google` answers 303 (an
+    // OAuth callback), the gate followed it to `/v1/o11y/login?...` and recorded
+    // that page's 404 against the callback's name — reporting cloud as
+    // contradicting itself about a route that had just answered. Same class of
+    // defect as reading a `403` as absence: the status this gate reasons about
+    // must be the status of the address it asked about.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
         .user_agent("hanzo-driftgate")
         .build()
         .expect("http client");
@@ -700,7 +748,10 @@ mod tests {
     /// lies. Anything that ever makes this test fail has reintroduced that.
     #[test]
     fn an_auth_refusal_is_a_route_that_exists_and_only_a_confirmed_404_is_absent() {
-        for code in [200, 201, 204, 302, 400, 401, 403, 405, 409, 429, 500, 502, 503] {
+        // 303 is in this list because it was MEASURED: `GET /v1/o11y/complete/google`
+        // answers it, and the transport used to follow the redirect and report the
+        // 404 of wherever it landed — a present route recorded as absent.
+        for code in [200, 201, 204, 302, 303, 400, 401, 403, 405, 409, 429, 500, 502, 503] {
             assert!(
                 matches!(verdict(&[Some(code)]), Probe::Present(c) if c == code),
                 "{code} is an answer FROM a route — a router with nothing at that address \
