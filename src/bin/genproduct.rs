@@ -47,6 +47,14 @@ const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 /// on a served address in the first place.
 const ELIDED: usize = 81;
 
+/// How many write commands fall back to `--data` because hanzoai/cloud's handler
+/// declares NO JSON requestBody. A CEILING, like `ELIDED`: it falls on its own as
+/// cloud types handlers (#67), and it may not rise, because a handler that lost
+/// its type is a regression at the source rather than a number to raise here.
+/// It counts ONLY that cause — a schema that is freeform BY CONSTRUCTION (`{}`,
+/// `additionalProperties`, `oneOf`, a bare array) is not a gap and is not pinned.
+const NO_SCHEMA: usize = 459;
+
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
 }
@@ -215,8 +223,19 @@ fn fold(
 
 // ---- typed field extraction -------------------------------------------------
 
+/// How deep a nested body object is expanded into dotted flags (`--a.b.c`).
+/// Beyond it a property keeps its whole JSON value in one flag, which is where
+/// every object property used to land. Measured against this document the cap
+/// SATURATES at 3 — caps of 3, 4 and 8 all derive the identical field set,
+/// because the `$ref` cycle guard stops the recursive schemas first — so it is a
+/// termination guarantee rather than a policy about the surface.
+const MAX_NEST: usize = 3;
+
 #[derive(Clone)]
 struct FieldDef {
+    /// The body key, DOTTED for a nested property (`spec.replicas`). No schema
+    /// property name in this document contains a `.` (measured: 0 of 3751), so
+    /// the path is unambiguous and the runtime rebuilds the object from it.
     key: String,
     flag: String,
     ty: &'static str, // Str|Int|Num|Bool|Json
@@ -228,6 +247,11 @@ struct FieldDef {
     /// so it can never land in argv, `ps` or shell history. The ONE stdin-secret
     /// marker; the runtime reads it through `iam::secret::read_secret`.
     secret: bool,
+    /// An ARRAY: the flag may be given more than once and the values collect into
+    /// a JSON array (`--tag a --tag b` → `["a","b"]`). `ty` is then the ELEMENT's
+    /// type, so an array of strings is a repeatable `--flag STRING` rather than
+    /// one opaque `--flag '["a","b"]'`.
+    repeat: bool,
 }
 
 /// A body property that is a SECRET VALUE. The marker is the standard OpenAPI
@@ -257,70 +281,133 @@ fn body_schema<'a>(spec: &'a Value, op: &'a Value) -> Option<&'a Value> {
     rb.get("content")?.get("application/json")?.get("schema")
 }
 
-/// Map a property/parameter schema to a clap type + enum choices. Shared by the
-/// requestBody-property and query-parameter paths — one classification rule.
-fn classify(spec: &Value, pschema: &Value) -> (&'static str, Vec<String>) {
-    let is_ref = pschema.get("$ref").is_some();
+/// The ONE leaf classification: a resolved schema that is not an EXPANDABLE
+/// object → (clap type, enum choices, repeatable). Shared by the body-property
+/// walk and the query-parameter path, so a `string` means the same thing in the
+/// URL and in the body.
+///
+/// An ARRAY is read through to its ELEMENT and marked repeatable: `--tag a --tag
+/// b` instead of one opaque `--tag '["a","b"]'`. An array OF arrays has no
+/// scalar element to repeat, so it stays one JSON value.
+///
+/// It derefs FIRST. The previous rule answered `Json` for any property written
+/// as a `$ref`, whatever it referred to — so a shared enum was as opaque as a
+/// nested object. What a schema IS does not depend on whether it was spelled
+/// inline or by name.
+fn classify(spec: &Value, pschema: &Value) -> (&'static str, Vec<String>, bool) {
     let d = deref(spec, pschema);
     let enum_vals: Vec<String> = d
         .get("enum")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
-    let t = d.get("type").and_then(Value::as_str).unwrap_or("");
-    if is_ref {
-        ("Json", vec![])
-    } else if t == "string" && !enum_vals.is_empty() {
-        ("Str", enum_vals)
-    } else {
-        match t {
-            "string" => ("Str", vec![]),
-            "integer" => ("Int", vec![]),
-            "number" => ("Num", vec![]),
-            "boolean" => ("Bool", vec![]),
-            "array" | "object" => ("Json", vec![]),
-            _ if d.get("properties").is_some() => ("Json", vec![]),
-            _ => ("Str", vec![]),
-        }
+    match d.get("type").and_then(Value::as_str).unwrap_or("") {
+        "string" => ("Str", enum_vals, false),
+        "integer" => ("Int", vec![], false),
+        "number" => ("Num", vec![], false),
+        "boolean" => ("Bool", vec![], false),
+        "array" => match d.get("items") {
+            // The element decides the flag's type; the array only decides that
+            // the flag repeats. A nested array cannot repeat into a flat list.
+            Some(items) => match classify(spec, items) {
+                (_, _, true) => ("Json", vec![], false),
+                (t, c, false) => (t, c, true),
+            },
+            None => ("Json", vec![], false),
+        },
+        "object" => ("Json", vec![], false),
+        _ if d.get("properties").is_some() => ("Json", vec![], false),
+        // A schema stating nothing at all (`{}`) is a freeform value, not a string.
+        _ if d.as_object().is_none_or(serde_json::Map::is_empty) => ("Json", vec![], false),
+        _ => ("Str", vec![], false),
     }
 }
 
-/// Resolve a body schema into typed fields, or an empty vec for a freeform /
-/// non-object body (→ `--data` fallback). Faithful to the schema — no invention.
-fn fields_of(spec: &Value, schema: &Value) -> Vec<FieldDef> {
+/// The properties an object schema declares, plus the names it marks required,
+/// flattening `allOf`. ONE reading, used at every level of the walk.
+fn object_of(spec: &Value, schema: &Value) -> (Vec<(String, Value)>, BTreeSet<String>) {
     let s = deref(spec, schema);
     let mut props: Vec<(String, Value)> = Vec::new();
     let mut required: BTreeSet<String> = BTreeSet::new();
     let mut collect = |obj: &Value| {
         if let Some(r) = obj.get("required").and_then(Value::as_array) {
-            for v in r {
-                if let Some(n) = v.as_str() {
-                    required.insert(n.to_string());
-                }
-            }
+            required.extend(r.iter().filter_map(Value::as_str).map(str::to_string));
         }
         if let Some(p) = obj.get("properties").and_then(Value::as_object) {
-            for (k, v) in p {
-                props.push((k.clone(), v.clone()));
-            }
+            props.extend(p.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
     };
-    if let Some(all) = s.get("allOf").and_then(Value::as_array) {
-        for sub in all {
-            collect(deref(spec, sub));
-        }
-    } else {
-        collect(s);
+    match s.get("allOf").and_then(Value::as_array) {
+        Some(all) => all.iter().for_each(|sub| collect(deref(spec, sub))),
+        None => collect(s),
     }
-    props
-        .into_iter()
-        .map(|(name, pschema)| {
-            let (ty, choices) = classify(spec, &pschema);
-            let required = required.contains(&name);
-            let secret = is_secret(deref(spec, &pschema));
-            FieldDef { flag: kebab(&name), key: name, ty, required, choices, query: false, secret }
-        })
-        .collect()
+    (props, required)
+}
+
+/// Resolve a body schema into typed fields, or an empty vec for a freeform /
+/// non-object body (→ `--data` fallback). Faithful to the schema — no invention.
+fn fields_of(spec: &Value, schema: &Value) -> Vec<FieldDef> {
+    let mut out = Vec::new();
+    walk_object(spec, schema, "", true, 0, &mut Vec::new(), &mut out);
+    out
+}
+
+/// Expand one object schema into flags, DESCENDING into a property that is
+/// itself an object with declared properties: `spec.replicas` becomes
+/// `--spec.replicas INT` instead of `--spec '<json>'`.
+///
+/// A nested leaf is required only when EVERY step to it is required — a flag
+/// clap demands inside an object the caller never mentions would refuse a call
+/// the server accepts.
+///
+/// `seen` is the `$ref` chain on the way down: a schema that refers to itself
+/// (a tree, a linked node) would otherwise expand forever, so it stops there and
+/// keeps its whole JSON value. `MAX_NEST` is the same guarantee for a schema
+/// spelled inline. A branch that expands to NOTHING (an object whose properties
+/// are all empty) falls back to one JSON flag rather than losing the property.
+fn walk_object(
+    spec: &Value,
+    schema: &Value,
+    prefix: &str,
+    req_path: bool,
+    depth: usize,
+    seen: &mut Vec<String>,
+    out: &mut Vec<FieldDef>,
+) {
+    let (props, required) = object_of(spec, schema);
+    for (name, pschema) in props {
+        let key = format!("{prefix}{name}");
+        let req = req_path && required.contains(&name);
+        let refname = pschema.get("$ref").and_then(Value::as_str).map(str::to_string);
+        let d = deref(spec, &pschema);
+        let expandable = d.get("properties").and_then(Value::as_object).is_some_and(|p| !p.is_empty())
+            || d.get("allOf").is_some();
+        let cycle = refname.as_ref().is_some_and(|r| seen.contains(r));
+        if expandable && depth < MAX_NEST && !cycle {
+            let before = out.len();
+            if let Some(r) = refname.clone() {
+                seen.push(r);
+            }
+            walk_object(spec, d, &format!("{key}."), req, depth + 1, seen, out);
+            if refname.is_some() {
+                seen.pop();
+            }
+            if out.len() > before {
+                continue;
+            }
+        }
+        let (ty, choices, repeat) = classify(spec, &pschema);
+        out.push(FieldDef {
+            flag: kebab(&key),
+            key,
+            ty,
+            required: req,
+            choices,
+            query: false,
+            secret: is_secret(d),
+            repeat,
+        });
+    }
 }
 
 /// Typed flags from an operation's `parameters` array: the `in: query` params
@@ -339,9 +426,9 @@ fn query_fields(spec: &Value, op: &Value) -> Vec<FieldDef> {
         }
         let Some(name) = p.get("name").and_then(Value::as_str) else { continue };
         let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
-        let (ty, choices) = match p.get("schema") {
+        let (ty, choices, repeat) = match p.get("schema") {
             Some(schema) => classify(spec, schema),
-            None => ("Str", vec![]),
+            None => ("Str", vec![], false),
         };
         out.push(FieldDef {
             flag: kebab(name),
@@ -353,6 +440,7 @@ fn query_fields(spec: &Value, op: &Value) -> Vec<FieldDef> {
             // A query parameter rides the URL; a secret must never do that, so a
             // query field is never a stdin-secret.
             secret: false,
+            repeat,
         });
     }
     out
@@ -373,6 +461,10 @@ struct Op {
     /// One line of prose from the spec (a typed op's doc comment, lifted by
     /// zipdoc and carried through genspec). Empty when the op is undescribed.
     sum: String,
+    /// WHY this write has no typed body, when it has none — read off the document
+    /// at the moment the decision is made, so the census below can never be a
+    /// second opinion about it. `""` for a read and for a typed write.
+    untyped: &'static str,
 }
 
 fn method_rank(m: &str) -> usize {
@@ -509,10 +601,19 @@ fn main() {
                 nodes.insert(0, std::mem::replace(&mut product, parent.to_string()));
             }
             // Typed flags: body properties (writes) + query parameters (all ops).
-            let mut fields = if matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
-                body_schema(&spec, op).map(|s| fields_of(&spec, s)).unwrap_or_default()
-            } else {
-                vec![]
+            let write = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
+            let schema = write.then(|| body_schema(&spec, op)).flatten();
+            let mut fields = schema.map(|s| fields_of(&spec, s)).unwrap_or_default();
+            // WHY, decided here and nowhere else. `no-schema` is a TYPING GAP IN
+            // CLOUD — the handler declares no JSON requestBody, so the document
+            // states no shape and there is no shape for this generator to read.
+            // `freeform` is a body the schema deliberately leaves open (`{}`,
+            // `additionalProperties`, `oneOf`, a bare array), where `--data` is
+            // the honest answer rather than a fallback.
+            let untyped = match (write, schema, fields.is_empty()) {
+                (true, None, _) => "no-schema",
+                (true, Some(_), true) => "freeform",
+                _ => "",
             };
             fields.extend(query_fields(&spec, op));
             // A body property that repeats a PATH parameter is the SAME value,
@@ -521,7 +622,17 @@ fn main() {
             // schema honestly carries both. A flag for it would be a second way to
             // say one thing — and one that cannot work alone, the positional being
             // required.
-            fields.retain(|fd| !f.params.contains(&fd.key));
+            //
+            // UNLESS it is the body's ONLY property. Then the two cannot be one
+            // value: dropping it leaves a declared schema sending `{}`, and a
+            // command whose whole body is typed away falls back to `--data`, which
+            // is strictly less than the schema stated. `POST
+            // /v1/o11y/service_accounts/{id}/roles` is the case — its `{id}` is the
+            // service account and its body `id` is the ROLE to assign — and it was
+            // the one `--data` write in the tree that no cloud typing gap explains.
+            let echo = |fd: &FieldDef| f.params.contains(&fd.key);
+            let body_survives = fields.iter().any(|fd| !fd.query && !echo(fd));
+            fields.retain(|fd| !echo(fd) || (!body_survives && !fd.query));
             // One name may appear as BOTH a body property and a query param
             // (or twice after kebab-casing); a clap long must be unique, so
             // keep the FIRST (body wins over query).
@@ -548,6 +659,7 @@ fn main() {
                 rest,
                 fields,
                 sum,
+                untyped,
             });
         }
     }
@@ -687,6 +799,51 @@ fn main() {
             .join("\n"),
     );
 
+    // THE UNTYPED CENSUS. A `--data` write is the CLI saying it does not know the
+    // shape, and until now the only number anywhere was one aggregate in the
+    // generated header, which cannot say WHOSE gap it is. It is two different
+    // facts and they have two different owners:
+    //
+    //   no-schema  the handler in hanzoai/cloud declares no JSON requestBody, so
+    //              the document states no shape. NOTHING IN THIS REPO CAN CLOSE
+    //              IT — the fix is a typed op where the handler lives (#67).
+    //   freeform   the schema is open BY CONSTRUCTION (`{}`, additionalProperties,
+    //              oneOf, a bare array). `--data` is the honest answer, not a
+    //              fallback, and typing it would be inventing a shape.
+    //
+    // Printed every run, and the per-product split is the hand-off list, so the
+    // number a cloud owner needs is the generator's own output rather than an
+    // analysis somebody has to redo.
+    let untyped: Vec<&Op> = coords.iter().filter(|o| !o.untyped.is_empty()).collect();
+    let no_schema = untyped.iter().filter(|o| o.untyped == "no-schema").count();
+    let gap_by_product = untyped.iter().filter(|o| o.untyped == "no-schema").fold(
+        BTreeMap::<&str, usize>::new(),
+        |mut m, o| {
+            *m.entry(o.product.as_str()).or_default() += 1;
+            m
+        },
+    );
+    let gap_worst = {
+        let mut v: Vec<_> = gap_by_product.iter().collect();
+        v.sort_by_key(|(p, n)| (std::cmp::Reverse(**n), **p));
+        v.into_iter().take(8).map(|(p, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", ")
+    };
+    eprintln!(
+        "genproduct: {} write command(s) take --data — {no_schema} because the handler declares no \
+         requestBody in hanzoai/cloud ({gap_worst}{}), {} because the schema is freeform by \
+         construction",
+        untyped.len(),
+        if gap_by_product.len() > 8 { ", …" } else { "" },
+        untyped.len() - no_schema,
+    );
+    assert!(
+        no_schema <= NO_SCHEMA,
+        "THE UNTYPED CEILING ROSE: {no_schema} write commands now take --data because cloud \
+         declares no requestBody, and NO_SCHEMA in src/bin/genproduct.rs says {NO_SCHEMA}. A \
+         handler that LOST its type is a regression in hanzoai/cloud, not a number to raise here; \
+         if a re-pin genuinely added untyped routes, say so in the commit."
+    );
+
     // ---- emit ----
     // `spec/cloud.json` is the ONLY source: every cloud capability is a real
     // `hanzo <product> <resource> <verb>`. A product the spec does not carry is a
@@ -778,7 +935,7 @@ fn emit_op(o: &Op) -> String {
                 // query param of the same name never collide.
                 let id = format!("{}.{}", if f.query { "query" } else { "field" }, f.key);
                 format!(
-                    "Field {{ key: {:?}, id: {:?}, flag: {:?}, ty: Ty::{}, required: {}, choices: {}, query: {}, secret: {} }}",
+                    "Field {{ key: {:?}, id: {:?}, flag: {:?}, ty: Ty::{}, required: {}, choices: {}, query: {}, secret: {}, repeat: {} }}",
                     f.key,
                     id,
                     f.flag,
@@ -786,7 +943,8 @@ fn emit_op(o: &Op) -> String {
                     f.required,
                     emit_slice(&f.choices),
                     f.query,
-                    f.secret
+                    f.secret,
+                    f.repeat
                 )
             })
             .collect();

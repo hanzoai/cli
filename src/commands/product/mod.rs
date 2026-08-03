@@ -3,26 +3,39 @@
 //! cloud: every capability is a real subcommand — there is no `hanzo api` verb and
 //! no raw-path escape.
 //!
-//! Nothing here links cloud. `genspec` joins the two documents that each answer
-//! half of "what commands exist": cloud's LIVE route table, read over the wire,
-//! says which operations are served, and hanzoai/openapi's authored master says
-//! what each one takes. `genproduct` folds that one spec into a (product, resource
-//! nodes, verb, method, path template, params, typed body fields) coordinate and
-//! commits it as pure DATA (`generated.rs`). At runtime we build a clap tree from
+//! Nothing here links cloud. `genspec` reads ONE document — hanzoai/cloud's own
+//! emitted `openapi.yaml` at a pinned release — and nothing else, so existence,
+//! prose and shape all come from the code that serves the route. (This paragraph
+//! used to describe a second reading, a hand-authored master that said "what each
+//! one takes"; it was deleted in 1.9.34 with the drift it caused.) `genproduct`
+//! folds that one spec into a (product, resource nodes, verb, method, path
+//! template, params, typed body fields) coordinate and commits it as pure DATA
+//! (`generated.rs`). At runtime we build a clap tree from
 //! that data and dispatch it through the one authenticated seam below: the ORIGIN
 //! comes from `network`, the BEARER from `store`, and the data contributes only
 //! the path template + argument SHAPE. The data contains no host, no URL and no
 //! auth (a test fails the build otherwise), so a hostile snapshot can at worst
 //! shape a call to YOUR OWN cloud with YOUR OWN token — never redirect it.
 //!
-//! Because the source specs carry real requestBody schemas, a write op with a
-//! schema gets TYPED `--flags` (one per property, with the property's type and
-//! required-ness) and the JSON body is assembled from them — not `--data`. A write
-//! with NO schema (or a freeform body) falls back to `--data '<json>'`. A product
-//! that is never authored, or authored and refuted by the live route table, is
-//! simply ABSENT (no passthrough, no `hanzo api` to paper over it — that gap
-//! closes by authoring the spec, or by serving the route). Nothing is invented —
-//! the fields are exactly the schema's properties.
+//! A write whose requestBody the document TYPES gets typed `--flags` and the JSON
+//! body is assembled from them — never `--data`. The reading goes all the way
+//! down, because a shape the document states and the CLI does not is the same
+//! defect as a shape neither states:
+//!
+//! - a scalar property is a flag at its own type (`--limit INT`, `--kind ENUM`);
+//! - an ARRAY is a REPEATABLE flag over its ELEMENT (`--tag a --tag b`), not one
+//!   `'["a","b"]'` blob the caller has to quote past a shell;
+//! - a NESTED OBJECT is DOTTED flags (`--spec.replicas 3`), rebuilt into the
+//!   object the schema declared — flat to type, nested on the wire.
+//!
+//! What stays `--data` is exactly what the document does not describe: a handler
+//! declaring no requestBody (a typing gap in hanzoai/cloud, counted and pinned by
+//! `genproduct`'s `NO_SCHEMA` ceiling), or a body that is freeform BY
+//! CONSTRUCTION (`{}`, `additionalProperties`, `oneOf`, a bare array), where a
+//! flag would be an invented shape. A product the document does not carry is
+//! simply ABSENT — no passthrough, no `hanzo api` to paper over it; that gap
+//! closes by serving the route. Nothing is invented — the fields are exactly the
+//! schema's properties.
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -65,14 +78,17 @@ pub struct Op {
     /// body (a write with no schema uses `--data`; a read has no body).
     pub fields: &'static [Field],
     /// One line of prose from the spec — a typed op's doc comment, lifted by
-    /// zipdoc, carried by genspec. Empty when the op is undescribed, in which
-    /// case the help falls back to `METHOD /path`.
+    /// zipdoc, carried by genspec. NEVER empty: `genproduct` refuses to emit an
+    /// undescribed op, so a command with nothing to say never becomes one.
     pub sum: &'static str,
 }
 
 /// One typed request-body field, from a schema property.
 pub struct Field {
-    /// The JSON property name — the body key sent to cloud.
+    /// The JSON property name — the body key sent to cloud. DOTTED for a nested
+    /// property (`spec.replicas`), which [`insert_path`] rebuilds into the object
+    /// the schema declared. No property name in cloud's document contains a `.`,
+    /// so the path is unambiguous.
     pub key: &'static str,
     /// The clap arg id — namespaced (`field.<key>`) so it can never collide with a
     /// path positional or a fixed control, even when a body key is `data`/`id`.
@@ -93,6 +109,11 @@ pub struct Field {
     /// secret law (`iam::secret::read_secret`), so it can never land in argv,
     /// `ps` or shell history. The grammar refuses a value-bearing argument.
     pub secret: bool,
+    /// The schema said ARRAY: the flag may be given more than once and the values
+    /// collect into a JSON array (`--tag a --tag b` → `["a","b"]`). `ty` is then
+    /// the ELEMENT's type, so an array of strings is a repeatable `--tag STRING`
+    /// rather than one opaque `--tag '["a","b"]'` the shell has to quote.
+    pub repeat: bool,
 }
 
 /// The JSON type of a body field — schema `type` mapped to a clap parser.
@@ -309,12 +330,21 @@ fn field_arg(f: &'static Field) -> Arg {
     match f.ty {
         Ty::Int => a = a.value_parser(clap::value_parser!(i64)).value_name("INT"),
         Ty::Num => a = a.value_parser(clap::value_parser!(f64)).value_name("NUMBER"),
-        Ty::Bool => a = a.action(ArgAction::SetTrue),
+        // An array of booleans still takes a VALUE — `--f --f` could not say
+        // `[true,false]` — so only a scalar bool is a bare presence flag.
+        Ty::Bool if !f.repeat => a = a.action(ArgAction::SetTrue),
+        Ty::Bool => a = a.value_parser(clap::value_parser!(bool)).value_name("BOOL"),
         Ty::Json => a = a.value_parser(parse_json).value_name("JSON"),
         Ty::Str => a = a.value_name("STRING"),
     }
     if !f.choices.is_empty() {
         a = a.value_parser(clap::builder::PossibleValuesParser::new(f.choices)).value_name("ENUM");
+    }
+    // An ARRAY property is a repeatable flag, one element per occurrence. The
+    // element keeps its own parser, so `--port 1 --port two` is a named type
+    // error at parse time rather than a malformed array the server rejects.
+    if f.repeat {
+        a = a.action(ArgAction::Append);
     }
     a
 }
@@ -341,20 +371,26 @@ fn field_flag(f: &'static Field) -> &'static str {
 
 /// Type-derived help — DATA, never the spec's prose (which could carry a URL).
 fn field_help(f: &Field) -> String {
-    if !f.choices.is_empty() {
-        return format!("one of: {}", f.choices.join(" | "));
-    }
-    let t = match f.ty {
-        Ty::Str => "string",
-        Ty::Int => "integer",
-        Ty::Num => "number",
-        Ty::Bool => "flag",
-        Ty::Json => "JSON value",
+    let t = if f.choices.is_empty() {
+        match f.ty {
+            Ty::Str => "string",
+            Ty::Int => "integer",
+            Ty::Num => "number",
+            Ty::Bool if f.repeat => "boolean",
+            Ty::Bool => "flag",
+            Ty::Json => "JSON value",
+        }
+        .to_string()
+    } else {
+        format!("one of: {}", f.choices.join(" | "))
     };
+    // The two facts a caller needs beyond the type, and they compose: an array of
+    // enums is "one of: … (repeatable)".
+    let t = if f.repeat { format!("{t} (repeatable)") } else { t };
     if f.required {
         format!("{t} (required)")
     } else {
-        t.to_string()
+        t
     }
 }
 
@@ -444,60 +480,90 @@ fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
 
 /// Assemble the JSON body from the BODY flags actually provided — nothing else.
 /// An unset optional field is OMITTED (so the server's own default stands), never
-/// sent as null. Each value is encoded at its schema type.
+/// sent as null. Each value is encoded at its schema type, and a DOTTED key is
+/// rebuilt into the nested object the schema declared.
 fn typed_body(op: &Op, m: &ArgMatches) -> Value {
     let mut map = Map::new();
     // A secret field has no matches entry (no flag/positional) — it is injected
     // from stdin at dispatch, so it is skipped here.
     for f in op.fields.iter().filter(|f| !f.query && !f.secret) {
-        match f.ty {
-            Ty::Str => {
-                if let Some(v) = m.get_one::<String>(f.id) {
-                    map.insert(f.key.to_string(), json!(v));
-                }
-            }
-            Ty::Int => {
-                if let Some(v) = m.get_one::<i64>(f.id) {
-                    map.insert(f.key.to_string(), json!(v));
-                }
-            }
-            Ty::Num => {
-                if let Some(v) = m.get_one::<f64>(f.id) {
-                    map.insert(f.key.to_string(), json!(v));
-                }
-            }
-            Ty::Bool => {
-                if m.get_flag(f.id) {
-                    map.insert(f.key.to_string(), json!(true));
-                }
-            }
-            Ty::Json => {
-                if let Some(v) = m.get_one::<Value>(f.id) {
-                    map.insert(f.key.to_string(), v.clone());
-                }
-            }
+        if let Some(v) = field_value(f, m) {
+            insert_path(&mut map, f.key, v);
         }
     }
     Value::Object(map)
 }
 
+/// ONE reading of a flag's value at its schema type, for the body and the query
+/// alike. `None` when the flag was not given, so an unset optional stays out of
+/// the request entirely. A REPEATABLE flag collects every occurrence into a JSON
+/// array, in the order they were typed.
+fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
+    if f.repeat {
+        let vs: Vec<Value> = match f.ty {
+            Ty::Str => m.get_many::<String>(f.id)?.map(|v| json!(v)).collect(),
+            Ty::Int => m.get_many::<i64>(f.id)?.map(|v| json!(v)).collect(),
+            Ty::Num => m.get_many::<f64>(f.id)?.map(|v| json!(v)).collect(),
+            Ty::Bool => m.get_many::<bool>(f.id)?.map(|v| json!(v)).collect(),
+            Ty::Json => m.get_many::<Value>(f.id)?.cloned().collect(),
+        };
+        return Some(Value::Array(vs));
+    }
+    match f.ty {
+        Ty::Str => m.get_one::<String>(f.id).map(|v| json!(v)),
+        Ty::Int => m.get_one::<i64>(f.id).map(|v| json!(v)),
+        Ty::Num => m.get_one::<f64>(f.id).map(|v| json!(v)),
+        // A scalar bool is a presence flag: absent means "unset", so it is
+        // omitted rather than sent as `false` over the server's own default.
+        Ty::Bool => m.get_flag(f.id).then_some(json!(true)),
+        Ty::Json => m.get_one::<Value>(f.id).cloned(),
+    }
+}
+
+/// Place a value at a DOTTED body key, building the objects the schema declared:
+/// `--spec.replicas 3` becomes `{"spec":{"replicas":3}}`. The paths come from one
+/// schema walk, so two fields can never disagree about whether a step is an
+/// object; a non-object already sitting at a step is REPLACED rather than
+/// panicked over, because a half-built body is worse than a whole one.
+fn insert_path(map: &mut Map<String, Value>, key: &str, value: Value) {
+    let mut parts = key.split('.').peekable();
+    let mut cur = map;
+    while let Some(p) = parts.next() {
+        if parts.peek().is_none() {
+            cur.insert(p.to_string(), value);
+            return;
+        }
+        let slot = cur.entry(p.to_string()).or_insert_with(|| Value::Object(Map::new()));
+        if !slot.is_object() {
+            *slot = Value::Object(Map::new());
+        }
+        cur = slot.as_object_mut().expect("just made it an object");
+    }
+}
+
 /// Assemble `key=value` query pairs from the QUERY flags actually provided; each
-/// value is stringified at its type and percent-encoded by `build_url`.
+/// value is stringified at its type and percent-encoded by `target`. A repeatable
+/// parameter emits ONE PAIR PER VALUE (`?tag=a&tag=b`), which is how a query
+/// array is spelled — never one comma-joined string.
 fn typed_query(op: &Op, m: &ArgMatches) -> Vec<String> {
     let mut out = Vec::new();
     for f in op.fields.iter().filter(|f| f.query) {
-        let v: Option<String> = match f.ty {
-            Ty::Str => m.get_one::<String>(f.id).cloned(),
-            Ty::Int => m.get_one::<i64>(f.id).map(|v| v.to_string()),
-            Ty::Num => m.get_one::<f64>(f.id).map(|v| v.to_string()),
-            Ty::Bool => m.get_flag(f.id).then(|| "true".to_string()),
-            Ty::Json => m.get_one::<Value>(f.id).map(|v| v.to_string()),
-        };
-        if let Some(v) = v {
-            out.push(format!("{}={v}", f.key));
+        match field_value(f, m) {
+            Some(Value::Array(vs)) => out.extend(vs.iter().map(|v| format!("{}={}", f.key, scalar(v)))),
+            Some(v) => out.push(format!("{}={}", f.key, scalar(&v))),
+            None => {}
         }
     }
     out
+}
+
+/// A query value's wire spelling: a string rides BARE (`?q=hi`, not `?q="hi"`),
+/// everything else is its JSON text.
+fn scalar(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    }
 }
 
 fn is_product(name: &str) -> bool {
@@ -547,9 +613,8 @@ fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
         anyhow::bail!("{} declares more than one stdin-secret field — an op reads stdin once", op.path);
     }
     let value = crate::iam::secret::read_secret(std::io::stdin().lock())?;
-    body.as_object_mut()
-        .ok_or_else(|| anyhow!("a typed body must be a JSON object"))?
-        .insert(f.key.to_string(), Value::String(value));
+    let obj = body.as_object_mut().ok_or_else(|| anyhow!("a typed body must be a JSON object"))?;
+    insert_path(obj, f.key, Value::String(value));
     Ok(body)
 }
 

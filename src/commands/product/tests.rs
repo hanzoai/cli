@@ -339,6 +339,140 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
     assert_eq!(v.as_object().unwrap().len(), 1, "unset optionals must be omitted: {v}");
 }
 
+/// An ARRAY property is a REPEATABLE flag, one element per occurrence, and the
+/// body carries a real JSON array. It used to be one `Ty::Json` flag, so saying
+/// "two plans" meant hand-writing `--plans '["a","b"]'` — JSON on a command line,
+/// quoted past a shell, to state a list the schema had already described.
+///
+/// The op is chosen from the DATA (the first with a repeatable string body
+/// field and no required flags), so this pins the property, never a coordinate.
+#[test]
+fn an_array_property_is_a_repeatable_flag_and_lands_as_a_json_array() {
+    let op = OPS
+        .iter()
+        .find(|o| {
+            o.params.is_empty()
+                && o.fields.iter().all(|f| !f.required)
+                && o.fields
+                    .iter()
+                    .any(|f| f.repeat && !f.query && f.choices.is_empty() && matches!(f.ty, Ty::Str))
+        })
+        .expect("cloud declares at least one array-of-string body property");
+    let arr = op
+        .fields
+        .iter()
+        .find(|f| f.repeat && !f.query && f.choices.is_empty() && matches!(f.ty, Ty::Str))
+        .unwrap();
+
+    let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.to_string());
+    for v in ["one", "two"] {
+        argv.push(format!("--{}", arr.flag));
+        argv.push(v.into());
+    }
+    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
+        panic!("typed leaf");
+    };
+    assert_eq!(v[arr.key], serde_json::json!(["one", "two"]), "in {v}");
+    // Order is the order they were typed — a list is not a set.
+    assert_eq!(v.as_object().unwrap().len(), 1, "unset optionals stay out: {v}");
+}
+
+/// A NESTED object is DOTTED flags, and the body rebuilds the object the schema
+/// declared: `--metrics.load1 0.5` sends `{"metrics":{"load1":0.5}}`. Before this
+/// the whole sub-object was one `Ty::Json` blob, so a caller had to know the
+/// nested shape the document had already stated.
+#[test]
+fn a_nested_object_is_dotted_flags_that_rebuild_the_object() {
+    let op = OPS
+        .iter()
+        .find(|o| {
+            o.params.is_empty()
+                && o.fields.iter().all(|f| !f.required)
+                && o.fields
+                    .iter()
+                    .any(|f| !f.query && !f.repeat && f.key.contains('.') && matches!(f.ty, Ty::Str))
+        })
+        .expect("cloud declares at least one nested body object");
+    let nested = op
+        .fields
+        .iter()
+        .find(|f| !f.query && !f.repeat && f.key.contains('.') && matches!(f.ty, Ty::Str))
+        .unwrap();
+
+    let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.to_string());
+    argv.push(format!("--{}", nested.flag));
+    argv.push("deep".into());
+    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
+        panic!("typed leaf");
+    };
+    // Walk the dotted key: every step is a real JSON object, and the leaf holds
+    // the value — the flag is FLAT and the body is NESTED.
+    let mut node = &v;
+    for step in nested.key.split('.') {
+        node = node.get(step).unwrap_or_else(|| panic!("{} missing in {v}", nested.key));
+    }
+    assert_eq!(node, "deep");
+    assert!(v[nested.key.split('.').next().unwrap()].is_object(), "must nest, not flatten: {v}");
+}
+
+/// The dotted-key law, held on the values rather than on a document: two flags
+/// under one parent land in ONE object, and a `.` in a flag never reaches the
+/// wire as a literal key.
+#[test]
+fn two_dotted_keys_under_one_parent_build_one_object() {
+    let mut m = Map::new();
+    insert_path(&mut m, "spec.replicas", json!(3));
+    insert_path(&mut m, "spec.image.name", json!("hanzo"));
+    insert_path(&mut m, "name", json!("web"));
+    assert_eq!(
+        Value::Object(m),
+        json!({"name": "web", "spec": {"replicas": 3, "image": {"name": "hanzo"}}})
+    );
+}
+
+/// A body property whose name repeats a PATH parameter is normally dropped —
+/// it is the same value, already a positional. NOT when it is the body's ONLY
+/// property: dropping it there types the whole write away and hands the caller
+/// `--data`, which is strictly less than the schema stated. `POST
+/// /v1/o11y/service_accounts/{id}/roles` is the case cloud actually serves — its
+/// `{id}` is the service account and its body `id` is the ROLE being assigned.
+#[test]
+fn a_lone_body_property_survives_a_path_parameter_of_the_same_name() {
+    for op in OPS.iter().filter(|o| matches!(o.method, "POST" | "PUT" | "PATCH")) {
+        let body: Vec<&Field> = op.fields.iter().filter(|f| !f.query).collect();
+        // Where a body key echoes a path param, it may only be because it was the
+        // body's whole shape.
+        for f in &body {
+            if op.params.contains(&f.key) {
+                assert_eq!(
+                    body.len(),
+                    1,
+                    "{} {} keeps `{}` beside {} other body field(s) — a path echo is only \
+                     kept when dropping it would leave no typed body at all",
+                    op.method,
+                    op.path,
+                    f.key,
+                    body.len() - 1
+                );
+            }
+        }
+        // And the converse: a write with a declared body never falls back to
+        // `--data` because the echo rule emptied it.
+        assert!(
+            !(body.is_empty() && op.params.iter().any(|p| op.fields.iter().any(|f| f.key == *p))),
+            "{} {} typed its whole body away",
+            op.method,
+            op.path
+        );
+    }
+}
+
 /// BUG-1 FIX: a collection GET is a runnable LEAF on a node that may also head a
 /// group — `hanzo kv list` runs `GET /v1/kv` rather than demanding a subcommand.
 ///
