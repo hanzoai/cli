@@ -65,3 +65,33 @@ fn the_committed_spec_names_the_release_it_was_generated_from() {
          Re-run `make spec`, then commit spec/cloud.json, generated.rs and .spec-lock together."
     );
 }
+
+/// …and the document's PATHS obey the naming rules — hermetically, on every push.
+///
+/// This is the half of `driftgate` that needs no network: whether a path says its
+/// own word twice, or carries a vendor's brand, is decidable from the document
+/// alone. The other half — is this route actually served — needs a running host
+/// and therefore cannot be a push gate, which is exactly why the naming rules
+/// would otherwise only ever run in a nightly that nobody watches.
+///
+/// It shells out to the SAME binary a maintainer runs (`driftgate --lint`) rather
+/// than re-deriving the rules here, for the reason the test above shells out to
+/// `genproduct --check`: a gate that runs a different derivation than the one
+/// that ships is a gate about something nobody ships.
+///
+/// A stutter this repo cannot fix — one owned by another repo's routes — is
+/// declared in `NAMED` in src/bin/driftgate.rs with the repo that fixes it, and
+/// printed on every run so it cannot go quiet.
+#[test]
+fn the_document_obeys_the_naming_rules() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_driftgate"))
+        .arg("--lint")
+        .output()
+        .expect("run driftgate --lint");
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
