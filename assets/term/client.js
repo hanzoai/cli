@@ -51,6 +51,28 @@
   TERM.loadAddon(FIT);
   TERM.open(document.getElementById('term'));
 
+  // Tell whoever framed us that a REAL terminal is here.
+  //
+  // A parent cannot find this out for itself. Everything it can reach across the
+  // origin lies to it identically: a frame refused by `frame-ancestors` and a
+  // frame that loaded perfectly BOTH throw on contentDocument, because the
+  // browser swaps in its own error document for the refusal. So the workspace
+  // used to read every blocked terminal as healthy and paint an opaque black
+  // rectangle over the only way out of it.
+  //
+  // This is the one honest bit: it is sent by the page that owns the terminal,
+  // after xterm has actually opened. Absence means the terminal is not there —
+  // gate, dead tunnel, offline machine, all the same — and absence is what the
+  // workspace acts on. `'*'` because every machine publishes on its own tunnel
+  // host and this claims nothing worth targeting.
+  try {
+    if (window.parent !== window) {
+      window.parent.postMessage({ source: 'hanzo-term', ready: true }, '*');
+    }
+  } catch (e) {
+    /* no parent, or one that will not be spoken to: the terminal still works */
+  }
+
   // ---- the socket ---------------------------------------------------------
   var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   var url = proto + location.host + location.pathname.replace(/\/$/, '') + '/ws' + location.search;
