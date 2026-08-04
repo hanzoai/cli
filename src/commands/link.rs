@@ -33,9 +33,10 @@ use crate::commands::code::{context, target};
 use crate::commands::{network, share};
 use crate::config::Config;
 use crate::iam::{paths, store};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::{Child, Command};
 
 /// The loopback port ttyd serves on. Fixed rather than random so a second `link`
@@ -82,7 +83,36 @@ impl Drop for Ttyd {
     }
 }
 
-fn start_ttyd(port: u16, cmd: &[String], writable: bool) -> Result<Ttyd> {
+/// Whether something already serves `port` on loopback.
+///
+/// Asked by BINDING, because that is the question: a connect probe cannot tell
+/// "another link is here" from "our own is up", and both look identical from
+/// outside. A bind that fails is the port being unavailable to us, which is
+/// exactly what stops ttyd.
+fn port_taken(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
+}
+
+/// How long ttyd is given to die on a port it cannot have.
+const TTYD_SETTLE: Duration = Duration::from_millis(600);
+
+async fn start_ttyd(port: u16, cmd: &[String], writable: bool) -> Result<Ttyd> {
+    // A SPAWN THAT SUCCEEDS PROVES A PROCESS WAS CREATED, NOT THAT IT IS SERVING.
+    // ttyd exits immediately when the port is taken, and that exit lands after
+    // `spawn()` has already returned Ok — so a second `hanzo link` on this machine
+    // sailed past, published a tunnel at 127.0.0.1:<port>, and put the FIRST
+    // link's shell behind its own session row. Measured on this machine: two link
+    // processes, ONE ttyd, and two tunnels claiming one share name.
+    //
+    // The comment on TTYD_PORT has always promised this fails loudly. Now it does.
+    if port_taken(port) {
+        bail!(
+            "port {port} is already serving — another `hanzo link` is almost certainly \
+             running on this machine. One link per machine: end that one first, or \
+             attach to the shell it already published with `tmux attach -t hanzo`."
+        );
+    }
+
     let mut c = Command::new("ttyd");
     c.arg("--port")
         .arg(port.to_string())
@@ -100,7 +130,16 @@ fn start_ttyd(port: u16, cmd: &[String], writable: bool) -> Result<Ttyd> {
         .kill_on_drop(true)
         .spawn()
         .context("starting ttyd (brew install ttyd)")?;
-    Ok(Ttyd(child))
+    let mut t = Ttyd(child);
+
+    // The check above races anything that grabs the port in the same instant, and
+    // says nothing about a ttyd that dies for another reason. This catches both:
+    // if our own child is already gone, there is no shell to publish.
+    tokio::time::sleep(TTYD_SETTLE).await;
+    if let Ok(Some(status)) = t.0.try_wait() {
+        bail!("ttyd exited immediately ({status}) — no shell is being served on port {port}");
+    }
+    Ok(t)
 }
 
 /// `hanzo link [--shell S] [--read-only] [--title T]`.
@@ -129,7 +168,7 @@ pub async fn run(
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
-    let _ttyd = start_ttyd(TTYD_PORT, &cmd, !read_only)?;
+    let _ttyd = start_ttyd(TTYD_PORT, &cmd, !read_only).await?;
     println!("{} {}", "→".green(), cmd.join(" ").cyan());
 
     let mut sh = share::start(
@@ -567,6 +606,19 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("share ended"), "got: {err}");
+    }
+
+    // The port check is the whole difference between "one link per machine" being
+    // a rule and being a comment. Measured before this existed: two link processes,
+    // ONE ttyd, and two tunnels claiming one share name — the second link had
+    // published the FIRST link's shell under its own session row.
+    #[test]
+    fn a_port_already_served_is_seen_as_taken() {
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind a spare port");
+        let port = held.local_addr().unwrap().port();
+        assert!(port_taken(port), "a bound port must read as taken");
+        drop(held);
+        assert!(!port_taken(port), "and free again once released");
     }
 
     // A clean exit is the caller leaving a shell they HAD. That ends the link.

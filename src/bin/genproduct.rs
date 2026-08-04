@@ -41,7 +41,7 @@ const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 /// the same address. A CEILING, not an equality — it is free to fall, and it may
 /// not rise without a person deciding what the second command is called. Measured
 /// where it is applied, at the end of the collapse.
-const ELIDED: usize = 87;
+const ELIDED: usize = 86;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
