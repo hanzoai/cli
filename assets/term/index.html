@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Hanzo</title>
+<style>
+/*__XTERM_CSS__*/
+:root { color-scheme: dark }
+html, body {
+  margin: 0; height: 100%; background: #000; overflow: hidden;
+  font-family: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+}
+/* The terminal owns the page, minus whatever the key row takes. */
+#term { position: absolute; inset: 0; padding: 6px 8px; }
+#term.with-keys { bottom: 44px; }
+.xterm-viewport::-webkit-scrollbar { width: 8px }
+.xterm-viewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 4px }
+.xterm-viewport { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.16) transparent }
+
+/* The key row. Docked, scrollable, and 44px so a thumb can hit it. */
+#keys {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 44px;
+  display: flex; gap: 4px; align-items: center;
+  padding: 0 6px calc(env(safe-area-inset-bottom) * 0.5);
+  background: #111; border-top: 1px solid rgba(255,255,255,.08);
+  overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+#keys::-webkit-scrollbar { display: none }
+#keys button {
+  flex: 0 0 auto; min-width: 40px; height: 32px; padding: 0 10px;
+  border: 1px solid rgba(255,255,255,.10); border-radius: 8px;
+  background: #1a1a1a; color: #e6e6e6;
+  font: 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+#keys button:active { background: #2a2a2a }
+#keys button[data-armed] { background: #e6e6e6; color: #000 }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<div id="keys" hidden></div>
+<script>/*__XTERM_JS__*/</script>
+<script>/*__FIT_JS__*/</script>
+<script>
+  // The key row steals 44px from the terminal, so the container has to know.
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    document.getElementById('term').classList.add('with-keys');
+  }
+</script>
+<script>/*__CLIENT_JS__*/</script>
+</body>
+</html>
