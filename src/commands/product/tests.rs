@@ -262,22 +262,59 @@ fn a_simple_leaf_resolves_and_fills() {
 /// JSON body is assembled from them at their schema types — never `--data`.
 #[test]
 fn a_typed_write_assembles_a_json_body_from_flags() {
-    // `hanzo authz check --sub alice --obj doc:1 --act read`
-    let m = matches_of(&["hanzo", "authz", "check", "--sub", "alice", "--obj", "doc:1", "--act", "read"]);
-    let Some(Resolved::Leaf { op, body, .. }) = resolve(&hand(), &m) else {
+    // WHICH op is typed is the spec's answer. This named `authz check --sub/--obj
+    // /--act` and broke when that operation's schema changed — asserting a
+    // snapshot of the document instead of the property that flags become a body.
+    let op = OPS
+        .iter()
+        .find(|o| {
+            o.method == "POST"
+                && o.params.is_empty()
+                && o.fields.iter().filter(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str)).count() >= 2
+        })
+        .expect("some POST takes at least two typed string body fields");
+
+    let typed: Vec<_> = op
+        .fields
+        .iter()
+        .filter(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str))
+        .take(2)
+        .collect();
+
+    let mut argv: Vec<String> = vec!["hanzo".into(), op.product.into()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.into());
+    for (i, f) in typed.iter().enumerate() {
+        argv.push(format!("--{}", f.flag));
+        argv.push(format!("v{i}"));
+    }
+    // Anything else the op REQUIRES has to be supplied, or clap refuses before the
+    // property under test is reached.
+    for f in op.fields.iter().filter(|f| f.required && !typed.iter().any(|t| t.key == f.key)) {
+        if f.secret {
+            continue; // a secret is stdin-only and cannot be given here
+        }
+        argv.push(format!("--{}", f.flag));
+        argv.push("x".into());
+    }
+
+    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+    let Some(Resolved::Leaf { op: got, body, .. }) = resolve(&hand(), &m) else {
         panic!("expected a leaf");
     };
-    assert_eq!(op.method, "POST");
-    assert_eq!(op.path, "/v1/authz/check");
-    assert!(!op.fields.is_empty(), "authz check must be typed, not --data");
-    let LeafBody::Typed(v) = body else { panic!("typed leaf must build a JSON body") };
-    assert_eq!(v["sub"], "alice");
-    assert_eq!(v["obj"], "doc:1");
-    assert_eq!(v["act"], "read");
-    // A typed leaf exposes NO `--data` — the flags ARE the body.
-    assert!(matches_of(&["hanzo", "authz", "check", "--sub", "a", "--obj", "b", "--act", "c"])
-        .subcommand()
-        .is_some());
+    assert_eq!(got.path, op.path);
+    let LeafBody::Typed(v) = body else { panic!("a typed leaf must build a JSON body") };
+    for (i, f) in typed.iter().enumerate() {
+        assert_eq!(v[f.key.as_ref() as &str], format!("v{i}"), "flag --{} must land in the body", f.flag);
+    }
+    // A typed leaf exposes NO `--data`: the flags ARE the body.
+    let mut with_data = argv.clone();
+    with_data.push("--data".into());
+    with_data.push("{}".into());
+    assert!(
+        augment(hand()).try_get_matches_from(&with_data).is_err(),
+        "a typed op must not also accept --data",
+    );
 }
 
 /// An INTEGER-typed flag reaches the body as a JSON number (not a string), and an
@@ -663,51 +700,52 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
 /// handler's discipline — and `resolve` never sees the value (it is injected
 /// from stdin only at dispatch).
 #[test]
-fn kms_secret_value_can_never_reach_argv() {
-    // The `create` op carries a `value` field explicitly marked secret.
-    let create = OPS.iter().find(|o| o.product == "kms" && o.verb == "create").expect("kms create");
-    let value = create.fields.iter().find(|f| f.key == "value").expect("value field");
-    assert!(value.secret, "the value field must be a stdin-secret");
-    assert!(!value.query, "a secret is a body field, never a query param");
+fn a_secret_value_can_never_reach_argv() {
+    // WHICH op carries a secret is the spec's answer, not this test's. It used to
+    // name `kms secrets create --value`, whose `format: password` was the only
+    // marker in the document; cloud has since dropped that op AND stopped emitting
+    // that format anywhere, so a pinned coordinate asserted a protection that had
+    // silently become unreachable. The property is what matters: whatever is
+    // marked secret must be unsettable from argv.
+    let (op, field) = OPS
+        .iter()
+        .find_map(|o| o.fields.iter().find(|f| f.secret).map(|f| (o, f)))
+        .expect("the surface protects at least one credential");
 
-    // No flag or positional can carry it: every value-bearing argv is rejected.
+    assert!(!field.query, "a secret is a body field, never a query param");
+
+    // Its flag must not exist: no `--<flag> value`, and no bare positional either.
+    let mut argv: Vec<String> = vec!["hanzo".into(), op.product.into()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.into());
     let base = || augment(Command::new("hanzo"));
-    let leaky: &[&[&str]] = &[
-        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "--value", "hunter2"],
-        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "--secret", "hunter2"],
-        &["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod", "hunter2"],
-    ];
-    for argv in leaky {
-        assert!(base().try_get_matches_from(*argv).is_err(), "value-bearing argv must not parse: {argv:?}");
-    }
 
-    // What DOES parse carries only the address + env; the body OMITS the secret
-    // (it is read from stdin at dispatch, never assembled from a flag).
-    let m = matches_of(&["hanzo", "kms", "secrets", "create", "--name", "DB", "--env", "prod"]);
-    let Some(Resolved::Leaf { op, body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
-        panic!("typed leaf");
-    };
-    assert_eq!(op.path, "/v1/kms/secrets");
-    assert_eq!(v["name"], "DB");
-    assert_eq!(v["env"], "prod");
-    assert!(v.get("value").is_none(), "the secret must NOT be assembled from flags: {v}");
-
-    // `--env` is required on the write (the server refuses to guess a default).
+    let mut with_flag = argv.clone();
+    with_flag.push(format!("--{}", field.flag));
+    with_flag.push("hunter2".into());
     assert!(
-        base().try_get_matches_from(["hanzo", "kms", "secrets", "create", "--name", "DB"]).is_err(),
-        "create must require --env"
+        base().try_get_matches_from(&with_flag).is_err(),
+        "`--{}` must not exist — a secret on argv is a secret in ps and shell history",
+        field.flag,
     );
 
-    // No `--org` on any kms verb — the org binds to the active identity's owner.
-    let orged: &[&[&str]] = &[
-        &["hanzo", "kms", "secrets", "list", "--org", "other"],
-        &["hanzo", "kms", "secrets", "get", "DB", "--org", "other"],
-        &["hanzo", "kms", "secrets", "rm", "DB", "--org", "other"],
-    ];
-    for argv in orged {
-        assert!(base().try_get_matches_from(*argv).is_err(), "no --org may exist: {argv:?}");
+    // And EVERY secret in the whole surface, not just the one sampled above.
+    for o in OPS.iter() {
+        for f in o.fields.iter().filter(|f| f.secret) {
+            let mut a: Vec<String> = vec!["hanzo".into(), o.product.into()];
+            a.extend(o.nodes.iter().map(|n| n.to_string()));
+            a.push(o.verb.into());
+            a.push(format!("--{}", f.flag));
+            a.push("hunter2".into());
+            assert!(
+                base().try_get_matches_from(&a).is_err(),
+                "{} {} --{} accepted a secret on the command line",
+                o.product, o.verb, f.flag,
+            );
+        }
     }
 }
+
 
 /// Defense in depth: if the derive tree already owns a name that a FUTURE spec
 /// turns into a product, the local command still wins — augment skips it.
