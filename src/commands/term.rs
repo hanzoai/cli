@@ -90,6 +90,22 @@ mod tests {
         assert!(js.contains("return true"), "everything else reaches the pty");
     }
 
+    /// The page ANNOUNCES itself to whoever framed it. A parent cannot work this
+    /// out alone: a frame refused by `frame-ancestors` and one that loaded
+    /// perfectly both throw on contentDocument, because the browser substitutes
+    /// its own error document for the refusal. Without this the workspace reads
+    /// every blocked terminal as healthy and paints black over the way out.
+    #[test]
+    fn the_terminal_tells_its_parent_it_is_really_there() {
+        let js = CLIENT_JS;
+        assert!(js.contains("hanzo-term"), "the workspace listens for exactly this source");
+        assert!(js.contains("postMessage"), "and it has to actually be sent");
+        assert!(
+            js.contains("window.parent !== window"),
+            "only when framed — a terminal opened directly has no parent to tell",
+        );
+    }
+
     /// A soft keyboard has no Esc, Ctrl, Tab or arrows, so a touch device without
     /// this row can read a terminal and not use one.
     #[test]
