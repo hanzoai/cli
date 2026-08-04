@@ -339,12 +339,35 @@ fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
 /// URL query (not the body), required-ness enforced by clap.
 #[test]
 fn a_query_param_becomes_a_typed_flag_in_the_url() {
-    let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway", "--limit", "50"]);
+    // WHICH op carries an optional query flag is the spec's answer, not this
+    // test's — the same rule its second half already follows. Pinning
+    // `o11y logs` is what broke it: cloud grew /v1/o11y/logs/{aggregate,
+    // livetail,fields,pipelines}, so `logs` stopped being a verb and became a
+    // node with `get` beneath it. The COORDINATE moved; the property never did.
+    let target = OPS
+        .iter()
+        .find(|o| {
+            o.method == "GET"
+                && o.params.is_empty()
+                && o.fields.iter().filter(|f| f.query && !f.required).count() >= 1
+        })
+        .expect("some GET takes an optional query parameter");
+    let flag = target.fields.iter().find(|f| f.query && !f.required).unwrap();
+
+    let mut argv: Vec<String> = vec!["hanzo".into(), target.product.into()];
+    argv.extend(target.nodes.iter().map(|n| n.to_string()));
+    argv.push(target.verb.into());
+    argv.push(format!("--{}", flag.flag));
+    argv.push("gateway".into());
+
+    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
     let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&hand(), &m) else { panic!("leaf") };
-    assert_eq!(op.path, "/v1/o11y/logs");
+    assert_eq!(op.path, target.path);
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
-    assert!(query.contains(&"product=gateway".to_string()), "{query:?}");
-    assert!(query.contains(&"limit=50".to_string()), "{query:?}");
+    assert!(
+        query.contains(&format!("{}=gateway", flag.key)),
+        "the flag must land in the URL: {query:?}",
+    );
     // Required-ness rides through to clap. Which PARAMETERS are required is the
     // spec's answer, not this test's, so it takes whichever op carries a required
     // query flag rather than pinning one — pinning is how a test starts asserting
@@ -384,7 +407,19 @@ fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
     // The o11y op the alias pointed at is still reachable under its own product —
     // one capability, one place, never duplicated to keep a nickname alive.
-    let m = matches_of(&["hanzo", "o11y", "logs", "--product", "gateway"]);
+    // Reached by PATH, because where it sits is the spec's to move: it was
+    // `o11y logs` until cloud gave /v1/o11y/logs children, and it is `o11y logs
+    // get` now. What must stay true is that it is reachable at all, and only
+    // from its own product.
+    let o11y = OPS
+        .iter()
+        .find(|o| o.path == "/v1/o11y/logs")
+        .expect("/v1/o11y/logs is served under the o11y product");
+    assert_eq!(o11y.product, "o11y", "it belongs to o11y and to nothing else");
+    let mut argv: Vec<String> = vec!["hanzo".into(), o11y.product.into()];
+    argv.extend(o11y.nodes.iter().map(|n| n.to_string()));
+    argv.push(o11y.verb.into());
+    let m = augment(hand()).try_get_matches_from(&argv).expect("o11y parses");
     let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(
