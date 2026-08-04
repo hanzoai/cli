@@ -168,6 +168,17 @@ async fn start_ttyd(port: u16, shell: &Shell, writable: bool) -> Result<Ttyd> {
     if shell.url_arg() {
         c.arg("--url-arg");
     }
+    // OUR page, not ttyd's. It is themed to match the console that frames it,
+    // carries a key row for devices with no Esc or Ctrl, and forwards the
+    // workspace's chords — none of which ttyd's own page can do, because it is
+    // somebody else's document inside a cross-origin frame. Best-effort: a page
+    // we cannot write is a reason to serve ttyd's, never to have no terminal.
+    match crate::commands::term::install() {
+        Ok(page) => {
+            c.arg("--index").arg(page);
+        }
+        Err(e) => tracing::debug!("serving ttyd's own page ({e})"),
+    }
     let child = c
         .args(shell.argv())
         .stdout(Stdio::null())

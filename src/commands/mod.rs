@@ -2,6 +2,7 @@
 pub mod host;
 pub mod launch;
 pub mod link;
+pub mod term;
 pub mod product;
 
 // Resource-noun commands — the primary `hanzo <resource> <verb>` tree.
