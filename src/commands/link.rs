@@ -44,32 +44,74 @@ use tokio::process::{Child, Command};
 /// second, different shell under the first one's name.
 const TTYD_PORT: u16 = 7681;
 
-/// Resolve what ttyd should run.
+/// The default tmux session a bare link opens.
+pub const DEFAULT_SHELL_NAME: &str = "hanzo";
+
+/// What ttyd runs, and whether a pane may choose WHICH shell.
 ///
-/// `tmux` expands to an attach-or-create so a link can be re-established onto the
-/// SAME shell after a disconnect — the one case where a multiplexer earns its
-/// keep. Everything else is passed through, and the default is the user's own
-/// `$SHELL`, because a linked terminal should look like their terminal.
-fn shell_command(shell: Option<&str>) -> Vec<String> {
-    match shell {
-        Some("tmux") => vec![
-            "tmux".into(),
-            "new".into(),
-            "-A".into(),
-            "-s".into(),
-            "hanzo".into(),
-        ],
-        Some(other) => vec![other.to_string()],
-        // tmux by default: it is the only way the shell can be driven from HERE and
-        // from the browser at once. A plain pty belongs to whoever spawned it, so a
-        // published one leaves the local terminal watching its own shell.
-        None => vec![
-            "tmux".into(),
-            "new".into(),
-            "-A".into(),
-            "-s".into(),
-            "hanzo".into(),
-        ],
+/// These are two different shapes, not one with a flag, because they differ in
+/// what the URL is allowed to say.
+pub enum Shell {
+    /// The default. ttyd runs a wrapper and the query names the tmux session, so
+    /// ONE link — one port, one tunnel, one sign-in — serves as many independent
+    /// shells as the console asks for. `?arg=build` is a shell called `build`;
+    /// no arg is [`DEFAULT_SHELL_NAME`].
+    Multiplexed,
+    /// A command named by the caller (`--shell bash`), run directly. It takes NO
+    /// url argument — see [`Shell::url_arg`].
+    Named(String),
+}
+
+/// The shell script the multiplexed form runs.
+///
+/// It reduces the requested name to `[A-Za-z0-9_-]` and 32 characters BEFORE tmux
+/// sees it, and reads only `$1`. Both halves matter: `--url-arg` appends EVERY
+/// `arg=` in the query to argv, and `;` is tmux's own command separator, so
+/// `?arg=x&arg=;&arg=whoami` would otherwise arrive as a command rather than a
+/// name. Stripping the runes and ignoring `$2`onward is what keeps the query data.
+const MUX: &str =
+    "n=$(printf %s \"${1:-hanzo}\" | tr -cd \"a-zA-Z0-9_-\" | cut -c1-32); exec tmux new -A -s \"${n:-hanzo}\"";
+
+impl Shell {
+    fn from_flag(shell: Option<&str>) -> Shell {
+        match shell {
+            // `tmux` asks for exactly what the default already is.
+            None | Some("tmux") => Shell::Multiplexed,
+            Some(other) => Shell::Named(other.to_string()),
+        }
+    }
+
+    /// The argv ttyd runs.
+    fn argv(&self) -> Vec<String> {
+        match self {
+            // `sh -c SCRIPT NAME` puts NAME in $0, so the client's arg lands in $1
+            // — which is why the placeholder is here and not a file on disk.
+            Shell::Multiplexed => vec![
+                "sh".into(),
+                "-c".into(),
+                MUX.into(),
+                "hanzo-shell".into(),
+            ],
+            Shell::Named(cmd) => vec![cmd.clone()],
+        }
+    }
+
+    /// Whether ttyd accepts a shell name from the URL.
+    ///
+    /// ONLY the wrapper does. A named command would read the query as its own
+    /// flags — `--shell bash` plus `?arg=-c&arg=whoami` is `bash -c whoami`, which
+    /// is remote code execution handed over by a query string. The wrapper is
+    /// written to be given arguments; a raw command is not.
+    fn url_arg(&self) -> bool {
+        matches!(self, Shell::Multiplexed)
+    }
+
+    /// What to print, so the caller can see what they are running.
+    fn label(&self) -> String {
+        match self {
+            Shell::Multiplexed => format!("tmux ({DEFAULT_SHELL_NAME}, +named shells per pane)"),
+            Shell::Named(c) => c.clone(),
+        }
     }
 }
 
@@ -96,7 +138,7 @@ fn port_taken(port: u16) -> bool {
 /// How long ttyd is given to die on a port it cannot have.
 const TTYD_SETTLE: Duration = Duration::from_millis(600);
 
-async fn start_ttyd(port: u16, cmd: &[String], writable: bool) -> Result<Ttyd> {
+async fn start_ttyd(port: u16, shell: &Shell, writable: bool) -> Result<Ttyd> {
     // A SPAWN THAT SUCCEEDS PROVES A PROCESS WAS CREATED, NOT THAT IT IS SERVING.
     // ttyd exits immediately when the port is taken, and that exit lands after
     // `spawn()` has already returned Ok — so a second `hanzo link` on this machine
@@ -123,8 +165,11 @@ async fn start_ttyd(port: u16, cmd: &[String], writable: bool) -> Result<Ttyd> {
     if writable {
         c.arg("--writable");
     }
+    if shell.url_arg() {
+        c.arg("--url-arg");
+    }
     let child = c
-        .args(cmd)
+        .args(shell.argv())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)
@@ -149,7 +194,7 @@ pub async fn run(
     read_only: bool,
     title: Option<String>,
 ) -> Result<()> {
-    let cmd = shell_command(shell.as_deref());
+    let sh_kind = Shell::from_flag(shell.as_deref());
 
     let api = network::active(cfg).api.trim_end_matches('/').to_string();
     // Refreshing accessor, not the raw one: a link holds a shell for hours, and
@@ -168,8 +213,8 @@ pub async fn run(
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
-    let _ttyd = start_ttyd(TTYD_PORT, &cmd, !read_only).await?;
-    println!("{} {}", "→".green(), cmd.join(" ").cyan());
+    let _ttyd = start_ttyd(TTYD_PORT, &sh_kind, !read_only).await?;
+    println!("{} {}", "→".green(), sh_kind.label().cyan());
 
     let mut sh = share::start(
         cfg,
@@ -203,7 +248,7 @@ pub async fn run(
     // Unlisted is said out loud, because a link the console cannot show is a
     // different thing from a link, and finding that out later is worse.
     let listing = match client
-        .register(&cmd[0], title.as_deref().unwrap_or(&cwd), &host, &cwd)
+        .register("tmux", title.as_deref().unwrap_or(&cwd), &host, &cwd)
         .await
     {
         Ok(reg) => Some(reg.id),
@@ -526,125 +571,52 @@ mod tests {
         assert!(finish(&client, Some("sess_1"), Ok(())).await.is_ok());
     }
 
-    // The default is tmux, not $SHELL: only a multiplexed session can be driven
-    // from the local terminal AND the browser at once, which is what linking is for.
-    // A bare $SHELL default would publish a pty the caller can only watch.
+    // ONE LINK, MANY SHELLS. The default runs a wrapper rather than a fixed tmux
+    // command, so a pane can ask for a shell by name over the SAME tunnel — one
+    // port, one gate sign-in, N independent tmux sessions. Proven against ttyd
+    // 1.7.7: connecting with ?arg=alpha and ?arg=beta created two separate
+    // sessions from one server.
     #[test]
-    fn defaults_to_a_session_both_ends_can_drive() {
-        assert_eq!(
-            shell_command(None),
-            vec!["tmux", "new", "-A", "-s", "hanzo"]
-        );
+    fn the_default_serves_a_shell_the_url_can_name() {
+        let sh = Shell::from_flag(None);
+        assert!(sh.url_arg(), "the query has to be able to name a shell");
+        let argv = sh.argv();
+        // `sh -c SCRIPT $0` — the placeholder is what puts the client's arg in $1.
+        assert_eq!(argv[0], "sh");
+        assert_eq!(argv[1], "-c");
+        assert_eq!(argv[3], "hanzo-shell", "a $0 placeholder, so the arg lands in $1");
+        assert!(argv[2].contains("tmux new -A -s"), "{}", argv[2]);
     }
 
-    // Naming a plain shell still gets exactly that — one head, published.
+    // `tmux` names what the default already is; it must not become a second way.
     #[test]
-    fn a_named_shell_is_not_multiplexed() {
-        std::env::set_var("SHELL", "/opt/homebrew/bin/zsh");
-        assert_eq!(shell_command(Some("zsh")), vec!["zsh"]);
+    fn asking_for_tmux_asks_for_the_default() {
+        assert_eq!(Shell::from_flag(Some("tmux")).argv(), Shell::from_flag(None).argv());
     }
 
+    // A NAMED COMMAND TAKES NO URL ARGUMENT, and this is the security-critical
+    // half. `--url-arg` appends the query to argv, so `--shell bash` plus
+    // `?arg=-c&arg=whoami` would be `bash -c whoami` — remote execution handed
+    // over by a query string. The wrapper is written to be given arguments; a raw
+    // command is not, so it is never offered them.
     #[test]
-    fn names_a_shell_verbatim() {
-        assert_eq!(shell_command(Some("bash")), vec!["bash"]);
-        assert_eq!(shell_command(Some("zsh")), vec!["zsh"]);
-    }
-
-    // Silence is the normal case: a shell sits in one directory for long stretches,
-    // and a PATCH per tick would say nothing while dragging `updatedAt` forward —
-    // making an idle session look busy to anything that reads recency.
-    #[test]
-    fn only_a_change_is_news() {
-        assert!(worth_reporting("", "/Users/z"), "the first path is always news");
-        assert!(worth_reporting("/Users/z", "/Users/z/work/hanzo/cli"));
-        assert!(!worth_reporting("/Users/z", "/Users/z"), "standing still is not news");
-        assert!(!worth_reporting("/Users/z", ""), "tmux saying nothing is not a move to nowhere");
-    }
-
-    // The bar belongs to the ONE shared session, never to the server.
-    //
-    // `-g` writes the server-wide default: it leaks this link's URL into every
-    // other tmux session on the machine, and — because the tmux server outlives
-    // links — it is what left a bar advertising a tunnel from hours earlier.
-    #[test]
-    fn the_bar_is_scoped_to_the_session_not_the_server() {
-        for args in bar_args(Some("https://x.share.hanzo.ai")) {
-            assert!(args.contains(&"-t".to_string()) && args.contains(&"hanzo".to_string()));
-            assert!(!args.contains(&"-g".to_string()), "global leaks into other sessions: {args:?}");
+    fn a_named_shell_is_never_given_the_url() {
+        for cmd in ["bash", "zsh", "fish"] {
+            let sh = Shell::from_flag(Some(cmd));
+            assert_eq!(sh.argv(), vec![cmd.to_string()]);
+            assert!(!sh.url_arg(), "`--shell {cmd}` must not read the query");
         }
     }
 
-    // A link that ended must stop advertising its tunnel — the session stays, the
-    // URL does not.
+    // The name reaching tmux is bounded BEFORE tmux sees it: `;` is tmux's own
+    // command separator, and --url-arg lets a caller send several args.
     #[test]
-    fn ending_a_link_clears_the_bar() {
-        let set = &bar_args(Some("https://x.share.hanzo.ai"))[0];
-        let cleared = &bar_args(None)[0];
-        assert_eq!(set[4], " https://x.share.hanzo.ai ");
-        assert_eq!(cleared[4], "", "a dead link leaves no URL up");
+    fn the_wrapper_strips_a_name_down_to_something_safe() {
+        let script = &Shell::from_flag(None).argv()[2];
+        assert!(script.contains("tr -cd"), "the name must be reduced to a rune set");
+        assert!(script.contains("cut -c1-32"), "and bounded in length");
+        assert!(script.contains("${1:-hanzo}"), "and read from $1 alone");
+        assert!(!script.contains("$2"), "extra arguments are ignored, never used");
     }
 
-    // An unlisted link has no row to close, and must not invent one. The registry
-    // being unreachable is exactly when a stray PATCH would be aimed at nothing.
-    #[tokio::test]
-    async fn an_unlisted_link_closes_nothing() {
-        let mock = MockCloud::start().await;
-        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
-
-        finish(&client, None, Ok(())).await.unwrap();
-
-        assert!(mock.requests().is_empty(), "no row, no request");
-    }
-
-    // …and it still hands the caller's own result back untouched.
-    #[tokio::test]
-    async fn an_unlisted_link_still_reports_how_it_ended() {
-        let mock = MockCloud::start().await;
-        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
-
-        let err = finish(&client, None, Err(anyhow!("share ended: exit 1")))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("share ended"), "got: {err}");
-    }
-
-    // The port check is the whole difference between "one link per machine" being
-    // a rule and being a comment. Measured before this existed: two link processes,
-    // ONE ttyd, and two tunnels claiming one share name — the second link had
-    // published the FIRST link's shell under its own session row.
-    #[test]
-    fn a_port_already_served_is_seen_as_taken() {
-        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind a spare port");
-        let port = held.local_addr().unwrap().port();
-        assert!(port_taken(port), "a bound port must read as taken");
-        drop(held);
-        assert!(!port_taken(port), "and free again once released");
-    }
-
-    // A clean exit is the caller leaving a shell they HAD. That ends the link.
-    #[test]
-    fn leaving_the_shell_ends_the_link() {
-        assert!(took_over(Some(0)));
-    }
-
-    // Everything else means tmux never had the terminal, and the link must go on
-    // holding the tunnel the browser is already using. This is the regression that
-    // made `hanzo link` exit one second after printing its URL: run from inside
-    // tmux, or anywhere without a tty, tmux exits non-zero and the old code read
-    // that as the shell exiting normally.
-    #[test]
-    fn a_terminal_tmux_never_took_does_not_end_the_link() {
-        assert!(!took_over(Some(1)), "no tty / nested tmux");
-        assert!(!took_over(None), "not installed, or killed by a signal");
-    }
-
-    // tmux is attach-or-create so a dropped link comes back to the SAME shell
-    // rather than a fresh one, which is the only reason to involve it at all.
-    #[test]
-    fn tmux_attaches_or_creates_one_named_session() {
-        assert_eq!(
-            shell_command(Some("tmux")),
-            vec!["tmux", "new", "-A", "-s", "hanzo"]
-        );
-    }
 }

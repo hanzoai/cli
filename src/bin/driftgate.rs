@@ -124,7 +124,7 @@ const EXCUSED: usize = 7;
 /// Routes cloud's own live table names and cloud's own host answers 404 to — a
 /// route registered with a dead mount behind it. A CEILING, not an equality, and
 /// the asymmetry is deliberate: see where it is applied.
-const CONTRADICTED: usize = 3;
+const CONTRADICTED: usize = 2;
 
 // ---- the route table ---------------------------------------------------------
 
