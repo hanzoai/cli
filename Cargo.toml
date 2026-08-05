@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.9.38"
+version = "1.9.39"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -38,7 +38,7 @@ genspec = ["dep:serde_norway"]
 members = ["crates/event"]
 
 [dependencies]
-hanzo-event = { path = "crates/event" }
+hanzo-event = { path = "crates/event", version = "0.1.0" }
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
