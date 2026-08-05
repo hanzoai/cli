@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.9.39"
+version = "1.9.40"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -19,7 +19,7 @@ path = "src/main.rs"
 [[bin]]
 name = "genspec"
 path = "src/bin/genspec.rs"
-required-features = ["genspec"]
+required-features = ["maintainer"]
 
 # driftgate is the GATE, not a generator: it reads the committed spec, the live
 # route table and — where neither can answer — the running host, and it reads the
@@ -28,9 +28,23 @@ required-features = ["genspec"]
 [[bin]]
 name = "driftgate"
 path = "src/bin/driftgate.rs"
+required-features = ["maintainer"]
 
+# genproduct rewrites the committed command tree from the committed spec. It was
+# auto-discovered from src/bin/ and so installed into every user PATH — where a
+# bare  (it parses no arguments) rewrote generated.rs inside the
+# reader own cargo registry cache. It is a maintainer tool; it is gated like one.
+[[bin]]
+name = "genproduct"
+path = "src/bin/genproduct.rs"
+required-features = ["maintainer"]
+
+# ONE gate for the three maintainer tools. A user installs the hanzo binary;
+# genspec, driftgate and genproduct are how that binary's command tree is MADE,
+# and a reader has no use for them. genproduct in particular parses no arguments,
+# so a bare invocation rewrote generated.rs inside the caller's own registry cache.
 [features]
-genspec = ["dep:serde_norway"]
+maintainer = ["dep:serde_norway"]
 
 # The canonical Event emitter lives in its own crate so `dev` can share the exact
 # same wire via a pinned git dependency — one source of truth, two consumers.
