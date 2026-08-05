@@ -40,12 +40,12 @@ cd "$(dirname "$0")/.."
 export HANZO_REGISTRY="$SPEC" HANZO_SPEC_REF="${SPEC_REF:-unpinned}"
 
 if [ "${1:-}" = "--check" ]; then
-  cargo run --quiet --features genspec --bin genspec --locked -- --check
+  cargo run --quiet --features maintainer --bin genspec --locked -- --check
   exit 0
 fi
 
-cargo run --quiet --features genspec --bin genspec --locked
-cargo run --quiet --bin genproduct --locked
+cargo run --quiet --features maintainer --bin genspec --locked
+cargo run --quiet --features maintainer --bin genproduct --locked
 
 # `.spec-lock` has ONE writer now — hanzoai/ci's client: lane, which knows the
 # document's repo, path, ref and digest and is the only thing that can know them.
