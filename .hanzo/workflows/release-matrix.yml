@@ -120,34 +120,38 @@ jobs:
           tar -xf macsdk.tar.xz -C "$HOME"
           echo "SDKROOT=$HOME/MacOSX11.3.sdk" >> "$GITHUB_ENV"
 
-      # THE DRIFT GATE. The command tree is a CLAIM about what the server serves,
-      # and a release is the moment that claim reaches users — so it is put to the
-      # server, in BOTH directions, before one artifact is minted. Recording the
-      # source (`info.description`, asserted offline in spec_drift) says WHERE the
-      # spec came from; only this says whether it is still TRUE. v1.7.2 shipped 149
+      # Tests GATE the artifact, and THE DRIFT GATE IS ONE OF THEM. The command
+      # tree is a CLAIM about what the server serves, and a release is the moment
+      # that claim reaches users — so `tests/spec_drift.rs` puts it to the evidence
+      # in BOTH directions before one artifact is minted: no command addressing a
+      # route the server denies, no served product no command reaches, and no
+      # hand-edited artifact anywhere in the derivation chain. v1.7.2 shipped 149
       # `/v1/cloud/<verb-noun>` commands the server has never served, a later spec
       # carried 129 more, and 46 served products shipped with no command at all.
       #
-      # `genspec --verify` stood here and did half of it: it could only refute
-      # inside a product the live table OWNS, which leaves everything behind a `*`
-      # relay door and the whole edge-answered inference plane un-refutable, and it
-      # never asked the other direction. `driftgate` applies that same predicate AND
-      # asks the running host wherever the table can only answer with a door or a
-      # silence. Needs no hanzoai/openapi checkout — a clone, a build and the network.
-      - name: The live server contradicts this command tree in neither direction
-        if: matrix.target.host
-        run: make verify
-
-      # Tests GATE the artifact. They run on the HOST arch only — a cross-built
-      # binary cannot execute here; the cross targets are the same source through
-      # the same compiler.
+      # There was a separate `make verify` step here, ahead of this one, from when
+      # that gate needed the network and could not live in a test. It is hermetic
+      # now — it rules on the checked-in `spec/live.json` — so it runs HERE, once.
+      # Two steps running one predicate is two places to keep it true.
+      #
+      # HOST arch only: a cross-built binary cannot execute here, and the cross
+      # targets are the same source through the same compiler.
       #
       # ALL targets, not `--bin hanzo`: that selector runs only the binary's unit
-      # tests, so `tests/spec_drift.rs` — the gate pinning `generated.rs` to the
-      # spec and the spec to the wire — compiled here and never once executed.
-      - name: Test
+      # tests, so `tests/spec_drift.rs` compiled here and never once executed.
+      #
+      # `make test`, not `cargo test` — and that is not a style choice. The gates
+      # in `tests/` EXEC `driftgate` and `genproduct`, which sit behind
+      # `required-features = ["maintainer"]`, so a bare `cargo test` never builds
+      # them and both gates die on `NotFound` instead of ruling. Measured: under a
+      # hand-edit to `generated.rs`, `cargo test --locked` printed the identical
+      # two NotFound panics it prints on a CLEAN tree — its verdict did not depend
+      # on its subject at all. The Makefile owns the one invocation that builds the
+      # tools first and runs the whole workspace; a second spelling here is a
+      # second thing to keep true, and this is the copy that guards the artifact.
+      - name: Test — including the drift gate, in both directions
         if: matrix.target.host
-        run: cargo test --locked
+        run: make test
 
       - name: Build
         run: cargo zigbuild --release --bin hanzo --locked --target ${{ matrix.target.rust }}

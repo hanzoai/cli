@@ -1,131 +1,165 @@
 //! `driftgate` — the shipped command surface and the live route table, held
-//! against each other in BOTH directions, with the running host as the arbiter.
+//! against each other in BOTH directions, HERMETICALLY, against evidence that is
+//! checked in.
 //!
-//! The two ways a CLI and its server come apart are not the same defect and are
-//! not found the same way, so the gate asks both questions and reports them
-//! apart:
+//! # WHY THIS GATE IS NOT THE ONE IT REPLACED
 //!
-//!   * PHANTOM — a route a command can address that the server does not serve.
-//!     `hanzo` v1.7.2 shipped 149 of these; a later spec carried 129 more; the
-//!     last four were `hanzo load-balancers …`, deleted upstream nine minutes
-//!     after the spec that shipped them was cut.
-//!   * ORPHAN — a product the server serves that no command reaches. 46 of these
-//!     shipped at once when a stale capture was used as the route table, and 21
-//!     `/v1/deploy` operations reached nobody for as long as a curation entry
-//!     reserved the name for a local command that had been deleted.
+//! The gate before it compared `generated.rs` against `spec/cloud.json` — two
+//! DERIVED artifacts, which agree with each other exactly as long as one derives
+//! from the other, whether or not either is still true of anything. Both can be
+//! stale together and the gate stays green. It could not have caught a single
+//! defect this repo actually shipped.
 //!
-//! # 404 IS NOT 403, AND ONE 404 IS NOT A 404
+//! What decides drift is the SERVER, and the server can only be asked over the
+//! network — which a gate must not need, because a gate that needs the network in
+//! CI gets switched off, and a switched-off gate is worse than none. So the two
+//! are decomplected:
 //!
-//! Everything here turns on that. `401`/`403` say the route is THERE and wants a
-//! caller who is signed in; `404` says there is nothing at that address. An
-//! earlier hand analysis of this exact surface conflated them and reported three
-//! production breaks that were not breaks. A gate that makes that mistake is
-//! worse than no gate: it is a red build that teaches people the build lies.
+//!   * `--refresh` ASKS (network). It writes `spec/live.json`: the live table's
+//!     word about every coordinate, the host's raw answers, and the control
+//!     answers that make those answers mean something. Evidence, not verdicts.
+//!   * the default RULES (no network). It reads that evidence, re-derives every
+//!     verdict from it, and refuses a tree the evidence contradicts. This is what
+//!     `cargo test` and `make verify` run, and it needs nothing but a checkout.
 //!
-//! The same mistake has a second floor, and this gate fell through it while it
-//! was being built: fourteen `/v1/pricing` paths answered `404` to one concurrent
-//! sweep and `200` to every serial re-ask a minute later. So a `404` is CONFIRMED
-//! before it counts — re-asked serially, three times — and a `404` that does not
-//! hold is `Flapping`: present, reported, never drift.
+//! One binary, because a gate that runs a different derivation than the writer
+//! tests something nobody ships. `--refresh --check` re-asks and refuses to write
+//! when a verdict moved — that is the nightly, and it is how production moving
+//! under a committed tree becomes a red build rather than a user's bug report.
 //!
-//! | answer                          | verdict   |
-//! |---------------------------------|-----------|
-//! | `404` three times, serially     | ABSENT    |
-//! | `404` that did not repeat       | FLAPPING (present, and said so) |
-//! | `401` `403` `405` `2xx` `5xx` … | PRESENT   |
-//! | no answer at all                | BLIND     |
+//! # 404 IS NOT 403, AND NEITHER MEANS ANYTHING WITHOUT A CONTROL
 //!
-//! BLIND fails. A gate that cannot see must not pass — the one thing it may
-//! never do is report "no drift" when what it means is "I could not look".
+//! `401`/`403` say the route is THERE and wants a caller who is signed in; `405`
+//! says the path is routed and the verb is not; only `404` says there is nothing
+//! at that address. An earlier hand analysis of this exact surface conflated them
+//! and reported three production breaks that were not breaks.
 //!
-//! # WHO IS ASKED, AND WHO CAN BE ASKED
+//! THAT RULE IS NOT ENOUGH, and believing it was cost this project a whole
+//! parallel document. A relay door or an auth wall answers IDENTICALLY for a real
+//! path and an invented one: `/v1/bot/*` 403s everything, so 32 authored `/v1/bot`
+//! operations "verified" against a door that cannot tell them from nonsense.
+//! 66 of the 71 operations a second authority contributed were confirmed exactly
+//! that way. A door is not a list, and a 403 with no control is not evidence.
 //!
-//! The route table answers first, because it is free and it is a projection of
-//! the router itself:
+//! So EVERY probe carries a CONTROL — a nonsense sibling under the same prefix,
+//! asked the same way — and the control is what makes the answer mean something:
 //!
-//!   * it OWNS the product and names no such
-//!     route                                 → REFUTED. The table is complete for
-//!     a product it serves, so this is decided without asking anyone.
-//!   * it NAMES the route exactly            → served — but the table projects the
-//!     ROUTER, and a route can be registered with a dead mount behind it, which
-//!     the router cannot know and the table therefore cannot say. Ask anyway.
-//!   * it names only a DOOR (`/v1/iam/*`)    → a door is not an answer. A `*`
-//!     catch-all says something is mounted behind it, never what. Ask.
-//!   * it is silent about the product        → the table this gate holds is one
-//!     RELEASE's projection and the host is whatever is deployed, so silence can
-//!     be skew rather than absence. Ask.
+//! | control | real     | verdict        | why                                        |
+//! |---------|----------|----------------|--------------------------------------------|
+//! | `404`   | `404`    | ABSENT         | the prefix discriminates, and denies this   |
+//! | `404`   | anything | PRESENT        | the prefix discriminates, and answers this  |
+//! | not 404 | anything | UNFALSIFIABLE  | the prefix answers for nonsense too         |
+//! | blind   | —        | BLIND          | nothing was learned                         |
 //!
-//! THERE IS NO EDGE EXCEPTION, and the sentence that used to sit in the last
-//! bullet — "the inference surface is answered at the edge" — was false. Measured
-//! 2026-08-03 against api.hanzo.ai, every probe with a nonsense sibling under the
-//! same prefix as its control: `GET /v1/models` 200 vs `/v1/models-zzq` 404;
-//! `POST /v1/chat/completions` 401 vs `-zzq` 404 (and `GET` of it 405, POST-only);
-//! `POST /v1/embeddings` 401 vs 404; `GET /v1/tools` 403 vs 404; `POST /v1/event`
-//! 401 vs 404 — all `server: hanzo`, all `x-api-version: v1.801.383`, the same
-//! router that answers the 404. All of them are in the emitted document and in
-//! `spec/cloud.json`. A rationalization in a doc comment is how a whole false
-//! category of "answered somewhere this pipeline cannot see" stayed alive, and it
-//! was the stated reason a second authority was allowed to describe it.
+//! UNFALSIFIABLE is a first-class verdict and it is COUNTED, never quietly read
+//! as presence. A stated blind spot is worth more than a confident guess, and the
+//! count is pinned so the blind spot cannot grow in silence.
 //!
-//! Roughly a third of this spec's operations sit behind a door or in a namespace
-//! the table never mentions — a surface on which the document is constitutionally
-//! unable to testify. That is the hole this gate
-//! exists to close, and only the host can close it.
+//! And a SINGLE 404 is not a 404 either: fourteen `/v1/pricing` paths answered
+//! `404` to one concurrent sweep and `200` to every serial re-ask a minute later.
+//! A `404` is confirmed [`CONFIRM`] times, serially, before it counts; one that
+//! does not hold is FLAPPING — present, reported, never drift. BLIND fails: the
+//! one thing a gate may never do is report "no drift" when it means "I could not
+//! look".
 //!
-//! But only a `GET` on a LITERAL path can be put to a host, and both halves of
-//! that were measured rather than assumed:
+//! # WHO CAN BE ASKED
 //!
-//!   * a `{param}` makes `404` mean "no route" OR "no such id", and a gate must
-//!     not read a sentence with two meanings;
-//!   * cloud's router answers `404`, not `405`, to a verb it does not have at a
-//!     path it does — `POST /v1/admin/credits` is in the live table and a `GET`
-//!     of it `404`s — so a `GET` says nothing about a `POST`-only route.
+//! Only a `GET` on a LITERAL path, and both halves were measured rather than
+//! assumed: a `{param}` makes `404` mean "no route" OR "no such id", and cloud's
+//! router answers `404`, not `405`, to a verb it lacks at a path it has (`POST
+//! /v1/admin/credits` is in the live table and a `GET` of it 404s). Everything
+//! else is settled by the live table's own word, or is UNFALSIFIABLE. The probe is
+//! only ever a `GET`: a gate that DELETEs to find out whether something is there
+//! is not a gate.
 //!
-//! Everything else is UNDECIDABLE and is counted as such. Naming that gap is
-//! honest; closing it by guessing would not be. And the probe is a `GET` for the
-//! reason it is only ever a `GET`: a gate that DELETEs to find out whether
-//! something is there is not a gate.
+//! # WHICH SIDE IS WRONG
 //!
-//! When the host does say ABSENT, whose defect it is turns on who claimed the
-//! route. If no document named it, the CLI is carrying a route the server denies
-//! — ours, and a hard failure. If the live table named it, cloud's own table and
-//! cloud's own server disagree; no edit in this repo can settle that, so it is
-//! reported against a CEILING that may not grow in silence and is free to fall
-//! the moment somebody redeploys.
+//! Both failures are real and they have different owners, so they are reported
+//! apart and named apart:
 //!
-//! # THE OTHER DIRECTION
+//!   * PHANTOM — the host denies it and NO document claims it. The CLI is
+//!     carrying a route the server does not serve. OURS, and a hard failure.
+//!   * CONTRADICTED — the host denies it and cloud's OWN live table claims it.
+//!     Cloud's table and cloud's server disagree; no edit in this repo settles
+//!     that, so it is a CEILING that may not grow in silence and is free to fall
+//!     the moment somebody redeploys.
+//!   * ORPHAN — a served product no command reaches. OURS: add the command, or
+//!     declare it in `src/curation.rs` with a reason a person can act on.
 //!
-//! Reachability is asked of the BINARY — `hanzo <product> --help` — not derived
-//! a second time from the data `genproduct` folded. Whether a person can reach a
-//! product is a fact about the built CLI, and only the built CLI knows it: a
+//! Every row names the COMMAND, not only the coordinate, because the command is
+//! what a person types and what a fix has to touch.
+//!
+//! # THE CHAIN, AND WHY A HAND EDIT ANYWHERE IN IT IS REFUSED
+//!
+//! ```text
+//!   hanzoai/cloud@<tag> openapi.yaml   ── .spec-lock  (repo, path, ref, sha256)
+//!        │ genspec
+//!   spec/cloud.json                    ── spec/live.json's `spec_sha256`
+//!        │ genproduct
+//!   src/commands/product/generated.rs  ── genproduct --check
+//! ```
+//!
+//! Each link is pinned by a digest whose writer is a generator, so an artifact
+//! edited by hand stops matching the thing it is supposed to be derived from.
+//! `spec/live.json` carries the digest of the `spec/cloud.json` it is evidence
+//! ABOUT, and its own digest over its own payload. Every coordinate must have
+//! evidence: a coordinate nobody has ever asked about is unproven, and unproven
+//! fails.
+//!
+//! # THE OTHER DIRECTION ASKS THE BINARY
+//!
+//! `hanzo <product> --help`, not a second derivation of the data `genproduct`
+//! folded. Whether a person can reach a product is a fact about the BUILT CLI: a
 //! generated product that collides with a local command, or a relocation that
 //! quietly stopped relocating, is invisible to any re-derivation and obvious to
-//! one exec.
+//! one exec. A served product with no command is drift unless `src/curation.rs`
+//! says otherwise, every excuse naming a spelling is RUN, and the applied count is
+//! pinned — an exception nobody counts is how 21 served `/v1/deploy` operations
+//! came to be reachable by nothing.
 //!
-//! A served product with no command is drift unless `src/curation.rs` says
-//! otherwise. Those entries are the DECLARED exceptions: each names a spelling
-//! the gate runs — so an excuse that stopped being true turns CI red — or says
-//! in words that nothing reaches the surface. The gate counts the ones it had to
-//! apply and pins the count, because an exception nobody counts is how 21 served
-//! `/v1/deploy` operations came to be reachable by nothing while the table that
-//! dropped them still called it a decision.
-//!
-//! Usage: `driftgate [--registry <url|path>] [--host <url>] [--spec <path>]
-//!                   [--hanzo <path>]`
+//! Usage: `driftgate [--refresh [--check]] [--registry <url|path>] [--host <url>]
+//!                   [--spec <path>] [--live <path>] [--hanzo <path>]`
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::{Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::Digest;
 
 #[path = "../curation.rs"]
 mod curation;
 use curation::{Curated, Instead};
 
+// The generated command table, by VALUE — the same static this binary's sibling
+// `hanzo` builds its parser from, not a re-parse of the file it lives in. A gate
+// that re-reads a generated artifact with a regex is a second reading of one
+// value, which is the disease this pipeline exists to end, one layer down.
+// The gate reads (product, nodes, verb, method, path) — enough to name a command;
+// `hanzo` reads the rest of every row. Two readers of one value legitimately use
+// different halves of it, which is what `dead_code` cannot know.
+#[path = "../commands/product/op.rs"]
+#[allow(dead_code)]
+mod op;
+#[allow(unused_imports)] // `Field` and `Ty` are used BY `generated` through `super::`.
+use op::{Field, Op, Ty};
+#[path = "../commands/product/generated.rs"]
+#[allow(dead_code)]
+mod generated;
+use generated::OPS;
+
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 const DEFAULT_REGISTRY: &str = "https://api.hanzo.ai/v1/openapi.json";
 const DEFAULT_HOST: &str = "https://api.hanzo.ai";
+
+/// The nonsense segment a CONTROL is asked at. It has to be shaped like a route
+/// somebody could have written — a segment of ASCII and hyphens — so that nothing
+/// but the router's own table can distinguish it from a real one.
+const NONSENSE: &str = "zzq9-no-such-route";
+
+/// How many serial `404`s confirm one.
+const CONFIRM: usize = 3;
 
 /// How many served products the curation table had to excuse the last time
 /// anyone looked. Pinned, and asserted EXACTLY: the number is a claim about the
@@ -138,32 +172,37 @@ const EXCUSED: usize = 7;
 /// route registered with a dead mount behind it. A CEILING, not an equality, and
 /// the asymmetry is deliberate: see where it is applied.
 ///
-/// 3 -> 6 at v1.801.383, and both halves of the move are worth reading.
-///
-/// The old 3 are GONE: `/v1/billing/{gpu-eligibility,payment-config,
-/// payment-methods}` were fixed in cloud's router. The new 6 are ONE event —
-/// `/v1/ai/{applications,permissions,sessions,sessions/duplicated,users,
-/// users/table-infos}`. cloud renamed those resources (applications→deployments,
-/// sessions→signin-sessions, users→usages, permissions back to IAM) and the
-/// deployed binary's ROUTER serves the new nouns while the DOCUMENT that same
-/// binary publishes still advertises the old ones. Measured, with controls:
-/// `GET /v1/ai/deployments` 401 (routed, wants a caller) and
-/// `GET /v1/ai/applications` 404, both `x-api-version: v1.801.383`.
+/// The six are ONE event: `/v1/ai/{applications,permissions,sessions,
+/// sessions/duplicated,users,users/table-infos}`. cloud renamed those resources
+/// (applications→deployments, sessions→signin-sessions, users→usages, permissions
+/// back to IAM) and the deployed binary's ROUTER serves the new nouns while the
+/// DOCUMENT that same binary publishes still advertises the old ones. Measured,
+/// with controls: `GET /v1/ai/deployments` 401 (routed, wants a caller) and
+/// `GET /v1/ai/applications` 404 against a `/v1/ai/<nonsense>` control that also
+/// 404s — so the prefix discriminates and the denial is real.
 ///
 /// The cause is a second authority INSIDE cloud, which is the same disease this
-/// pipeline just cured on its own side: `apps/ai` projects from the committed
+/// pipeline cured on its own side: `apps/ai` projects from the committed
 /// `plugin/ai/openapi.json` subset instead of the mounted plugin's live registry,
 /// so its published names lag its routes. Nothing in this repo can settle it — the
 /// fix is in hanzoai/cloud (task #146's seam), and the number is here so it cannot
 /// be settled by forgetting.
-///
-/// TWO MORE WERE NOT REAL and are not counted: `/v1/o11y/complete/{google,oidc}`
-/// answer `303`, and the transport used to follow the redirect and record the
-/// landing page's 404 against the callback's name. Fixed where the client is
-/// built; a redirect is an answer.
 const CONTRADICTED: usize = 6;
 
-// ---- the route table ---------------------------------------------------------
+/// Coordinates whose evidence cannot decide anything, because the prefix that
+/// answers for them answers the same way for a route nobody wrote — a relay door
+/// (`/v1/bot/*` 403s everything) or an auth wall that refuses before it routes.
+///
+/// A CEILING, and the most important number in this file. It is exactly the
+/// surface on which a second authority could once say anything it liked and call
+/// it verified: 66 of the 71 operations the deleted master contributed were
+/// "confirmed" by a door that cannot tell a real path from an invented one. The
+/// count may not grow in silence — a growing blind spot is a growing licence to
+/// guess — and it falls on its own as cloud types those relays into real
+/// operations.
+const UNFALSIFIABLE: usize = 177;
+
+// ---- the live route table ----------------------------------------------------
 
 fn segs(p: &str) -> Vec<&str> {
     p.split('/').filter(|s| !s.is_empty()).collect()
@@ -175,6 +214,21 @@ fn is_param(s: &str) -> bool {
 fn is_wild(s: &str) -> bool {
     is_param(s) && s.contains("wild")
 }
+/// A coordinate: the METHOD and the path template, as one key.
+fn coord(method: &str, path: &str) -> String {
+    format!("{method} {path}")
+}
+/// The prefix a CONTROL is asked under — the coordinate's own parent. Asking
+/// `/v1/o11y/<nonsense>` is what makes a `404` at `/v1/o11y/services` mean the
+/// router denies THAT ROUTE rather than "this whole prefix answers 404 to
+/// everything" (or, the other way round, that it answers 403 to everything).
+fn parent(path: &str) -> String {
+    let s = segs(path);
+    format!("/{}", s[..s.len() - 1].join("/"))
+}
+fn control_of(path: &str) -> String {
+    format!("{}/{NONSENSE}", parent(path).trim_end_matches('/'))
+}
 
 /// What the live route table knows: the patterns it serves per method, and the
 /// products it is the authority over.
@@ -183,13 +237,32 @@ struct Table {
     owned: BTreeSet<String>,
 }
 
-/// The table's answer about one operation. `Door` and `Silent` are not answers —
-/// they are the table saying it cannot answer, which is why they carry a probe.
+/// The table's answer about one operation, recorded in the capture so the
+/// hermetic run can reason with it. `Door` and `Silent` are not answers — they are
+/// the table saying it cannot answer.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
 enum Says {
+    /// The table names this exact route.
     Serves,
+    /// The table OWNS this product and names no such route — decided without
+    /// asking anyone, because the table is complete for a product it serves.
     Refutes,
+    /// Only a `/v1/<product>/*` catch-all matches. A door says something is
+    /// mounted behind it, never what.
     Door,
+    /// The table has never heard of this product.
     Silent,
+}
+
+impl Says {
+    /// Does the LIVE table claim to answer here? This is the question that decides
+    /// WHOSE defect an absence is, and it is the only thing `Door` is good for: a
+    /// door claims the subtree relays, so a denial behind one is cloud's table
+    /// disagreeing with cloud's server, not a route this repo invented.
+    fn claims(self) -> bool {
+        matches!(self, Says::Serves | Says::Door)
+    }
 }
 
 impl Table {
@@ -245,17 +318,12 @@ impl Table {
             None => Says::Silent,
         }
     }
-
-    fn products(&self) -> BTreeSet<String> {
-        self.owned.clone()
-    }
 }
 
-/// Every product either reading names — the universe the ORPHAN direction asks
-/// about. The live table's products plus the spec's, because the two are one
-/// document at two commits: a product cloud typed after the pinned release is in
-/// the live table and not the spec, and one retired since is in the spec and not
-/// the table. Neither is a category of route this pipeline cannot see.
+/// Every product a document names — the universe the ORPHAN direction asks about,
+/// taken from BOTH readings, because they are one document at two commits: a
+/// product cloud typed after the pinned release is in the live table and not the
+/// spec, and one retired since is in the spec and not the table.
 fn products(doc: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for path in doc.get("paths").and_then(Value::as_object).into_iter().flatten().map(|(p, _)| p) {
@@ -267,13 +335,98 @@ fn products(doc: &Value) -> BTreeSet<String> {
     out
 }
 
-// ---- the arbiter -------------------------------------------------------------
+/// Every coordinate a document carries, and whether a host can be asked about it.
+/// Only a `GET` on a LITERAL path can: see the module docs for why each half of
+/// that is a measurement rather than a convention.
+fn coordinates(doc: &Value) -> Vec<(String, String, bool)> {
+    let mut out = Vec::new();
+    for (path, item) in doc.get("paths").and_then(Value::as_object).into_iter().flatten() {
+        let s = segs(path);
+        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) || path.contains('?') || path.contains('#') {
+            continue;
+        }
+        let literal = !s.iter().any(|x| is_param(x));
+        for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
+            if VERBS.contains(&m.to_ascii_lowercase().as_str()) {
+                let m = m.to_ascii_uppercase();
+                let askable = literal && m == "GET";
+                out.push((m, path.clone(), askable));
+            }
+        }
+    }
+    out
+}
 
-#[derive(Clone, Copy, PartialEq)]
+// ---- the evidence ------------------------------------------------------------
+
+/// `spec/live.json` — what the live server said, checked in, so the gate that
+/// rules on it needs no network. EVIDENCE, never verdicts: the raw answer
+/// sequences are stored and every verdict is re-derived from them by [`verdict`]
+/// and [`settle`], which are pure and are pinned by the tests at the foot of this
+/// file. A capture holding conclusions instead of answers could not be re-judged
+/// when the rule is corrected — and the rule has been corrected twice.
+#[derive(Serialize, Deserialize)]
+struct Capture {
+    evidence: Evidence,
+    /// sha256 of `evidence`, canonically encoded — this file's own integrity.
+    digest: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Evidence {
+    /// Which release, which host, and — the load-bearing one — the digest of the
+    /// `spec/cloud.json` this evidence was taken ABOUT. A capture that does not
+    /// name the artifact it describes cannot catch a hand edit to it.
+    source: Source,
+    /// The products the LIVE table serves. Half of the ORPHAN universe, and the
+    /// half a committed spec cannot know: a product cloud started serving after
+    /// the pinned release shows up here and nowhere else.
+    products: BTreeSet<String>,
+    /// Per coordinate, the live table's own word.
+    table: BTreeMap<String, Says>,
+    /// Per literal path, the host's answers to a `GET`. `null` is a transport
+    /// failure, and it is recorded rather than dropped.
+    probes: BTreeMap<String, Vec<Option<u16>>>,
+    /// Per prefix, the host's answers to a `GET` of a route NOBODY WROTE. Keyed by
+    /// prefix and not by path, because "does this prefix discriminate?" is one
+    /// question per prefix and asking it 744 times would be 744 requests proving
+    /// the same thing.
+    controls: BTreeMap<String, Vec<Option<u16>>>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+struct Source {
+    /// The hanzoai/cloud release tag `.spec-lock` pins. Evidence taken about a
+    /// different release is evidence about a different surface.
+    r#ref: String,
+    host: String,
+    registry: String,
+    spec_sha256: String,
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", sha2::Sha256::digest(bytes))
+}
+
+impl Capture {
+    fn seal(evidence: Evidence) -> Self {
+        let digest = sha256(&serde_json::to_vec(&evidence).expect("encode evidence"));
+        Capture { evidence, digest }
+    }
+    /// Was this file written by the refresh, or by a person? Same trick as every
+    /// other link in the chain: the digest's only writer is the generator.
+    fn sealed(&self) -> bool {
+        self.digest == sha256(&serde_json::to_vec(&self.evidence).expect("encode evidence"))
+    }
+}
+
+// ---- the rules, which are pure -----------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Probe {
-    /// Three `404`s in a row. Nothing is routed here.
+    /// [`CONFIRM`] `404`s in a row. Nothing is routed here.
     Absent,
-    Present(u16),
+    Answered(u16),
     /// A `404` that did not hold up. The route exists — a router with no such
     /// route cannot produce a `200` — but it is intermittently answering as if it
     /// did not, which is a production symptom worth naming and NOT drift.
@@ -281,31 +434,19 @@ enum Probe {
     Blind,
 }
 
-/// How many serial `404`s confirm one.
-const CONFIRM: usize = 3;
-
-/// THE RULE OF THIS GATE, and it is a pure function of the answers so that it can
-/// be stated as a test rather than only as a paragraph — see the tests at the foot
-/// of this file. It is kept apart from the transport for exactly that reason.
-///
-/// `401`/`403` say the route is THERE and wants a caller who is signed in; `405`
-/// says the path is routed and the verb is not; only `404` says there is nothing at
-/// that address. An earlier hand analysis of this exact surface conflated them and
-/// reported three production breaks that were not breaks.
-///
-/// And A SINGLE 404 IS NOT EVIDENCE. Measured on this surface: fourteen
-/// `/v1/pricing` paths answered 404 to one concurrent sweep and 200 to every serial
-/// re-ask a minute later. So a 404 counts only once it has held [`CONFIRM`] times;
-/// one that did not hold is [`Probe::Flapping`] — present, reported, never drift.
-/// A sequence that ran out before confirming, or that went silent, is
-/// [`Probe::Blind`]: no answer is not "no drift", it is "I could not look".
+/// A `404` is only a `404` once it has held [`CONFIRM`] times, serially. Measured
+/// on this surface: fourteen `/v1/pricing` paths answered `404` to one concurrent
+/// sweep and `200` to every serial re-ask a minute later, so condemning on the
+/// first answer would have reported fourteen breaks that were not breaks. Silence
+/// is [`Probe::Blind`] and never absence: no answer is not "no drift", it is "I
+/// could not look".
 fn verdict(answers: &[Option<u16>]) -> Probe {
     let mut seen404 = 0;
     for a in answers {
         match *a {
             Some(404) => seen404 += 1,
             Some(code) if seen404 > 0 => return Probe::Flapping(code),
-            Some(code) => return Probe::Present(code),
+            Some(code) => return Probe::Answered(code),
             None => return Probe::Blind,
         }
     }
@@ -316,36 +457,49 @@ fn verdict(answers: &[Option<u16>]) -> Probe {
     }
 }
 
-/// Ask the host whether anything is routed at this path, and hand the answers to
-/// [`verdict`]. Read-only by construction: a `GET`, and a `405` is a PRESENT
-/// answer, not a failure.
-async fn probe(client: &reqwest::Client, host: &str, path: &str) -> Probe {
-    let url = format!("{}{}", host.trim_end_matches('/'), path);
-    let mut answers = Vec::with_capacity(CONFIRM);
-    // Up to CONFIRM rounds, serially; each tolerates one transport failure, because
-    // a dropped connection is not evidence about a route. Only a 404 is re-asked —
-    // every other answer has already settled the question.
-    while answers.len() < CONFIRM {
-        if !answers.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-        }
-        let mut answer = None;
-        for attempt in 0..2 {
-            match client.get(&url).send().await {
-                Ok(r) => {
-                    answer = Some(r.status().as_u16());
-                    break;
-                }
-                Err(_) if attempt == 0 => continue,
-                Err(_) => break,
-            }
-        }
-        answers.push(answer);
-        if answer != Some(404) {
-            break;
-        }
+/// What one coordinate's evidence actually decides.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Settled {
+    Present,
+    Absent,
+    /// The prefix answers the same for a route nobody wrote, so nothing about
+    /// THIS route was learned. Counted, never read as presence.
+    Unfalsifiable,
+    /// Nobody could be asked, and the table has no word either.
+    Blind,
+}
+
+/// THE RULE OF THIS GATE, and the reason it is a pure function of the evidence
+/// rather than a paragraph: it can then be stated as a test, and the tests at the
+/// foot of this file are that statement.
+///
+/// The CONTROL decides whether the real answer means anything at all. A prefix
+/// that answers a route nobody wrote is a prefix whose answers say nothing about
+/// any particular route — that is a relay door or an auth wall, and reading its
+/// `403` as "served" is exactly how 66 invented operations were once "verified".
+/// Only where the control is a confirmed `404` does the real answer decide, and
+/// then it decides both ways: `404` is absence, anything else is presence.
+///
+/// Where no host can be asked, the live table's own word stands: it is complete
+/// for a product it OWNS (so a missing route there is refuted without asking
+/// anyone), and a door or a silence is not an answer.
+fn settle(says: Says, probe: Option<(Probe, Probe)>) -> Settled {
+    match probe {
+        Some((real, control)) => match (control, real) {
+            (Probe::Blind, _) | (_, Probe::Blind) => Settled::Blind,
+            // The control answered. The prefix cannot tell a real route from an
+            // invented one, so it has not testified about this one.
+            (Probe::Answered(_) | Probe::Flapping(_), _) => Settled::Unfalsifiable,
+            (Probe::Absent, Probe::Absent) => Settled::Absent,
+            (Probe::Absent, _) => Settled::Present,
+        },
+        None => match says {
+            Says::Serves => Settled::Present,
+            Says::Refutes => Settled::Absent,
+            Says::Door | Says::Silent => Settled::Unfalsifiable,
+        },
     }
-    verdict(&answers)
 }
 
 // ---- reachability ------------------------------------------------------------
@@ -354,7 +508,7 @@ async fn probe(client: &reqwest::Client, host: &str, path: &str) -> Probe {
 /// that is the only thing that knows. clap prints `Usage: hanzo <spelling> …`
 /// for a command it has and falls back to the ROOT usage for one it does not, so
 /// the usage line is the answer and no help-page format is parsed.
-fn resolves(hanzo: &std::path::Path, spelling: &str) -> bool {
+fn resolves(hanzo: &Path, spelling: &str) -> bool {
     let out = Command::new(hanzo)
         .args(spelling.split_whitespace())
         .arg("--help")
@@ -377,15 +531,43 @@ fn claim(c: &Curated) -> Option<String> {
     }
 }
 
+/// Which command a coordinate IS, in the words a person types. A gate that can
+/// only print `GET /v1/x` makes the reader do the join; and a coordinate with no
+/// command at all is a different fact — elided by the verb fold, or curated out —
+/// which is worth saying rather than leaving as a blank.
+fn commands(method: &str, path: &str) -> Vec<String> {
+    OPS.iter()
+        .filter(|o| o.method == method && o.path == path)
+        .map(|o| {
+            let mut s = vec!["hanzo", o.product];
+            s.extend(o.nodes.iter().copied());
+            s.push(o.verb);
+            s.join(" ")
+        })
+        .collect()
+}
+
+fn named(method: &str, path: &str) -> String {
+    let cmds = commands(method, path);
+    if cmds.is_empty() {
+        format!("{method:<7}{path}  (no command — elided by the verb fold, or curated out)")
+    } else {
+        format!("{method:<7}{path}  ⇒  {}", cmds.join(" | "))
+    }
+}
+
 // ---- arguments ---------------------------------------------------------------
 
-const USAGE: &str =
-    "usage: driftgate [--registry <url|path>] [--host <url>] [--spec <path>] [--hanzo <path>]";
+const USAGE: &str = "usage: driftgate [--refresh [--check]] [--registry <url|path>] [--host <url>] \
+                     [--spec <path>] [--live <path>] [--hanzo <path>]";
 
 struct Args {
+    refresh: bool,
+    check: bool,
     registry: String,
     host: String,
     spec: PathBuf,
+    live: PathBuf,
     hanzo: PathBuf,
 }
 
@@ -398,37 +580,89 @@ fn args() -> Args {
         .and_then(|p| p.parent().map(|d| d.join(if cfg!(windows) { "hanzo.exe" } else { "hanzo" })))
         .unwrap_or_else(|| manifest.join("target/debug/hanzo"));
     let mut a = Args {
+        refresh: false,
+        check: false,
         registry: DEFAULT_REGISTRY.to_string(),
         host: DEFAULT_HOST.to_string(),
         spec: manifest.join("spec/cloud.json"),
+        live: manifest.join("spec/live.json"),
         hanzo: sibling,
     };
-    // The flag is decided BEFORE its value is required, so an unknown flag says so
-    // and `--help` is answered rather than told it needs a value.
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < argv.len() {
         let flag = argv[i].clone();
-        let set: fn(&mut Args, String) = match flag.as_str() {
-            "--registry" => |a, v| a.registry = v,
-            "--host" => |a, v| a.host = v,
-            "--spec" => |a, v| a.spec = PathBuf::from(v),
-            "--hanzo" => |a, v| a.hanzo = PathBuf::from(v),
+        // The valueless flags are decided first, so an unknown flag says so and
+        // `--help` is answered rather than told it needs a value.
+        match flag.as_str() {
+            "--refresh" => {
+                a.refresh = true;
+                i += 1;
+                continue;
+            }
+            "--check" => {
+                a.check = true;
+                i += 1;
+                continue;
+            }
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0)
             }
+            _ => {}
+        }
+        let set: fn(&mut Args, String) = match flag.as_str() {
+            "--registry" => |a, v| a.registry = v,
+            "--host" => |a, v| a.host = v,
+            "--spec" => |a, v| a.spec = PathBuf::from(v),
+            "--live" => |a, v| a.live = PathBuf::from(v),
+            "--hanzo" => |a, v| a.hanzo = PathBuf::from(v),
             other => panic!("{USAGE}\nunknown: {other}"),
         };
         set(&mut a, argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{flag} needs a value\n{USAGE}")));
         i += 2;
     }
+    assert!(!(a.check && !a.refresh), "--check is a mode of --refresh: it re-asks the host and \
+         refuses to write when a verdict moved. The default run is already a check, and it needs \
+         no network.\n{USAGE}");
     a
 }
 
-/// Read the route table. Retried for the same reason a 404 is confirmed: one
-/// dropped connection is not a fact about anything, and a gate that fails the
-/// build over it is an intermittent red gate, which is how a gate dies.
+// ---- asking (the ONLY part that touches the network) -------------------------
+
+/// Ask the host whether anything is routed at this path. Read-only by
+/// construction: a `GET`, and a `405` is an ANSWER, not a failure. Only a `404` is
+/// re-asked — every other answer has already settled the question — and each round
+/// tolerates one transport failure, because a dropped connection is not evidence
+/// about a route.
+async fn ask(client: &reqwest::Client, host: &str, path: &str) -> Vec<Option<u16>> {
+    let url = format!("{}{}", host.trim_end_matches('/'), path);
+    let mut answers = Vec::with_capacity(CONFIRM);
+    while answers.len() < CONFIRM {
+        if !answers.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+        let mut answer = None;
+        for attempt in 0..2 {
+            match client.get(&url).send().await {
+                Ok(r) => {
+                    answer = Some(r.status().as_u16());
+                    break;
+                }
+                Err(_) if attempt == 0 => continue,
+                Err(_) => break,
+            }
+        }
+        answers.push(answer);
+        if answer != Some(404) {
+            break;
+        }
+    }
+    answers
+}
+
+/// Read the live route table. Retried for the same reason a 404 is confirmed: one
+/// dropped connection is not a fact about anything.
 async fn read(src: &str) -> Value {
     let body = if src.starts_with("http") {
         let mut last = String::new();
@@ -449,11 +683,9 @@ async fn read(src: &str) -> Value {
             }
         }
         let Some(body) = got else {
-            // The same law the probes obey, at the top of the run: a gate that
-            // cannot see must not pass. Said plainly, not as a backtrace.
             println!(
                 "driftgate: BLIND — {src} did not answer, three times: {last}\n\
-                 Nothing was checked. This is not \"no drift\" — it is \"I could not look\"."
+                 Nothing was captured. This is not \"no drift\" — it is \"I could not look\"."
             );
             std::process::exit(1);
         };
@@ -464,144 +696,345 @@ async fn read(src: &str) -> Value {
     serde_json::from_str(&body).unwrap_or_else(|e| panic!("{src} is not the JSON route table: {e}"))
 }
 
+/// Ask everything, once, and return the evidence. Concurrency is bounded because
+/// this is somebody's production API, and a gate that reads like an attack gets
+/// itself rate-limited into a BLIND verdict.
+async fn gather(a: &Args, spec: &Value, spec_sha: String, spec_ref: String) -> Evidence {
+    let table = Table::read(&read(&a.registry).await);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        // A REDIRECT IS AN ANSWER, and following it asks a different question
+        // about a different address. This turned two live routes into false 404s:
+        // `GET /v1/o11y/complete/google` answers 303 (an OAuth callback), the gate
+        // followed it to `/v1/o11y/login?…` and recorded THAT page's 404 against
+        // the callback's name — reporting cloud as contradicting itself about a
+        // route that had just answered. Same class as reading a 403 as absence:
+        // the status this gate reasons about must be the status of the address it
+        // asked about.
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent("hanzo-driftgate")
+        .build()
+        .expect("http client");
+
+    let mut says = BTreeMap::new();
+    let mut targets: BTreeSet<String> = BTreeSet::new();
+    for (m, path, askable) in coordinates(spec) {
+        says.insert(coord(&m, &path), table.says(&m, &segs(&path)));
+        if askable {
+            targets.insert(path);
+        }
+    }
+    // One control per PREFIX: "does this prefix discriminate?" is one question per
+    // prefix, and asking it once per path would be 744 requests proving the same
+    // thing 221 times over.
+    let controls: BTreeSet<String> = targets.iter().map(|p| control_of(p)).collect();
+
+    let mut probes = BTreeMap::new();
+    let mut control_answers = BTreeMap::new();
+    let all: Vec<(String, bool)> = targets
+        .iter()
+        .map(|p| (p.clone(), false))
+        .chain(controls.iter().map(|p| (p.clone(), true)))
+        .collect();
+    let total = all.len();
+    let mut done = 0usize;
+    for batch in all.chunks(16) {
+        let mut set = tokio::task::JoinSet::new();
+        for (p, is_control) in batch {
+            let (c, h, p, is_control) = (client.clone(), a.host.clone(), p.clone(), *is_control);
+            set.spawn(async move {
+                let answers = ask(&c, &h, &p).await;
+                (p, is_control, answers)
+            });
+        }
+        while let Some(r) = set.join_next().await {
+            let (p, is_control, answers) = r.expect("probe task");
+            if is_control {
+                control_answers.insert(parent(&p), answers);
+            } else {
+                probes.insert(p, answers);
+            }
+        }
+        done += batch.len();
+        eprint!("\rdriftgate: asked {done}/{total}");
+    }
+    eprintln!();
+
+    Evidence {
+        source: Source {
+            r#ref: spec_ref,
+            host: a.host.clone(),
+            registry: a.registry.clone(),
+            spec_sha256: spec_sha,
+        },
+        products: table.owned,
+        table: says,
+        probes,
+        controls: control_answers,
+    }
+}
+
+// ---- ruling (no network, ever) -----------------------------------------------
+
+/// One coordinate's whole story, as the report needs it.
+struct Row {
+    method: String,
+    path: String,
+    says: Says,
+    verdict: Settled,
+    /// The code the host answered, where one was asked for — printed so a reader
+    /// can see the 401/403 split with their own eyes rather than trusting that the
+    /// gate did not conflate them.
+    code: Option<u16>,
+    flapping: bool,
+}
+
+/// Re-derive every verdict from the evidence. This is the whole ruling, and it is
+/// a pure function of (spec, capture) — which is what makes the gate hermetic and
+/// what makes a corrected rule re-judge old evidence instead of needing new.
+fn rule(spec: &Value, ev: &Evidence) -> (Vec<Row>, Vec<(String, String)>) {
+    let (mut rows, mut unproven) = (Vec::new(), Vec::new());
+    for (method, path, askable) in coordinates(spec) {
+        let key = coord(&method, &path);
+        let Some(&says) = ev.table.get(&key) else {
+            unproven.push((method, path));
+            continue;
+        };
+        let probe = if askable {
+            let real = ev.probes.get(&path).map(|a| verdict(a));
+            let control = ev.controls.get(&parent(&path)).map(|a| verdict(a));
+            match (real, control) {
+                (Some(r), Some(c)) => Some((r, c)),
+                // A coordinate the capture calls askable but never asked about is
+                // not "probably fine" — it is unproven, and unproven fails.
+                _ => {
+                    unproven.push((method, path));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let (code, flapping) = match probe.map(|(r, _)| r) {
+            Some(Probe::Answered(c)) => (Some(c), false),
+            Some(Probe::Flapping(c)) => (Some(c), true),
+            _ => (None, false),
+        };
+        rows.push(Row { method, path, says, verdict: settle(says, probe), code, flapping });
+    }
+    (rows, unproven)
+}
+
 // ---- the gate ----------------------------------------------------------------
+
+fn lock_ref(manifest: &Path) -> String {
+    let lock = std::fs::read_to_string(manifest.join(".spec-lock")).expect("read .spec-lock");
+    lock.lines()
+        .find_map(|l| l.strip_prefix("ref="))
+        .expect(".spec-lock has no ref= — this tree does not name a document")
+        .to_string()
+}
 
 #[tokio::main]
 async fn main() {
     // `driftgate | head` should end like `ls | head` does, not with a Rust panic
-    // about a broken pipe. Rust ignores SIGPIPE so a closed stdout surfaces as a
-    // write error; this report is meant to be read through a pager.
+    // about a broken pipe.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
     let a = args();
-    assert!(a.hanzo.is_file(), "no `hanzo` at {} — build it first (`cargo build --bin hanzo`), \
-         because whether a product is reachable is a fact about the built CLI", a.hanzo.display());
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let spec_bytes = std::fs::read(&a.spec).unwrap_or_else(|e| panic!("read {}: {e}", a.spec.display()));
+    let spec: Value = serde_json::from_slice(&spec_bytes)
+        .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.spec.display()));
+    let spec_sha = sha256(&spec_bytes);
+    let spec_ref = lock_ref(&manifest);
 
-    let table = Table::read(&read(&a.registry).await);
-    let spec: Value = serde_json::from_slice(
-        &std::fs::read(&a.spec).unwrap_or_else(|e| panic!("read {}: {e}", a.spec.display())),
-    )
-    .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.spec.display()));
-    let paths = spec.get("paths").and_then(Value::as_object).cloned().unwrap_or_else(Map::new);
+    if a.refresh {
+        refresh(&a, &spec, spec_sha, spec_ref).await;
+        return;
+    }
+    gate(&a, &spec, &spec_sha, &spec_ref);
+}
 
-    // A REDIRECT IS AN ANSWER, and following it asks a different question about a
-    // different address. reqwest follows up to 10 by default, and that turned two
-    // live routes into false 404s: `GET /v1/o11y/complete/google` answers 303 (an
-    // OAuth callback), the gate followed it to `/v1/o11y/login?...` and recorded
-    // that page's 404 against the callback's name — reporting cloud as
-    // contradicting itself about a route that had just answered. Same class of
-    // defect as reading a `403` as absence: the status this gate reasons about
-    // must be the status of the address it asked about.
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .redirect(reqwest::redirect::Policy::none())
-        .user_agent("hanzo-driftgate")
-        .build()
-        .expect("http client");
+/// ASK. The only mode that touches the network, and the only one that writes.
+async fn refresh(a: &Args, spec: &Value, spec_sha: String, spec_ref: String) {
+    let ev = gather(a, spec, spec_sha, spec_ref).await;
+
+    // A capture with a hole in it is a gate that will pass on a blind spot for as
+    // long as nobody refreshes again. Refuse to write one.
+    let blind: Vec<&String> = ev
+        .probes
+        .iter()
+        .chain(ev.controls.iter())
+        .filter(|(_, ans)| verdict(ans) == Probe::Blind)
+        .map(|(p, _)| p)
+        .collect();
+    if !blind.is_empty() {
+        println!("driftgate --refresh: BLIND on {} target(s) — nothing written.", blind.len());
+        for p in blind.iter().take(20) {
+            println!("   {p}");
+        }
+        println!("   A capture with a hole in it passes the gate on that hole forever. Re-run.");
+        std::process::exit(1);
+    }
+
+    let fresh = Capture::seal(ev);
+    if a.check {
+        // The NIGHTLY. Not a byte comparison — a 401 that became a 403 is the same
+        // fact about the same route, and a gate that goes red for it is a gate
+        // people learn to switch off. What must not move in silence is a VERDICT.
+        let have: Capture = serde_json::from_slice(
+            &std::fs::read(&a.live).unwrap_or_else(|e| panic!("read {}: {e}", a.live.display())),
+        )
+        .unwrap_or_else(|e| panic!("{} is not a capture: {e}", a.live.display()));
+        let (was, _) = rule(spec, &have.evidence);
+        let (now, _) = rule(spec, &fresh.evidence);
+        let key = |r: &Row| coord(&r.method, &r.path);
+        let old: BTreeMap<String, Settled> = was.iter().map(|r| (key(r), r.verdict)).collect();
+        let mut moved: Vec<String> = Vec::new();
+        for r in &now {
+            match old.get(&key(r)) {
+                Some(&before) if before != r.verdict => moved.push(format!(
+                    "{:<7}{}  {:?} → {:?}   {}",
+                    r.method,
+                    r.path,
+                    before,
+                    r.verdict,
+                    commands(&r.method, &r.path).join(" | ")
+                )),
+                None => moved.push(format!("{:<7}{}  NEW", r.method, r.path)),
+                _ => {}
+            }
+        }
+        let gone: BTreeSet<&String> = have.evidence.products.difference(&fresh.evidence.products).collect();
+        let new: BTreeSet<&String> = fresh.evidence.products.difference(&have.evidence.products).collect();
+        if moved.is_empty() && gone.is_empty() && new.is_empty() {
+            println!("driftgate --refresh --check: the live server still says what {} records.", a.live.display());
+            return;
+        }
+        println!("!! THE LIVE SERVER MOVED under the committed evidence.");
+        for m in &moved {
+            println!("   {m}");
+        }
+        for p in gone {
+            println!("   product {p} is no longer served");
+        }
+        for p in new {
+            println!("   product {p} is served now and was not");
+        }
+        println!("\nRe-capture with `make live`, commit spec/live.json, and read what the gate then says.");
+        std::process::exit(1);
+    }
+
+    let bytes = serde_json::to_vec(&fresh).expect("encode capture");
+    std::fs::write(&a.live, &bytes).unwrap_or_else(|e| panic!("write {}: {e}", a.live.display()));
+    let (rows, _) = rule(spec, &fresh.evidence);
+    let count = |v: Settled| rows.iter().filter(|r| r.verdict == v).count();
+    println!(
+        "driftgate --refresh: {} coordinates — {} present, {} absent, {} unfalsifiable; {} products \
+         served -> {} ({} bytes)",
+        rows.len(),
+        count(Settled::Present),
+        count(Settled::Absent),
+        count(Settled::Unfalsifiable),
+        fresh.evidence.products.len(),
+        a.live.display(),
+        bytes.len()
+    );
+}
+
+/// RULE. No network, no clock, no host — a pure function of what is committed.
+fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
+    assert!(
+        a.hanzo.is_file(),
+        "no `hanzo` at {} — build it first (`cargo build --bin hanzo`), because whether a product \
+         is reachable is a fact about the built CLI",
+        a.hanzo.display()
+    );
+    let raw = std::fs::read(&a.live).unwrap_or_else(|e| {
+        panic!("read {}: {e}\nNo evidence, no verdict. Capture it with `make live`.", a.live.display())
+    });
+    let cap: Capture = serde_json::from_slice(&raw)
+        .unwrap_or_else(|e| panic!("{} is not a capture: {e}", a.live.display()));
+    let ev = &cap.evidence;
+
+    let mut fail = false;
+    let broke = |title: &str, rows: Vec<String>| {
+        if rows.is_empty() {
+            return;
+        }
+        println!("\n!! {title}");
+        for r in &rows {
+            println!("   {r}");
+        }
+    };
+
+    // ---- THE CHAIN. Every link pinned by a digest whose writer is a generator,
+    // so an artifact edited by hand stops matching what it is derived from.
+    let mut chain = Vec::new();
+    if !cap.sealed() {
+        chain.push(format!(
+            "{} does not match its own digest — it was edited by hand. Evidence is CAPTURED, never \
+             written: re-run `make live`.",
+            a.live.display()
+        ));
+    }
+    if ev.source.spec_sha256 != spec_sha {
+        chain.push(format!(
+            "{} is evidence about sha256:{}, and {} hashes to sha256:{}.\n   \
+             Either that spec was hand-edited — it is @generated from hanzoai/cloud's document and \
+             nothing else — or it was regenerated onto a new release and nobody re-asked the server. \
+             `make live` settles the second; `make spec-check` settles the first.",
+            a.live.display(),
+            &ev.source.spec_sha256[..16],
+            a.spec.display(),
+            &spec_sha[..16]
+        ));
+    }
+    if ev.source.r#ref != spec_ref {
+        chain.push(format!(
+            "{} is evidence about hanzoai/cloud@{}, and .spec-lock pins @{spec_ref}. Evidence about \
+             one release cannot rule on a projection of another — `make live`.",
+            a.live.display(),
+            ev.source.r#ref
+        ));
+    }
+    if !chain.is_empty() {
+        // Nothing below this line can mean anything if the chain is broken, and a
+        // gate that reports fifty consequential failures for one broken link
+        // teaches people to skim. Stop here.
+        println!("driftgate — the derivation chain");
+        for c in &chain {
+            println!("\n!! {c}");
+        }
+        println!("\ndriftgate: the chain is broken. Nothing else was checked.");
+        std::process::exit(1);
+    }
 
     // ---- direction one: a route the server does not serve --------------------
-    //
-    // Asked of the SPEC, not of the folded tree: every command's route comes from
-    // here, and a phantom the curation table happens to hide today ships the day
-    // that entry is removed. The superset is the honest question.
-    // Only a GET operation on a literal path can be put to the host, and both
-    // halves of that are measured, not assumed:
-    //
-    //   * `{param}` — a 404 from `/v1/things/{id}` means "no route" or "no such
-    //     id" and a gate must not read a sentence with two meanings.
-    //   * not GET — cloud's router answers 404, not 405, to a method it does not
-    //     have at a path it does: `POST /v1/admin/credits` is in the live table
-    //     and a GET of it 404s. So a GET says nothing about a POST-only route,
-    //     and the honest thing is to leave the table's word as the only word.
-    //
-    // The probe is a GET for the same reason it is only ever a GET: a gate that
-    // DELETEs to find out whether something is there is not a gate.
-    let (mut serves, mut refutes, mut undecidable) = (0usize, Vec::new(), 0usize);
-    let mut ask: BTreeMap<String, bool> = BTreeMap::new();
-    for (path, item) in &paths {
-        let s = segs(path);
-        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) || path.contains('?') || path.contains('#') {
-            continue;
-        }
-        let literal = !s.iter().any(|x| is_param(x));
-        for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
-            if !VERBS.contains(&m.to_ascii_lowercase().as_str()) {
-                continue;
-            }
-            let m = m.to_ascii_uppercase();
-            let askable = literal && m == "GET";
-            match table.says(&m, &s) {
-                // The table names this route exactly. It is still worth asking a
-                // host that can be asked — the table is a projection of the
-                // ROUTER, and a route can be registered with a dead mount behind
-                // it, which the router cannot know and the table therefore cannot
-                // say. `serves` counts the ones nobody can re-ask.
-                Says::Serves if askable => {
-                    ask.insert(path.clone(), true);
-                }
-                Says::Serves => serves += 1,
-                Says::Refutes => refutes.push((m, path.clone())),
-                // A door or a silence is not an answer; only the host has one.
-                Says::Door | Says::Silent if askable => {
-                    ask.entry(path.clone()).or_insert(false);
-                }
-                Says::Door | Says::Silent => undecidable += 1,
-            }
-        }
-    }
-
-    let targets: Vec<String> = ask.keys().cloned().collect();
-    let mut answers: BTreeMap<String, Probe> = BTreeMap::new();
-    for batch in targets.chunks(16) {
-        let mut set = tokio::task::JoinSet::new();
-        for p in batch {
-            let (c, h, p) = (client.clone(), a.host.clone(), p.clone());
-            set.spawn(async move {
-                let v = probe(&c, &h, &p).await;
-                (p, v)
-            });
-        }
-        while let Some(r) = set.join_next().await {
-            let (p, v) = r.expect("probe task");
-            answers.insert(p, v);
-        }
-    }
-
-    // The histogram is printed, not just totalled. Conflating 404 with 401/403 is
-    // the one mistake this gate exists not to make, so every CI log carries the
-    // split that proves it did not: a run whose "present" is all 401 has still
-    // seen 401, and anyone reading the log can tell.
+    let (rows, unproven) = rule(spec, ev);
     let mut codes: BTreeMap<u16, usize> = BTreeMap::new();
-    let (mut present, mut absent, mut contradicted, mut flapping, mut blind) =
-        (0usize, Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (path, table_serves) in &ask {
-        match answers.get(path).copied().unwrap_or(Probe::Blind) {
-            Probe::Present(c) => {
-                present += 1;
-                *codes.entry(c).or_default() += 1;
-            }
-            Probe::Flapping(c) => {
-                present += 1;
-                *codes.entry(c).or_default() += 1;
-                flapping.push(path.clone());
-            }
-            // WHOSE defect it is turns on who claimed the route. If the table
-            // named it, cloud's own table and cloud's own server disagree and no
-            // edit in this repo can settle that. If nothing named it, the CLI is
-            // carrying a route the server denies, and that is ours.
-            Probe::Absent if *table_serves => contradicted.push(path.clone()),
-            Probe::Absent => absent.push(path.clone()),
-            Probe::Blind => blind.push(path.clone()),
-        }
+    for r in rows.iter().filter_map(|r| r.code) {
+        *codes.entry(r).or_default() += 1;
     }
-    let split = codes.iter().map(|(c, n)| format!("{c}×{n}")).collect::<Vec<_>>().join(" ");
+    let count = |v: Settled| rows.iter().filter(|r| r.verdict == v).count();
+    let by = |v: Settled, claims: bool| -> Vec<String> {
+        rows.iter()
+            .filter(|r| r.verdict == v && r.says.claims() == claims)
+            .map(|r| named(&r.method, &r.path))
+            .collect()
+    };
+    let phantoms = by(Settled::Absent, false);
+    let contradicted = by(Settled::Absent, true);
+    let blind: Vec<String> = by(Settled::Blind, true).into_iter().chain(by(Settled::Blind, false)).collect();
+    let flapping: Vec<&Row> = rows.iter().filter(|r| r.flapping).collect();
 
     // ---- direction two: a served product no command reaches ------------------
-    let mut universe = table.products();
-    universe.extend(products(&spec));
+    let mut universe = ev.products.clone();
+    universe.extend(products(spec));
     let (mut reachable, mut orphans, mut excused) = (0usize, Vec::new(), Vec::new());
     for p in &universe {
         if resolves(&a.hanzo, p) {
@@ -612,7 +1045,6 @@ async fn main() {
             orphans.push(p.clone());
         }
     }
-
     // An excuse is only an excuse while it is true. Every claim in the curation
     // table names a spelling; the gate runs all of them, applied or not, because
     // the reservation that goes stale FIRST is the one nothing is leaning on yet.
@@ -623,93 +1055,124 @@ async fn main() {
         .collect();
 
     // ---- the report ----------------------------------------------------------
-    println!("driftgate — {} against {}", a.spec.display(), a.registry);
-    println!("  the table settled     {serves:>5} served, {} refuted", refutes.len());
     println!(
-        "  the host settled      {present:>5} present, {} absent, {} contradicted, {} unanswered",
-        absent.len(),
-        contradicted.len(),
-        blind.len()
+        "driftgate — {} against hanzoai/cloud@{spec_ref}, on evidence in {}",
+        a.spec.display(),
+        a.live.display()
     );
-    println!("                              answers: {split}   (a CONFIRMED 404 ⇒ absent; everything else ⇒ present)");
-    println!("  nobody can settle     {undecidable:>5} (a `{{param}}`, or a verb a read-only probe cannot ask about)");
-    println!("  products reachable    {reachable:>5} of {}", universe.len());
-    println!("  declared exceptions   {:>5} applied of {} in src/curation.rs", excused.len(), curation::CURATED.len());
+    println!(
+        "  coordinates          {:>5}   {} present, {} absent, {} unfalsifiable",
+        rows.len(),
+        count(Settled::Present),
+        count(Settled::Absent),
+        count(Settled::Unfalsifiable)
+    );
+    // The histogram is printed, not just totalled. Conflating 404 with 401/403 is
+    // the one mistake this gate exists not to make, so every log carries the split
+    // that proves it did not: a run whose "present" is all 401 has still seen 401,
+    // and anyone reading can tell.
+    println!(
+        "  the host answered    {:>5}   {}",
+        codes.values().sum::<usize>(),
+        codes.iter().map(|(c, n)| format!("{c}×{n}")).collect::<Vec<_>>().join(" ")
+    );
+    println!(
+        "  controls             {:>5}   prefixes asked with a route nobody wrote; {} of them \
+         answered, so nothing under those prefixes can be decided",
+        ev.controls.len(),
+        ev.controls.values().filter(|a| verdict(a) != Probe::Absent).count()
+    );
+    println!("  products reachable   {reachable:>5}   of {}", universe.len());
+    println!(
+        "  declared exceptions  {:>5}   applied of {} in src/curation.rs",
+        excused.len(),
+        curation::CURATED.len()
+    );
     if !flapping.is_empty() {
         println!("\n   {} route(s) answered 404 and then answered — present, but not reliably:", flapping.len());
-        for p in &flapping {
-            println!("   {p}");
+        for r in &flapping {
+            println!("   {:<7}{}", r.method, r.path);
         }
     }
 
-    let mut fail = false;
-    let mut bad = |title: &str, rows: Vec<String>| {
-        if rows.is_empty() {
-            return;
-        }
-        fail = true;
-        println!("\n!! {title}");
-        for r in &rows {
-            println!("   {r}");
-        }
-    };
+    broke(
+        "UNPROVEN — spec/cloud.json carries a coordinate the evidence has never seen. \
+         Either the capture is stale (`make live`), or this coordinate was added by hand to a \
+         @generated file, in which case it is a phantom by construction",
+        unproven.iter().map(|(m, p)| named(m, p)).collect(),
+    );
+    fail |= !unproven.is_empty();
 
-    bad(
-        "PHANTOM — the route table owns this product and serves no such route",
-        refutes.iter().map(|(m, p)| format!("{m:<7}{p}")).collect(),
+    broke(
+        "PHANTOM — the host denies this route and NO document claims it. THIS REPO is carrying a \
+         command the server does not serve",
+        phantoms.clone(),
     );
-    bad(
-        "PHANTOM — no document claims this route and the host answers 404, three times",
-        absent.clone(),
-    );
-    bad(
-        "BLIND — the host did not answer at all. A gate that cannot see must not pass",
+    fail |= !phantoms.is_empty();
+
+    broke(
+        "BLIND — nothing was learned about this coordinate. A gate that cannot see must not pass",
         blind.clone(),
     );
-    bad(
-        "ORPHAN — served, and no command reaches it. Add the command, or declare it in src/curation.rs with a reason",
+    fail |= !blind.is_empty();
+
+    broke(
+        "ORPHAN — served, and no command reaches it. Add the command, or declare it in \
+         src/curation.rs with a reason a person can act on",
         orphans.clone(),
     );
-    bad(
+    fail |= !orphans.is_empty();
+
+    broke(
         "STALE EXCEPTION — the curation table sends people to a command that does not exist",
         stale.iter().map(|(p, s)| format!("{p:<16}claims `hanzo {s}`")).collect(),
     );
+    fail |= !stale.is_empty();
 
     // Cloud's table and cloud's server disagreeing is REAL and it is not ours: no
-    // edit in this repo makes `GET /v1/billing/payment-config` answer, and a gate
-    // that turns this build red for it is a gate people learn to switch off. So
-    // it is a CEILING, not an equality — it may not grow in silence, and it is
-    // allowed to fall the moment somebody redeploys, without turning a nightly
-    // run red for the crime of production getting better.
-    if contradicted.len() > CONTRADICTED {
-        fail = true;
-    }
+    // edit in this repo makes `GET /v1/ai/applications` answer, and a gate that
+    // turns this build red for it is a gate people learn to switch off. So it is a
+    // CEILING — it may not grow in silence, and it is allowed to fall the moment
+    // somebody redeploys, without turning a nightly red for the crime of
+    // production getting better.
     if !contradicted.is_empty() {
+        let over = contradicted.len() > CONTRADICTED;
+        fail |= over;
         println!(
-            "\n{} CLOUD CONTRADICTS ITSELF — the live route table names these routes and the host \
-             answers 404 ({} of at most {CONTRADICTED})",
-            if contradicted.len() > CONTRADICTED { "!!" } else { "  " },
+            "\n{} CLOUD CONTRADICTS ITSELF — cloud's own live table claims these routes and cloud's \
+             own host denies them ({} of at most {CONTRADICTED})",
+            if over { "!!" } else { "  " },
             contradicted.len()
         );
         for p in &contradicted {
             println!("   {p}");
         }
         println!(
-            "   A route registered with a dead mount behind it: the router knows it, so the table\n   \
-             it projects claims it, and the server still has nothing to run. The fix is in\n   \
-             hanzoai/cloud's router, never a list here. If this grew, file it there; if it shrank,\n   \
-             bring CONTRADICTED down to {} in src/bin/driftgate.rs.",
+            "   A route registered with a dead mount behind it: the router knows it, so the table it\n   \
+             projects claims it, and the server still has nothing to run. The fix is in hanzoai/cloud,\n   \
+             never a list here. If this grew, file it there; if it shrank, bring CONTRADICTED down to\n   \
+             {} in src/bin/driftgate.rs.",
             contradicted.len()
+        );
+    }
+
+    let unfalsifiable = count(Settled::Unfalsifiable);
+    if unfalsifiable > UNFALSIFIABLE {
+        fail = true;
+        println!(
+            "\n!! THE BLIND SPOT GREW: {unfalsifiable} coordinates sit behind a prefix that answers \
+             the same for a route nobody wrote, and UNFALSIFIABLE says {UNFALSIFIABLE}.\n   \
+             This is the exact surface on which a second authority could once assert anything and \
+             call it verified —\n   66 of the 71 operations the deleted master contributed were \
+             'confirmed' by a relay door. It falls on its own\n   as hanzoai/cloud types those \
+             relays into real operations; it may not rise without somebody saying why."
         );
     }
 
     if excused.len() != EXCUSED {
         fail = true;
         let verb = if excused.len() > EXCUSED { "GREW" } else { "SHRANK" };
-        println!(
-            "\n!! DECLARED EXCEPTIONS {verb}: {} applied, EXCUSED says {EXCUSED}",
-            excused.len()
-        );
+        println!("\n!! DECLARED EXCEPTIONS {verb}: {} applied, EXCUSED says {EXCUSED}", excused.len());
         for c in &excused {
             println!("   {:<16}{}", c.product, c.why);
         }
@@ -727,25 +1190,24 @@ async fn main() {
     }
 
     if fail {
-        println!("\ndriftgate: the CLI surface and the live route table disagree.");
+        println!("\ndriftgate: the CLI surface and the live server disagree.");
         std::process::exit(1);
     }
     println!("\ndriftgate: no drift.");
 }
 
-/// The gate's two predicates, pinned. Both are pure — that is why they were
-/// separated from the network and from the report — and both encode a rule this
-/// gate exists to keep, which is a rule a paragraph cannot enforce.
+/// The gate's rules, pinned. All three are pure — that is why they were separated
+/// from the transport and from the report — and each encodes a rule this gate
+/// exists to keep, which is a rule a paragraph cannot enforce.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// THE rule, and the reason this gate is worth having. `401`/`403` say the
-    /// route is THERE and wants a caller; `405` says the path is routed and the
-    /// verb is not; only `404` says nothing is at that address. An earlier hand
-    /// analysis of this exact surface conflated them and reported three production
-    /// breaks that were not breaks — a red build that teaches people the build
-    /// lies. Anything that ever makes this test fail has reintroduced that.
+    /// `401`/`403` say the route is THERE and wants a caller; `405` says the path
+    /// is routed and the verb is not; only `404` says nothing is at that address.
+    /// An earlier hand analysis of this exact surface conflated them and reported
+    /// three production breaks that were not breaks — a red build that teaches
+    /// people the build lies.
     #[test]
     fn an_auth_refusal_is_a_route_that_exists_and_only_a_confirmed_404_is_absent() {
         // 303 is in this list because it was MEASURED: `GET /v1/o11y/complete/google`
@@ -753,42 +1215,48 @@ mod tests {
         // 404 of wherever it landed — a present route recorded as absent.
         for code in [200, 201, 204, 302, 303, 400, 401, 403, 405, 409, 429, 500, 502, 503] {
             assert!(
-                matches!(verdict(&[Some(code)]), Probe::Present(c) if c == code),
-                "{code} is an answer FROM a route — a router with nothing at that address \
-                 cannot produce it, so it is never absence"
+                matches!(verdict(&[Some(code)]), Probe::Answered(c) if c == code),
+                "{code} is an answer FROM a route — a router with nothing at that address cannot \
+                 produce it, so it is never absence"
             );
         }
-        assert!(matches!(verdict(&[Some(404); CONFIRM]), Probe::Absent));
+        assert_eq!(verdict(&[Some(404); CONFIRM]), Probe::Absent);
     }
 
     /// A SINGLE 404 IS NOT EVIDENCE — the same mistake one layer down. Fourteen
     /// `/v1/pricing` paths answered 404 to one concurrent sweep and 200 to every
-    /// serial re-ask a minute later; condemning on the first answer would have
-    /// reported fourteen more breaks that were not breaks.
+    /// serial re-ask a minute later.
     #[test]
     fn a_404_that_does_not_hold_is_flapping_and_never_drift() {
-        assert!(matches!(verdict(&[Some(404), Some(200)]), Probe::Flapping(200)));
-        assert!(matches!(verdict(&[Some(404), Some(404), Some(403)]), Probe::Flapping(403)));
-        assert!(
-            matches!(verdict(&[Some(404), Some(404)]), Probe::Blind),
-            "two 404s are not the {CONFIRM} that confirm one"
-        );
+        assert_eq!(verdict(&[Some(404), Some(200)]), Probe::Flapping(200));
+        assert_eq!(verdict(&[Some(404), Some(404), Some(403)]), Probe::Flapping(403));
+        assert_eq!(verdict(&[Some(404), Some(404)]), Probe::Blind, "two 404s are not the {CONFIRM} that confirm one");
+        assert_eq!(verdict(&[None]), Probe::Blind);
+        assert_eq!(verdict(&[Some(404), None]), Probe::Blind);
+        assert_eq!(verdict(&[]), Probe::Blind);
     }
 
-    /// No answer is not "no drift" — it is "I could not look". A gate that cannot
-    /// see must not pass, so silence is its own verdict and never absence.
+    /// THE CONTROL IS WHAT MAKES AN ANSWER MEAN ANYTHING. A prefix that answers a
+    /// route nobody wrote — a relay door, an auth wall — has said nothing about
+    /// any particular route under it, and reading its `403` (or its `200`) as
+    /// "served" is exactly how 66 invented operations were once verified.
     #[test]
-    fn silence_is_never_read_as_an_answer() {
-        assert!(matches!(verdict(&[None]), Probe::Blind));
-        assert!(matches!(verdict(&[Some(404), None]), Probe::Blind));
-        assert!(matches!(verdict(&[]), Probe::Blind));
+    fn a_prefix_that_answers_for_nonsense_has_testified_about_nothing() {
+        let (real, absent) = (Probe::Answered(200), Probe::Absent);
+        // The door: control 403, so a 403 on the real path proves nothing…
+        assert_eq!(settle(Says::Door, Some((Probe::Answered(403), Probe::Answered(403)))), Settled::Unfalsifiable);
+        // …and neither does a 404 under a prefix that 200s for nonsense.
+        assert_eq!(settle(Says::Serves, Some((absent, Probe::Answered(200)))), Settled::Unfalsifiable);
+        // A discriminating prefix is what makes both readings possible.
+        assert_eq!(settle(Says::Silent, Some((real, absent))), Settled::Present);
+        assert_eq!(settle(Says::Serves, Some((absent, absent))), Settled::Absent);
+        // Silence is never an answer, from either side.
+        assert_eq!(settle(Says::Serves, Some((Probe::Blind, absent))), Settled::Blind);
+        assert_eq!(settle(Says::Serves, Some((real, Probe::Blind))), Settled::Blind);
     }
 
-    /// What the table may and may not settle on its own. It is complete for a
-    /// product it OWNS, so a missing route there is refuted without asking anyone;
-    /// a `*` door and a silence are NOT answers and carry a probe instead. The bare
-    /// `/v1/*` fallthrough is evidence of nothing — counting it would make every
-    /// conceivable path "served" and this gate a no-op.
+    /// Where no host can be asked, the table's own word stands — and it may only
+    /// refute inside a product it OWNS. A door and a silence are not answers.
     #[test]
     fn the_table_refutes_only_inside_a_product_it_owns_and_a_door_is_not_an_answer() {
         let t = Table::read(&serde_json::json!({"paths": {
@@ -796,11 +1264,68 @@ mod tests {
             "/v1/iam/{wildcard1}": {"get": {}},
             "/v1/{wildcard1}": {"get": {}}
         }}));
-        assert!(matches!(t.says("GET", &segs("/v1/billing/usage")), Says::Serves));
-        assert!(matches!(t.says("GET", &segs("/v1/billing/no-such-route")), Says::Refutes));
-        assert!(matches!(t.says("GET", &segs("/v1/iam/anything/at/all")), Says::Door));
-        assert!(matches!(t.says("GET", &segs("/v1/nosuchproduct/x")), Says::Silent));
-        assert!(matches!(t.says("POST", &segs("/v1/billing/usage")), Says::Refutes), "a verb is part of the route");
-        assert_eq!(t.products(), ["billing", "iam"].iter().map(ToString::to_string).collect());
+        assert_eq!(t.says("GET", &segs("/v1/billing/usage")), Says::Serves);
+        assert_eq!(t.says("GET", &segs("/v1/billing/no-such-route")), Says::Refutes);
+        assert_eq!(t.says("GET", &segs("/v1/iam/anything/at/all")), Says::Door);
+        assert_eq!(t.says("GET", &segs("/v1/nosuchproduct/x")), Says::Silent);
+        assert_eq!(t.says("POST", &segs("/v1/billing/usage")), Says::Refutes, "a verb is part of the route");
+        assert_eq!(t.owned, ["billing", "iam"].iter().map(ToString::to_string).collect());
+
+        assert_eq!(settle(Says::Serves, None), Settled::Present);
+        assert_eq!(settle(Says::Refutes, None), Settled::Absent);
+        assert_eq!(settle(Says::Door, None), Settled::Unfalsifiable);
+        assert_eq!(settle(Says::Silent, None), Settled::Unfalsifiable);
+    }
+
+    /// WHOSE defect an absence is turns on who claimed the route, and `Door` is on
+    /// the claiming side: a door says the subtree relays, so a denial behind one is
+    /// cloud's table disagreeing with cloud's server — not a route this repo made up.
+    #[test]
+    fn only_a_route_no_document_claims_is_this_repos_phantom() {
+        assert!(Says::Serves.claims() && Says::Door.claims());
+        assert!(!Says::Refutes.claims() && !Says::Silent.claims());
+    }
+
+    /// A CONTROL IS A SIBLING, not a child and not a cousin: same prefix, one
+    /// segment, a name nobody wrote. `/v1/models`'s sibling lives under the bare
+    /// `/v1` on purpose — that is precisely the question "does the global
+    /// fallthrough swallow everything?".
+    #[test]
+    fn a_control_is_a_nonsense_sibling_under_the_same_prefix() {
+        assert_eq!(control_of("/v1/o11y/services"), format!("/v1/o11y/{NONSENSE}"));
+        assert_eq!(control_of("/v1/models"), format!("/v1/{NONSENSE}"));
+        assert_eq!(parent(&control_of("/v1/o11y/services")), "/v1/o11y");
+    }
+
+    /// The report names the COMMAND, because that is what a person types and what
+    /// a fix has to touch — and it says so plainly when a coordinate has none.
+    #[test]
+    fn a_failing_coordinate_is_named_as_the_command_it_is() {
+        let op = OPS.iter().find(|o| o.method == "GET").expect("the tree has a read");
+        let line = named(op.method, op.path);
+        assert!(line.contains(&format!("hanzo {}", op.product)), "{line}");
+        assert!(named("GET", "/v1/no-such-product/nothing").contains("no command"));
+    }
+
+    /// Evidence is CAPTURED, never written. The seal is the only thing standing
+    /// between "the server said so" and "somebody typed it".
+    #[test]
+    fn a_capture_that_was_edited_by_hand_is_not_sealed() {
+        let ev = Evidence {
+            source: Source {
+                r#ref: "v0.0.0".into(),
+                host: "h".into(),
+                registry: "r".into(),
+                spec_sha256: "s".into(),
+            },
+            products: BTreeSet::new(),
+            table: BTreeMap::from([(coord("GET", "/v1/kv"), Says::Serves)]),
+            probes: BTreeMap::new(),
+            controls: BTreeMap::new(),
+        };
+        let mut cap = Capture::seal(ev);
+        assert!(cap.sealed());
+        cap.evidence.table.insert(coord("GET", "/v1/invented"), Says::Serves);
+        assert!(!cap.sealed(), "a row was added and the file still claimed its own digest");
     }
 }

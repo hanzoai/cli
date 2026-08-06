@@ -39,17 +39,27 @@ client:
 #
 # THE DRIFT GATE is a different question — a capture can equal its inputs exactly
 # and still describe a surface production stopped serving, or miss a product
-# production started — and it is NOT here either, for a reason the first draft of
-# this file got wrong. `make verify` sat in the list below, ordered before clippy so
-# a lint failure could not hide it. But this list runs inside hanzoai/ci's ONE lane,
-# after the client step, the KMS login and the toolchain provisioning, and a gate
-# that runs last in a shared job does not report on the server: it reports on
-# everything ahead of it. It was never asked once that way. So the drift gate owns
-# its own job — clone, compiler, network, nothing else — in
-# .hanzo/workflows/drift.yml, which now carries all four ways of asking (push, PR,
-# the nightly schedule, and a click). One predicate, one place.
+# production started — and it IS here, inside `cargo test`, because it stopped
+# needing the network. It rules on `spec/live.json`: the raw answers the live
+# server gave to every probe and to a nonsense-sibling CONTROL for each, captured
+# by `make live` and committed. So the push gate asks both directions on every
+# push, in the one lane, with nothing to fail for a reason that is not drift.
+#
+# It used to need the wire, and that is what made it fragile: a gate needing the
+# network in CI gets switched off, and this one first sat in the list below where
+# a failure in the client step or the KMS login meant it was never reached at all.
+# It was never asked once that way.
+#
+# What still needs the wire is the OTHER half — has production moved under the
+# committed evidence? — and that has its own job, its own triggers and nothing
+# else in it: `.hanzo/workflows/drift.yml`, nightly and on a click, `make
+# live-check`. One predicate per place, and neither shares its fate with anything.
+#
+# `make test`, never a bare `cargo test`: the gates below exec maintainer
+# binaries that `cargo test` does not build, and a gate that dies on NotFound
+# reads exactly like a gate that passed. One invocation, in the Makefile.
 test:
   - name: cargo-test
-    run: cargo test --locked
+    run: make test
   - name: clippy
     run: cargo clippy --locked --all-targets -- -D warnings
