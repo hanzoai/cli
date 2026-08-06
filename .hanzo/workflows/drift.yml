@@ -1,52 +1,58 @@
 name: Drift Gate
 
-# The command tree and the live server, held against each other in BOTH
-# directions — a command whose route the server does not serve, and a served
-# product no command reaches. `make verify` → `src/bin/driftgate.rs`.
+# THE QUESTION THIS JOB ASKS IS NOT THE ONE `cargo test` ASKS, and that is the
+# whole reason it still exists.
 #
-# THIS FILE IS THE GATE'S ONLY HOME, and it owns all four ways of asking. It was
-# split across two: a `drift` entry in hanzo.yml's `test:` list for pushes, and
-# this file for the schedule. That is one predicate in two places, and the half in
-# the shared lane could not answer.
+# The gate itself — the command tree and the server held against each other in
+# BOTH directions — is now HERMETIC: it rules on `spec/live.json`, the checked-in
+# evidence, and runs inside `cargo test` on every push with no network at all.
+# That was the fix for the oldest problem this pipeline had: a gate that needs the
+# network in CI gets switched off, and a switched-off gate is worse than none.
 #
-# WHY IT MUST BE ITS OWN JOB. hanzo.yml's `test:` block runs inside hanzoai/ci's
-# one lane, AFTER the client step (fetch the release document, refuse a moved ref),
-# the KMS login and the toolchain provisioning. A gate that runs last in a shared
-# job does not report on the server — it reports on everything ahead of it, and a
-# failure anywhere upstream means the drift question is never asked at all. It was
-# never asked: at the moment this file was rewritten, `drift.yml` had zero runs
-# (the nightly had not come round yet) and the last three CI/CD runs on main were
-# red. Ordering the gate before clippy fixed the smallest instance of a problem
-# whose real shape is that a verdict must not share its fate with anything else.
+# What no committed file can answer is whether PRODUCTION STILL SAYS SO. This
+# drift is almost never introduced by a commit here — the route table moves when
+# hanzoai/cloud deploys — so a repo that only checks itself when it changes learns
+# about it at the next release, from a user. `make live-check` re-asks the running
+# server, with a control for every probe, and fails when a VERDICT moved: not when
+# a 401 became a 403 (the same fact about the same route, and a gate that goes red
+# for that is a gate people learn to switch off), but when something present
+# became absent, or absent became present, or a product appeared or vanished.
 #
-# So the drift gate now needs exactly three things — a clone, a compiler and the
-# network — and NOTHING in this job can fail for a reason that is not drift.
+# The remedy it prints is one command: `make live`, commit `spec/live.json`, and
+# read what the hermetic gate then says.
 #
-# The SCHEDULE is still the half that matters most: this drift is almost never
-# introduced by a commit here. The route table moves when hanzoai/cloud deploys,
-# and a repo that only checks itself when it changes learns about that at the next
-# release, from a user. `workflow_dispatch` is here so the answer is one click away
-# when somebody asks "is the tree still true?" without pushing anything to find out.
+# WHY IT IS ITS OWN JOB. hanzo.yml's `test:` block runs inside hanzoai/ci's one
+# lane, AFTER the client step (fetch the release document, refuse a moved ref),
+# the KMS login and the toolchain provisioning. A job that runs last in a shared
+# lane does not report on the server — it reports on everything ahead of it, and a
+# failure anywhere upstream means the question is never asked at all. It was never
+# asked once that way: at the moment this file was first rewritten, `drift.yml`
+# had zero runs and the last three CI/CD runs on main were red.
 #
-# The fourth ask lives in `release-matrix.yml` and is not a duplicate of this: it is
-# the same `make verify` at the one moment the claim reaches users, before a single
-# artifact is minted. Same command, four triggers, one implementation.
+# PUSH AND PULL_REQUEST ARE NOT TRIGGERS ANY MORE. On those, `cargo test` already
+# rules on the evidence, hermetically, in hanzoai/ci's lane — so re-asking
+# production on every push would add nothing except the power for somebody else's
+# deploy to redden this repo's builds. The SCHEDULE is the half that matters, and
+# `workflow_dispatch` is here so the answer is one click away when somebody asks
+# "is the tree still true?" without pushing anything to find out.
+#
+# `release-matrix.yml` runs `make verify` — the hermetic gate — at the one moment
+# the claim reaches users, before a single artifact is minted. That is not a
+# duplicate of this job; it is the other question, at the moment it counts.
 #
 # `.hanzo/`, not `.github/`: the runners belong to git.hanzo.ai and github.com has
 # none, so a pipeline under `.github/` queues forever instead of building.
 
 on:
-  push: { branches: [main] }
-  pull_request:
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
 
 jobs:
-  drift:
-    name: The live server contradicts this command tree in neither direction
+  live:
+    name: The live server still says what the committed evidence records
     runs-on: hanzo-build-linux-amd64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: make verify
+      - run: make live-check
