@@ -44,8 +44,10 @@ const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 ///
 /// 87 -> 81 when the hand-authored master stopped deciding existence: six of the
 /// elided operations were the master's alone, so they were never a second method
-/// on a served address in the first place.
-const ELIDED: usize = 81;
+/// on a served address in the first place. 81 -> 80 on re-pinning the document
+/// forward to v1.801.477, which is the ceiling doing its job: it falls on its own
+/// as cloud's surface moves, and lowering it is how the fall gets kept.
+const ELIDED: usize = 80;
 
 /// How many write commands fall back to `--data` because hanzoai/cloud's handler
 /// declares NO JSON requestBody. A CEILING, like `ELIDED`: it falls on its own as
@@ -53,7 +55,7 @@ const ELIDED: usize = 81;
 /// its type is a regression at the source rather than a number to raise here.
 /// It counts ONLY that cause — a schema that is freeform BY CONSTRUCTION (`{}`,
 /// `additionalProperties`, `oneOf`, a bare array) is not a gap and is not pinned.
-const NO_SCHEMA: usize = 459;
+const NO_SCHEMA: usize = 437;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
@@ -243,9 +245,11 @@ struct FieldDef {
     choices: Vec<String>,
     /// A query-string parameter (goes in the URL), vs a requestBody property.
     query: bool,
-    /// A SECRET body value (`format: password`): read from stdin, NEVER a flag —
-    /// so it can never land in argv, `ps` or shell history. The ONE stdin-secret
-    /// marker; the runtime reads it through `iam::secret::read_secret`.
+    /// A SECRET body value: read from stdin, NEVER a flag — so it can never land
+    /// in argv, `ps` or shell history. Decided by `is_secret`, which honours
+    /// `format: password` first and falls back to the NAME, because the document
+    /// carries that format on zero fields. The runtime reads it through
+    /// `iam::secret::read_secret`.
     secret: bool,
     /// An ARRAY: the flag may be given more than once and the values collect into
     /// a JSON array (`--tag a --tag b` → `["a","b"]`). `ty` is then the ELEMENT's
@@ -254,11 +258,60 @@ struct FieldDef {
     repeat: bool,
 }
 
-/// A body property that is a SECRET VALUE. The marker is the standard OpenAPI
-/// `format: password` — the one signal "this input is a secret", honored
-/// uniformly across the whole product surface (today: `kms secrets create`).
-fn is_secret(pschema: &Value) -> bool {
-    pschema.get("format").and_then(Value::as_str) == Some("password")
+/// A body property that is a SECRET VALUE — read from stdin, never a flag, so it
+/// cannot land in argv, `ps` output or shell history.
+///
+/// `format: password` is the standard OpenAPI marker and is honoured first. It is
+/// NOT trusted alone: cloud's document carries that format on ZERO fields while
+/// serving credential-shaped inputs — sign-in passwords, client secrets, API keys,
+/// bearer tokens.
+///
+/// ONE AUTHORITY MADE THIS LOAD-BEARING, not optional. The marker used to reach
+/// exactly one command on the strength of the hand-authored master, which carried
+/// `format: password` twice. That file is deleted, and cloud's document — now the
+/// only input — carries it zero times. So the choice here is not "marker or
+/// heuristic"; it is "heuristic or nothing", and nothing means the generator emits
+/// `--password <VALUE>` and the credential goes to `~/.zsh_history`.
+///
+/// So the NAME is also evidence. That is a heuristic, and it is the right kind of
+/// heuristic because the two ways of being wrong are not symmetric: a false
+/// positive asks someone to type a value on stdin that did not need it, while a
+/// false negative writes a live credential into `~/.zsh_history`. When in doubt,
+/// stdin.
+///
+/// The disqualifiers matter as much as the matches — `passwordSalt`,
+/// `passwordHash`, `tokenFormat` and `password_file` all NAME a credential
+/// without being one, and forcing those onto stdin would be noise that teaches
+/// people to distrust the mechanism.
+fn is_secret(name: &str, pschema: &Value) -> bool {
+    if pschema.get("format").and_then(Value::as_str) == Some("password") {
+        return true;
+    }
+    // Only a string can be a secret value. A boolean `secret` is a switch, an
+    // integer `budgetTokens` is a budget, an array `tokenFields` is a schema.
+    if pschema.get("type").and_then(Value::as_str) != Some("string") {
+        return false;
+    }
+    let n: String = name.to_ascii_lowercase().chars().filter(char::is_ascii_alphanumeric).collect();
+
+    /// Names that DESCRIBE a credential rather than carrying one.
+    const NOT_THE_VALUE: &[&str] = &[
+        "file", "path", "hash", "salt", "ref", "id", "name", "type", "format",
+        "method", "url", "uri", "days", "options", "ttl", "count", "enabled",
+        "attributes", "fields", "prefix", "algorithm", "scheme", "kind", "mode",
+        "expiry", "expires", "at", "by", "signingmethod",
+    ];
+    if NOT_THE_VALUE.iter().any(|suf| n.ends_with(suf)) {
+        return false;
+    }
+
+    /// What a secret is called, as a whole name or the tail of one
+    /// (`clientSecret`, `accessSecret`, `apiKey`, `refreshToken`).
+    const IS_THE_VALUE: &[&str] = &[
+        "password", "passwd", "passphrase", "secret", "apikey", "privatekey",
+        "credential", "token", "clientsecret", "accesskey", "secretkey",
+    ];
+    IS_THE_VALUE.iter().any(|w| n == *w || n.ends_with(w))
 }
 
 fn deref<'a>(spec: &'a Value, v: &'a Value) -> &'a Value {
@@ -404,7 +457,7 @@ fn walk_object(
             required: req,
             choices,
             query: false,
-            secret: is_secret(d),
+            secret: is_secret(&name, d),
             repeat,
         });
     }
@@ -962,4 +1015,58 @@ fn emit_op(o: &Op) -> String {
         fields,
         o.sum
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_secret;
+    use serde_json::json;
+
+    fn s(name: &str, ty: &str) -> bool {
+        is_secret(name, &json!({ "type": ty }))
+    }
+
+    /// The standard marker still decides, on its own, whatever the field is called.
+    #[test]
+    fn the_openapi_marker_is_honoured_first() {
+        assert!(is_secret("anything", &json!({ "type": "string", "format": "password" })));
+    }
+
+    /// …and is not TRUSTED on its own. Cloud's document carries `format: password`
+    /// on zero fields while serving sign-in passwords, client secrets, API keys and
+    /// bearer tokens. When the single upstream marker went away, so did every
+    /// protection that depended on it — silently, which is the failure this exists
+    /// to make impossible.
+    #[test]
+    fn a_credential_is_recognised_by_name_too() {
+        for name in [
+            "password", "newPassword", "oldPassword", "defaultPassword", "masterPassword",
+            "secret", "clientSecret", "accessSecret", "token", "accessToken",
+            "refreshToken", "apiKey", "privateKey", "passphrase", "credential",
+        ] {
+            assert!(s(name, "string"), "`{name}` carries a credential and must go to stdin");
+        }
+    }
+
+    /// A name that DESCRIBES a credential is not one. Forcing these onto stdin
+    /// would be noise, and noise is what teaches people to distrust the mechanism.
+    #[test]
+    fn naming_a_credential_is_not_carrying_one() {
+        for name in [
+            "passwordSalt", "passwordHash", "password_file", "tokenFormat",
+            "tokenSigningMethod", "secretRef", "credentialId", "tokenPrefix",
+            "passwordExpireDays", "secretName", "tokenUrl",
+        ] {
+            assert!(!s(name, "string"), "`{name}` names a credential without being one");
+        }
+    }
+
+    /// Only a string can BE the value: a boolean `secret` is a switch, an integer
+    /// `budgetTokens` is a budget, an array `tokenFields` is a schema.
+    #[test]
+    fn only_a_string_can_be_the_value() {
+        for (name, ty) in [("secret", "boolean"), ("budgetTokens", "integer"), ("tokenFields", "array")] {
+            assert!(!s(name, ty), "`{name}: {ty}` is not a secret value");
+        }
+    }
 }

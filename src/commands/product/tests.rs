@@ -500,15 +500,36 @@ fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
 /// URL query (not the body), required-ness enforced by clap.
 #[test]
 fn a_query_param_becomes_a_typed_flag_in_the_url() {
-    // `logs` is a NODE, not a verb: cloud typed `/v1/o11y/logs/{aggregate,fields,
-    // livetail,pipelines,promote_paths}` beside it, so the noun cannot also be the
-    // command — the fold's `has_child` branch gives the read its own `get`.
-    let m = matches_of(&["hanzo", "o11y", "logs", "get", "--product", "gateway", "--limit", "50"]);
+    // WHICH op carries an optional query flag is the spec's answer, not this
+    // test's — the same rule the second half already follows, and the first half
+    // used to break. Pinning `o11y logs` is what broke it: cloud grew
+    // /v1/o11y/logs/{aggregate,livetail,fields,pipelines}, so `logs` stopped
+    // being a verb and became a node with `get` beneath it. The COORDINATE
+    // moved; the property never did.
+    let target = OPS
+        .iter()
+        .find(|o| {
+            o.method == "GET"
+                && o.params.is_empty()
+                && o.fields.iter().filter(|f| f.query && !f.required).count() >= 1
+        })
+        .expect("some GET takes an optional query parameter");
+    let flag = target.fields.iter().find(|f| f.query && !f.required).unwrap();
+
+    let mut argv: Vec<String> = vec!["hanzo".into(), target.product.into()];
+    argv.extend(target.nodes.iter().map(|n| n.to_string()));
+    argv.push(target.verb.into());
+    argv.push(format!("--{}", flag.flag));
+    argv.push("gateway".into());
+
+    let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
     let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&hand(), &m) else { panic!("leaf") };
-    assert_eq!(op.path, "/v1/o11y/logs");
+    assert_eq!(op.path, target.path);
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
-    assert!(query.contains(&"product=gateway".to_string()), "{query:?}");
-    assert!(query.contains(&"limit=50".to_string()), "{query:?}");
+    assert!(
+        query.contains(&format!("{}=gateway", flag.key)),
+        "the flag must land in the URL: {query:?}",
+    );
     // Required-ness rides through to clap. Which PARAMETERS are required is the
     // spec's answer, not this test's, so it takes whichever op carries a required
     // query flag rather than pinning one — pinning is how a test starts asserting
@@ -548,7 +569,19 @@ fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
     assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
     // The o11y op the alias pointed at is still reachable under its own product —
     // one capability, one place, never duplicated to keep a nickname alive.
-    let m = matches_of(&["hanzo", "o11y", "logs", "get", "--product", "gateway"]);
+    // Reached by PATH, because where it sits is the spec's to move: it was
+    // `o11y logs` until cloud gave /v1/o11y/logs children, and it is `o11y logs
+    // get` now. What must stay true is that it is reachable at all, and only
+    // from its own product.
+    let o11y = OPS
+        .iter()
+        .find(|o| o.path == "/v1/o11y/logs")
+        .expect("/v1/o11y/logs is served under the o11y product");
+    assert_eq!(o11y.product, "o11y", "it belongs to o11y and to nothing else");
+    let mut argv: Vec<String> = vec!["hanzo".into(), o11y.product.into()];
+    argv.extend(o11y.nodes.iter().map(|n| n.to_string()));
+    argv.push(o11y.verb.into());
+    let m = augment(hand()).try_get_matches_from(&argv).expect("o11y parses");
     let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("o11y leaf") };
     assert_eq!(op.path, "/v1/o11y/logs");
     assert!(
@@ -786,26 +819,28 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
     }
 }
 
-/// How many body properties the document marks `format: password`. A stdin-secret
-/// has no flag and no positional, so it can never land in argv, `ps` or shell
-/// history.
+/// How many body properties are stdin-secrets. A stdin-secret has no flag and no
+/// positional, so it can never land in argv, `ps` or shell history.
 ///
-/// **It is ZERO, and that is a stated upstream gap, not a design choice.** The
-/// marker used to reach exactly one op — `kms secrets create --value` — and it
-/// came from the hand-authored master, which carried `format: password` twice.
-/// hanzoai/cloud's own emitted document carries it **0 times** (`grep -c 'format:
-/// password' openapi.yaml` at v1.801.383), because `POST /v1/kms/secrets` is still
-/// an untyped fiber handler with no Go struct for zip to reflect — it declares no
-/// requestBody at all. So the CLI was enforcing a rule the server's own contract
-/// never stated, which is exactly the drift this pipeline exists to end; the
-/// enforcement has to come back from the source, by typing that handler in
-/// hanzoai/cloud with `format:"password"` on the value.
+/// **It was ZERO, and zero was not a gap to wait out — it was an unprotected
+/// surface.** `format: password` is the standard marker, and hanzoai/cloud's
+/// emitted document carries it **0 times** (`grep -c 'format: password'
+/// openapi.yaml`). The marker only ever reached one op on the strength of the
+/// hand-authored master, which carried it twice; deleting that master took the
+/// last document that carried it, so the count went to zero while the number of
+/// credential-shaped inputs cloud serves did not change at all.
 ///
-/// Until then `hanzo kms secrets create` takes `--data`, and `--data -` reads the
-/// body from stdin — so a secret CAN still be kept out of argv, it just is not
-/// FORCED out. Do not restate the rule here: a client that knows a constraint the
-/// document does not is the second authority wearing a different hat.
-const SECRET_FIELDS: usize = 0;
+/// A count of zero pinned as "an upstream gap" is a test that passes vacuously
+/// forever over a generator emitting `--password <VALUE>`. So `is_secret` reads
+/// the NAME as well, and the count is what that finds: the two ways of being
+/// wrong are not symmetric — a false positive asks for a value on stdin that did
+/// not need it, a false negative writes a live credential into `~/.zsh_history`.
+///
+/// It is still a CEILING on cloud's side of the bargain: every one of these
+/// should eventually arrive as `format: password` from a typed handler, and when
+/// that happens this number does not move — only the reason each field is on the
+/// list does.
+const SECRET_FIELDS: usize = 64;
 
 /// THE invariant of a secrets CLI, on the GENERATED path: a `format: password`
 /// body property has NO flag and NO positional, so a value-bearing argv is a PARSE

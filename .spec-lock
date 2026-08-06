@@ -1,4 +1,4 @@
-ref=v1.801.383
-sha256=3549c5f093c353addaa8a08f920babdaed188f68fed43c94a1b7f9b852777ff8
+ref=v1.801.477
+sha256=d98a3dcc8160f9d1177f908def3f1d9dff8045eaf2d5e0b23b5b4848b789003f
 repo=hanzoai/cloud
 path=openapi.yaml
