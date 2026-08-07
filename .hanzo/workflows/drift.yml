@@ -54,5 +54,19 @@ jobs:
     runs-on: hanzo-build-linux-amd64
     steps:
       - uses: actions/checkout@v4
+      # `toolchain: stable` is STATED, not inferred from the `@stable` ref.
+      # dtolnay/rust-toolchain reads the branch name out of `github.action_ref`
+      # to decide the toolchain — that is GitHub-runner behaviour, and act_runner
+      # on our own forge does not reproduce it, so the action received an empty
+      # input and failed with "'toolchain' is a required input".
+      #
+      # It only ever broke ONE target, which is why it looked like a linux-amd64
+      # problem: linux-amd64 is the sole `host: true` entry, so it alone runs
+      # `make test` -> the drift gate, and the gate's own workflow carried the
+      # same step. Four targets shipped, the fifth did not, and the release
+      # looked healthy while missing the only binary our own amd64 sandbox can
+      # run.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - run: make live-check
