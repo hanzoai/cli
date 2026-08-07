@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn server_url_known_and_unknown() {
-        assert_eq!(server_url("hanzo").unwrap(), "https://iam.hanzo.ai");
+        assert_eq!(server_url("hanzo").unwrap(), "https://api.hanzo.ai");
         assert_eq!(server_url("lux").unwrap(), "https://lux.id");
         assert_eq!(server_url("zoo").unwrap(), "https://zoo.id");
         assert!(server_url("bogus").is_err());
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn authorize_url_is_hip0111_pkce_s256() {
         let url = build_authorize_url(
-            "https://iam.hanzo.ai",
+            "https://api.hanzo.ai",
             "http://127.0.0.1:54321/callback",
             "CHALLENGE",
             "STATE",
