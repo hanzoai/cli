@@ -73,7 +73,10 @@ const TUNNELS: usize = 18;
 /// it is also this repo telling the truth for the first time — 86 operations that
 /// used to lose their coordinate now reach a command, and an untyped one carries
 /// its gap in with it. Neither is a reason to stop counting.
-const NO_SCHEMA: usize = 527;
+///
+/// 527 -> 529 on re-pinning v1.801.491 -> v1.801.492 (+10 operations, and four
+/// relay doors typed away: DOORS 11 -> 7). Two of the ten declare no requestBody.
+const NO_SCHEMA: usize = 529;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
