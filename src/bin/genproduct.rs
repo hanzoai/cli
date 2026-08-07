@@ -45,9 +45,20 @@ const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 /// 87 -> 81 when the hand-authored master stopped deciding existence: six of the
 /// elided operations were the master's alone, so they were never a second method
 /// on a served address in the first place. 81 -> 80 on re-pinning the document
-/// forward to v1.801.477, which is the ceiling doing its job: it falls on its own
-/// as cloud's surface moves, and lowering it is how the fall gets kept.
-const ELIDED: usize = 80;
+/// forward to v1.801.477.
+///
+/// 80 -> 100 on re-pinning to v1.801.491 (+464 operations), then 100 -> 14 by
+/// answering the question the census had been carrying as unanswerable. `PUT` and
+/// `PATCH` are two commands and cloud's own prose says which is which, so they
+/// stopped sharing a verb; the method-override tunnels are one command reached two
+/// ways, so they stopped being generated at all. 86 served operations that reached
+/// nobody now have a command. What is left is 14, all `iam`, and they are a real
+/// undecided naming question rather than a table collapsing two names into one.
+const ELIDED: usize = 14;
+/// Method-override tunnels dropped: a POST cloud registers beside the real verb
+/// so a browser form can reach a PUT/PATCH/DELETE handler. Not a loss — pinned so
+/// the count cannot drift unread. See the drop site in the op-build loop.
+const TUNNELS: usize = 18;
 
 /// How many write commands fall back to `--data` because hanzoai/cloud's handler
 /// declares NO JSON requestBody. A CEILING, like `ELIDED`: it falls on its own as
@@ -55,7 +66,14 @@ const ELIDED: usize = 80;
 /// its type is a regression at the source rather than a number to raise here.
 /// It counts ONLY that cause — a schema that is freeform BY CONSTRUCTION (`{}`,
 /// `additionalProperties`, `oneOf`, a bare array) is not a gap and is not pinned.
-const NO_SCHEMA: usize = 437;
+///
+/// 437 -> 527 on re-pinning from v1.801.401 to v1.801.491. The rise is REAL and it
+/// is cloud's: 90 releases added 464 operations, and the new handlers were written
+/// the same untyped way as the old ones, so the gap grew with the surface. Part of
+/// it is also this repo telling the truth for the first time — 86 operations that
+/// used to lose their coordinate now reach a command, and an untyped one carries
+/// its gap in with it. Neither is a reason to stop counting.
+const NO_SCHEMA: usize = 527;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
@@ -129,8 +147,16 @@ fn cmd_tokens(sg: &[&str]) -> Vec<String> {
     }
     out
 }
-/// The collection-root verb: distinct writes (`clear`/`replace`) so a collection
-/// op never clashes with the item op's `rm`/`update`.
+/// The collection-root verb. Held DISJOINT from `item_verb` below, because
+/// `/v1/x` and `/v1/x/{id}` fold to the same `nodes`, so an overlapping name
+/// makes them one coordinate and one of them reaches nobody.
+///
+/// `PUT` and `PATCH` are TWO commands, and cloud says so in its own prose:
+/// `PUT /v1/store/{storeid}` is "Replace a storefront outright" and `PATCH` is
+/// "Change part of a storefront". They both read `replace` before, so every
+/// `PATCH` beside a `PUT` was silently unreachable — 62 of them. `patch` is the
+/// method's own name rather than an invented synonym: this generator refuses to
+/// coin vocabulary, and the one word already in the contract is not a coinage.
 fn root_verb(method: &str, coll: bool) -> &'static str {
     match method {
         "GET" => {
@@ -141,8 +167,27 @@ fn root_verb(method: &str, coll: bool) -> &'static str {
             }
         }
         "POST" => "create",
-        "PUT" | "PATCH" => "replace",
+        "PUT" => "replace",
+        "PATCH" => "patch",
         _ => "clear",
+    }
+}
+
+/// The ITEM verb — the address ends in a `{param}`, so there is no noun to name
+/// the command after. Disjoint from `root_verb` by construction (`get` is the
+/// one shared word, and it is reachable at a root only when that root is NOT a
+/// collection, which is exactly when no item path exists).
+///
+/// `set` is `PUT` here for the same reason `patch` is `PATCH` above: `replace`
+/// belongs to the collection table, and the alternative was leaving `PUT` and
+/// `PATCH` folded into one `update` that only one of them ever reached.
+fn item_verb(method: &str) -> &'static str {
+    match method {
+        "GET" => "get",
+        "DELETE" => "rm",
+        "PUT" => "set",
+        "PATCH" => "update",
+        _ => "add",
     }
 }
 
@@ -198,12 +243,7 @@ fn fold(
     }
     let last = &ct[ct.len() - 1];
     let verb: String = if is_param(last) {
-        match method {
-            "GET" => "get",
-            "DELETE" => "rm",
-            _ => "update",
-        }
-        .into()
+        item_verb(method).into()
     } else if has_child(&p, all) || multi.contains(&p) {
         // Two reasons for the SAME shape. A noun with children is a group, so it
         // cannot also be a verb. A noun answering several methods is not one
@@ -630,6 +670,7 @@ fn main() {
     );
 
     let mut raw: BTreeMap<(String, Vec<String>, String), Vec<Op>> = BTreeMap::new();
+    let mut tunnels = 0usize;
     for (path, item) in paths {
         // A path key with a `?query` (AWS-S3-style sub-resource selectors) is
         // not a distinct RESOURCE — the query, not the path, distinguishes it.
@@ -701,6 +742,22 @@ fn main() {
                 .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
                 .unwrap_or_default();
             let sum = op.get("summary").and_then(Value::as_str).unwrap_or("").to_string();
+            // A METHOD-OVERRIDE TUNNEL IS NOT A COMMAND. cloud registers a POST
+            // beside the real verb at some addresses so a browser form — which can
+            // only send GET and POST — can still reach a PUT/PATCH/DELETE handler.
+            // Its own summary says exactly that. A CLI sends the real verb, so the
+            // tunnel reaches nothing this tree does not already reach at the verb
+            // it tunnels for, and generating it would put two spellings of one
+            // command in the surface.
+            //
+            // This is a DROP, not an elision: nothing is lost, so it must not be
+            // counted as loss. It is pinned separately (`TUNNELS`) because a number
+            // that changes without anyone noticing is how the elision census went
+            // unread in the first place.
+            if sum.starts_with("Method-override tunnel") {
+                tunnels += 1;
+                continue;
+            }
             let coord = (product.clone(), nodes.clone(), f.verb.clone());
             raw.entry(coord).or_default().push(Op {
                 product,
@@ -753,10 +810,18 @@ fn main() {
     // read as `update`, `GET` and `POST` on `/v1/billing/payment-methods` both
     // read as `payment-methods`. One of them wins and the other reaches nobody.
     //
-    // Which SECOND name is right is a verb decision this generator cannot make
-    // (is a `PUT` beside a `PATCH` a different command, or the same one?), so it
-    // is not made here. What is not acceptable is making it silently: an
-    // operation that vanishes without a number is exactly the shape of defect
+    // "Is a `PUT` beside a `PATCH` a different command, or the same one?" used to
+    // stand here as a question this generator could not answer. It was never the
+    // generator's to answer, and it was never open: cloud states it, per address,
+    // in the prose it publishes. `PUT /v1/store/{storeid}` is "Replace a storefront
+    // outright"; `PATCH` is "Change part of a storefront". Two commands, said in
+    // the contract, folded into one name by a table here — so `root_verb` and
+    // `item_verb` now separate them, and the same reading retired the 18
+    // method-override tunnels, which cloud's own summary calls a shim for clients
+    // that cannot send the real verb.
+    //
+    // What survives the census is genuinely undecided, and the rule is unchanged:
+    // an operation that vanishes without a number is exactly the shape of defect
     // this pipeline exists to end. So the loss is reported, and pinned as a
     // CEILING — free to fall, and it cannot grow without somebody deciding.
     let mut coords: Vec<Op> = Vec::new();
@@ -835,6 +900,18 @@ fn main() {
          reach no command ({worst}{})",
         elided.len(),
         if by_product.len() > 8 { ", …" } else { "" }
+    );
+    eprintln!(
+        "genproduct: {tunnels} method-override tunnel(s) dropped — a POST cloud registers so a \
+         browser form can reach a PUT/PATCH/DELETE handler. Nothing is lost: a CLI sends the real \
+         verb, and that command is in the tree."
+    );
+    assert_eq!(
+        tunnels, TUNNELS,
+        "THE TUNNEL COUNT MOVED: {tunnels} method-override tunnels, and TUNNELS says {TUNNELS}. \
+         Up means cloud added addresses a browser must reach through a POST; down means it typed \
+         some away. Either is fine — say which in the commit and move the number. What is not \
+         fine is the number drifting unread, which is how the elision census went unnoticed."
     );
     assert!(
         elided.len() <= ELIDED,
