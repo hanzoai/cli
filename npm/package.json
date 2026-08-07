@@ -1,0 +1,25 @@
+{
+  "name": "@hanzo/cli",
+  "version": "1.9.43",
+  "description": "Hanzo CLI \u2014 manage Hanzo AI cloud resources",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanzoai/cli.git"
+  },
+  "homepage": "https://hanzo.ai",
+  "bin": {
+    "hanzo": "bin/hanzo.js"
+  },
+  "files": [
+    "bin/",
+    "install.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

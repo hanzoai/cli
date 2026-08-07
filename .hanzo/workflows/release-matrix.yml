@@ -239,3 +239,51 @@ jobs:
             [ "$code" = "201" ] || { echo "upload $f failed ($code)"; cat /tmp/up.json; exit 1; }
             echo "uploaded $f"
           done
+
+  # PUBLISH TO NPM, and only after every target uploaded.
+  #
+  # `needs: build` is the whole safety property: the npm package's postinstall
+  # downloads `hanzo-<platform>.tar.gz` from the release for its own version, so
+  # publishing before the assets exist ships a package whose install 404s. v1.9.41
+  # is the cautionary case — four targets uploaded, linux-amd64 did not, and the
+  # release read as green while the only binary our own amd64 cluster runs was
+  # absent. A matrix job that fails now blocks this one.
+  #
+  # One artifact, not six: the binary is the release asset, and npm carries a
+  # downloader rather than five per-platform packages. Five packages would be a
+  # second copy of the same bytes under a second set of version numbers, and the
+  # copies drift.
+  npm:
+    name: npm
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: hanzo-build-linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Version from the tag, never from the file
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#v}"
+          # The tag is the authority. package.json carrying a different number is
+          # how a release publishes bytes under a version nobody built.
+          node -e '
+            const fs=require("fs"),p="npm/package.json";
+            const j=JSON.parse(fs.readFileSync(p));
+            j.version=process.argv[1];
+            fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");
+          ' "$v"
+          echo "publishing @hanzo/cli@$v"
+      - name: Publish
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --ignore-scripts: postinstall fetches a binary, and it must run on the
+          # INSTALLING machine, not on this runner where it would bake one
+          # platform's binary into the tarball.
+          npm publish --access public --ignore-scripts
