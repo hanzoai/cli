@@ -24,7 +24,7 @@ pub const REVOKE: &str = "/v1/iam/oauth/revoke";
 /// the origin it is reached on. This is the SINGLE place the mapping lives.
 pub fn server_url_for_brand(brand: &str) -> Option<&'static str> {
     match brand {
-        "hanzo" => Some("https://iam.hanzo.ai"),
+        "hanzo" => Some("https://api.hanzo.ai"),
         "lux" => Some("https://lux.id"),
         "zoo" => Some("https://zoo.id"),
         "bootnode" => Some("https://id.bootno.de"),
@@ -55,7 +55,7 @@ pub fn trim_server_url(server_url: &str) -> &str {
 ///
 /// ```
 /// # use hanzo::iam::paths::{iam_url, TOKEN};
-/// assert_eq!(iam_url("https://iam.hanzo.ai", TOKEN), "https://iam.hanzo.ai/v1/iam/oauth/token");
+/// assert_eq!(iam_url("https://api.hanzo.ai", TOKEN), "https://api.hanzo.ai/v1/iam/oauth/token");
 /// ```
 pub fn iam_url(server_url: &str, path: &str) -> String {
     format!("{}{}", trim_server_url(server_url), path)
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn brand_origins_are_canonical() {
-        assert_eq!(server_url_for_brand("hanzo"), Some("https://iam.hanzo.ai"));
+        assert_eq!(server_url_for_brand("hanzo"), Some("https://api.hanzo.ai"));
         assert_eq!(server_url_for_brand("lux"), Some("https://lux.id"));
         assert_eq!(server_url_for_brand("zoo"), Some("https://zoo.id"));
         assert_eq!(server_url_for_brand("bootnode"), Some("https://id.bootno.de"));
@@ -78,9 +78,9 @@ mod tests {
     #[test]
     fn endpoints_are_hip0111_exact() {
         // No /api/ prefix, no legacy /oauth/*. Exactly the HIP-0111 paths.
-        assert_eq!(iam_url("https://iam.hanzo.ai", AUTHORIZE), "https://iam.hanzo.ai/v1/iam/oauth/authorize");
-        assert_eq!(iam_url("https://iam.hanzo.ai", TOKEN), "https://iam.hanzo.ai/v1/iam/oauth/token");
-        assert_eq!(iam_url("https://iam.hanzo.ai", USERINFO), "https://iam.hanzo.ai/v1/iam/oauth/userinfo");
+        assert_eq!(iam_url("https://api.hanzo.ai", AUTHORIZE), "https://api.hanzo.ai/v1/iam/oauth/authorize");
+        assert_eq!(iam_url("https://api.hanzo.ai", TOKEN), "https://api.hanzo.ai/v1/iam/oauth/token");
+        assert_eq!(iam_url("https://api.hanzo.ai", USERINFO), "https://api.hanzo.ai/v1/iam/oauth/userinfo");
     }
 
     #[test]
