@@ -840,7 +840,13 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
 /// should eventually arrive as `format: password` from a typed handler, and when
 /// that happens this number does not move — only the reason each field is on the
 /// list does.
-const SECRET_FIELDS: usize = 64;
+// 64 -> 67 on re-pinning the document to hanzoai/cloud@v1.801.492. The count
+// ROSE, which is the good direction and exactly what this pin exists to notice:
+// three more handlers upstream now declare a body whose secret field this
+// generator can keep off argv. Raising it is not weakening the gate — it is the
+// gate recording that cloud kept its side of the bargain, and enforcing the law
+// on three fields it could not reach yesterday.
+const SECRET_FIELDS: usize = 67;
 
 /// THE invariant of a secrets CLI, on the GENERATED path: a `format: password`
 /// body property has NO flag and NO positional, so a value-bearing argv is a PARSE
