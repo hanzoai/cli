@@ -15,6 +15,16 @@
 # that tests something nobody ships.
 
 SHELL := /bin/bash
+
+# THE FORGE IS CANONICAL. git.hanzo.ai holds hanzoai/cloud; the GitHub copy is a
+# mirror, and a mirror can be behind — universe's was measured 40 chat versions
+# and 51 app versions stale on the same day this changed. Verifying the command
+# tree against a mirror means a gate that passes on a document production is not
+# serving, which is worse than a gate that fails.
+#
+# The forge serves its API at /v1/, NOT /api/v1/ — asking for /api/v1 returns a
+# 404 that reads exactly like a rejected credential and costs an hour.
+SPEC_HOST ?= https://git.hanzo.ai/v1
 SPEC_REPO ?= hanzoai/cloud
 SPEC_PATH ?= openapi.yaml
 LOCK      := .spec-lock
@@ -35,8 +45,8 @@ want=$$(sed -n 's/^sha256=//p' $(LOCK)); \
 [ -n "$$ref" ] || { echo "no $(LOCK) — this tree does not name a document"; exit 1; }; \
 [ -n "$${SPEC_TOKEN:-}" ] || { echo "SPEC_TOKEN (contents:read on $(SPEC_REPO)) is unset"; exit 1; }; \
 tmp=$$(mktemp); \
-curl -fsSL -H "Authorization: Bearer $$SPEC_TOKEN" -H 'Accept: application/vnd.github.raw' \
-  "https://api.github.com/repos/$(SPEC_REPO)/contents/$(SPEC_PATH)?ref=$$ref" -o "$$tmp"; \
+curl -fsSL -H "Authorization: token $$SPEC_TOKEN" \
+  "$(SPEC_HOST)/repos/$(SPEC_REPO)/raw/$(SPEC_PATH)?ref=$$ref" -o "$$tmp"; \
 got=$$(sha256sum "$$tmp" | cut -d' ' -f1); \
 [ "$$got" = "$$want" ] || { echo "$(SPEC_REPO)@$$ref:$(SPEC_PATH) hashes to $$got, but $(LOCK) says $$want — the ref moved under this capture"; exit 1; }; \
 export SPEC="$$tmp" SPEC_REF="$$ref"
