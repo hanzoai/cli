@@ -424,14 +424,33 @@ and why.
   computed over the bytes actually read, and `spec_drift.rs` refuses any
   disagreement between the spec, the lock, and a release-shaped tag.
 
-  **THE SEAM IS WIRED — that is the whole point.** `genspec` used to be reachable
-  only by a maintainer typing it: `grep -rn genspec` over this repo's CI returned
-  nothing, and there was no `hanzo.yml` and no `Makefile` at all. Now
-  `hanzo.yml`'s `spec-drift-check` runs it on every push, and hanzoai/cloud's
-  release sends `repository_dispatch: spec-update` carrying `(version, sha,
-  spec_sha256)` — the lane fetches that exact document, regenerates, compiles,
-  and cuts a CLI patch. The capture cannot go stale silently because a cloud
-  release is what moves it.
+  **THE PIN MOVES BY PULLING, and it is the nightly that moves it.** `genspec`
+  used to be reachable only by a maintainer typing it: `grep -rn genspec` over
+  this repo's CI returned nothing, and there was no `hanzo.yml` and no `Makefile`
+  at all. `hanzo.yml`'s client lane now runs it on every push — as a CHECK, at the
+  ref `.spec-lock` already names.
+
+  What MOVES the ref is one step in `.hanzo/workflows/drift.yml`: read hanzoai/
+  cloud's newest tag off git.hanzo.ai, fetch the document at it, write the lock,
+  regenerate, re-capture the evidence, open the patch. It runs even when
+  `live-check` failed, because production having moved is exactly when the pin
+  wants moving.
+
+  It used to be described as a PUSH — cloud's release sending `repository_dispatch:
+  spec-update` with `(version, sha, spec_sha256)`. That event was undeliverable in
+  both directions: this repo has no `.github/workflows` for GitHub to run, the
+  forge has no repository_dispatch endpoint, and on a push hanzoai/ci's client lane
+  is check-only at the LOCKED ref anyway. Across 104 runs the pin moved once, by
+  hand. The trigger is deleted; the side WITH runners asks.
+
+  **A RE-PIN OPENS A PATCH, IT DOES NOT LAND.** A tag exists when it is cut and
+  production deploys it some time later, so the newest document can name a route
+  the running server does not serve yet — which the drift gate correctly calls a
+  phantom. Measured while writing this: v1.801.495 is tagged, production answers
+  `x-api-version: sha-716c08370361`, and `GET /v1/commerce/org` (which .495 adds)
+  404s against a `/v1/commerce/<nonsense>` control that also 404s, so the prefix
+  discriminates and the denial is real. That is a wait, not a defect, and waiting
+  is a person's call.
 
   Measured when it was wired: the committed capture was 7 operations short and 8
   wrong against a document cloud had already committed — the `/v1/billing/*`
