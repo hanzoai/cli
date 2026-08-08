@@ -234,7 +234,7 @@ fn the_org_scope_is_never_a_positional_or_flag() {
 /// with no local command, nothing is absorbed, so every generated coordinate is
 /// reachable at its own name and a test can address it without knowing which
 /// names `main` happens to claim. The absorbed case is asserted where the real
-/// derive tree is — `main::tests::a_local_command_absorbs_the_product_of_its_own_name`.
+/// derive tree is — `every_operation_of_an_absorbed_product_resolves_to_its_own_route`.
 fn hand() -> Command {
     Command::new("hanzo")
 }
@@ -676,6 +676,33 @@ fn there_is_no_passthrough_or_raw_path_escape() {
 
 // ---- collisions: a local command always wins its bare name -------------------
 
+/// The shortest argv that reaches an op: its address, then a value for every
+/// required input, invented from the DECLARED type. Nothing here knows an
+/// operation by name — a test that names one proves the property for one.
+fn argv_for(op: &'static Op) -> Vec<String> {
+    let mut a: Vec<String> = vec!["hanzo".into(), op.product.into()];
+    a.extend(op.nodes.iter().map(|n| (*n).to_string()));
+    a.push(op.verb.into());
+    // A path parameter is a required positional. The value is never sent.
+    a.extend(op.params.iter().map(|_| "x".to_string()));
+    for f in op.fields.iter().filter(|f| f.required && !f.secret) {
+        a.push(format!("--{}", field_flag(f)));
+        if let Some(v) = f.choices.first() {
+            a.push((*v).to_string());
+            continue;
+        }
+        match f.ty {
+            // A scalar bool is a bare presence flag; an array of them is not.
+            Ty::Bool if !f.repeat => {}
+            Ty::Bool => a.push("true".into()),
+            Ty::Int | Ty::Num => a.push("1".into()),
+            Ty::Json => a.push("{}".into()),
+            Ty::Str => a.push("x".into()),
+        }
+    }
+    a
+}
+
 /// A name a LOCAL command owns is ABSORBED, never dropped — the local command
 /// keeps every verb it declares and gains every one the document does.
 ///
@@ -684,8 +711,17 @@ fn there_is_no_passthrough_or_raw_path_escape() {
 /// and 7 `/v1/code` ones came to be reachable by nothing, with a curation entry
 /// calling it a decision. Written as a PROPERTY over whatever collides, so the
 /// next local command to share a cloud name is covered without an edit.
+///
+/// AND THEN IT ASSERTED THE NAME. `here.find_subcommand(node).is_some()` passes
+/// when the node under that name IS the local command — the name exists, the
+/// operation reaches nobody, and the test says the law holds. That is the exact
+/// defect one layer up, where `hanzo logs` MOUNTED and dispatched somewhere else
+/// and "a test that asserted only the MOUNT never saw it". The cure there was to
+/// walk parse → resolve → op; it was never applied here. It is now: every
+/// operation of every absorbed product is PARSED from an argv a person could
+/// type and RESOLVED, and the op that comes back must be the op that went in.
 #[test]
-fn a_local_name_absorbs_the_product_instead_of_dropping_it() {
+fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
     use clap::CommandFactory;
     let hand = crate::Cli::command();
     let merged = augment(crate::Cli::command());
@@ -694,21 +730,40 @@ fn a_local_name_absorbs_the_product_instead_of_dropping_it() {
         let Some(local) = hand.find_subcommand(p) else { continue };
         absorbed += 1;
         let here = merged.find_subcommand(p).expect("a product mounts under some name");
-        // Every operation of the product reaches a node under the local command…
+        // Every operation of the product is reachable AS ITSELF…
         for op in OPS.iter().filter(|o| o.product == p) {
-            let node = *op.nodes.first().unwrap_or(&op.verb);
-            assert!(
-                here.find_subcommand(node).is_some(),
-                "`hanzo {p} {node}` must exist — otherwise {} {} reaches nobody",
-                op.method,
-                op.path
+            let argv = argv_for(op);
+            let line = argv.join(" ");
+            let m = merged
+                .clone()
+                .try_get_matches_from(&argv)
+                .unwrap_or_else(|e| panic!("`{line}` does not parse:\n{e}"));
+            let Some(Resolved::Leaf { op: got, .. }) = resolve(&hand, &m) else {
+                panic!(
+                    "`{line}` reaches no operation — {} {} is served, described, and reachable by \
+                     nobody, because the local command owns that name",
+                    op.method, op.path
+                );
+            };
+            assert_eq!(
+                (got.method, got.path),
+                (op.method, op.path),
+                "`{line}` resolved to {} {} instead",
+                got.method,
+                got.path
             );
         }
-        // …and every name the local command declared is still its own.
-        for name in local.get_subcommands().map(clap::Command::get_name) {
-            assert!(
-                here.find_subcommand(name).is_some(),
-                "`hanzo {p} {name}` is the local command's and was overwritten"
+        // …and every name the local command declared is still ITS OWN command,
+        // not a generated node wearing the same name.
+        for sub in local.get_subcommands() {
+            let mine = here
+                .find_subcommand(sub.get_name())
+                .unwrap_or_else(|| panic!("`hanzo {p} {}` is the local command's and was overwritten", sub.get_name()));
+            assert_eq!(
+                mine.get_about().map(ToString::to_string),
+                sub.get_about().map(ToString::to_string),
+                "`hanzo {p} {}` is no longer the command the local tree declares",
+                sub.get_name()
             );
         }
     }

@@ -78,8 +78,8 @@ pub(crate) fn mounted(cmd: &Command) -> Vec<&'static str> {
 /// owns its name, and the generated operations of that name mount INSIDE it.
 ///
 /// A product no local command claims becomes a first-class top-level command. A
-/// product whose name is taken is ABSORBED — `hanzo billing invoices` is the
-/// document's operation, `hanzo billing balance` is the hand-written one, and the
+/// product whose name is taken is ABSORBED — `hanzo code search` is the
+/// document's operation, `hanzo code claude` is the hand-written one, and the
 /// same rule settles both: whoever was there first keeps the name.
 ///
 /// It used to DROP the collision, and the cost was measured before this was
@@ -106,11 +106,19 @@ pub fn augment(mut cmd: Command) -> Command {
 fn absorb(local: Command, product: &'static str) -> Command {
     let owned: std::collections::HashSet<String> =
         local.get_subcommands().map(|c| c.get_name().to_string()).collect();
+    // A local command that takes a REQUIRED operand becomes a runnable group the
+    // moment it gains one, and it is governed by the same rule `to_command` gives
+    // every other runnable group: bare it runs itself, with a subcommand it
+    // descends. Without that, `hanzo share` kept demanding its `<TARGET>` while
+    // advertising `enable` and `get` in its own help — two served operations
+    // listed as reachable that no argv could reach.
     trie(product)
         .children
         .iter()
         .filter(|(name, _)| !owned.contains(**name))
         .fold(local, |c, (name, node)| c.subcommand(to_command(name, node)))
+        .args_conflicts_with_subcommands(true)
+        .subcommand_negates_reqs(true)
 }
 
 /// Distinct product names in `OPS`, stable order.

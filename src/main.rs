@@ -333,12 +333,6 @@ enum Commands {
         command: WalletCommands,
     },
 
-    /// Prepaid wallet money — read the balance
-    Billing {
-        #[command(subcommand)]
-        command: BillingCommands,
-    },
-
     /// Connect an external provider account (Cloudflare, …) to your org
     Connector {
         #[command(subcommand)]
@@ -570,12 +564,6 @@ enum WalletCommands {
     Use { address: String },
     /// List known wallets
     List,
-}
-
-#[derive(Subcommand)]
-enum BillingCommands {
-    /// Show the active identity's prepaid balance
-    Balance,
 }
 
 #[derive(Subcommand)]
@@ -845,9 +833,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             WalletCommands::Use { address } => commands::wallet::use_wallet(&mut config, address)?,
             WalletCommands::List => commands::wallet::list(&config)?,
         },
-        Commands::Billing { command } => match command {
-            BillingCommands::Balance => commands::billing::balance(&mut config).await?,
-        },
         Commands::Connector { command } => match command {
             ConnectorCommands::Add { provider, account_id, token } => {
                 commands::connector::add(&mut config, provider, account_id, token).await?
@@ -1077,32 +1062,6 @@ mod tests {
 
         let m = merged.try_get_matches_from(["hanzo", "version"]).unwrap();
         assert!(commands::product::resolve(&hand, &m).is_none(), "a local command is not a product");
-    }
-
-    /// THE COLLISION LAW, both halves, on the command where getting it wrong costs
-    /// money: `hanzo billing` is a hand-written wallet wrapper AND a served cloud
-    /// product. Its own verbs stay its own; the document's arrive beside them.
-    #[test]
-    fn a_local_command_absorbs_the_product_of_its_own_name() {
-        let hand = Cli::command();
-        let merged = commands::product::augment(hand.clone());
-        let billing = merged.find_subcommand("billing").expect("`billing` is a command");
-        for v in ["balance", "invoices", "usage", "plans", "payouts", "alerts"] {
-            assert!(billing.find_subcommand(v).is_some(), "`hanzo billing {v}` must exist");
-        }
-
-        // The local one dispatches through the derive tree…
-        let m = merged.clone().try_get_matches_from(["hanzo", "billing", "balance"]).unwrap();
-        assert!(commands::product::resolve(&hand, &m).is_none(), "`balance` is the local command's");
-
-        // …and the absorbed one through the product seam, at its real route.
-        let m = merged.try_get_matches_from(["hanzo", "billing", "invoices", "list"]).unwrap();
-        let Some(commands::product::Resolved::Leaf { op, .. }) =
-            commands::product::resolve(&hand, &m)
-        else {
-            panic!("`hanzo billing invoices` must resolve to a cloud operation")
-        };
-        assert_eq!(op.path, "/v1/billing/invoices");
     }
 
     /// THE FRONT DOOR SURVIVES ABSORPTION. `hanzo code` gained six cloud verbs, so
