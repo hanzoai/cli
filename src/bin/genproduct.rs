@@ -76,7 +76,15 @@ const TUNNELS: usize = 18;
 ///
 /// 527 -> 529 on re-pinning v1.801.491 -> v1.801.492 (+10 operations, and four
 /// relay doors typed away: DOORS 11 -> 7). Two of the ten declare no requestBody.
-const NO_SCHEMA: usize = 529;
+///
+/// 529 -> 421 on re-pinning onto cloud's main. 93 of the 108 are `ai` alone
+/// (95 -> 2): cloud deleted the door that read a foreign route table and kept two
+/// strings per route, so `ai`'s own declared contracts finally reach the document.
+/// They are not typed FLAGS yet — 93 of them declare a body that is freeform by
+/// construction, which is why the freeform count rose 10 -> 103 in the same step —
+/// but a stated open shape and an absent one are different facts with different
+/// owners, and only the second is a gap. 17 write commands did gain typed flags.
+const NO_SCHEMA: usize = 421;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')

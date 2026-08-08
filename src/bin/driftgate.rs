@@ -77,11 +77,14 @@
 //! Both failures are real and they have different owners, so they are reported
 //! apart and named apart:
 //!
-//!   * PHANTOM — the host denies it and NO document claims it. The CLI is
-//!     carrying a route the server does not serve. OURS, and a hard failure.
-//!     Asked of BOTH trees: the generated one, coordinate by coordinate against
-//!     the host, and the hand-written one, whose routes are literals in the
-//!     source and were read by nothing at all until 1.9.46 — see [`sent`].
+//!   * PHANTOM — a HAND-WRITTEN command sends a route no document declares, under
+//!     a product cloud owns. OURS, and a hard failure. Those routes are literals
+//!     in the source and were read by nothing at all until 1.9.46 — see [`sent`].
+//!     A GENERATED coordinate can never be one: it exists because the document
+//!     declares it, and the chain digests refuse a hand-edited `generated.rs`.
+//!   * AHEAD — the host denies it, the live table does not name it, and the pinned
+//!     document does. The deploy has not landed. Not ours, not cloud's table's
+//!     either: a wait, pinned so it cannot lengthen unread.
 //!   * CONTRADICTED — the host denies it and cloud's OWN live table claims it.
 //!     Cloud's table and cloud's server disagree; no edit in this repo settles
 //!     that, so it is a CEILING that may not grow in silence and is free to fall
@@ -190,7 +193,32 @@ const EXCUSED: usize = 7;
 /// so its published names lag its routes. Nothing in this repo can settle it — the
 /// fix is in hanzoai/cloud (task #146's seam), and the number is here so it cannot
 /// be settled by forgetting.
-const CONTRADICTED: usize = 6;
+///
+/// 6 -> 0: cloud deleted the door that threw those schemas away, so `apps/ai`
+/// projects its own live registry and the six stale nouns left the document with
+/// it. The class is empty and the ceiling is on the floor, which is where a
+/// ceiling belongs when nobody is under it.
+const CONTRADICTED: usize = 0;
+
+/// Coordinates the PINNED document declares, the live table does not name, and
+/// the host denies. That is the document running AHEAD of the deploy: cloud's
+/// source says the route exists and the binary answering api.hanzo.ai was built
+/// before it did. It falls on its own at the next deploy.
+///
+/// A CEILING, like [`CONTRADICTED`], and for the same reason — no edit in this
+/// repo makes `GET /v1/commerce/org` answer, and a gate that reddens for it is a
+/// gate people switch off. Today it is 3 (`GET /v1/commerce/org`,
+/// `POST /v1/iam/link`, `PUT /v1/iam/password`), all three among the eleven
+/// operations this re-pin added.
+///
+/// IT USED TO BE CALLED A PHANTOM, and that was false by construction. A phantom
+/// is a command addressing a route NO DOCUMENT claims; every generated coordinate
+/// is claimed by the document it was generated from, and the chain digests refuse
+/// a hand-edited `generated.rs`, so this bucket could never hold one. Reading
+/// "the deploy has not landed" as "this repo invented a route" points a hard
+/// failure at the wrong owner and buries the real phantom class — the
+/// hand-written literals, which keep the name and keep failing hard.
+const AHEAD: usize = 3;
 
 /// Coordinates whose evidence cannot decide anything, because the prefix that
 /// answers for them answers the same way for a route nobody wrote — a relay door
@@ -209,7 +237,15 @@ const CONTRADICTED: usize = 6;
 /// were still budgeted as undecidable, which is 87 routes' worth of licence to
 /// guess held open by a number nobody brought down. A ceiling pinned above
 /// reality is the thing this comment says it exists to prevent.
-const UNFALSIFIABLE: usize = 90;
+///
+/// 90 -> 92, and the two are production's, not this tree's: the live table stopped
+/// naming `/v1/agent/*` at all (four routes, `serves` -> `silent` between two
+/// captures). Two of the four are askable GETs and were decided by the host; the
+/// other two — `POST /v1/agent` and `GET /v1/agent/conversations/{id}` — can be
+/// asked of nobody, so the table's silence is the whole evidence. That is the
+/// `agent` vs `agents` split showing up in the route table: one noun, two
+/// products, and the fix is a route move in hanzoai/agent.
+const UNFALSIFIABLE: usize = 92;
 
 // ---- the live route table ----------------------------------------------------
 
@@ -1116,7 +1152,7 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
             .map(|r| named(&r.method, &r.path))
             .collect()
     };
-    let phantoms = by(Settled::Absent, false);
+    let ahead = by(Settled::Absent, false);
     let contradicted = by(Settled::Absent, true);
     let blind: Vec<String> = by(Settled::Blind, true).into_iter().chain(by(Settled::Blind, false)).collect();
     let flapping: Vec<&Row> = rows.iter().filter(|r| r.flapping).collect();
@@ -1227,13 +1263,6 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
     fail |= !invented.is_empty();
 
     broke(
-        "PHANTOM — the host denies this route and NO document claims it. THIS REPO is carrying a \
-         command the server does not serve",
-        phantoms.clone(),
-    );
-    fail |= !phantoms.is_empty();
-
-    broke(
         "BLIND — nothing was learned about this coordinate. A gate that cannot see must not pass",
         blind.clone(),
     );
@@ -1251,6 +1280,30 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
         stale.iter().map(|(p, s)| format!("{p:<16}claims `hanzo {s}`")).collect(),
     );
     fail |= !stale.is_empty();
+
+    // The pinned document naming a route the deploy has not caught up with is a
+    // WAIT, and waiting is not a defect anybody here can fix. Pinned so the wait
+    // cannot lengthen unread, and free to fall the moment cloud ships.
+    if !ahead.is_empty() {
+        let over = ahead.len() > AHEAD;
+        fail |= over;
+        println!(
+            "\n{} AHEAD OF THE DEPLOY — the pinned document declares these routes, the live table \
+             does not name them, and the host denies them ({} of at most {AHEAD})",
+            if over { "!!" } else { "  " },
+            ahead.len()
+        );
+        for p in &ahead {
+            println!("   {p}");
+        }
+        println!(
+            "   cloud's source says the route exists and the binary answering api.hanzo.ai was built\n   \
+             before it did. Nothing here makes it answer. If this grew, the pin moved further ahead of\n   \
+             production than a release should sit; if it shrank, the deploy landed — bring AHEAD down\n   \
+             to {} in src/bin/driftgate.rs.",
+            ahead.len()
+        );
+    }
 
     // Cloud's table and cloud's server disagreeing is REAL and it is not ours: no
     // edit in this repo makes `GET /v1/ai/applications` answer, and a gate that
