@@ -59,7 +59,6 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Network { .. } => "network",
         Commands::Host { .. } => "host",
         Commands::Wallet { .. } => "wallet",
-        Commands::Connector { .. } => "connector",
         Commands::Share { .. } => "share",
         Commands::Init { .. } => "init",
     }

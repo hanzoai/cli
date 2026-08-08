@@ -535,19 +535,32 @@ pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
     call(cfg, method, path, body, query, false).await
 }
 
-/// Fill a stdin-secret body field (`format: password`, e.g. `kms secrets
-/// create`'s `value`) from STDIN through the ONE secret law
-/// (`iam::secret::read_secret`). Because the field has no flag and no positional,
-/// this is the ONLY way a secret enters the body — it can never come from argv.
-/// A single op reads stdin exactly once; more than one secret field is an
-/// authoring error we refuse rather than read stdin twice.
+/// Fill a secret body field (`kms secrets create`'s `value`, `integrations
+/// connect`'s `token`) through the ONE secret law (`iam::secret`). Because the
+/// field has no flag and no positional, this is the ONLY way a secret enters the
+/// body — it can never come from argv, and a value-bearing argv is a parse error
+/// rather than a matter of discipline. A single op reads stdin exactly once; more
+/// than one secret field is an authoring error we refuse rather than read twice.
+///
+/// A PIPE is read; a TERMINAL is PROMPTED, hidden. It used to read stdin either
+/// way, so a person running this at a terminal typed their credential in the
+/// clear — the reason a hand-written `hanzo connector add` survived beside the
+/// generated command for the same four routes.
 fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
+    use crate::iam::secret;
     let mut secrets = op.fields.iter().filter(|f| f.secret);
     let Some(f) = secrets.next() else { return Ok(body) };
     if secrets.next().is_some() {
-        anyhow::bail!("{} declares more than one stdin-secret field — an op reads stdin once", op.path);
+        anyhow::bail!("{} declares more than one secret field — an op reads stdin once", op.path);
     }
-    let value = crate::iam::secret::read_secret(std::io::stdin().lock())?;
+    // A secret field has no flag, so `None` is the only question that can be
+    // asked: nothing could have carried a literal here for the law to refuse.
+    let value = match secret::secret_source(None, secret::stdin_is_tty()) {
+        secret::SecretSource::Prompt => {
+            secret::prompt(&format!("{} for `hanzo {} {}`", f.flag, op.product, op.verb))?
+        }
+        _ => secret::read_secret(std::io::stdin().lock())?,
+    };
     let obj = body.as_object_mut().ok_or_else(|| anyhow!("a typed body must be a JSON object"))?;
     insert_path(obj, f.key, Value::String(value));
     Ok(body)

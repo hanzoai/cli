@@ -333,12 +333,6 @@ enum Commands {
         command: WalletCommands,
     },
 
-    /// Connect an external provider account (Cloudflare, …) to your org
-    Connector {
-        #[command(subcommand)]
-        command: ConnectorCommands,
-    },
-
     /// Publish a local service to a public https://<token>.share.hanzo.ai URL
     Share {
         /// Local target: a port (3000), host:port, or a full url
@@ -564,32 +558,6 @@ enum WalletCommands {
     Use { address: String },
     /// List known wallets
     List,
-}
-
-#[derive(Subcommand)]
-enum ConnectorCommands {
-    /// Connect a provider: verify a scoped credential and seal it into KMS
-    Add {
-        #[arg(long)]
-        provider: String,
-        #[arg(long)]
-        account_id: Option<String>,
-        /// `-` reads the token from stdin (a literal is REFUSED)
-        #[arg(long)]
-        token: Option<String>,
-    },
-    /// List your org's connectors and their status (never the credential)
-    List,
-    /// Re-verify a connected credential against the provider, live
-    Verify {
-        #[arg(long)]
-        provider: String,
-    },
-    /// Disconnect a provider: delete its KMS credential and forget it
-    Rm {
-        #[arg(long)]
-        provider: String,
-    },
 }
 
 #[tokio::main]
@@ -832,18 +800,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
             WalletCommands::Use { address } => commands::wallet::use_wallet(&mut config, address)?,
             WalletCommands::List => commands::wallet::list(&config)?,
-        },
-        Commands::Connector { command } => match command {
-            ConnectorCommands::Add { provider, account_id, token } => {
-                commands::connector::add(&mut config, provider, account_id, token).await?
-            }
-            ConnectorCommands::List => commands::connector::list(&mut config).await?,
-            ConnectorCommands::Verify { provider } => {
-                commands::connector::verify(&mut config, provider).await?
-            }
-            ConnectorCommands::Rm { provider } => {
-                commands::connector::rm(&mut config, provider).await?
-            }
         },
         Commands::Share { target, backend_mode, name } => {
             commands::share::run(&mut config, target, backend_mode, name).await?

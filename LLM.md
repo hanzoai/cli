@@ -156,7 +156,7 @@ in the program exec'd, so a third is a const, not a file. The `model_catalog_jso
 write for them must carry EVERY field their parser requires: it rejects the whole
 document on the first missing one, and that took the session down with it (a lost
 context window is survivable, a session that cannot start is not).
-- identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage|billing|connector`
+- identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage`
 - cloud: `hanzo serve`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
 - fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
@@ -278,6 +278,26 @@ a capture taken from it could never be re-derived and never be checked.
   `absorb` now gives a local command that gains subcommands the same rule
   `to_command` gives every other runnable group — bare it runs itself, with a
   subcommand it descends.
+- **ONE COMMAND PER ROUTE, and the last duplicate is gone.** `hanzo connector
+  {add,list,verify,rm}` was a second implementation of `hanzo integrations
+  {connect,list,verify,disconnect}` over the same four routes — cloud's own
+  summary for verify still reads "…live (`hanzo connector verify`)", which is now
+  prose to fix upstream, never here. ONE thing kept it alive: it held the provider
+  credential off argv and the generated command could not, because the handler
+  declared no body. Cloud types it now (`connectIn.token`), and a credential is a
+  secret by NAME, so the generated command has no `--token` at all — a
+  value-bearing argv is a PARSE ERROR rather than a runtime refusal, which is
+  strictly stronger than what the hand-written one enforced.
+  `the_credential_of_a_connect_has_no_flag_to_carry_it` pins it, so an untyping
+  upstream is loud. The name `connector` was freed too, and it is a real product:
+  `hanzo connector github webhook` is `POST /v1/connector/github/webhook`.
+- **A TERMINAL IS PROMPTED; A PIPE IS READ.** The generated secret path read stdin
+  either way, so a person running a secret-taking command interactively typed the
+  credential in the clear — the one thing the hand-written connector did better,
+  and the reason it survived. The hidden read now lives in `iam::secret` beside
+  the other two readers, where `SecretSource::Prompt` already named it, and both
+  `iam::onboarding` and the generated tree use that one implementation. It existed
+  twice before and neither copy was reachable from the generated tree.
 - **THE ELISION CEILING — the one remaining silent loss, now counted.** The fold
   names a leaf after its own noun, so two methods at one address want one command:
   `PUT` and `PATCH` on an item both read as `update`, `GET` and `POST` on

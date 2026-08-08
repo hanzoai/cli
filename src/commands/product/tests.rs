@@ -903,6 +903,46 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
 // on three fields it could not reach yesterday.
 const SECRET_FIELDS: usize = 67;
 
+/// WHAT KILLED THE SECOND CONNECTOR COMMAND, pinned so it cannot come back
+/// silently. `hanzo connector add` existed beside `hanzo integrations connect`
+/// over the same four routes for ONE reason: it kept the provider credential off
+/// argv, and the generated command could not, because the handler declared no
+/// body. Cloud types it now — `connectIn.token` — and a credential is a secret by
+/// NAME, so the generated command has no `--token` at all and a value-bearing
+/// argv is a PARSE ERROR rather than a runtime refusal. If this fails, the
+/// handler lost its type upstream and a credential just became typeable on the
+/// command line; the fix is in hanzoai/cloud, and it is urgent.
+#[test]
+fn the_credential_of_a_connect_has_no_flag_to_carry_it() {
+    let op = OPS
+        .iter()
+        .find(|o| o.path == "/v1/integrations/{provider}/connect" && o.method == "POST")
+        .expect("cloud serves the connector plane");
+    let token = op.fields.iter().find(|f| f.key == "token").expect("the document types the body");
+    assert!(token.secret, "a provider credential must never be a flag");
+    let argv = ["hanzo", op.product, op.verb, "cloudflare", "--token", "cf-live-key"];
+    assert!(
+        augment(Command::new("hanzo")).try_get_matches_from(argv).is_err(),
+        "`--token <literal>` must not parse"
+    );
+}
+
+/// A SECRET FIELD IS NEVER READ WITH THE PIPE READER ON A TERMINAL. `dispatch`
+/// read stdin either way, so a person running a secret-taking command
+/// interactively typed their credential in the clear — which is exactly why a
+/// hand-written command with a hidden prompt outlived the generated one. The
+/// branch is asserted over the SOURCE because the alternative needs a tty: what
+/// must never come back is an unconditional pipe read.
+#[test]
+fn a_terminal_is_prompted_and_never_read_as_a_pipe() {
+    let src = include_str!("mod.rs");
+    let body = &src[src.find("fn inject_secret").expect("inject_secret exists")..];
+    let body = &body[..body.find("\n}\n").expect("a function ends")];
+    assert!(body.contains("secret::secret_source("), "the source of a secret is the law's to decide");
+    assert!(body.contains("SecretSource::Prompt => {"), "a terminal must be prompted");
+    assert!(!body.contains("read_secret(std::io::stdin().lock())?;\n    let obj"), "unconditional pipe read");
+}
+
 /// THE invariant of a secrets CLI, on the GENERATED path: a `format: password`
 /// body property has NO flag and NO positional, so a value-bearing argv is a PARSE
 /// ERROR — a property of the grammar, not of the handler's discipline — and
