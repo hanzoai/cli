@@ -79,6 +79,9 @@
 //!
 //!   * PHANTOM — the host denies it and NO document claims it. The CLI is
 //!     carrying a route the server does not serve. OURS, and a hard failure.
+//!     Asked of BOTH trees: the generated one, coordinate by coordinate against
+//!     the host, and the hand-written one, whose routes are literals in the
+//!     source and were read by nothing at all until 1.9.46 — see [`sent`].
 //!   * CONTRADICTED — the host denies it and cloud's OWN live table claims it.
 //!     Cloud's table and cloud's server disagree; no edit in this repo settles
 //!     that, so it is a CEILING that may not grow in silence and is free to fall
@@ -354,6 +357,86 @@ fn coordinates(doc: &Value) -> Vec<(String, String, bool)> {
             }
         }
     }
+    out
+}
+
+/// Does the document declare this path? Segment by segment, so a `{param}` in
+/// the source matches the document's `{param}` whatever either chose to call it
+/// — the router's names are its own.
+fn declares(doc: &Value, path: &str) -> bool {
+    let want = segs(path);
+    doc.get("paths")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .any(|(k, _)| Table::matches(&segs(k).iter().map(|s| (*s).to_string()).collect::<Vec<_>>(), &want))
+}
+
+/// Every `/v1` path the HAND-WRITTEN commands send, read out of the source that
+/// sends them, keyed to the file it was read from.
+///
+/// The gate's notion of "what this repo can call" was `generated::OPS` and
+/// nothing else, so a route only a local command sends was ruled on by no one.
+/// `hanzo billing deposit` posted to `/v1/billing/deposit` for as long as it
+/// existed — a route hanzoai/cloud has never served, in a product whose whole
+/// route list the document carries — and the gate that exists to make a phantom
+/// impossible could not see it, because the phantom was not in the generated
+/// table.
+///
+/// The DOCUMENT is authority only over the products it owns, and that is enough
+/// to decide this without an exception list: `hanzo fabric` talks to a hanzo
+/// NODE, whose `/v1/node/cluster/*` routes cloud does not own and does not
+/// publish, so they are not cloud's to refute and are left alone. A literal
+/// under a product cloud DOES own is a claim about cloud's surface, and the
+/// document is the whole of that surface.
+///
+/// It reads paths, not coordinates: a literal is a `&str`, and the method sits
+/// at the call site. That is the granularity a lexical read can honestly reach,
+/// and it is the granularity the defect lives at.
+fn sent(src: &Path) -> BTreeMap<String, String> {
+    fn walk(dir: &Path, out: &mut BTreeMap<String, String>) {
+        let mut entries: Vec<PathBuf> =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+                .map(|e| e.expect("dir entry").path())
+                .collect();
+        entries.sort();
+        for p in entries {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if p.is_dir() {
+                // `bin/` is the maintainer tools, not the shipped binary.
+                if name != "bin" {
+                    walk(&p, out);
+                }
+                continue;
+            }
+            // The generated tree is ruled on above, coordinate by coordinate,
+            // and test code is not wire — a mock serves the routes it invents
+            // and an assertion names paths on purpose.
+            if !name.ends_with(".rs") || name == "generated.rs" || name.contains("test") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+            let text = &text[..text.find("cfg(test)").unwrap_or(text.len())];
+            let file = p.display().to_string();
+            let mut rest = text;
+            while let Some(i) = rest.find("\"/v1/") {
+                rest = &rest[i + 1..];
+                let Some(end) = rest.find('"') else { break };
+                let (lit, tail) = rest.split_at(end);
+                rest = tail;
+                // A path is one token: a literal carrying spaces is prose that
+                // happens to quote a route, and a `?` begins a query string,
+                // which is not part of the address.
+                let lit = lit.split('?').next().unwrap_or(lit).trim_end_matches('/');
+                if lit.contains(' ') || segs(lit).len() < 2 {
+                    continue;
+                }
+                out.entry(lit.to_string()).or_insert_with(|| file.clone());
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(src, &mut out);
     out
 }
 
@@ -1032,6 +1115,24 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
     let blind: Vec<String> = by(Settled::Blind, true).into_iter().chain(by(Settled::Blind, false)).collect();
     let flapping: Vec<&Row> = rows.iter().filter(|r| r.flapping).collect();
 
+    // ---- the same direction, asked of the OTHER tree --------------------------
+    // The local commands' routes are literals, and the document decides them the
+    // same way it decides a generated coordinate. A product cloud does not own is
+    // not cloud's to answer for — see [`sent`].
+    let owned = products(spec);
+    let local = sent(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
+    assert!(
+        !local.is_empty(),
+        "the sweep read no /v1 path out of src/ at all — the local commands do send some, so the \
+         read is broken and a broken read reports 'no drift' for the one reason a gate may never \
+         report it"
+    );
+    let invented: Vec<String> = local
+        .iter()
+        .filter(|(p, _)| owned.contains(segs(p)[1]) && !declares(spec, p))
+        .map(|(p, f)| format!("{p:<40}sent by {f}"))
+        .collect();
+
     // ---- direction two: a served product no command reaches ------------------
     let mut universe = ev.products.clone();
     universe.extend(products(spec));
@@ -1083,6 +1184,14 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
         ev.controls.values().filter(|a| verdict(a) != Probe::Absent).count()
     );
     println!("  products reachable   {reachable:>5}   of {}", universe.len());
+    // Printed, because a sweep that quietly reads nothing is a gate that passes
+    // for the wrong reason — the failure mode of every lexical read ever written.
+    println!(
+        "  hand-written routes  {:>5}   /v1 paths the local commands send, read from src/; {} \
+         under a product cloud owns",
+        local.len(),
+        local.keys().filter(|p| owned.contains(segs(p)[1])).count()
+    );
     println!(
         "  declared exceptions  {:>5}   applied of {} in src/curation.rs",
         excused.len(),
@@ -1102,6 +1211,14 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
         unproven.iter().map(|(m, p)| named(m, p)).collect(),
     );
     fail |= !unproven.is_empty();
+
+    broke(
+        "PHANTOM — a hand-written command sends a route the document does not declare, in a \
+         product whose whole route list the document carries. Delete the command, or serve the \
+         route in hanzoai/cloud",
+        invented.clone(),
+    );
+    fail |= !invented.is_empty();
 
     broke(
         "PHANTOM — the host denies this route and NO document claims it. THIS REPO is carrying a \
@@ -1305,6 +1422,41 @@ mod tests {
         let line = named(op.method, op.path);
         assert!(line.contains(&format!("hanzo {}", op.product)), "{line}");
         assert!(named("GET", "/v1/no-such-product/nothing").contains("no command"));
+    }
+
+    /// THE SWEEP MUST ACTUALLY READ SOMETHING. A lexical read that quietly
+    /// matches nothing reports "no drift" for the one reason a gate may never
+    /// report it, so the routes the hand-written commands are KNOWN to send are
+    /// asserted by name: `hanzo status` composes exactly these three.
+    #[test]
+    fn the_sweep_reads_the_routes_the_local_commands_send() {
+        let local = sent(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
+        for p in ["/v1/k8s/clusters", "/v1/deploy/applications", "/v1/fleet/workers"] {
+            let from = local.get(p).unwrap_or_else(|| panic!("the sweep missed {p}"));
+            assert!(from.ends_with("status.rs"), "{p} is sent by {from}");
+        }
+        // Prose that quotes a route is not a route, and a query string is not
+        // part of an address.
+        assert!(local.keys().all(|p| !p.contains(' ') && !p.contains('?')), "{local:?}");
+    }
+
+    /// THE DOCUMENT DECIDES, and only for the products it owns. `hanzo fabric`
+    /// talks to a hanzo NODE, so `/v1/node/*` is not cloud's to refute — which is
+    /// why the sweep needs no exception list beside the document.
+    #[test]
+    fn the_sweep_rules_only_where_the_document_is_the_authority() {
+        let doc = serde_json::json!({"paths": {
+            "/v1/billing/balance": {"get": {}},
+            "/v1/agents/sessions/{id}/events": {"post": {}},
+        }});
+        assert!(declares(&doc, "/v1/billing/balance"));
+        // The router's parameter names are its own.
+        assert!(declares(&doc, "/v1/agents/sessions/{session}/events"));
+        // The phantom: a product the document owns, at an address it does not.
+        assert!(!declares(&doc, "/v1/billing/deposit"));
+        assert!(products(&doc).contains("billing"));
+        // And the node's routes are outside the document's authority entirely.
+        assert!(!products(&doc).contains("node"));
     }
 
     /// Evidence is CAPTURED, never written. The seal is the only thing standing

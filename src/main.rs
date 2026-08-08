@@ -333,7 +333,7 @@ enum Commands {
         command: WalletCommands,
     },
 
-    /// Prepaid wallet money — read the balance, mint a deposit
+    /// Prepaid wallet money — read the balance
     Billing {
         #[command(subcommand)]
         command: BillingCommands,
@@ -576,21 +576,6 @@ enum WalletCommands {
 enum BillingCommands {
     /// Show the active identity's prepaid balance
     Balance,
-    /// Credit an account (SuperAdmin / internal service only — the server rules)
-    Deposit {
-        #[arg(long)]
-        user: String,
-        #[arg(long)]
-        cents: i64,
-        #[arg(long)]
-        currency: Option<String>,
-        #[arg(long)]
-        notes: Option<String>,
-        #[arg(long)]
-        tags: Option<String>,
-        #[arg(long)]
-        expires_in: Option<u32>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -862,13 +847,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         },
         Commands::Billing { command } => match command {
             BillingCommands::Balance => commands::billing::balance(&mut config).await?,
-            BillingCommands::Deposit { user, cents, currency, notes, tags, expires_in } => {
-                commands::billing::deposit(
-                    &mut config,
-                    commands::billing::Deposit { user, cents, currency, notes, tags, expires_in },
-                )
-                .await?
-            }
         },
         Commands::Connector { command } => match command {
             ConnectorCommands::Add { provider, account_id, token } => {
@@ -1109,7 +1087,7 @@ mod tests {
         let hand = Cli::command();
         let merged = commands::product::augment(hand.clone());
         let billing = merged.find_subcommand("billing").expect("`billing` is a command");
-        for v in ["balance", "deposit", "invoices", "usage", "plans", "payouts", "alerts"] {
+        for v in ["balance", "invoices", "usage", "plans", "payouts", "alerts"] {
             assert!(billing.find_subcommand(v).is_some(), "`hanzo billing {v}` must exist");
         }
 
