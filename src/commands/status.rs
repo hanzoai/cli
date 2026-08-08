@@ -5,14 +5,18 @@
 //! the one authenticated seam (`product::Seam` — origin from `network`, bearer
 //! from the active identity, no org header ever):
 //!
-//! | surface        | route                      | rows       |
-//! |----------------|----------------------------|------------|
-//! | clusters       | `GET /v1/k8s/clusters`     | `clusters` |
-//! | applications   | `GET /v1/deploy/applications` | `items` (argocd) |
-//! | compute nodes  | `GET /v1/fleet/workers`    | `workers`  |
+//! | surface        | route                      | rows       | the command it is |
+//! |----------------|----------------------------|------------|-------------------|
+//! | clusters       | `GET /v1/k8s/clusters`     | `clusters` | `hanzo k8s clusters list` |
+//! | applications   | `GET /v1/deploy/applications` | `items` (argocd) | `hanzo deploy applications list` |
+//! | compute nodes  | `GET /v1/fleet/workers`    | `workers`  | `hanzo fleet workers` |
 //!
 //! There is no fourth wire and no CLI-only side channel: everything here is a
-//! route the API, the SDKs and the console already read.
+//! route the API, the SDKs and the console already read. The last column is why
+//! this is a VIEW and not a duplicate — each of those three is a generated
+//! command anybody can run, and `status` adds only the arrangement:
+//! unhealthy-first, counted, and a surface that did not answer rendered as
+//! unavailable rather than zero. It introduces no route of its own.
 //!
 //! ## Two laws
 //!
