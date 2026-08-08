@@ -8,13 +8,11 @@
 # runs twice — once here, and once on GitHub where nothing can ever pick it up
 # and the job simply queues. `.hanzo/` is the half that runs.
 #
-# The `uses:` pin below is spelled `.github/workflows/build.yml@v1` even though
-# hanzoai/ci keeps the file at `.hanzo/workflows/build.yml` and nowhere else.
-# That reads like a lie and is not one: the path in a `uses:` is a LOOKUP KEY the
-# forge resolves by name across its own workflow directories, not a file it opens.
-# Measured, because the pin was changed to the "true" path on the strength of the
-# file listing alone: green at the spelling below, red twice at the honest-looking
-# one, same tree, same runner. A pin is right when the pipeline runs.
+# The `uses:` pin below names `.hanzo/workflows/build.yml`, which is where
+# hanzoai/ci publishes the reusable and the only place it exists — the
+# `.github/workflows` path this used to name is a 404 at v1. The forge resolves
+# a reusable by name across its workflow directories, so the wrong path ran
+# anyway; the pin is now true rather than merely lucky.
 #
 # `repository_dispatch: spec-update` used to be here, described as the coupling
 # that carries a hanzoai/cloud release into this repo. It never carried one. The
@@ -32,5 +30,5 @@ on:
   workflow_dispatch:
 jobs:
   cicd:
-    uses: hanzoai/ci/.github/workflows/build.yml@v1
+    uses: hanzoai/ci/.hanzo/workflows/build.yml@v1
     secrets: inherit
