@@ -83,17 +83,29 @@ jobs:
       # moved exactly once, by hand.
       #
       # So the side WITH runners asks. This job already has the network and the
-      # toolchain and already runs nightly; reading one tag and regenerating costs
+      # toolchain and already runs nightly; reading one ref and regenerating costs
       # it one more step and needs no dispatch, no new secret and no second
       # mechanism. It runs even when `live-check` failed — production having moved
       # under the committed evidence is precisely when the pin wants moving.
       #
+      # IT READS main, NOT THE NEWEST TAG. The document is emitted from cloud's
+      # source, so what it says is a fact about that source and the ref that names
+      # it is main. A tag names a SERVICE RELEASE, which is a different thing and
+      # lags: measured the day this changed, cloud's newest tag was four commits and
+      # two hours behind a main carrying 256 newly typed operations, and re-pinning
+      # to it would have moved this repo's pin BACKWARDS. Two notions of "the
+      # document" is the same defect as two documents.
+      #
+      # A sha, never `main` itself, because a branch name is not a value: two runs
+      # of one commit have to read the same bytes for the digest below to mean
+      # anything.
+      #
       # It OPENS A PATCH rather than pushing to main, because a re-pin is not
-      # always safe to take: a tag exists the moment it is cut and production
-      # deploys some time later, so a document can name a route the running server
-      # does not serve yet — which the drift gate on the branch calls a phantom,
-      # correctly. That is a wait, not a defect, and it needs a person.
-      - name: Re-pin to hanzoai/cloud's newest release, and open the patch
+      # always safe to take: cloud's source states a route the moment it is written
+      # and production deploys it some time later, so the document can name a route
+      # the running server does not serve yet. The gate calls that AHEAD and pins
+      # it; taking a longer wait is a person's call, and this is where they make it.
+      - name: Re-pin to hanzoai/cloud's main, and open the patch
         if: always()
         env:
           FORGE: https://git.hanzo.ai/v1
@@ -101,22 +113,25 @@ jobs:
         run: |
           set -euo pipefail
           api() { curl -fsSL -H "Authorization: token $TOKEN" "$@"; }
-          newest=$(api "$FORGE/repos/hanzoai/cloud/tags?limit=1" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')
+          head=$(api "$FORGE/repos/hanzoai/cloud/branches/main" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["id"])')
           pinned=$(sed -n 's/^ref=//p' .spec-lock)
-          if [ "$newest" = "$pinned" ]; then
-            echo "the pin is hanzoai/cloud@$pinned, and that is the newest release"
+          if [ "$head" = "$pinned" ]; then
+            echo "the pin is hanzoai/cloud@$pinned, and that is main"
             exit 0
           fi
-          echo "hanzoai/cloud@$pinned -> @$newest"
-          branch="spec/$newest"
+          echo "hanzoai/cloud@$pinned -> @$head"
+          # ONE branch, because there is one pending re-pin. Naming it after the ref
+          # would open a fresh one every night main moved, and a pile of stale
+          # branches is how a patch stops being read.
+          branch=repin
           if api "$FORGE/repos/${{ github.repository }}/branches/$branch" >/dev/null 2>&1; then
             echo "$branch is already open — the patch is waiting on a person, not on this job"
             exit 0
           fi
-          api "$FORGE/repos/hanzoai/cloud/raw/openapi.yaml?ref=$newest" -o /tmp/openapi.yaml
+          api "$FORGE/repos/hanzoai/cloud/raw/openapi.yaml?ref=$head" -o /tmp/openapi.yaml
           printf 'ref=%s\nsha256=%s\nrepo=hanzoai/cloud\npath=openapi.yaml\n' \
-            "$newest" "$(sha256sum /tmp/openapi.yaml | cut -d' ' -f1)" > .spec-lock
+            "$head" "$(sha256sum /tmp/openapi.yaml | cut -d' ' -f1)" > .spec-lock
           # `make spec` fetches that ref AGAIN and refuses if the bytes moved under
           # the digest just written — the lock checking itself — then regenerates
           # the surface and re-captures the evidence in the same act.
@@ -124,9 +139,9 @@ jobs:
           git config user.name hanzo-dev
           git config user.email dev@hanzo.ai
           git switch -c "$branch"
-          git commit -am "spec: re-pin to $newest"
+          git commit -am "spec: re-pin to $head"
           git push -u origin "$branch"
-          python3 - "$branch" "$newest" <<'PY' > /tmp/pull.json
+          python3 - "$branch" "$head" <<'PY' > /tmp/pull.json
           import json, sys
           branch, ref = sys.argv[1], sys.argv[2]
           json.dump({
@@ -134,12 +149,13 @@ jobs:
               "base": "main",
               "title": f"spec: re-pin to hanzoai/cloud@{ref}",
               "body": (
-                  "The projection, moved forward to the newest release, with the "
-                  "evidence re-captured in the same act.\n\n"
-                  "`make verify` on this branch is the question worth reading. A "
-                  "PHANTOM here means the tag is cut and production has not "
-                  "deployed it yet, which is a wait rather than a defect: hold the "
-                  "patch until the deploy lands and re-run.\n\n"
+                  "The projection, moved forward to cloud's main, with the evidence "
+                  "re-captured in the same act.\n\n"
+                  "`make verify` on this branch is the question worth reading. AHEAD "
+                  "means cloud's source states a route production has not deployed "
+                  "yet, which is a wait rather than a defect: raise the pin with the "
+                  "count if the wait is acceptable, or hold the patch until the "
+                  "deploy lands and re-run.\n\n"
                   "Operation ids move freely between releases; CLI coordinates key "
                   "on (method, path) and do not."
               ),
@@ -147,4 +163,4 @@ jobs:
           PY
           api -X POST -H 'Content-Type: application/json' \
             "$FORGE/repos/${{ github.repository }}/pulls" -d @/tmp/pull.json >/dev/null
-          echo "opened spec: re-pin to $newest"
+          echo "opened spec: re-pin to $head"
