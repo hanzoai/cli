@@ -59,8 +59,16 @@ client:
 # `make test`, never a bare `cargo test`: the gates below exec maintainer
 # binaries that `cargo test` does not build, and a gate that dies on NotFound
 # reads exactly like a gate that passed. One invocation, in the Makefile.
+#
+# THE LINT GATE HAS TO INSTALL WHAT IT LINTS WITH. `dtolnay/rust-toolchain@stable`
+# provisions rustc and cargo and no components, so `cargo clippy` answered
+# "'cargo-clippy' is not installed for the toolchain" and every main build went
+# red on it — six in a row, while `make test` above passed every one of them. A
+# gate that cannot run is worse than no gate whichever way it lands: red, it
+# teaches people the build lies; green, it teaches them nothing at all. It asks
+# for the component first now, which is idempotent and costs a cached download.
 test:
   - name: cargo-test
     run: make test
   - name: clippy
-    run: cargo clippy --locked --all-targets -- -D warnings
+    run: rustup component add clippy && cargo clippy --locked --all-targets -- -D warnings
