@@ -47,7 +47,12 @@ fi
 cargo run --quiet --features maintainer --bin genspec --locked
 cargo run --quiet --features maintainer --bin genproduct --locked
 
-# `.spec-lock` has ONE writer now — hanzoai/ci's client: lane, which knows the
-# document's repo, path, ref and digest and is the only thing that can know them.
-# This script used to append a second half (`master=`, the hanzoai/openapi commit
-# it generated against). There is no second half.
+# `.spec-lock` has ONE writer — the nightly re-pin in `.hanzo/workflows/drift.yml`,
+# which reads hanzoai/cloud's newest tag, fetches the document at it, and records
+# the ref beside the digest of the bytes it actually read. It used to be named as
+# hanzoai/ci's client: lane, on the strength of a `repository_dispatch` a cloud
+# release was supposed to send; nothing was ever delivered, and on a push that lane
+# is check-only at the LOCKED ref, so for 104 runs the lock had no writer at all
+# and moved once, by hand. This script writes no half of it: it used to append a
+# second (`master=`, the hanzoai/openapi commit it generated against), and there is
+# no second half.

@@ -20,11 +20,12 @@
 # What CI owns for this repo is the two gates below and the client lane.
 
 client:
-  # The document, by value at a pinned ref. hanzoai/cloud's release hands this
-  # repo (version, sha, spec_sha256) once per release; the lane fetches
-  # openapi.yaml AT THAT SHA, refuses on a digest mismatch, and writes
-  # .spec-lock. Reading api.hanzo.ai here would name whatever is serving now
-  # rather than the release that sent us.
+  # The document, by value at a pinned ref: the lane fetches openapi.yaml at the
+  # ref .spec-lock names and refuses on a digest mismatch. It does not choose the
+  # ref and does not write the lock — on a push it is check-only at the locked
+  # one. What MOVES the pin is the nightly re-pin in .hanzo/workflows/drift.yml,
+  # which pulls hanzoai/cloud's newest tag and opens a patch. Reading api.hanzo.ai
+  # here would name whatever is serving now rather than a release.
   spec: { repo: hanzoai/cloud, path: openapi.yaml }
   generate: ./scripts/generate.sh
   # PATCH only, derived. The command surface is the document's; this crate only
