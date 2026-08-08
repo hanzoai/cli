@@ -44,8 +44,17 @@ fn generated_data_carries_no_host_url_or_auth() {
             "generated call data must be host/url/auth-free; found {banned:?}"
         );
     }
+    // A LINK is a scheme with somewhere to go. Banning the bare characters `://`
+    // banned the word "otpauth://" as well — the URI SCHEME cloud's MFA enrollment
+    // hands back for a person to render as a QR code, named in prose as a scheme
+    // and followed by a space. Naming a scheme is a fact, exactly as naming a host
+    // is; what may never appear is an authority after it, because that is the part
+    // a client could dial instead of the configured origin.
     for op in OPS {
-        assert!(!op.sum.contains("://"), "prose may name a host, never carry a link: {}", op.sum);
+        let link = op.sum.match_indices("://").any(|(i, _)| {
+            op.sum[i + 3..].chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        });
+        assert!(!link, "prose may name a host or a scheme, never carry a link: {}", op.sum);
     }
     // A product description is display-only prose, but it still must not carry
     // an auth token — and the tuple shape means it can never be dialed.

@@ -78,10 +78,23 @@ fn the_committed_spec_names_the_release_it_was_generated_from() {
     };
     let (r#ref, sha) = (field("ref"), field("sha256"));
 
+    // AN IMMUTABLE REF, which is a weaker word than "release" and the only one
+    // that was ever true. This asked for a release TAG, on the grounds that main
+    // is a document nobody has deployed — but a tag is cut before production
+    // deploys it too, so the spelling never carried the guarantee it was asked
+    // for, and it cost the pin a whole notion of its own: cloud's newest tag can
+    // sit hours behind a main that has typed 256 operations, and taking the tag
+    // moves the pin BACKWARDS. What actually measures the deploy is the live
+    // evidence — driftgate's AHEAD, counted and pinned. What this test can decide
+    // is that the ref names BYTES: a tag or a commit, never a branch and never a
+    // host, because only those re-derive to the same document twice.
+    let tag = r#ref.starts_with('v') && r#ref.split('.').count() == 3;
+    let commit = r#ref.len() == 40 && r#ref.chars().all(|c| c.is_ascii_hexdigit());
     assert!(
-        r#ref.starts_with('v') && r#ref.split('.').count() == 3,
-        ".spec-lock names {ref:?}, which is not a hanzoai/cloud release tag. A capture must name a \
-         RELEASE: main is a document nobody has deployed, and a host is not a version."
+        tag || commit,
+        ".spec-lock names {ref:?}, which is neither a hanzoai/cloud release tag nor a commit. A \
+         capture must name IMMUTABLE bytes: a branch moves under the digest and a host is not a \
+         version."
     );
     assert!(
         prov.contains(&format!("hanzoai/cloud@{ref}")) && prov.contains(&format!("sha256:{sha}")),
