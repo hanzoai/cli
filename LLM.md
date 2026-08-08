@@ -316,7 +316,7 @@ a capture taken from it could never be re-derived and never be checked.
   sends the real verb and that command is in the tree. With the 11 that curation
   drops (`agent` 4, `help` 4, `completions` `csrf` `openapi.json` 1 each) that is
   the WHOLE distance, exactly:
-  **2369 spec operations − 18 tunnels − 14 elided − 11 curated = 2326 commands.**
+  **2378 spec operations − 18 tunnels − 14 elided − 11 curated = 2335 commands.**
   Nothing else is lost anywhere in the derivation, and the arithmetic closing is
   the check.
 - **A capability missing from the CLI is missing from the SERVER. There is no
@@ -351,7 +351,10 @@ and why.
   **2127 of 2127 generated commands match a live route; 0 match nothing.** Before,
   it was 1812 of 1823 with **11 phantoms**. That zero is a property of the wiring,
   not the result of a cleanup pass — there is no input left that could reintroduce
-  one.
+  one *into the generated tree*. The qualifier is load-bearing and was missing for
+  a whole release: the HAND-WRITTEN commands take no input from the document at
+  all, and `hanzo billing deposit` posted to a route cloud has never served inside
+  a pipeline built to make exactly that impossible. Both trees are swept now.
 - **WHAT WAS DELETED, and what it actually cost.** The master
   (hanzoai/openapi `hanzo.yaml`) contributed **71** operations to `spec/cloud.json`
   on its own word. Held against the live router: **2 addressed nothing at all**
@@ -451,10 +454,21 @@ and why.
   ref `.spec-lock` already names.
 
   What MOVES the ref is one step in `.hanzo/workflows/drift.yml`: read hanzoai/
-  cloud's newest tag off git.hanzo.ai, fetch the document at it, write the lock,
+  cloud's main off git.hanzo.ai, fetch the document at that COMMIT, write the lock,
   regenerate, re-capture the evidence, open the patch. It runs even when
   `live-check` failed, because production having moved is exactly when the pin
   wants moving.
+
+  **It reads main, not the newest tag, and the tag was the second authority
+  wearing a hat.** The document is emitted from cloud's SOURCE, so the ref that
+  names it is main; a tag names a service RELEASE, which is a different thing and
+  lags. Measured the day this changed: cloud's newest tag was two hours and four
+  commits behind a main carrying 256 newly typed operations, so re-pinning to the
+  tag would have moved this repo's pin BACKWARDS. The tag was also never the
+  guarantee it was read as — a tag is cut before production deploys it, which the
+  old prose said in the same breath. What actually measures the deploy is the live
+  evidence, and that is `AHEAD` (below). A commit sha, never `main` itself: a
+  branch name is not a value, and the digest beside it has to mean something.
 
   It used to be described as a PUSH — cloud's release sending `repository_dispatch:
   spec-update` with `(version, sha, spec_sha256)`. That event was undeliverable in
@@ -463,14 +477,14 @@ and why.
   is check-only at the LOCKED ref anyway. Across 104 runs the pin moved once, by
   hand. The trigger is deleted; the side WITH runners asks.
 
-  **A RE-PIN OPENS A PATCH, IT DOES NOT LAND.** A tag exists when it is cut and
-  production deploys it some time later, so the newest document can name a route
-  the running server does not serve yet — which the drift gate correctly calls a
-  phantom. Measured while writing this: v1.801.495 is tagged, production answers
-  `x-api-version: sha-716c08370361`, and `GET /v1/commerce/org` (which .495 adds)
-  404s against a `/v1/commerce/<nonsense>` control that also 404s, so the prefix
-  discriminates and the denial is real. That is a wait, not a defect, and waiting
-  is a person's call.
+  **A RE-PIN OPENS A PATCH, IT DOES NOT LAND.** cloud's source states a route the
+  moment it is written and production deploys it some time later, so the newest
+  document can name a route the running server does not serve yet — which the
+  drift gate calls `AHEAD`, counts and pins. Measured: `GET /v1/commerce/org` 404s
+  against a `/v1/commerce/<nonsense>` control that also 404s, so the prefix
+  discriminates and the denial is real, while production answers
+  `x-api-version: sha-716c08370361`. That is a wait, not a defect, and how long a
+  wait to take is a person's call — which is what the patch is for.
 
   Measured when it was wired: the committed capture was 7 operations short and 8
   wrong against a document cloud had already committed — the `/v1/billing/*`
@@ -539,14 +553,24 @@ and why.
     fabric` talks to a hanzo NODE, and `/v1/node/*` is not cloud's to refute. The
     count is printed and an empty sweep aborts — a lexical read that quietly
     matches zero reports "no drift" for the one reason a gate may never report it.
-  - **Whose defect it is turns on who claimed the route.** No document claimed it
-    and the host 404s → the CLI's phantom, hard failure. The LIVE TABLE claimed it
-    and the host 404s → cloud's table and cloud's server disagree, which no edit
-    here can settle: reported against `CONTRADICTED`, a CEILING that may not grow in
-    silence and is free to fall when somebody redeploys. Today it is 6, all
-    `/v1/ai` (`applications`, `permissions`, `sessions`, `sessions/duplicated`,
-    `users`, `users/table-infos`) — one rename, half-landed. The old 3 `/v1/billing`
-    ones are gone, fixed in cloud's router.
+  - **Whose defect it is turns on who claimed the route**, and there are THREE
+    owners, not two. No document claims it and the host 404s → the CLI's PHANTOM,
+    hard failure — and that class is now exactly the HAND-WRITTEN literals, because
+    a generated coordinate exists only where the document declares it. The LIVE
+    TABLE claims it and the host 404s → cloud's table and cloud's server disagree
+    (`CONTRADICTED`); today **0**, since cloud's `ai` app stopped publishing from a
+    committed subset and the six stale `/v1/ai` nouns left the document with it.
+    The PINNED DOCUMENT claims it, the table does not name it and the host 404s →
+    the document is `AHEAD` of the deploy; today **3** (`GET /v1/commerce/org`,
+    `POST /v1/iam/link`, `PUT /v1/iam/password`), all three among the eleven
+    operations the re-pin onto main added. Both of the last two are CEILINGS: free
+    to fall the moment somebody redeploys, and they may not grow in silence.
+
+    `AHEAD` used to be reported as a PHANTOM, which was false by construction —
+    "no document claims it" cannot be true of a coordinate generated FROM the
+    document, and the chain digests refuse a hand-edited `generated.rs`. It pointed
+    a hard failure at the wrong owner and buried the real phantom class underneath
+    a wait nobody here can end.
   - **A REDIRECT IS AN ANSWER.** The transport followed redirects by default, so
     `GET /v1/o11y/complete/google` — a 303 OAuth callback — was followed to
     `/v1/o11y/login?…` and that page's 404 was recorded against the callback's
@@ -791,50 +815,58 @@ a projection that repairs its source hides the defect at the one place it can be
 - **`/v1/logs` and `/v1/o11y/logs` are two doors onto one noun** — "Search your org's
   logs by label, time and substring" vs "a page of one product's logs for the caller's
   org". One should win in hanzoai/cloud; the CLI follows whichever does.
-- **cloud's document names 6 routes cloud's own server 404s, and it is a SECOND
-  AUTHORITY INSIDE CLOUD** — the same disease this pipeline just cured on its side.
-  `/v1/ai/{applications,permissions,sessions,sessions/duplicated,users,
+- ~~**cloud's document names 6 routes cloud's own server 404s**~~ — **CLOSED.**
+  `CONTRADICTED` is 0: cloud deleted the door that made `apps/ai` publish from a
+  committed subset, so the six stale nouns are out of the document. Kept here
+  because the cause is worth recognising the next time it appears, and it is the
+  same disease this pipeline cured on its own side.
+  It was `/v1/ai/{applications,permissions,sessions,sessions/duplicated,users,
   users/table-infos}`: cloud renamed those resources (applications→deployments,
   sessions→signin-sessions, users→usages, permissions back to IAM) and the DEPLOYED
-  binary serves the new nouns while the document that SAME binary publishes still
-  advertises the old ones. Measured with controls: `GET /v1/ai/deployments` 401
-  (routed), `GET /v1/ai/applications` 404, both `x-api-version: v1.801.383`. The
-  cause: `apps/ai` projects from the committed `plugin/ai/openapi.json` subset
-  rather than from the mounted plugin's live registry, so its published names lag
-  its routes. Fix is in hanzoai/cloud (#146's seam); `make verify` MEASURES it
-  (`CONTRADICTED`, a ceiling, 3 → 6 — the old three `/v1/billing` ones are fixed).
-  Pricing was once named here as "the bulk" of the class; it is not — its 14 paths
-  answer 200 on every serial re-ask, and a concurrent sweep reading transient 404s
-  as fact is why the gate confirms a 404 three times before believing it.
+  binary served the new nouns while the document that SAME binary published still
+  advertised the old ones — because `apps/ai` projected from a committed
+  `plugin/ai/openapi.json` subset rather than from the mounted plugin's live
+  registry, so its published names lagged its routes. `make verify` measured it
+  the whole way, 3 → 6 → 0. Pricing was once named here as "the bulk" of the
+  class; it never was — its 14 paths answer 200 on every serial re-ask, and a
+  concurrent sweep reading transient 404s as fact is why the gate confirms a 404
+  three times before believing it.
 - **`version::tests::a_v_prefix_is_tolerated` is flaky** — 1 failure observed in ~10
   full `cargo test` runs on this box, 0 in 8 consecutive runs after. It writes a stub
   script and execs it, so it races other tests' spawns. It is now in the release gate;
   an intermittent red gate teaches people to re-run, which is how a gate dies.
-- **539 WRITE COMMANDS TAKE `--data`, AND 529 OF THEM ARE AN UNTYPED HANDLER IN
+- **524 WRITE COMMANDS TAKE `--data`, AND 421 OF THEM ARE AN UNTYPED HANDLER IN
   hanzoai/cloud.** That split is the whole point: a `--data` blob is the CLI
   admitting it does not know the shape, and until 1.9.35 the only number anywhere
   was one aggregate that could not say WHOSE gap it was. `genproduct` now decides
   the cause where the decision is made and prints it every run:
 
   ```
-  genproduct: 539 write command(s) take --data — 529 because the handler declares
-  no requestBody in hanzoai/cloud (ai 95, commerce 51, iam 43, store 22, billing 16,
-  router 15, admin 11, captable 11, …), 10 because the schema is freeform by
-  construction
+  genproduct: 524 write command(s) take --data — 421 because the handler declares
+  no requestBody in hanzoai/cloud (commerce 51, iam 44, store 22, billing 16,
+  router 15, admin 11, captable 11, git 9, …), 103 because the schema is freeform
+  by construction
   ```
 
-  It rose with the SURFACE, not with the gap's share of it: 90 releases added 464
-  operations and the new handlers were written the same untyped way as the old
-  ones. Every one of the 529 becomes a typed flag with no edit in this repo, the
-  day the handler declares its body.
+  It had risen with the SURFACE, not with the gap's share of it: 90 releases added
+  464 operations and the new handlers were written the same untyped way as the old
+  ones. Then **529 → 421 in one re-pin**, and reading only that number would tell
+  the wrong story: **93 of the 108 are `ai` alone** (95 → 2), and they did not
+  become typed flags — cloud deleted the door that threw `ai`'s declared contracts
+  away, so those bodies are now STATED and the statement is freeform, which is why
+  the freeform count rose 10 → 103 in the same step. A declared open shape and an
+  absent one are different facts with different owners, and only the second is a
+  gap. **17 write commands did gain typed flags** (`evals` 6, `domain` 3,
+  `experiments` 3, `benchmark` 2, `functions` 2, `security` 1) — those are the ones
+  cloud typed rather than merely published.
 
-  `NO_SCHEMA = 529` is a CEILING beside `ELIDED`: free to fall as cloud types
+  `NO_SCHEMA = 421` is a CEILING beside `ELIDED`: free to fall as cloud types
   handlers (#67, #92–#158), and it may not rise, because a handler that LOST its
-  type is a regression at the source rather than a number to raise here. The 10
-  freeform are not a gap and are not pinned — `{}` (5), `additionalProperties`
-  (2, incl. `POST /v1/admin/credits`, whose Go input type genuinely IS
-  `map[string]any`), a bare `type: array` (2), and `oneOf` (1, `POST /v1/event`,
-  which really does accept four shapes). `--data -` still reads the body from
+  type is a regression at the source rather than a number to raise here. The
+  freeform ones are not a gap and are not pinned — `{}`, `additionalProperties`
+  (incl. `POST /v1/admin/credits`, whose Go input type genuinely IS
+  `map[string]any`), a bare `type: array`, and `oneOf` (`POST /v1/event`, which
+  really does accept four shapes). `--data -` still reads the body from
   stdin, so none of these forces a secret into argv.
 
   The worked example is still `hanzo authz check`: it took `--sub --obj --act`,
@@ -843,15 +875,17 @@ a projection that repairs its source hides the defect at the one place it can be
   A client that knows a shape the server never stated is a client nobody can
   check. It comes back the moment the handler is typed, with no edit here.
 
-  Held against cloud's tree, 458 of the 459 pin to a file: **227** to Go source
-  (an `openapi.Describe(…)` beside a raw `g.Post(…)` — prose hand-written,
-  shape never reflected: `apps/commerce/describe.go` 39, `apps/captable/captable.go`
-  11, `apps/platform/platform.go` 9, `apps/integrations/integrations.go` 9,
-  `apps/projects/projects.go` 8, …), and **231** only to a committed
-  `plugin/<x>/openapi.json` subset (`ai` 118, `iam` 43, `exec` 12, `company` 8,
-  `git` 6, …) — the same seam #146 names, where the published names come from a
-  file rather than the mounted plugin's live registry. One (`POST
-  /v1/risk/state/snapshot`) resolves to neither.
+  Held against cloud's tree when the gap was 459, 458 of them pinned to a file:
+  **227** to Go source (an `openapi.Describe(…)` beside a raw `g.Post(…)` — prose
+  hand-written, shape never reflected: `apps/commerce/describe.go` 39,
+  `apps/captable/captable.go` 11, `apps/platform/platform.go` 9,
+  `apps/integrations/integrations.go` 9, `apps/projects/projects.go` 8, …), and
+  **231** only to a committed `plugin/<x>/openapi.json` subset (`ai` 118, `iam` 43,
+  `exec` 12, `company` 8, `git` 6, …), where the published names came from a file
+  rather than the mounted plugin's live registry. That second half is the one that
+  moved: the `ai` line is closed, and the census wants redoing at 421 before
+  anybody quotes its shape again. The Go-source half has not been re-measured and
+  has not been fixed.
 - **TYPED MEANS ALL THE WAY DOWN — arrays repeat, objects dot (1.9.35).** A flag
   typed `JSON` is a `--data` blob wearing a type: the document stated a shape and
   the CLI made the caller hand-write it anyway. `genproduct` now reads a property
