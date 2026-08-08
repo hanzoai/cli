@@ -86,7 +86,14 @@ const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// CLI's surface is knowably short of what cloud serves, and it is a number
 /// derived from the document rather than a parallel file guessing at the
 /// contents.
-const DOORS: usize = 11;
+///
+/// 11 -> 7 on the document this tree pins: cloud typed `exec`, `files`,
+/// `licensing` and `upload` into real operations. The ceiling did not follow them
+/// down, so for four releases it admitted four doors that no longer existed — and
+/// a ceiling with slack in it is not a ceiling, it is a number that would have
+/// let four NEW relays appear without a word. Today: bot collections dns download
+/// sbom sentry tasks.
+const DOORS: usize = 7;
 
 fn segs(p: &str) -> Vec<&str> {
     p.split('/').filter(|s| !s.is_empty()).collect()
@@ -431,6 +438,34 @@ async fn main() {
     // `genproduct` derives from it inherits the lie. Nothing is written: a check
     // that repairs what it measures reports success for a tree that was wrong
     // when the job started.
+    // THE DOOR CENSUS. Printed every run — BOTH runs. It is a fact about the
+    // DOCUMENT, so it belongs before the write-or-compare branch: sitting after
+    // it, the ceiling was only ever reached by a regeneration, and the gate CI
+    // actually runs on every push (`--check`) returned above it. The one thing a
+    // person needs to know about a surface derived from one document is where
+    // that document stops being able to enumerate. Each of these is a served
+    // subtree the CLI cannot reach past, and the fix is upstream in every case:
+    // type the relay's routes as zip ops, or have the mounted service publish its
+    // own document for the weave to carry.
+    eprintln!(
+        "genspec: {} relay door(s) — /v1/<product>/* subtrees the document declares without \
+         naming what is behind them, so no command can reach past them: {}",
+        reg.doors.len(),
+        reg.doors.iter().cloned().collect::<Vec<_>>().join(" ")
+    );
+    assert!(
+        reg.doors.len() <= DOORS,
+        "THE DOOR CEILING ROSE: the document now relays {} product subtrees through a catch-all and \
+         DOORS in src/bin/genspec.rs says {DOORS}. New door(s): {}\n\n\
+         A door is the one place this pipeline knowingly under-reaches: the request gets through and \
+         nothing here can name the operation. Type the relay's routes in hanzoai/cloud, or — if the \
+         subtree really must stay opaque — raise DOORS with the reason in the commit. Do NOT re-add \
+         a hand-authored file enumerating what is behind it; that is the second authority this \
+         generator was rebuilt to delete.",
+        reg.doors.len(),
+        reg.doors.iter().cloned().collect::<Vec<_>>().join(" "),
+    );
+
     if a.check {
         let have = std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display()));
         if have == bytes {
@@ -481,30 +516,6 @@ async fn main() {
         bytes.len()
     );
 
-    // THE DOOR CENSUS. Printed every run, because the one thing a person needs to
-    // know about a surface derived from one document is where that document stops
-    // being able to enumerate. Each of these is a served subtree the CLI cannot
-    // reach past, and the fix is upstream in every case: type the relay's routes
-    // as zip ops, or have the mounted service publish its own document for the
-    // weave to carry.
-    eprintln!(
-        "genspec: {} relay door(s) — /v1/<product>/* subtrees the document declares without \
-         naming what is behind them, so no command can reach past them: {}",
-        reg.doors.len(),
-        reg.doors.iter().cloned().collect::<Vec<_>>().join(" ")
-    );
-    assert!(
-        reg.doors.len() <= DOORS,
-        "THE DOOR CEILING ROSE: the document now relays {} product subtrees through a catch-all and \
-         DOORS in src/bin/genspec.rs says {DOORS}. New door(s): {}\n\n\
-         A door is the one place this pipeline knowingly under-reaches: the request gets through and \
-         nothing here can name the operation. Type the relay's routes in hanzoai/cloud, or — if the \
-         subtree really must stay opaque — raise DOORS with the reason in the commit. Do NOT re-add \
-         a hand-authored file enumerating what is behind it; that is the second authority this \
-         generator was rebuilt to delete.",
-        reg.doors.len(),
-        reg.doors.iter().cloned().collect::<Vec<_>>().join(" "),
-    );
 }
 
 #[cfg(test)]

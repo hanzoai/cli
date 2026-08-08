@@ -203,7 +203,13 @@ const CONTRADICTED: usize = 6;
 /// count may not grow in silence — a growing blind spot is a growing licence to
 /// guess — and it falls on its own as cloud types those relays into real
 /// operations.
-const UNFALSIFIABLE: usize = 177;
+///
+/// 177 -> 90 on the evidence this tree carries. It fell exactly as described,
+/// and the ceiling stayed where it was: 87 coordinates the gate can now decide
+/// were still budgeted as undecidable, which is 87 routes' worth of licence to
+/// guess held open by a number nobody brought down. A ceiling pinned above
+/// reality is the thing this comment says it exists to prevent.
+const UNFALSIFIABLE: usize = 90;
 
 // ---- the live route table ----------------------------------------------------
 

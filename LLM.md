@@ -250,8 +250,8 @@ a capture taken from it could never be re-derived and never be checked.
   `a_reservation_must_name_a_command_that_exists` is the gate.
 - **THE COLLISION LAW: a local command ABSORBS the product of its own name** — one
   law, applied at every level, replacing the three-entry list that used to call the
-  clash a decision (1.9.23). `hanzo billing invoices list` is the document's
-  operation, `hanzo billing balance` is the hand-written one, and the rule that
+  clash a decision (1.9.23). `hanzo code search` is the document's operation,
+  `hanzo code claude` is the hand-written one, and the rule that
   settles both is the same: whoever was there first keeps the name. `augment`
   mounts the product's remaining nodes into the local command; `resolve` reads the
   SAME hand-written tree — which is why it takes it as an argument — so a node the
@@ -262,22 +262,43 @@ a capture taken from it could never be re-derived and never be checked.
   still `Instead::Nothing` for a different reason and says so: `/v1/agent` (one
   tool-calling round) and `/v1/agents` (the registry) are two products on one noun,
   and the fix is a route move in hanzoai/agent.
+- **AN ABSORBED LOCAL COMMAND IS A RUNNABLE GROUP, and the test walks to the OP.**
+  `every_operation_of_an_absorbed_product_resolves_to_its_own_route` parses an argv
+  a person could type for EVERY operation of every absorbed product and asserts the
+  op that comes back is the op that went in. It used to assert
+  `find_subcommand(node).is_some()` — the NAME — which passes when the node under
+  that name IS the local command, so the operation reaches nobody and the test
+  reports the law holding. Same defect as the `hanzo logs` alias, where "a test
+  that asserted only the MOUNT never saw it"; the cure there was this walk, and it
+  was never applied here. It found two on its first run. `hanzo billing balance`
+  was a hand-written verb SHADOWING `GET /v1/billing/balance` — deleted, so
+  `billing` is now a plain generated product and its help prints its route like
+  every sibling. And `hanzo share`, which takes a required `<TARGET>`, listed the
+  absorbed `enable` and `get` in its own help while no argv could reach either:
+  `absorb` now gives a local command that gains subcommands the same rule
+  `to_command` gives every other runnable group — bare it runs itself, with a
+  subcommand it descends.
 - **THE ELISION CEILING — the one remaining silent loss, now counted.** The fold
   names a leaf after its own noun, so two methods at one address want one command:
   `PUT` and `PATCH` on an item both read as `update`, `GET` and `POST` on
   `/v1/billing/payment-methods` both read as `payment-methods`. The
   higher-priority method takes the name and the other reached nobody, with no
   number anywhere. `genproduct` now reports the loss every run and pins it:
-  **`ELIDED = 81`**, a CEILING — free to fall, and it cannot rise without somebody
+  **`ELIDED = 14`**, a CEILING — free to fall, and it cannot rise without somebody
   naming the second command. Which name that is, is a verb decision this generator
   cannot make (is a `PUT` beside a `PATCH` a different command or the same one?),
   and the fold already shows the shape of the answer in its `has_child` branch: the
-  noun becomes a node and each method takes its `root_verb`. Worst products today:
-  `ai` 26, `iam` 15, `router` 5, `store` 4, `collections`/`download`/`exec`/`files`
-  3 each. With the 11 that curation drops (`agent` 4, `help` 4, `completions`
-  `csrf` `openapi.json` 1 each) that is the WHOLE distance, exactly:
-  **2219 spec operations − 81 elided − 11 curated = 2127 commands.** Nothing else
-  is lost anywhere in the derivation, and the arithmetic closing is the check.
+  noun becomes a node and each method takes its `root_verb`. All 14 are `iam`, a
+  real undecided naming question rather than a table folding two names into one —
+  `PUT` and `PATCH` became two commands the day cloud said which is which. Beside
+  them sit **18 method-override tunnels**, a POST cloud registers so a browser form
+  can reach a PUT/PATCH/DELETE handler: dropped, and nothing is lost, because a CLI
+  sends the real verb and that command is in the tree. With the 11 that curation
+  drops (`agent` 4, `help` 4, `completions` `csrf` `openapi.json` 1 each) that is
+  the WHOLE distance, exactly:
+  **2369 spec operations − 18 tunnels − 14 elided − 11 curated = 2326 commands.**
+  Nothing else is lost anywhere in the derivation, and the arithmetic closing is
+  the check.
 - **A capability missing from the CLI is missing from the SERVER. There is no
   second place, and that is the change.** It used to read "author it in
   hanzoai/openapi, or serve it in hanzoai/cloud", and the first half was the
@@ -323,10 +344,11 @@ and why.
 - **WHAT REPLACED IT — a DOOR CENSUS, derived, counted, and pinned.** The doors are
   the one place the CLI knowingly under-reaches: `/v1/<product>/{wildcardN}` says a
   subtree is relayed through here without naming what is in it. `genspec` counts
-  them off the document every run, prints them, and pins the count as a ceiling
-  (`DOORS`, today **11**: `bot collections dns download exec files licensing sbom
-  sentry tasks upload`). A number derived from the document, that falls on its own
-  as cloud types those relays, beats a 3.5MB parallel file guessing at their
+  them off the document every run — BOTH runs, `--check` included, because the
+  census is a fact about the document and not about writing a file — and pins the
+  count as a ceiling (`DOORS`, today **7**: `bot collections dns download sbom
+  sentry tasks`). A number derived from the document, that falls on its own as
+  cloud types those relays, beats a 3.5MB parallel file guessing at their
   contents. The ceiling has already proved itself: regenerating against the older
   v1.801.360 document trips it at 12, because `/v1/o11y/*` was still a door there
   and is now 363 typed operations.
@@ -466,6 +488,18 @@ and why.
     It owns the product and names no such route → REFUTED, decided without asking.
     It offers only `/v1/iam/*`, or is silent → ask the host. Roughly a third of the
     operations sit behind a door or in a namespace the table never mentions.
+  - **BOTH TREES SEND, so both are swept.** The gate's notion of "what this repo
+    can call" was `generated::OPS` and nothing else, so a route only a HAND-WRITTEN
+    command sends was ruled on by nobody — which is how `hanzo billing deposit`
+    posted to `/v1/billing/deposit`, a route cloud has never served, inside a
+    pipeline built to make a phantom impossible. `driftgate::sent` lifts every
+    `/v1` path literal out of the shipped source and holds it against the same
+    document; a literal under a product cloud OWNS that the document does not
+    declare is a phantom by the same law. The document is authority only over the
+    products it carries, which is what lets this need no exception list: `hanzo
+    fabric` talks to a hanzo NODE, and `/v1/node/*` is not cloud's to refute. The
+    count is printed and an empty sweep aborts — a lexical read that quietly
+    matches zero reports "no drift" for the one reason a gate may never report it.
   - **Whose defect it is turns on who claimed the route.** No document claimed it
     and the host 404s → the CLI's phantom, hard failure. The LIVE TABLE claimed it
     and the host 404s → cloud's table and cloud's server disagree, which no edit
@@ -737,20 +771,25 @@ a projection that repairs its source hides the defect at the one place it can be
   full `cargo test` runs on this box, 0 in 8 consecutive runs after. It writes a stub
   script and execs it, so it races other tests' spawns. It is now in the release gate;
   an intermittent red gate teaches people to re-run, which is how a gate dies.
-- **469 WRITE COMMANDS TAKE `--data`, AND 459 OF THEM ARE AN UNTYPED HANDLER IN
+- **539 WRITE COMMANDS TAKE `--data`, AND 529 OF THEM ARE AN UNTYPED HANDLER IN
   hanzoai/cloud.** That split is the whole point: a `--data` blob is the CLI
   admitting it does not know the shape, and until 1.9.35 the only number anywhere
   was one aggregate that could not say WHOSE gap it was. `genproduct` now decides
   the cause where the decision is made and prints it every run:
 
   ```
-  genproduct: 469 write command(s) take --data — 459 because the handler declares
-  no requestBody in hanzoai/cloud (ai 72, iam 43, store 19, admin 14, platform 13,
-  billing 11, captable 11, o11y 10, …), 10 because the schema is freeform by
+  genproduct: 539 write command(s) take --data — 529 because the handler declares
+  no requestBody in hanzoai/cloud (ai 95, commerce 51, iam 43, store 22, billing 16,
+  router 15, admin 11, captable 11, …), 10 because the schema is freeform by
   construction
   ```
 
-  `NO_SCHEMA = 459` is a CEILING beside `ELIDED`: free to fall as cloud types
+  It rose with the SURFACE, not with the gap's share of it: 90 releases added 464
+  operations and the new handlers were written the same untyped way as the old
+  ones. Every one of the 529 becomes a typed flag with no edit in this repo, the
+  day the handler declares its body.
+
+  `NO_SCHEMA = 529` is a CEILING beside `ELIDED`: free to fall as cloud types
   handlers (#67, #92–#158), and it may not rise, because a handler that LOST its
   type is a regression at the source rather than a number to raise here. The 10
   freeform are not a gap and are not pinned — `{}` (5), `additionalProperties`
@@ -806,24 +845,29 @@ a projection that repairs its source hides the defect at the one place it can be
   is the ROLE being assigned — and it was the ONE `--data` write in the tree that
   no cloud typing gap explained. It is the one command that moved from `--data` to
   a typed flag in 1.9.35; every other `--data` write is upstream, by construction.
-- **THE STDIN-SECRET CHANNEL BINDS TO ZERO OPERATIONS, and that is security-
-  relevant.** `format: password` marks a body property the CLI reads from stdin and
-  gives no flag and no positional, so it can never land in argv, `ps` or shell
-  history. `grep -c 'format: password'` is **2** in the deleted master and **0** in
-  hanzoai/cloud's emitted document, so the marker reached exactly one command —
-  `kms secrets create --value` — on the strength of a hand file. `POST
-  /v1/kms/secrets` is an untyped fiber handler declaring no requestBody, so it is
-  now `hanzo kms secrets create --data`. **`--data -` still reads the body from
-  stdin**, so a secret CAN be kept off argv; it is no longer FORCED off. The
-  mechanism is intact and `a_stdin_secret_can_never_reach_argv` pins the count at
-  `SECRET_FIELDS = 0` so the day cloud types that handler with
-  `format:"password"` the law starts enforcing itself again. Do not restate the
-  rule here — a client that knows a constraint the document does not is the second
-  authority wearing a different hat.
-- **ELEVEN RELAY DOORS are the whole remaining under-reach, and they are the
-  worklist.** `bot collections dns download exec files licensing sbom sentry tasks
-  upload` — each is a `/v1/<product>/{wildcardN}` in cloud's own document, so the
-  CLI can offer `get`/`rm`/`update` at the door and nothing past it. `genspec`
+- **THE STDIN-SECRET CHANNEL BINDS TO 67 FIELDS, and that is security-relevant.**
+  `format: password` marks a body property the CLI reads from stdin and gives no
+  flag and no positional, so it can never land in argv, `ps` or shell history.
+  It bound to **zero** when cloud's emitted document carried no `format: password`
+  at all, and a count of zero pinned as "an upstream gap" is a test that passes
+  vacuously forever over a generator emitting `--password <VALUE>`. So `is_secret`
+  reads the NAME as well as the format — the two ways of being wrong are not
+  symmetric: a false positive asks for a value on stdin that did not need it, a
+  false negative writes a live credential into `~/.zsh_history`.
+  `a_stdin_secret_can_never_reach_argv` pins the count at **`SECRET_FIELDS = 67`**,
+  asserted EXACTLY. A RISE is the good direction and the reason the pin exists:
+  cloud typed a body whose secret field the generator can now keep off argv, so
+  raise it and the law starts enforcing itself on those fields too. A FALL to zero
+  is a regression at the source. Do not restate the rule here — a client that knows
+  a constraint the document does not is the second authority wearing a different
+  hat. **`--data -` still reads the body from stdin**, so a secret can always be
+  kept off argv even where nothing is typed.
+- **SEVEN RELAY DOORS are the whole remaining under-reach, and they are the
+  worklist.** `bot collections dns download sbom sentry tasks` — each is a
+  `/v1/<product>/{wildcardN}` in cloud's own document, so the
+  CLI can offer `get`/`rm`/`update` at the door and nothing past it. It was ELEVEN;
+  cloud typed `exec`, `files`, `licensing` and `upload` into real operations, which
+  is the whole point of counting them. `genspec`
   prints the list every run and `DOORS` pins the count. The fix is one of two
   things, both upstream: type the relay's routes as zip ops in hanzoai/cloud (what
   `/v1/o11y` did — it was a door at v1.801.360 and is 363 typed operations at
