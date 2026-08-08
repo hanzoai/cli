@@ -161,29 +161,12 @@ fn pick_provider() -> Result<Option<Choice>> {
 // are the ONE stdin-secret law, in `iam::secret`; this module only resolves a
 // provider key / identity token through them.
 
-/// Prompt for a secret with a hidden (non-echoing) input.
-fn prompt_secret(prompt: &str) -> Result<String> {
-    use dialoguer::{
-        theme::{ColorfulTheme, SimpleTheme, Theme},
-        Password,
-    };
-    let colorful = ColorfulTheme::default();
-    let simple = SimpleTheme;
-    let theme: &dyn Theme = if color_on() { &colorful } else { &simple };
-    let key = Password::with_theme(theme).with_prompt(prompt).interact()?;
-    let key = key.trim().to_string();
-    if key.is_empty() {
-        bail!("no key entered");
-    }
-    Ok(key)
-}
-
 /// Resolve a provider-key secret from the `--token` flag / terminal, refusing an
 /// argv literal outright.
 fn read_key(token: Option<String>, prompt: &str) -> Result<String> {
     match secret_source(token.as_deref(), stdin_is_tty()) {
         SecretSource::Stdin => read_trimmed(std::io::stdin().lock()),
-        SecretSource::Prompt => prompt_secret(prompt),
+        SecretSource::Prompt => crate::iam::secret::prompt(prompt),
         SecretSource::ArgvRefused => bail!(
             "a key must never be passed on the command line (it would land in `ps` and shell history) \
              — pipe it on stdin with `--token -`, or run `hanzo auth login` interactively"
