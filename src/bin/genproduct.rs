@@ -84,7 +84,12 @@ const TUNNELS: usize = 18;
 /// construction, which is why the freeform count rose 10 -> 103 in the same step —
 /// but a stated open shape and an absent one are different facts with different
 /// owners, and only the second is a gap. 17 write commands did gain typed flags.
-const NO_SCHEMA: usize = 421;
+/// (421 -> 422): tracker's POST .../issues/{num}/claim takes no body ON PURPOSE.
+/// Its whole input is the address — the holder is the CALLER, never an argument,
+/// because "assign this to someone else" is a different act with different
+/// authority and already exists as a PATCH. So the absent requestBody is the
+/// contract, not a gap, and the only honest move is to count it and say why.
+const NO_SCHEMA: usize = 422;
 
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
