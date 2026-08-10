@@ -910,7 +910,14 @@ fn kms_is_generated_with_exactly_the_real_cloud_routes() {
 // generator can keep off argv. Raising it is not weakening the gate — it is the
 // gate recording that cloud kept its side of the bargain, and enforcing the law
 // on three fields it could not reach yesterday.
-const SECRET_FIELDS: usize = 67;
+//
+// 67 -> 69, and the two are one handler: `PUT /v1/iam/password` arrived typed,
+// so `oldPassword` and `password` are `format: password` body properties now
+// instead of an untyped body reached with `--data`. That is the best case this
+// pin can record — a password change is the one command where a value on argv
+// lands verbatim in shell history — and both fields lose their flag by
+// construction rather than by anyone remembering to be careful.
+const SECRET_FIELDS: usize = 69;
 
 /// WHAT KILLED THE SECOND CONNECTOR COMMAND, pinned so it cannot come back
 /// silently. `hanzo connector add` existed beside `hanzo integrations connect`

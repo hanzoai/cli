@@ -198,7 +198,18 @@ const EXCUSED: usize = 7;
 /// projects its own live registry and the six stale nouns left the document with
 /// it. The class is empty and the ceiling is on the floor, which is where a
 /// ceiling belongs when nobody is under it.
-const CONTRADICTED: usize = 0;
+///
+/// 0 -> 16, and every one of them is `GET /v1/billing/*`: accounts, alerts,
+/// alerts/authorize, credit-balance, credits, crypto/options, invoices, methods,
+/// payouts, plans, portal/methods, settings, subscriptions, tier, transactions,
+/// wire. Measured with a control: each answers 404 three times while
+/// `/v1/billing/balance` and `/v1/billing/usage` answer 401 under the SAME
+/// prefix, so the prefix discriminates and the denial belongs to the route
+/// rather than to a wall in front of it. The live table cloud publishes names
+/// all sixteen. Sixteen mounts registered with nothing behind them is cloud's to
+/// reconnect, and the number sits here so it cannot be settled by forgetting. It
+/// goes back on the floor the day billing answers.
+const CONTRADICTED: usize = 16;
 
 /// Coordinates the PINNED document declares, the live table does not name, and
 /// the host denies. That is the document running AHEAD of the deploy: cloud's
@@ -245,7 +256,16 @@ const AHEAD: usize = 3;
 /// asked of nobody, so the table's silence is the whole evidence. That is the
 /// `agent` vs `agents` split showing up in the route table: one noun, two
 /// products, and the fix is a route move in hanzoai/agent.
-const UNFALSIFIABLE: usize = 92;
+///
+/// 92 -> 115, and production owns this one as well: `/v1/commerce` became a
+/// door. It answers `{"error":"commerce unavailable","code":503}` for every path
+/// beneath it, an invented one included, while `/v1/admin/<nonsense>` still 404s
+/// — so the control discriminates, and commerce's answer is not about any route.
+/// 123 coordinates sit under that prefix. `GET /v1/commerce/org` is among them,
+/// which is the whole cost: the one coordinate the previous capture could still
+/// call CONTRADICTED is now undecidable, so a blind spot has swallowed evidence
+/// the gate used to hold. It falls when the plugin is mounted again.
+const UNFALSIFIABLE: usize = 115;
 
 // ---- the live route table ----------------------------------------------------
 
