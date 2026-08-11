@@ -63,6 +63,16 @@ impl Share {
     }
 }
 
+/// The variable the fabric helper reads its controller address from.
+///
+/// Named for the helper, not for us: ours is the `zrok2` lineage and it reads
+/// `ZROK2_API_ENDPOINT` (`environment/env_v0_4/api.go`). Under any other name the
+/// helper silently keeps its compiled-in default — the PUBLIC zrok service — and
+/// every call goes to a controller that has never heard of this org. That failed
+/// as a share which never announces a url, sixty seconds later, with nothing
+/// naming the cause.
+const CONTROLLER_ENV: &str = "ZROK2_API_ENDPOINT";
+
 /// What sits behind a share, in OUR words, and the helper's word for it.
 ///
 /// The fabric helper's fourth mode is named after an outside web server. That name
@@ -118,7 +128,7 @@ pub async fn start(
     // 3. Enable this machine against the provisioned account (idempotent, quiet).
     let _ = Command::new(&zbin)
         .args(["enable", &pr.account_token])
-        .env("ZROK_API_ENDPOINT", &pr.controller)
+        .env(CONTROLLER_ENV, &pr.controller)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -167,7 +177,7 @@ pub async fn start(
     println!("{} sharing {}", "→".green(), backend.cyan());
     let mut child = Command::new(&zbin)
         .args(&args)
-        .env("ZROK_API_ENDPOINT", &pr.controller)
+        .env(CONTROLLER_ENV, &pr.controller)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -176,13 +186,15 @@ pub async fn start(
     // zrok announces the token on one of the two streams; whichever carries it
     // first wins, and the other keeps echoing as log.
     let tmpl = pr.url_template.clone();
+    let said = Said::default();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(2);
     if let Some(out) = child.stdout.take() {
-        let (tmpl, tx) = (tmpl.clone(), tx.clone());
-        tokio::spawn(async move { stream(out, tmpl, tx).await });
+        let (tmpl, tx, said) = (tmpl.clone(), tx.clone(), said.clone());
+        tokio::spawn(async move { stream(out, tmpl, tx, said).await });
     }
     if let Some(err) = child.stderr.take() {
-        tokio::spawn(async move { stream(err, tmpl, tx).await });
+        let said = said.clone();
+        tokio::spawn(async move { stream(err, tmpl, tx, said).await });
     }
 
     // A tunnel that never announces a URL is not a share; time out rather than
@@ -191,7 +203,7 @@ pub async fn start(
         Ok(Some(u)) => u,
         _ => {
             let _ = child.start_kill();
-            bail!("zrok did not announce a share url");
+            bail!("zrok did not announce a share url{}", said.tail());
         }
     };
     Ok(Share { url, child })
@@ -239,18 +251,46 @@ fn resolve_target(arg: &str) -> Result<String> {
     bail!("could not parse target {arg:?} (want a port, host:port, or url)")
 }
 
+/// The last thing the fabric helper said before it stopped saying anything.
+///
+/// A share that never announces is the helper refusing for a reason it already
+/// printed — the wrong controller, an environment that was never enabled, a
+/// namespace the controller does not know. That reason went to `debug!`, so the
+/// error a person actually saw named the symptom and threw the cause away.
+/// Keeping ONE line costs nothing and turns a silent timeout into a sentence.
+#[derive(Clone, Default)]
+struct Said(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+impl Said {
+    fn hear(&self, line: &str) {
+        if let Ok(mut g) = self.0.lock() {
+            *g = Some(line.to_string());
+        }
+    }
+
+    /// Rendered for the tail of an error, or empty when it never spoke.
+    fn tail(&self) -> String {
+        match self.0.lock().ok().and_then(|g| g.clone()) {
+            Some(l) => format!("; it last said: {}", l.trim()),
+            None => String::new(),
+        }
+    }
+}
+
 /// Relay helper output; highlight the public URL when the share token appears
 /// (`… <token>.public`).
 async fn stream<R: tokio::io::AsyncRead + Unpin>(
     r: R,
     url_template: String,
     tx: tokio::sync::mpsc::Sender<String>,
+    said: Said,
 ) {
     let mut lines = BufReader::new(r).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(tok) = share_token(&line) {
             let _ = tx.try_send(url_template.replace("{token}", &tok));
         } else {
+            said.hear(&line);
             // The tunnel's own log is diagnostics, not output. A share prints one
             // URL; a link prints one URL and then holds a shell — neither wants the
             // fabric narrating every GET. `-v` turns it back on.
