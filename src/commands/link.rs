@@ -227,14 +227,24 @@ pub async fn run(
     let _ttyd = start_ttyd(TTYD_PORT, &sh_kind, !read_only).await?;
     println!("{} {}", "→".green(), sh_kind.label().cyan());
 
+    // WHOSE SHELL THIS IS, said out loud. A terminal reachable by anyone who
+    // learns the URL is not something to opt in to protecting — and neither is
+    // one reachable by anyone with an account. The address comes off the token
+    // already in hand, and the frontend checks it against what hanzo.id says
+    // about whoever turns up, so this is a claim about the publisher rather than
+    // a decision made here.
+    let email = crate::iam::identity::email(&tok.access_token).ok_or_else(|| {
+        anyhow!(
+            "this identity carries no email address, and a published shell has to say whose it is.\n\
+             Add one to your Hanzo identity and run `hanzo auth login` again."
+        )
+    })?;
     let mut sh = share::start(
         cfg,
         format!("http://127.0.0.1:{TTYD_PORT}"),
         "proxy".into(),
         None,
-        // Gated by default. A terminal reachable by anyone who learns the URL is
-        // not something to opt IN to protecting.
-        Some("hanzo"),
+        Some(share::Owner { provider: "hanzo", email: &email }),
     )
     .await?;
 

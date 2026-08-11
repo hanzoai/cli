@@ -20,11 +20,42 @@ pub struct Identity {
 }
 
 /// The claims we read off an access token. IAM issues `owner` (the org) and
-/// `name` (the username) on every access token it mints.
+/// `name` (the username) on every access token it mints, and `email` for a
+/// human identity.
 #[derive(Debug, Deserialize)]
 struct Claims {
     owner: String,
     name: String,
+    #[serde(default)]
+    email: String,
+}
+
+/// The address a token claims, or `None`.
+///
+/// The SAME unverified decode as [`Identity::from_access_token`], for the same
+/// kind of use: a label, never a decision. `hanzo link` hands this to the
+/// share's frontend as the one address that may open the published shell, and
+/// the frontend then asks hanzo.id who the visitor actually is — so a wrong
+/// value here can only lock the publisher out of their own terminal, never let
+/// anybody else in.
+pub fn email(access_token: &str) -> Option<String> {
+    let claims: Claims = serde_json::from_slice(&payload(access_token)?).ok()?;
+    (!claims.email.trim().is_empty()).then_some(claims.email)
+}
+
+/// A JWT's claims segment, decoded. `None` for anything that is not one.
+///
+/// JWT payloads are base64url WITHOUT padding (RFC 7515 §2); a padded encoder is
+/// tolerated rather than failed on a cosmetic difference.
+fn payload(access_token: &str) -> Option<Vec<u8>> {
+    let mut parts = access_token.split('.');
+    let p = match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => p,
+        _ => return None,
+    };
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(p.trim_end_matches('='))
+        .ok()
 }
 
 impl Identity {
@@ -52,9 +83,8 @@ impl Identity {
     /// the forger's own keychain slot and grants nothing. Do not let this
     /// decode gate anything.
     pub fn from_access_token(access_token: &str) -> Result<Self> {
-        let mut parts = access_token.split('.');
-        let payload = match (parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => p,
+        let raw = match payload(access_token) {
+            Some(raw) => raw,
             // A key is not an identity. An `hk-` gateway key has no derivable
             // principal, so filing it in an identity-keyed store would mean
             // FABRICATING one — worse than refusing. Name the alternative rather
@@ -72,11 +102,6 @@ impl Identity {
                  Run `hanzo auth login` to sign in as a human identity (it obtains an IAM access token)."
             ),
         };
-        // JWT payloads are base64url WITHOUT padding (RFC 7515 §2); tolerate a
-        // padded encoder rather than fail on a cosmetic difference.
-        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload.trim_end_matches('='))
-            .context("decoding access-token claims")?;
         let claims: Claims = serde_json::from_slice(&raw)
             .context("parsing access-token claims (no `owner`/`name`?)")?;
         Self::new(claims.owner, claims.name)
@@ -167,6 +192,28 @@ pub(crate) mod testjwt {
 mod tests {
     use super::testjwt::{claims_jwt, jwt};
     use super::*;
+
+    // `hanzo link` publishes a shell FOR an address, so an address that is not
+    // there has to be absent rather than empty: the frontend reads it as a glob,
+    // and an empty glob matches nothing — a terminal its own publisher cannot
+    // open. Refusing to publish says so; publishing an unopenable one does not.
+    #[test]
+    fn an_address_is_read_off_the_token_or_reported_missing() {
+        assert_eq!(
+            email(&claims_jwt(r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai"}"#)).as_deref(),
+            Some("a@hanzo.ai")
+        );
+        for without in [
+            r#"{"owner":"hanzo","name":"a"}"#,
+            r#"{"owner":"hanzo","name":"a","email":""}"#,
+            r#"{"owner":"hanzo","name":"a","email":"   "}"#,
+        ] {
+            assert_eq!(email(&claims_jwt(without)), None, "{without}");
+        }
+        // A gateway key is not a token and claims nothing.
+        assert_eq!(email("hk-abc123"), None);
+        assert_eq!(email(""), None);
+    }
 
     #[test]
     fn identity_is_derived_from_the_tokens_own_claims() {
