@@ -37,6 +37,22 @@ struct EnableResp {
     url_template: String,
 }
 
+/// Who a share is published for, and who vouches for them.
+///
+/// ONE VALUE, because it is one decision. Naming a provider and not naming a
+/// person publishes a shell to everyone that provider has ever heard of — every
+/// account on hanzo.id, in any org — which is what "protected" used to mean here
+/// and is not what anybody means by it. The two were separate flags on the
+/// helper and it was possible, in fact usual, to pass the first without the
+/// second.
+pub struct Owner<'a> {
+    /// The provider the frontend recognises, by the name it is configured under.
+    pub provider: &'a str,
+    /// The address it must recognise. The helper reads this as a glob; an
+    /// address is a glob that matches one address.
+    pub email: &'a str,
+}
+
 /// A running share: the zrok child and the public URL it announced.
 ///
 /// Dropping it kills the tunnel, so a caller that holds one cannot leave a share
@@ -111,7 +127,7 @@ pub async fn start(
     target: String,
     backend_mode: String,
     name: Option<String>,
-    oauth_provider: Option<&str>,
+    owner: Option<Owner<'_>>,
 ) -> Result<Share> {
     let backend = resolve_target(&target)?;
 
@@ -161,16 +177,17 @@ pub async fn start(
         args.push("--name".into());
         args.push(n.clone());
     }
-    // A published terminal is a shell. Gating it behind the org's own identity
-    // provider is what makes the URL insufficient on its own — without this, anyone
-    // who learns the hostname has the shell.
-    if let Some(p) = oauth_provider {
-        if supports_flag(&zbin, "--oauth-provider").await {
-            args.push("--oauth-provider".into());
-            args.push(p.to_string());
-        } else {
-            bail!("this zrok cannot gate a share (--oauth-provider unsupported); refusing to publish an open terminal");
+    // A published terminal is a shell, so it is published FOR SOMEONE. Both
+    // halves travel together: the provider makes the URL insufficient on its own,
+    // and the address makes the provider insufficient on its own. Without the
+    // second, every account hanzo.id knows — every org — could open this shell by
+    // learning the hostname, which is a smaller set than the internet and not a
+    // small one.
+    if let Some(o) = &owner {
+        if !supports_flag(&zbin, "--oauth-provider").await {
+            bail!("this zrok cannot say who a share is for (--oauth-provider unsupported); refusing to publish an open terminal");
         }
+        args.extend(owner_args(o));
     }
     args.push(backend.clone());
 
@@ -316,6 +333,20 @@ fn share_token(line: &str) -> Option<String> {
     (tok.len() >= 6).then(|| tok.to_string())
 }
 
+/// The helper flags that say who a share is for.
+///
+/// One function so the pair cannot come apart. The helper's second flag is named
+/// after domains and takes address globs, which is exactly the kind of name that
+/// invites passing the first flag alone and calling it done.
+fn owner_args(o: &Owner<'_>) -> [String; 4] {
+    [
+        "--oauth-provider".into(),
+        o.provider.into(),
+        "--oauth-email-domain".into(),
+        o.email.into(),
+    ]
+}
+
 /// Does this zrok accept `flag` on `share public`?
 ///
 /// Asked rather than assumed because two zrok lineages are in the wild — ours and
@@ -375,6 +406,19 @@ mod tests {
         assert_eq!(resolve_target("https://x.local").unwrap(), "https://x.local");
         assert!(resolve_target("0").is_err());
         assert!(resolve_target("").is_err());
+    }
+
+    // A SHARE IS PUBLISHED FOR SOMEONE, and both halves of that say so. The
+    // provider alone was the old behaviour: it makes the URL insufficient, and
+    // leaves every account hanzo.id knows — every org — able to open the shell
+    // by learning the hostname.
+    #[test]
+    fn a_published_share_names_the_person_it_is_for() {
+        let args = owner_args(&Owner { provider: "hanzo", email: "z@hanzo.ai" });
+        assert_eq!(
+            args,
+            ["--oauth-provider", "hanzo", "--oauth-email-domain", "z@hanzo.ai"]
+        );
     }
 
     #[test]
