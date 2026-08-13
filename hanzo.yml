@@ -24,8 +24,9 @@ client:
   # ref .spec-lock names and refuses on a digest mismatch. It does not choose the
   # ref and does not write the lock — on a push it is check-only at the locked
   # one. What MOVES the pin is the nightly re-pin in .hanzo/workflows/drift.yml,
-  # which pulls hanzoai/cloud's newest tag and opens a patch. Reading api.hanzo.ai
-  # here would name whatever is serving now rather than a release.
+  # which reads hanzoai/cloud's main and commits the result once `make verify`
+  # rules on it. Reading api.hanzo.ai here would name whatever is serving now
+  # rather than a release.
   spec: { repo: hanzoai/cloud, path: openapi.yaml }
   generate: ./scripts/generate.sh
   # PATCH only, derived. The command surface is the document's; this crate only
