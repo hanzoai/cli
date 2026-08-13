@@ -277,12 +277,35 @@ jobs:
             fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");
           ' "$v"
           echo "publishing @hanzo/cli@$v"
+      # THE CREDENTIAL IS READ FROM KMS, WHICH IS WHERE A SECRET LIVES. This job
+      # took `secrets.NPM_TOKEN`, and that secret exists on neither the hanzoai
+      # org nor this repo on git.hanzo.ai. An absent secret interpolates to the
+      # empty string rather than failing, so npm was handed a blank credential,
+      # answered `ENEEDAUTH`, and every release since the job was written failed
+      # here after building all five binaries — which is why @hanzo/cli is still
+      # a 404 on the registry. Same identity and same path hanzoai/ui-design
+      # reads, so there is one npm credential in the fleet and nothing to rotate.
+      #
+      # python3, not jq: jq is installed by the build job above, and this job
+      # does not run that step.
       - name: Publish
         working-directory: npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          KMS_CLIENT_ID: ${{ secrets.KMS_CLIENT_ID }}
+          KMS_CLIENT_SECRET: ${{ secrets.KMS_CLIENT_SECRET }}
+          KMS: ${{ vars.KMS_ENDPOINT || 'https://kms.hanzo.ai' }}
         run: |
           set -euo pipefail
+          val() { python3 -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"; }
+          kt=$(curl -fsS "$KMS/v1/kms/auth/login" -H 'Content-Type: application/json' \
+                 -d "{\"clientId\":\"$KMS_CLIENT_ID\",\"clientSecret\":\"$KMS_CLIENT_SECRET\"}" | val accessToken)
+          [ -n "$kt" ] || { echo "::error::KMS login failed at $KMS/v1/kms/auth/login (check KMS_CLIENT_ID/KMS_CLIENT_SECRET)"; exit 1; }
+          # No -f on the read: a miss must name the path that was empty rather
+          # than exiting 22 with nothing to act on.
+          NODE_AUTH_TOKEN=$(curl -sS "$KMS/v1/kms/secrets/NPM_TOKEN?env=prod" -H "Authorization: Bearer $kt" | val value)
+          [ -n "$NODE_AUTH_TOKEN" ] || { echo "::error::no NPM_TOKEN at $KMS/v1/kms/secrets/NPM_TOKEN?env=prod"; exit 1; }
+          echo "::add-mask::$NODE_AUTH_TOKEN"
+          export NODE_AUTH_TOKEN
           # --ignore-scripts: postinstall fetches a binary, and it must run on the
           # INSTALLING machine, not on this runner where it would bake one
           # platform's binary into the tarball.
