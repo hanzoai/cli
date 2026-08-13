@@ -1,0 +1,70 @@
+#!/bin/bash
+# hanzo-ios — the iOS run-target capability on a linked Mac.
+#
+# A simulator is a window; you watch it through the SAME link this Mac already
+# has (`hanzo link` frames this shell) or by publishing the Mac display with
+# `hanzo share 5900`. There is no second streaming path: a simulator is
+# macOS-only and can never be a Linux sandbox pod, so the desktop-class
+# Xvfb+VNC+noVNC screen path does not apply here — the fabric shell is the view.
+set -euo pipefail
+export PATH=/opt/homebrew/bin:$PATH
+
+DEV="${HANZO_IOS_DEVICE:-iPhone 17 Pro}"
+NAME="${HANZO_IOS_NAME:-hanzo-ios}"
+RT="$(xcrun simctl list runtimes 2>/dev/null | awk '/iOS/{print $NF}' | tail -1)"
+
+udid() { xcrun simctl list devices 2>/dev/null | awk -v n="$NAME" 'index($0,n){gsub(/[()]/,"",$2); print $2; exit}'; }
+
+boot() {
+  [ -n "$RT" ] || { echo "no iOS runtime — run: xcodebuild -downloadPlatform iOS" >&2; exit 1; }
+  local u; u="$(udid)"
+  [ -n "$u" ] || u="$(xcrun simctl create "$NAME" "$DEV" "$RT" 2>/dev/null | tail -1)"
+  xcrun simctl boot "$u" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "$u" -b >/dev/null 2>&1 || true
+  echo "$u"
+}
+
+case "${1:-boot}" in
+  boot) boot ;;
+  shot)
+    u="$(boot)"; out="${2:-/tmp/hanzo-ios.png}"
+    xcrun simctl io "$u" screenshot "$out" >/dev/null 2>&1
+    echo "$out" ;;
+  run)
+    # run <dir.app | file.swift>: build if swift, install, launch, report pid
+    u="$(boot)"; src="$2"
+    if [[ "$src" == *.swift ]]; then
+      base="$(basename "${src%.swift}")"; app="/tmp/${base}.app"; mkdir -p "$app"
+      xcrun -sdk iphonesimulator swiftc -parse-as-library \
+        -target arm64-apple-ios18.0-simulator "$src" -o "$app/App" >/dev/null
+      if [ ! -f "$app/Info.plist" ]; then
+        cat > "$app/Info.plist" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>App</string>
+  <key>CFBundleIdentifier</key><string>ai.hanzo.ios.${base}</string>
+  <key>CFBundleName</key><string>${base}</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSRequiresIPhoneOS</key><true/>
+  <key>UILaunchScreen</key><dict/>
+  <key>UIDeviceFamily</key><array><integer>1</integer></array>
+  <key>MinimumOSVersion</key><string>18.0</string>
+</dict></plist>
+PL
+      fi
+      src="$app"
+    fi
+    id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$src/Info.plist")"
+    xcrun simctl install "$u" "$src" >/dev/null 2>&1
+    xcrun simctl launch "$u" "$id" 2>/dev/null | tail -1 ;;
+  serve)
+    # publish the Simulator window over the fabric — reuse, no new streaming path
+    open -a Simulator >/dev/null 2>&1 || true
+    echo "run:  hanzo share 5900   # macOS Screen Sharing over the Hanzo fabric" ;;
+  *)
+    echo "usage: hanzo-ios {boot | shot [out.png] | run <app|file.swift> | serve}" >&2
+    exit 2 ;;
+esac
