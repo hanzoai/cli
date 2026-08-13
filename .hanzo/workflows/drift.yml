@@ -100,12 +100,22 @@ jobs:
       # of one commit have to read the same bytes for the digest below to mean
       # anything.
       #
-      # It OPENS A PATCH rather than pushing to main, because a re-pin is not
-      # always safe to take: cloud's source states a route the moment it is written
-      # and production deploys it some time later, so the document can name a route
-      # the running server does not serve yet. The gate calls that AHEAD and pins
-      # it; taking a longer wait is a person's call, and this is where they make it.
-      - name: Re-pin to hanzoai/cloud's main, and open the patch
+      # A RE-PIN IS NOT ALWAYS SAFE TO TAKE, and `make verify` is what decides.
+      # Cloud's source states a route the moment it is written and production
+      # deploys it some time later, so the document can name a route the running
+      # server does not serve; the gate calls that AHEAD and refuses once it runs
+      # further ahead than the ceiling allows. So verify runs on the regenerated
+      # tree BEFORE the commit, and the push happens only behind it. When it
+      # refuses, nothing is written and the red nightly carries the gate's own
+      # reasons — which is what a person needs to read.
+      #
+      # It COMMITS TO MAIN. This used to push a `repin` branch and open a pull
+      # request; the request was never openable, because this repo has the pull
+      # unit turned off — the forge answers 500 to `POST /pulls` and 404 to `GET
+      # /pulls` when it is off — so the step failed every night it had anything to
+      # do, after pushing a branch nobody could turn into a patch. Two ways to
+      # land a re-pin, one of which does not exist, is one too many.
+      - name: Re-pin to hanzoai/cloud's main
         if: always()
         env:
           FORGE: https://git.hanzo.ai/v1
@@ -121,14 +131,6 @@ jobs:
             exit 0
           fi
           echo "hanzoai/cloud@$pinned -> @$head"
-          # ONE branch, because there is one pending re-pin. Naming it after the ref
-          # would open a fresh one every night main moved, and a pile of stale
-          # branches is how a patch stops being read.
-          branch=repin
-          if api "$FORGE/repos/${{ github.repository }}/branches/$branch" >/dev/null 2>&1; then
-            echo "$branch is already open — the patch is waiting on a person, not on this job"
-            exit 0
-          fi
           api "$FORGE/repos/hanzoai/cloud/raw/openapi.yaml?ref=$head" -o /tmp/openapi.yaml
           printf 'ref=%s\nsha256=%s\nrepo=hanzoai/cloud\npath=openapi.yaml\n' \
             "$head" "$(sha256sum /tmp/openapi.yaml | cut -d' ' -f1)" > .spec-lock
@@ -136,31 +138,9 @@ jobs:
           # the digest just written — the lock checking itself — then regenerates
           # the surface and re-captures the evidence in the same act.
           SPEC_TOKEN="$TOKEN" make spec
+          make verify
           git config user.name hanzo-dev
           git config user.email dev@hanzo.ai
-          git switch -c "$branch"
           git commit -am "spec: re-pin to $head"
-          git push -u origin "$branch"
-          python3 - "$branch" "$head" <<'PY' > /tmp/pull.json
-          import json, sys
-          branch, ref = sys.argv[1], sys.argv[2]
-          json.dump({
-              "head": branch,
-              "base": "main",
-              "title": f"spec: re-pin to hanzoai/cloud@{ref}",
-              "body": (
-                  "The projection, moved forward to cloud's main, with the evidence "
-                  "re-captured in the same act.\n\n"
-                  "`make verify` on this branch is the question worth reading. AHEAD "
-                  "means cloud's source states a route production has not deployed "
-                  "yet, which is a wait rather than a defect: raise the pin with the "
-                  "count if the wait is acceptable, or hold the patch until the "
-                  "deploy lands and re-run.\n\n"
-                  "Operation ids move freely between releases; CLI coordinates key "
-                  "on (method, path) and do not."
-              ),
-          }, sys.stdout)
-          PY
-          api -X POST -H 'Content-Type: application/json' \
-            "$FORGE/repos/${{ github.repository }}/pulls" -d @/tmp/pull.json >/dev/null
-          echo "opened spec: re-pin to $head"
+          git push origin HEAD:main
+          echo "main is pinned to hanzoai/cloud@$head"
