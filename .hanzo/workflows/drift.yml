@@ -115,14 +115,21 @@ jobs:
       # /pulls` when it is off — so the step failed every night it had anything to
       # do, after pushing a branch nobody could turn into a patch. Two ways to
       # land a re-pin, one of which does not exist, is one too many.
+      #
+      # FORGE_TOKEN READS THE DOCUMENT AND PUSHES THE RESULT — one credential
+      # for the whole step. The actions token cannot do the second half: the
+      # forge knows it as User -2, and a protected branch refuses it however the
+      # rule is written. It is the same credential, spelled the same way, that
+      # hanzoai/ci's client lane uses to land a regenerated client.
       - name: Re-pin to hanzoai/cloud's main
         if: always()
         env:
           FORGE: https://git.hanzo.ai/v1
-          TOKEN: ${{ github.token }}
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
         run: |
           set -euo pipefail
-          api() { curl -fsSL -H "Authorization: token $TOKEN" "$@"; }
+          [ -n "${FORGE_TOKEN:-}" ] || { echo "::error::the re-pin reads hanzoai/cloud and pushes the result here, and needs FORGE_TOKEN"; exit 1; }
+          api() { curl -fsSL -H "Authorization: token $FORGE_TOKEN" "$@"; }
           head=$(api "$FORGE/repos/hanzoai/cloud/branches/main" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["id"])')
           pinned=$(sed -n 's/^ref=//p' .spec-lock)
@@ -137,10 +144,20 @@ jobs:
           # `make spec` fetches that ref AGAIN and refuses if the bytes moved under
           # the digest just written — the lock checking itself — then regenerates
           # the surface and re-captures the evidence in the same act.
-          SPEC_TOKEN="$TOKEN" make spec
+          SPEC_TOKEN="$FORGE_TOKEN" make spec
           make verify
           git config user.name hanzo-dev
           git config user.email dev@hanzo.ai
           git commit -am "spec: re-pin to $head"
-          git push origin HEAD:main
+          # ONE CREDENTIAL ON THE WIRE. `http.extraHeader` is multi-valued, and a
+          # url-specific entry does not displace a broader one: git sends every
+          # header that matches and the forge honours the first Authorization it
+          # reads. actions/checkout leaves its own behind, so merely adding ours
+          # puts the actions token in front — and this step died on `Not allowed
+          # to push to protected branch main` with the credential that IS allowed
+          # sitting unused in the environment. Clear first, then set one.
+          git config --local --name-only --get-regexp '^http\..*extraheader$' 2>/dev/null \
+            | while read -r k; do git config --local --unset-all "$k"; done || true
+          git config --local http.extraheader "Authorization: token $FORGE_TOKEN"
+          git push "${GITHUB_SERVER_URL:-https://git.hanzo.ai}/${{ github.repository }}" HEAD:main
           echo "main is pinned to hanzoai/cloud@$head"
