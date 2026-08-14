@@ -157,7 +157,7 @@ write for them must carry EVERY field their parser requires: it rejects the whol
 document on the first missing one, and that took the session down with it (a lost
 context window is survivable, a session that cannot start is not).
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage`
-- cloud: `hanzo serve`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
+- cloud: `hanzo up`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
 - fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 - the whole cloud, one screen: `hanzo status` (see below)

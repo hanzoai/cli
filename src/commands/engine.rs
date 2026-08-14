@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use crate::commands::launch;
 
 /// Resolve the engine binary. NOT `hanzo` on PATH — that is THIS CLI; the engine
-/// ships as `hanzo-engine` (or point `HANZO_ENGINE_BIN` at a built `hanzo serve`).
+/// ships as `hanzo-engine` (or point `HANZO_ENGINE_BIN` at a build of it).
 fn engine_bin() -> Option<PathBuf> {
     launch::resolve("HANZO_ENGINE_BIN", &["hanzo-engine"])
 }

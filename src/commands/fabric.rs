@@ -14,7 +14,7 @@
 //! (dedicated cloud Kubernetes) and `hanzo node` (the compute fleet).
 
 use crate::commands::network;
-use crate::commands::serve;
+use crate::commands::up;
 use crate::config::Config;
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
@@ -73,9 +73,9 @@ fn missing_bin_err() -> anyhow::Error {
 }
 
 /// Best-effort start of the cloud control plane alongside the node, through the
-/// ONE cloud-binary resolver (`serve::resolve_cloud_bin`).
+/// ONE cloud-binary resolver (`up::resolve_cloud_bin`).
 fn spawn_cloud() -> Result<()> {
-    match serve::resolve_cloud_bin() {
+    match up::resolve_cloud_bin() {
         Some(b) => {
             let child = Command::new(&b)
                 .arg("cloud")
