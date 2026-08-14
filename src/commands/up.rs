@@ -1,4 +1,4 @@
-//! `hanzo serve` — run a Hanzo service from THIS machine.
+//! `hanzo up` — run a Hanzo service from THIS machine.
 //!
 //! `serve cloud` runs the COMPLETE Hanzo Cloud API on one listener; `serve
 //! <service>` runs one subsystem independently (iam | kms | gateway | storage |
@@ -26,7 +26,7 @@ fn missing() -> anyhow::Error {
     )
 }
 
-/// `hanzo serve cloud [-- args…]` — the whole API on one listener.
+/// `hanzo up cloud [-- args…]` — the whole API on one listener.
 pub async fn cloud(passthrough: Vec<String>) -> Result<()> {
     let bin = resolve_cloud_bin().ok_or_else(missing)?;
     println!("{} running the Hanzo Cloud API", "→".cyan());
@@ -35,7 +35,7 @@ pub async fn cloud(passthrough: Vec<String>) -> Result<()> {
     launch::exec(&bin, &argv)
 }
 
-/// `hanzo serve <service> [-- args…]` — one subsystem, standalone. The service
+/// `hanzo up <service> [-- args…]` — one subsystem, standalone. The service
 /// name is the binary's own subcommand; the binary is the authority on which
 /// names it serves, so an unknown one is its error, not a guess here.
 pub async fn service(name: String, passthrough: Vec<String>) -> Result<()> {

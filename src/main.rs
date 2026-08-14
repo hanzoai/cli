@@ -291,10 +291,12 @@ enum Commands {
     /// Scan local files for exposed secrets (exits non-zero on a find)
     Scan { path: PathBuf },
 
-    /// Run a Hanzo service: `cloud` for the whole API, or one service
-    /// (iam | kms | gateway | storage | pubsub)
-    Serve {
-        /// `cloud`, or a single service name (iam | kms | gateway | storage | pubsub)
+    /// Bring the cloud up on this machine. Bare `hanzo up` runs the whole API;
+    /// name one service to run it alone (iam | kms | gateway | storage | pubsub)
+    Up {
+        /// A single service name (iam | kms | gateway | storage | pubsub).
+        /// Omitted means the whole API.
+        #[arg(default_value = "cloud")]
         service: String,
         /// Extra args passed verbatim to the service (after `--`)
         #[arg(last = true, allow_hyphen_values = true)]
@@ -726,11 +728,11 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             RunnerCommands::Stop => commands::runner::stop().await?,
             RunnerCommands::Status => commands::runner::status().await?,
         },
-        Commands::Serve { service, passthrough } => {
+        Commands::Up { service, passthrough } => {
             if service == "cloud" {
-                commands::serve::cloud(passthrough).await?
+                commands::up::cloud(passthrough).await?
             } else {
-                commands::serve::service(service, passthrough).await?
+                commands::up::service(service, passthrough).await?
             }
         }
         Commands::Status => commands::status::run(&mut config).await?,
@@ -948,7 +950,7 @@ mod tests {
             );
         }
         for present in
-            ["auth", "code", "config", "desktop", "dev", "engine", "runner", "scan", "serve"]
+            ["auth", "code", "config", "desktop", "dev", "engine", "runner", "scan", "up"]
         {
             assert!(names.iter().any(|n| n == present), "`{present}` must be a resource noun");
         }
@@ -975,8 +977,8 @@ mod tests {
         assert!(Cli::try_parse_from(["hanzo", "engine", "serve", "gemma"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "runner", "start"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "scan", "."]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "serve", "cloud"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "serve", "iam"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "up", "cloud"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "up", "iam"]).is_ok());
         assert!(matches!(
             Cli::try_parse_from(["hanzo", "version"]).unwrap().command,
             Some(Commands::Version)

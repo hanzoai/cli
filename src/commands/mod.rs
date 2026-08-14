@@ -15,7 +15,7 @@ pub mod runner;
 pub mod scan;
 pub mod status;
 pub mod version;
-pub mod serve;
+pub mod up;
 
 // The one coding/agent orchestrator, behind `hanzo code` and `hanzo desktop`.
 pub mod code;
