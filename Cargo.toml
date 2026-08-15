@@ -75,6 +75,9 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"                                              # PKCE S256 challenge
 base64 = "0.22"                                            # base64url (no pad)
 rand = "0.8"                                               # OsRng for PKCE verifier + state + local wallet entropy
+# A scannable link, so signing a headless box in is a phone camera rather than
+# 40 characters typed by hand. Terminal half-blocks, no image, no C.
+qr2term = "0.3"
 webbrowser = "1"                                           # open the IAM authorize URL
 
 # Local / imported wallets — HD derivation + EVM address. Cloud-custody (KMS/MPC)

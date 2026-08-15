@@ -10,12 +10,15 @@
 //! - `provider`    — provider (openai/anthropic/hanzo) API-key filing over the
 //!   SAME `Vault`; the model-credential seam, disjoint from identity + wallet.
 //! - `oauth`       — the interactive flow + userinfo (protocol mechanics, pure-ish).
+//! - `device`      — RFC 8628, the sign-in for a machine with no browser: a short
+//!   code and a scannable link, approved on a device the person already holds.
 //! - `login`       — the `login`/`whoami`/`switch`/`logout` entrypoints (UI + glue).
 //! - `onboarding`  — the fresh-machine greeting + the multi-provider login picker.
 //! - `secret`      — the ONE stdin-secret law (never argv); shared by onboarding
 //!   (keys + identity tokens), the `kms` secret plane, and `connector add`
 //!   (`resolve_token`: `--token -`/pipe/hidden-prompt, argv refused).
 
+pub mod device;
 pub mod identity;
 pub mod login;
 pub mod oauth;

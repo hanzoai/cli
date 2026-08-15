@@ -19,14 +19,39 @@ use super::identity::Selector;
 use super::paths::{brand_flag, DEFAULT_BRAND};
 use super::provider::{self, Provider};
 use super::token::TokenSet;
-use super::{oauth, store};
+use super::{device, oauth, store};
 
-/// `hanzo auth login [--brand]`: interactive OIDC PKCE sign-in. ADDS an identity
+/// `hanzo auth login [--brand]`: interactive OIDC sign-in. ADDS an identity
 /// (never clobbers another) and makes it active.
+///
+/// THE MACHINE PICKS THE FLOW, and there is no flag, because which one works is
+/// a fact about the machine rather than a preference. A browser HERE takes the
+/// authorization code back over loopback, which is instant and asks nothing. No
+/// browser here and `127.0.0.1` is the wrong address by construction — it names
+/// this machine, and the person is at another one — so the code cannot come back
+/// that way at all, and the device grant (RFC 8628) is the flow built for it: a
+/// short code they read off this screen and approve on any device they already
+/// hold. A `--device` switch would be asking a person to predict the failure it
+/// exists to avoid.
 pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
     oauth::server_url(brand)?; // reject unknown brands before opening a browser
-    let tokens = oauth::login(brand).await?;
+    let tokens = if browser_here() {
+        oauth::login(brand).await?
+    } else {
+        device::login(brand).await?
+    };
     add(cfg, brand, &tokens).await
+}
+
+/// Whether a browser can open ON THIS MACHINE. macOS and Windows always have a
+/// GUI; on Linux and the BSDs a browser needs a display, and a shell with
+/// neither is a container, an ssh session or CI — every one of them a place
+/// where a loopback redirect lands on somebody else's computer.
+fn browser_here() -> bool {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        return true;
+    }
+    std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 /// `hanzo auth login --token`: store a hanzo.id bearer directly, for a shell
