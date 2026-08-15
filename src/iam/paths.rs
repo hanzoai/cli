@@ -18,6 +18,11 @@ pub const TOKEN: &str = "/v1/iam/oauth/token";
 pub const USERINFO: &str = "/v1/iam/oauth/userinfo";
 /// Revocation endpoint (RFC 7009 §2.1) — what makes `logout` reach the server.
 pub const REVOKE: &str = "/v1/iam/oauth/revoke";
+/// Device authorization endpoint (RFC 8628 §3.1) — the sign-in for a machine
+/// with no browser of its own. IAM publishes it in its own discovery document
+/// and answers it today; this is the same address written where the CLI's other
+/// three live, rather than fetched.
+pub const DEVICE: &str = "/v1/iam/oauth/device";
 
 /// Resolve a brand key to its canonical IAM `server_url` origin. White-label is
 /// host-based: one IAM deployment serves every brand and selects the tenant by
