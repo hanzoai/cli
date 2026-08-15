@@ -5,11 +5,26 @@
 //! `/v1/iam/oauth/authorize`, capture the redirect on `127.0.0.1`, then
 //! exchange the code at `/v1/iam/oauth/token`. Only the explicit HIP-0111 paths
 //! are ever used — no discovery, no legacy `/oauth/*`, no `/api/`.
+//!
+//! THE CODE COMES BACK TWO WAYS, and they race. `127.0.0.1` is only reachable
+//! from the machine the CLI runs on, so a shell in a sandbox, a container or an
+//! ssh session sends the browser to a loopback that belongs to a DIFFERENT
+//! computer: the redirect lands on the desktop's own localhost, the tab shows a
+//! connection error, and the CLI waits forever on a socket nothing will ever
+//! dial. The person watching that has the code in their address bar the whole
+//! time. So they can paste it — the SAME flow, the same client, the same PKCE
+//! verifier, with the return leg switched from a socket to the keyboard.
+//!
+//! ONE command and no flag, because whichever way the code arrives it is the
+//! same login and a person cannot tell in advance which will work: pressing
+//! `--paste` is a decision they can only make correctly after the failure it
+//! was meant to prevent.
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Url;
 use serde::Deserialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::io::IsTerminal;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 use super::paths::{self, AUTHORIZE, REVOKE, TOKEN, USERINFO};
@@ -55,14 +70,26 @@ pub async fn login(brand: &str) -> Result<TokenSet> {
 
     let authorize_url = build_authorize_url(origin, &redirect_uri, &pkce.challenge, &state)?;
 
-    println!("Opening your browser to sign in to {brand}...");
-    println!("If it does not open, visit:\n  {authorize_url}\n");
-    let _ = webbrowser::open(authorize_url.as_str());
-
-    let cb = capture_callback(&listener).await?;
-    if cb.state.as_deref() != Some(state.as_str()) {
-        bail!("state mismatch — possible CSRF; aborting login");
+    // Say what happened, not what was attempted. On a machine with no browser
+    // the open FAILS, and "Opening your browser..." above a prompt that never
+    // returns is the CLI describing something the person can see did not occur.
+    if webbrowser::open(authorize_url.as_str()).is_ok() {
+        println!("Opening your browser to sign in to {brand}...");
+        println!("If it does not open, visit:\n  {authorize_url}\n");
+    } else {
+        println!("Open this in a browser to sign in to {brand}:\n  {authorize_url}\n");
     }
+    if std::io::stdin().is_terminal() {
+        println!("Signed in on another machine? Paste the URL it lands on here.");
+    }
+
+    // Whichever leg answers first. The socket wins on a desktop, where it
+    // returns before a person could paste anything; the keyboard wins where the
+    // browser was somewhere else, which is the case that used to hang.
+    let cb = tokio::select! {
+        r = capture_callback(&listener, &state) => r?,
+        r = paste_callback(&state) => r?,
+    };
     let code = cb
         .code
         .ok_or_else(|| anyhow!("no authorization code in callback"))?;
@@ -217,9 +244,84 @@ fn parse_callback(target: &str) -> Result<Callback> {
     Ok(cb)
 }
 
+/// The authorization code, off the keyboard.
+///
+/// It accepts either shape a person can copy: the WHOLE redirect URL out of the
+/// address bar (which is where it already is when the loopback fails), or the
+/// bare `code` value. A malformed line is answered and the read continues —
+/// bailing would end a login the socket might still complete, and the paste is
+/// the leg that was already having a bad time.
+async fn paste_callback(state: &str) -> Result<Callback> {
+    // A pipe is not a person. Its EOF arrives at once, and resolving this side
+    // of the race on it would end the login before the browser could answer, so
+    // a non-terminal stdin simply never returns and the socket decides.
+    if !std::io::stdin().is_terminal() {
+        return std::future::pending().await;
+    }
+
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    while let Some(line) = lines.next_line().await? {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let cb = parse_pasted(line);
+        if let Some(err) = cb.error {
+            bail!("authorization denied: {err}");
+        }
+        // State rides along only when the whole URL did. Present, it MUST match
+        // — that is the bind to this attempt. Absent, the person typed a code
+        // into this process by hand and PKCE is what binds the exchange: the
+        // verifier never left here, so a code lifted from someone else's login
+        // cannot be spent by us and ours cannot be spent by them.
+        match (&cb.state, &cb.code) {
+            (Some(got), _) if got != state => {
+                bail!("state mismatch — that code belongs to a different sign-in; aborting")
+            }
+            (_, Some(_)) => return Ok(cb),
+            _ => println!("No code in that. Paste the whole URL from the browser, or just the code."),
+        }
+    }
+    // stdin closed under us; leave the socket to it.
+    std::future::pending().await
+}
+
+/// Pull `code`/`state`/`error` out of whatever a person pasted: a full URL, the
+/// `/callback?...` target, a bare query string, or the code alone. Pure — no I/O.
+fn parse_pasted(input: &str) -> Callback {
+    // Quotes come along when a URL is copied out of some terminals and chats.
+    let s = input.trim().trim_matches(|c| c == '"' || c == '\'');
+    let query = match s.find('?') {
+        Some(i) => &s[i + 1..],
+        // No `?` at all: a bare query string still has `code=`, anything else is
+        // the code itself.
+        None if s.contains('=') => s,
+        None => {
+            return Callback {
+                code: Some(s.to_string()),
+                ..Callback::default()
+            }
+        }
+    };
+    let mut cb = Callback::default();
+    for (k, v) in Url::parse(&format!("http://127.0.0.1/?{query}"))
+        .iter()
+        .flat_map(|u| u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())))
+    {
+        match k.as_str() {
+            "code" => cb.code = Some(v),
+            "state" => cb.state = Some(v),
+            "error" => cb.error = Some(v),
+            _ => {}
+        }
+    }
+    cb
+}
+
 /// Accept exactly one loopback request, reply with a friendly page, and return
-/// the parsed callback. Errors if the provider reported `error=...`.
-async fn capture_callback(listener: &TcpListener) -> Result<Callback> {
+/// the parsed callback. Errors if the provider reported `error=...`, or if the
+/// redirect does not carry back the `state` this login sent.
+async fn capture_callback(listener: &TcpListener, state: &str) -> Result<Callback> {
     let (mut stream, _) = listener
         .accept()
         .await
@@ -260,6 +362,11 @@ async fn capture_callback(listener: &TcpListener) -> Result<Callback> {
 
     if let Some(err) = cb.error {
         bail!("authorization denied: {err}");
+    }
+    // A browser always sends back what we put in the authorize URL, so here —
+    // unlike a hand-typed code — an absent state is as wrong as a wrong one.
+    if cb.state.as_deref() != Some(state) {
+        bail!("state mismatch — possible CSRF; aborting login");
     }
     Ok(cb)
 }
@@ -321,7 +428,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { capture_callback(&listener).await });
+        let server = tokio::spawn(async move { capture_callback(&listener, "xyz").await });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         client
@@ -337,5 +444,65 @@ mod tests {
         let cb = server.await.unwrap().unwrap();
         assert_eq!(cb.code.as_deref(), Some("abc"));
         assert_eq!(cb.state.as_deref(), Some("xyz"));
+    }
+
+    // A browser sends back what we sent it, so on THIS leg an absent state is
+    // as wrong as a wrong one.
+    #[tokio::test]
+    async fn loopback_refuses_a_state_that_is_not_ours() {
+        use tokio::net::TcpStream;
+
+        for target in ["/callback?code=abc&state=SOMEONE_ELSE", "/callback?code=abc"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { capture_callback(&listener, "xyz").await });
+
+            let mut client = TcpStream::connect(addr).await.unwrap();
+            client
+                .write_all(format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut sink = Vec::new();
+            let _ = client.read_to_end(&mut sink).await;
+
+            assert!(server.await.unwrap().is_err(), "{target} was accepted");
+        }
+    }
+
+    // The four shapes a person can actually paste. The first is the one that
+    // matters: it is what sits in the address bar when the loopback is on
+    // another machine, which is the whole reason this leg exists.
+    #[test]
+    fn a_paste_is_read_from_every_shape_a_person_can_copy() {
+        let whole = parse_pasted("http://127.0.0.1:51394/callback?code=abc&state=xyz");
+        assert_eq!(whole.code.as_deref(), Some("abc"));
+        assert_eq!(whole.state.as_deref(), Some("xyz"));
+
+        let target = parse_pasted("/callback?code=abc&state=xyz");
+        assert_eq!(target.code.as_deref(), Some("abc"));
+        assert_eq!(target.state.as_deref(), Some("xyz"));
+
+        let query = parse_pasted("code=abc&state=xyz");
+        assert_eq!(query.code.as_deref(), Some("abc"));
+        assert_eq!(query.state.as_deref(), Some("xyz"));
+
+        // The code alone carries no state, and that is not an error — PKCE is
+        // what binds it, and the verifier never left this process.
+        let bare = parse_pasted("  abc  ");
+        assert_eq!(bare.code.as_deref(), Some("abc"));
+        assert!(bare.state.is_none());
+    }
+
+    #[test]
+    fn a_paste_decodes_and_survives_copy_noise() {
+        // Quotes ride along out of terminals and chat clients.
+        let quoted = parse_pasted("\"http://127.0.0.1:1/callback?code=the%2Bcode&state=xyz\"");
+        assert_eq!(quoted.code.as_deref(), Some("the+code")); // %2B -> +
+        assert_eq!(quoted.state.as_deref(), Some("xyz"));
+
+        // A denial pasted back is a denial, not a code.
+        let denied = parse_pasted("http://127.0.0.1:1/callback?error=access_denied");
+        assert_eq!(denied.error.as_deref(), Some("access_denied"));
+        assert!(denied.code.is_none());
     }
 }
