@@ -10,8 +10,8 @@
 //! print how to get it.
 //!
 //! `fabric cluster …` queries the model cluster a running node exposes
-//! (topology/models/route/placement/chat/search) — distinct from `hanzo cluster`
-//! (dedicated cloud Kubernetes) and `hanzo node` (the compute fleet).
+//! (topology/models/route/placement/chat/search) — distinct from `hanzo clusters`
+//! (dedicated cloud Kubernetes) and `hanzo compute` (the compute fleet).
 
 use crate::commands::network;
 use crate::commands::up;

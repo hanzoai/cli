@@ -1,50 +1,40 @@
 //! The root man page — what a bare `hanzo`, `hanzo --help` or `hanzo help`
 //! prints. The man-page form: NAME / SYNOPSIS / DESCRIPTION / GLOBAL FLAGS /
-//! GROUPS / COMMANDS, each group on one line. GROUPS is composed from the SAME
-//! generated data the parser uses (`product::catalog`) plus the hand-written
-//! resource groups — never a second table of products.
+//! GROUPS / COMMANDS, each group on one line.
+//!
+//! EVERY name on this page is read off the PARSER — the hand-written commands
+//! from `cmd` itself, the generated products from `product::catalog`, which reads
+//! the same `cmd`. There is no table of commands here, for the same reason there
+//! is no second table of products: a page that keeps its own list can name a
+//! command the parser does not have, and an unrecognized first word is read as a
+//! TASK, so the reader who types it gets a coding session about their own words
+//! instead of an error. Both halves of that defect had shipped — `agent run` and
+//! `connector` named nothing, `serve` had been renamed `up`, `billing` was listed
+//! twice because it is a product now, and `up` and `link` appeared nowhere.
 
 use colored::Colorize;
 
 use crate::commands::product;
 
-/// The hand-written resource GROUPS (they take subcommands), with the same
-/// one-line prose their clap definitions carry.
-const GROUPS: &[(&str, &str)] = &[
-    ("auth", "Manage identities and credentials"),
-    ("billing", "Prepaid wallet money: read the balance, mint a deposit"),
-    ("config", "Manage local CLI settings"),
-    ("connector", "Connect an external provider account to your org"),
-    ("engine", "Run AI engines on this machine"),
-    ("fabric", "Run / join hanzo.network (the L1 fabric) and query its cluster"),
-    ("host", "The local cloud host: every cloud command, served from a checkout"),
-    ("network", "Network selection + custom/sovereign networks"),
-    ("runner", "Provide this machine as a CI runner"),
-    ("wallet", "Wallet identity: PQ cloud custody (KMS/MPC) or local keychain"),
-];
-
-/// The terminal COMMANDS (they take no subcommand).
-const COMMANDS: &[(&str, &str)] = &[
-    (
-        "code",
-        "Start a coding session on our own `dev` agent — or name another: \
-         `code claude` / `code codex` (also `--dev` / `--claude` / `--codex`). \
-         A trailing task runs headless",
-    ),
-    ("dev", "Start a coding session on the `dev` backend: `hanzo code dev`, spelled shorter"),
-    ("desktop", "Point an agent at the desktop and browser instead of the repo"),
-    ("init", "Initialize a new Hanzo project"),
-    ("scan", "Scan local files for exposed secrets"),
-    ("serve", "Run a Hanzo service: `cloud` for the whole API, or one service"),
-    ("share", "Publish a local service to a public share.hanzo.ai URL"),
-    (
-        "status",
-        "Show the whole cloud in one screen: what is unhealthy first, then the \
-         clusters, the applications and the machines on the fleet",
-    ),
-    ("version", "Print the CLI version"),
-    ("help", "Print this page, or a subcommand's own help"),
-];
+/// The hand-written commands, split the way the page presents them: a GROUP takes
+/// subcommands, a COMMAND is terminal. Prose is each command's own clap `about`,
+/// so a command states what it does in exactly one place.
+fn hand(cmd: &clap::Command) -> (Vec<(&str, String)>, Vec<(&str, String)>) {
+    let (mut groups, mut commands) = (Vec::new(), Vec::new());
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name();
+        let entry = (name, sub.get_about().map(ToString::to_string).unwrap_or_default());
+        // clap's `help` builtin mirrors the whole tree beneath itself so that
+        // `hanzo help <command>` reaches every page. That mirror is not a product
+        // group; to a reader `help` is one terminal command.
+        if sub.has_subcommands() && name != "help" {
+            groups.push(entry);
+        } else {
+            commands.push(entry);
+        }
+    }
+    (groups, commands)
+}
 
 fn b(s: &str) -> String {
     s.bold().to_string()
@@ -82,6 +72,14 @@ fn entry(out: &mut String, name: &str, about: &str) {
 /// value `product::augment` is given, so `product::catalog` drops exactly the
 /// generated products augmentation drops.
 pub fn page(cmd: &clap::Command) -> String {
+    // Read a BUILT tree: clap materializes its own `help` subcommand at build
+    // time, so an unbuilt one is missing a command the binary really answers to.
+    // Built once and read by both halves below — two readings is how a page comes
+    // to disagree with its parser in the first place.
+    let mut cmd = cmd.clone();
+    cmd.build();
+    let cmd = &cmd;
+
     let mut o = String::with_capacity(16 * 1024);
 
     o.push_str(&format!("{}\n", b("NAME")));
@@ -109,7 +107,7 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   product's operations, generated from the same contract the API, SDKs and\n\
          \x20   MCP tools serve.\n\n\
          \x20   `hanzo \"fix the failing test\"` starts an AI coding session on the task\n\
-         \x20   (`hanzo agent run` for the interactive form). Sign in with `hanzo auth\n\
+         \x20   (`hanzo code` for the interactive form). Sign in with `hanzo auth\n\
          \x20   login`; see your money with `hanzo billing balance` and `hanzo usage`.\n\n",
     );
 
@@ -122,15 +120,13 @@ pub fn page(cmd: &clap::Command) -> String {
         o.push_str(&format!("     {}\n        {}\n\n", b(f), d));
     }
 
+    let (mut groups, mut commands) = hand(cmd);
+
     o.push_str(&format!("{}\n", b("GROUPS")));
     o.push_str(&format!("    {} is one of the following:\n\n", "GROUP".underline()));
     // Hand groups and generated products, one alphabetical list — the reader
     // does not care which half of the binary answers.
-    let mut groups: Vec<(&str, String)> =
-        GROUPS.iter().map(|(n, a)| (*n, (*a).to_string())).collect();
-    for (name, about) in product::catalog(cmd) {
-        groups.push((name, about));
-    }
+    groups.extend(product::catalog(cmd));
     groups.sort_by_key(|(n, _)| *n);
     for (name, about) in &groups {
         entry(&mut o, name, about);
@@ -138,8 +134,78 @@ pub fn page(cmd: &clap::Command) -> String {
 
     o.push_str(&format!("{}\n", b("COMMANDS")));
     o.push_str(&format!("    {} is one of the following:\n\n", "COMMAND".underline()));
-    for (name, about) in COMMANDS {
+    commands.sort_by_key(|(n, _)| *n);
+    for (name, about) in &commands {
         entry(&mut o, name, about);
     }
     o
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    /// EVERY command this page names must be one the parser ACCEPTS, and every
+    /// command the parser accepts must be NAMED here. Both halves had failed at
+    /// once, because the page kept its own tables: `agent run` and `connector`
+    /// named nothing, `serve` had been renamed `up`, `billing` was printed twice
+    /// once it became a generated product, and `up` and `link` were named nowhere.
+    ///
+    /// This is not a typo class. An unrecognized first word is read as a TASK, so
+    /// `hanzo agent run` off this page did not fail — it started a coding session
+    /// about the words "agent run" and reported nothing wrong.
+    #[test]
+    fn the_page_names_every_command_and_only_real_ones() {
+        let hand = crate::Cli::command();
+        let merged = crate::commands::product::augment(crate::Cli::command());
+        let mut built = hand.clone();
+        built.build();
+        let (groups, commands) = super::hand(&built);
+        // A name is real if either half of the binary answers to it: the built
+        // hand tree (which is where clap materializes its own `help`), or the
+        // generated products mounted beside it.
+        let resolve = |n: &str| built.find_subcommand(n).or_else(|| merged.find_subcommand(n));
+
+        // The tables: every entry parses, and every entry says what it does.
+        for (name, about) in groups.iter().chain(commands.iter()) {
+            assert!(
+                resolve(name).is_some(),
+                "the page names `hanzo {name}`, which the parser does not accept"
+            );
+            assert!(!about.is_empty(), "`hanzo {name}` is on the page with nothing to say");
+        }
+
+        // The other direction: a command absent from the page is a command nobody
+        // can find. `hanzo up` and `hanzo link` both were.
+        let named: Vec<&str> = groups.iter().chain(commands.iter()).map(|(n, _)| *n).collect();
+        for sub in built.get_subcommands().map(clap::Command::get_name) {
+            assert!(named.contains(&sub), "`hanzo {sub}` is a command the page never names");
+        }
+
+        // The page's own PROSE names commands too, and only this walks it. Scoped
+        // to the text this file writes: a product summary is cloud's sentence, and
+        // a command it misnames is fixed upstream, never here.
+        let page = super::page(&hand);
+        let prose = page.split("GLOBAL FLAGS").next().expect("the page opens with prose");
+        for quoted in prose.split('`').skip(1).step_by(2) {
+            let mut words = quoted.split_whitespace().peekable();
+            if words.next() != Some("hanzo") {
+                continue;
+            }
+            let mut at = None;
+            for w in words {
+                if w.starts_with('-') || w.starts_with('"') {
+                    break;
+                }
+                at = match at {
+                    None => resolve(w),
+                    Some(c) => clap::Command::find_subcommand(c, w),
+                };
+                assert!(
+                    at.is_some(),
+                    "the page's prose names `{quoted}`, which the parser does not accept"
+                );
+            }
+        }
+    }
 }

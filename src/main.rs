@@ -33,15 +33,15 @@ pub fn warn(msg: &str) {
 #[command(about = "Unified CLI for Hanzo AI development tools", long_about = None)]
 // Bare `hanzo` IS a coding session, WITH flags: the code args are flattened at the
 // top level, so `hanzo --resume <id>`, `hanzo --model enso`, and `hanzo "fix the
-// bug"` all route to a coding session (the same run `hanzo agent run` starts).
+// bug"` all route to a coding session (the same run `hanzo code` starts).
 // `args_conflicts_with_subcommands` keeps them mutually exclusive with an explicit
-// subcommand (`hanzo agent …`, `hanzo auth …`), and `subcommand_negates_reqs` lets
+// subcommand (`hanzo code …`, `hanzo auth …`), and `subcommand_negates_reqs` lets
 // a subcommand run without them — so the flattened args apply ONLY to a bare `hanzo`.
 #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct Cli {
     /// Sets a custom config file
     ///
-    /// GLOBAL: valid on every subcommand (`hanzo cluster list --config F`).
+    /// GLOBAL: valid on every subcommand (`hanzo clusters list --config F`).
     #[arg(short, long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
@@ -69,7 +69,7 @@ struct Cli {
     command: Option<Commands>,
 }
 
-/// The coding-session arguments — shared between `hanzo agent run` and a bare
+/// The coding-session arguments — shared between `hanzo code` and a bare
 /// `hanzo …` (flattened onto [`Cli`]), so both accept exactly the same flags.
 #[derive(clap::Args, Clone)]
 struct CodeArgs {
@@ -181,7 +181,7 @@ impl CodeArgs {
     /// Map the parsed args to the code runner's [`Options`]. The `no_*` flags become
     /// their positive sense here, and the backend is resolved here — both in exactly
     /// ONE place, shared by `hanzo code …`, a bare `hanzo …`, `hanzo dev` and
-    /// `hanzo agent run`.
+    /// `hanzo desktop`.
     fn into_options(self) -> Result<commands::code::Options> {
         let named = self.named_backend();
         let (backend, task) = commands::code::backend::select(commands::code::backend::Selection {
