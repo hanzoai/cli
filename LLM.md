@@ -88,7 +88,10 @@ The remaining gaps are elsewhere:
   the build already uploaded rather than a second reading of the bytes, and each
   rewrite READ BACK, because an anchor that stops matching would leave the
   previous release's checksum under the new url and say nothing. Four targets:
-  Homebrew has no windows.
+  Homebrew has no windows. It pushes the FORGE with `FORGE_TOKEN` and the push
+  mirror carries it to github, where `brew tap` clones — the first run wrote
+  github directly and left git.hanzo.ai a commit behind, with the mirror aimed at
+  a github main it no longer contained.
 
 **CI runs on the FORGE. This is the whole story, and both halves bit us.**
 - `runs-on: hanzo-build-linux-amd64` is a **git.hanzo.ai** label, advertised by
