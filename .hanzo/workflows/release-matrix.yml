@@ -331,8 +331,14 @@ jobs:
   # disagree, and the formula's own `v#{version}` urls make a release ONE version
   # line and four checksums.
   #
-  # GH_PAT and github.com, for the reason the release itself is there: `brew tap`
-  # clones from github.com, so that is the copy an install reads.
+  # It writes the FORGE, and the forge's push mirror carries it to github.com,
+  # where `brew tap` clones from. Writing github directly is what the first run
+  # did, and it left git.hanzo.ai — the canonical copy — a commit behind, with a
+  # mirror push aimed at a github main it no longer contained. So the credential
+  # is FORGE_TOKEN, the same one the spec re-pin pushes this repo's own protected
+  # main with; `secrets.GH_PAT` still reaches github, but only the release assets
+  # need it. The sidecars below are read over https from github Releases, which is
+  # where DISTRIBUTION lives either way.
   tap:
     name: homebrew tap
     needs: build
@@ -341,13 +347,16 @@ jobs:
     steps:
       - name: Point the formula at this release
         env:
-          TOKEN: ${{ secrets.GH_PAT }}
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          [ -n "${FORGE_TOKEN:-}" ] || { echo "::error::the tap bump pushes hanzoai/homebrew-tap and needs FORGE_TOKEN"; exit 1; }
           v="${TAG#v}"
-          git clone --depth 1 "https://x-access-token:$TOKEN@github.com/hanzoai/homebrew-tap.git" tap
+          tap_url="${GITHUB_SERVER_URL:-https://git.hanzo.ai}/hanzoai/homebrew-tap"
+          git clone --depth 1 "$tap_url" tap
+          git -C tap config --local http.extraheader "Authorization: token $FORGE_TOKEN"
           f=tap/Formula/hanzo.rb
           test -f "$f"
 
@@ -369,5 +378,5 @@ jobs:
           cd tap
           if git diff --quiet; then echo "formula is already at $v"; exit 0; fi
           git -c user.name=hanzo-dev -c user.email=dev@hanzo.ai commit -qam "hanzo $v"
-          git push -q origin HEAD:main
+          git push -q "$tap_url" HEAD:main
           echo "tap now at $v"
