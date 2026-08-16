@@ -203,7 +203,7 @@ MIT © Hanzo AI
 ## Support
 
 - Documentation: https://docs.hanzo.ai/cli
-- Discord: https://discord.gg/hanzoai
+- Discord: https://discord.gg/CJCyAsm9Vr
 - GitHub Issues: https://github.com/hanzoai/cli/issues
 - Email: support@hanzo.ai
 
