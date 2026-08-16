@@ -310,3 +310,64 @@ jobs:
           # INSTALLING machine, not on this runner where it would bake one
           # platform's binary into the tarball.
           npm publish --access public --ignore-scripts
+
+  # BUMP THE HOMEBREW TAP, because nothing ever did.
+  #
+  # `brew install hanzoai/tap/hanzo` served v1.9.18 while every other install path
+  # served the current build: the formula was hand-written in three commits on one
+  # day and then sat through 35 releases. The tap's own gate cannot catch that —
+  # it downloads each url and checks it against the sha256 beside it, which stays
+  # green forever on a stale but self-consistent pair. Freshness is not a fact
+  # about that repo, it is a fact about THIS release, so the bump belongs here.
+  #
+  # `needs: build` for the same reason npm has it: the formula names assets, and a
+  # formula pointing at a release whose upload failed is a broken install.
+  #
+  # FOUR targets, not five — Homebrew has no windows.
+  #
+  # The checksums are the `.sha256` sidecars the build job already uploaded, never
+  # recomputed here. Recomputing means downloading the asset and trusting a second
+  # reading of it; reading the sidecar means the tap and the release cannot
+  # disagree, and the formula's own `v#{version}` urls make a release ONE version
+  # line and four checksums.
+  #
+  # GH_PAT and github.com, for the reason the release itself is there: `brew tap`
+  # clones from github.com, so that is the copy an install reads.
+  tap:
+    name: homebrew tap
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: hanzo-build-linux-amd64
+    steps:
+      - name: Point the formula at this release
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          git clone --depth 1 "https://x-access-token:$TOKEN@github.com/hanzoai/homebrew-tap.git" tap
+          f=tap/Formula/hanzo.rb
+          test -f "$f"
+
+          sed -i "s/^  version \".*\"$/  version \"$v\"/" "$f"
+          for t in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            sha="$(curl -fsSL "https://github.com/$REPO/releases/download/$TAG/hanzo-$t.tar.gz.sha256" | cut -d' ' -f1)"
+            [ ${#sha} -eq 64 ] || { echo "::error::no sha256 sidecar for hanzo-$t at $TAG"; exit 1; }
+            # Anchored on the asset name, so each checksum lands under its own url.
+            perl -0pi -e "s{(hanzo-$t\.tar\.gz\"\s+sha256 \")[0-9a-f]{64}}{\${1}$sha}" "$f"
+            # An anchor that stops matching — a renamed asset, a reflowed formula —
+            # leaves the PREVIOUS release's checksum under the new url and reports
+            # nothing. That ships a formula whose every install fails on a checksum
+            # mismatch, so the rewrite is read back rather than assumed.
+            grep -q "\"$sha\"" "$f" || { echo "::error::hanzo-$t checksum never landed in the formula"; exit 1; }
+          done
+
+          grep -q "^  version \"$v\"\$" "$f" || { echo "::error::formula kept its old version"; exit 1; }
+
+          cd tap
+          if git diff --quiet; then echo "formula is already at $v"; exit 0; fi
+          git -c user.name=hanzo-dev -c user.email=dev@hanzo.ai commit -qam "hanzo $v"
+          git push -q origin HEAD:main
+          echo "tap now at $v"
