@@ -1,11 +1,11 @@
-//! `hanzo secret scan PATH` — find exposed credentials and private keys in LOCAL
+//! `hanzo scan PATH` — find exposed credentials and private keys in LOCAL
 //! files before they leave your machine.
 //!
 //! This is a LOCAL scanner, deliberately distinct from any cloud secret service:
 //! `kms`/`connector` STORE secrets in Hanzo KMS; this READS your working tree and
 //! flags secrets that should never have been written there. It reads only the
 //! files you point it at, sends nothing anywhere, and exits NON-ZERO when it finds
-//! anything — so `hanzo secret scan .` drops straight into a pre-commit hook or CI.
+//! anything — so `hanzo scan .` drops straight into a pre-commit hook or CI.
 //!
 //! Detection is dependency-free and structural: known credential prefixes with a
 //! minimum length (`sk-`, `sk-ant-`, `hk-`, `ghp_`, GitLab/Slack/Stripe…), the AWS
@@ -32,7 +32,7 @@ const SKIP_DIRS: &[&str] =
 /// Files larger than this are treated as data, not code, and skipped.
 const MAX_FILE: u64 = 5 * 1024 * 1024;
 
-/// `hanzo secret scan PATH` — scan a file or a directory tree.
+/// `hanzo scan PATH` — scan a file or a directory tree.
 pub async fn scan(path: PathBuf) -> Result<()> {
     if !path.exists() {
         bail!("no such path: {}", path.display());

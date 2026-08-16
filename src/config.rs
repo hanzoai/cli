@@ -100,7 +100,10 @@ pub struct Config {
     #[serde(default)]
     pub code: CodeState,
 
-    /// The default dedicated cloud cluster selected by `hanzo cluster use`.
+    /// The default dedicated cloud cluster. No command selects it — `hanzo
+    /// cluster use` was deleted with the other hand-written cloud verbs and
+    /// `hanzo clusters` (the generated product) has no `use`, so this is carried
+    /// state nothing writes.
     #[serde(default)]
     pub cluster: ClusterState,
 
@@ -109,8 +112,8 @@ pub struct Config {
     path: PathBuf,
 }
 
-/// The default dedicated cloud cluster (`hanzo cluster use`). Non-secret, mirrors
-/// how `NetworkState`/`WalletState` hold a selection.
+/// The default dedicated cloud cluster. Non-secret, mirrors how
+/// `NetworkState`/`WalletState` hold a selection.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClusterState {
     /// The selected cluster name; `None` until one is chosen.

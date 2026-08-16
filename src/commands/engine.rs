@@ -1,4 +1,4 @@
-//! `hanzo model serve MODEL` — serve a model from THIS machine on a local
+//! `hanzo engine serve MODEL` — serve a model from THIS machine on a local
 //! /v1 chat-completions endpoint.
 //!
 //! The backend is the Hanzo engine (`~/work/hanzo/engine`): its `serve` command
@@ -21,7 +21,7 @@ fn engine_bin() -> Option<PathBuf> {
     launch::resolve("HANZO_ENGINE_BIN", &["hanzo-engine"])
 }
 
-/// `hanzo model serve MODEL [-- engine args…]`
+/// `hanzo engine serve MODEL [-- engine args…]`
 pub async fn serve(model: String, passthrough: Vec<String>) -> Result<()> {
     let bin = engine_bin().ok_or_else(|| {
         anyhow!(
