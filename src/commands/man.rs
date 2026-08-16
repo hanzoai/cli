@@ -16,10 +16,13 @@ use colored::Colorize;
 
 use crate::commands::product;
 
+/// A command's name beside its own clap `about` line.
+type Entry<'a> = (&'a str, String);
+
 /// The hand-written commands, split the way the page presents them: a GROUP takes
 /// subcommands, a COMMAND is terminal. Prose is each command's own clap `about`,
 /// so a command states what it does in exactly one place.
-fn hand(cmd: &clap::Command) -> (Vec<(&str, String)>, Vec<(&str, String)>) {
+fn hand(cmd: &clap::Command) -> (Vec<Entry<'_>>, Vec<Entry<'_>>) {
     let (mut groups, mut commands) = (Vec::new(), Vec::new());
     for sub in cmd.get_subcommands() {
         let name = sub.get_name();
