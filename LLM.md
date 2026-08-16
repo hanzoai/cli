@@ -77,6 +77,18 @@ The remaining gaps are elsewhere:
   build. That is not hypothetical: v1.9.13, v1.9.15, v1.9.16 and v1.9.17 were
   all tagged while users were still resolving v1.9.12, so `hanzo code` was
   unreachable for everyone who had not built from source.
+- **Homebrew is a THIRD install path, and for 35 releases nobody moved it.**
+  `brew install hanzoai/tap/hanzo` read a formula hand-written at v1.9.18, so
+  brew served a build answering `hanzo serve` where every other path served
+  `hanzo up`. The tap's own gate could not see it: it checks each url against the
+  sha256 beside it, which stays green forever on a stale but self-consistent
+  pair. Freshness is a fact about the RELEASE, so the `tap` job in
+  `release-matrix.yml` writes `hanzoai/homebrew-tap` `Formula/hanzo.rb` on every
+  tag — the version line and four checksums, taken from the `.sha256` sidecars
+  the build already uploaded rather than a second reading of the bytes, and each
+  rewrite READ BACK, because an anchor that stops matching would leave the
+  previous release's checksum under the new url and say nothing. Four targets:
+  Homebrew has no windows.
 
 **CI runs on the FORGE. This is the whole story, and both halves bit us.**
 - `runs-on: hanzo-build-linux-amd64` is a **git.hanzo.ai** label, advertised by
@@ -111,6 +123,25 @@ The remaining gaps are elsewhere:
 product subcommands `hanzo <product> …` (derived from the spec, below — the ONE
 interface to cloud; no `hanzo api` verb, no raw-path escape). Bare `hanzo [flags] [task]`
 is an AI coding session (Hanzo MCP attached, routed + streamed to cloud when signed in).
+
+**THE ROOT PAGE IS A PROJECTION OF THE PARSER, and it may not keep a list.**
+`commands/man.rs` held two hand-written tables of commands beside the generated
+half it already read off `cmd`, and nothing held them against the tree. All four
+ways of being wrong shipped at once: `agent run` and `connector` named commands
+that do not exist, `serve` had been renamed `up`, `billing` printed TWICE once it
+became a generated product, and `up` and `link` appeared nowhere. Naming a
+command that does not exist is not a typo here — an unrecognized first word is a
+TASK, so `hanzo agent run` off the page started a coding session about the words
+"agent run" and reported nothing wrong, the same class as `hanzo status` before
+it was a command. The tables are gone: a GROUP takes subcommands, a COMMAND is
+terminal, prose is each command's own clap `about`, and the page is rendered from
+a BUILT tree because clap materializes `help` at build time.
+`the_page_names_every_command_and_only_real_ones` walks it in both directions
+plus the page's own prose — scoped to the text this file writes, since a product
+summary is cloud's sentence and a command it misnames is fixed upstream. Help
+text elsewhere is under the same rule and was wrong the same way: `--config`'s
+GLOBAL line cited `hanzo cluster list` on every subcommand screen, and the
+product is `clusters`.
 
 **The coding session, and its ONE resolver** — `hanzo code` starts it on one of three
 DISTINCT backends: our own `dev` agent (hanzoai/dev, the DEFAULT), `claude`, and
