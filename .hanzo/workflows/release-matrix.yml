@@ -355,7 +355,8 @@ jobs:
           [ -n "${FORGE_TOKEN:-}" ] || { echo "::error::the tap bump pushes hanzoai/homebrew-tap and needs FORGE_TOKEN"; exit 1; }
           v="${TAG#v}"
           tap_url="${GITHUB_SERVER_URL:-https://git.hanzo.ai}/hanzoai/homebrew-tap"
-          git clone --depth 1 "$tap_url" tap
+          # The tap is private, so the token rides on the clone as well as the push.
+          git -c http.extraheader="Authorization: token $FORGE_TOKEN" clone --depth 1 "$tap_url" tap
           git -C tap config --local http.extraheader "Authorization: token $FORGE_TOKEN"
           f=tap/Formula/hanzo.rb
           test -f "$f"
