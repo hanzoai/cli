@@ -64,7 +64,7 @@ curl -fsSL -H "Authorization: token $$SPEC_TOKEN" \
   "$(SPEC_HOST)/repos/$(SPEC_REPO)/raw/$(SPEC_PATH)?ref=$$ref" -o "$$tmp"; \
 got=$$(sha256sum "$$tmp" | cut -d' ' -f1); \
 [ "$$got" = "$$want" ] || { echo "$(SPEC_REPO)@$$ref:$(SPEC_PATH) hashes to $$got, but $(LOCK) says $$want — the ref moved under this capture"; exit 1; }; \
-export SPEC="$$tmp" SPEC_REF="$$ref"
+export SPEC="$$tmp" SPEC_REF="$$ref" HANZO_SPEC_REPO="$(SPEC_REPO)"
 endef
 
 # Moving the projection forward RE-ASKS THE SERVER in the same breath. Evidence

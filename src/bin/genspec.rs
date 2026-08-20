@@ -377,7 +377,15 @@ async fn main() {
     // HANZO_SPEC_REF, which is the one thing a reader cannot derive from bytes
     // (hanzoai/cloud's release sets it when it hands this repo its document).
     let spec_ref = std::env::var("HANZO_SPEC_REF").unwrap_or_else(|_| "unpinned".into());
-    let provenance = format!("hanzoai/cloud@{spec_ref} sha256:{digest}");
+    // THE REPO IS READ, NOT SPELLED. It was the literal `hanzoai/cloud` here,
+    // which made this a fourth place that knows which cloud the document comes
+    // from -- beside .spec-lock, the Makefile and hanzo.yml -- and the one place
+    // nobody thought to change when the product line moved to hanzo-inc/cloud.
+    // The lock then said hanzo-inc and the capture it describes said hanzoai, so
+    // the drift test compared a repo against itself and passed while the two
+    // disagreed.
+    let spec_repo = std::env::var("HANZO_SPEC_REPO").unwrap_or_else(|_| "hanzo-inc/cloud".into());
+    let provenance = format!("{spec_repo}@{spec_ref} sha256:{digest}");
 
     // THE WHOLE DERIVATION. The document enumerates; each of its operations
     // exists, carries its own prose and its own reflected shape, and is kept.
