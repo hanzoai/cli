@@ -27,8 +27,29 @@ name: CI/CD
 on:
   push: { branches: [main] }
   pull_request:
+  # A DISPATCH THAT NAMES NO DOCUMENT MOVES NOTHING. hanzoai/ci's client lane
+  # moves this projection's pin only when handed a ref, and it read that from
+  # `client_payload` -- which `repository_dispatch` populates and Hanzo Git does
+  # not serve. So a bare poke re-read the LOCKED ref, asserted its digest and
+  # exited before any write: every release could poke this forever and the pin
+  # would never move.
+  #
+  # ci v1.0.75 takes the ref as an input. Omit it and this is a check that writes
+  # nothing, exactly as before.
   workflow_dispatch:
+    inputs:
+      spec-ref:
+        description: "cloud commit to move .spec-lock to. Empty = check the locked ref, write nothing."
+        required: false
+        default: ''
+      spec-sha256:
+        description: "Expected sha256 of openapi.yaml at that ref. Empty = do not verify."
+        required: false
+        default: ''
 jobs:
   cicd:
-    uses: hanzoai/ci/.hanzo/workflows/build.yml@v1.0.54
+    uses: hanzoai/ci/.hanzo/workflows/build.yml@v1.0.75
+    with:
+      spec-ref: ${{ github.event.inputs.spec-ref || '' }}
+      spec-sha256: ${{ github.event.inputs.spec-sha256 || '' }}
     secrets: inherit
