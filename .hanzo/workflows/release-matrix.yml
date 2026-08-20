@@ -335,7 +335,7 @@ jobs:
   # where `brew tap` clones from. Writing github directly is what the first run
   # did, and it left git.hanzo.ai — the canonical copy — a commit behind, with a
   # mirror push aimed at a github main it no longer contained. So the credential
-  # is FORGE_TOKEN, the same one the spec re-pin pushes this repo's own protected
+  # is GIT_TOKEN, the same one the spec re-pin pushes this repo's own protected
   # main with; `secrets.GH_PAT` still reaches github, but only the release assets
   # need it. The sidecars below are read over https from github Releases, which is
   # where DISTRIBUTION lives either way.
@@ -347,17 +347,17 @@ jobs:
     steps:
       - name: Point the formula at this release
         env:
-          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+          GIT_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          [ -n "${FORGE_TOKEN:-}" ] || { echo "::error::the tap bump pushes hanzoai/homebrew-tap and needs FORGE_TOKEN"; exit 1; }
+          [ -n "${GIT_TOKEN:-}" ] || { echo "::error::the tap bump pushes hanzoai/homebrew-tap and needs GIT_TOKEN"; exit 1; }
           v="${TAG#v}"
           tap_url="${GITHUB_SERVER_URL:-https://git.hanzo.ai}/hanzoai/homebrew-tap"
           # The tap is private, so the token rides on the clone as well as the push.
-          git -c http.extraheader="Authorization: token $FORGE_TOKEN" clone --depth 1 "$tap_url" tap
-          git -C tap config --local http.extraheader "Authorization: token $FORGE_TOKEN"
+          git -c http.extraheader="Authorization: token $GIT_TOKEN" clone --depth 1 "$tap_url" tap
+          git -C tap config --local http.extraheader "Authorization: token $GIT_TOKEN"
           f=tap/Formula/hanzo.rb
           test -f "$f"
 

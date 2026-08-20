@@ -116,7 +116,7 @@ jobs:
       # do, after pushing a branch nobody could turn into a patch. Two ways to
       # land a re-pin, one of which does not exist, is one too many.
       #
-      # FORGE_TOKEN READS THE DOCUMENT AND PUSHES THE RESULT — one credential
+      # GIT_TOKEN READS THE DOCUMENT AND PUSHES THE RESULT — one credential
       # for the whole step. The actions token cannot do the second half: the
       # Hanzo Git knows it as User -2, and a protected branch refuses it however the
       # rule is written. It is the same credential, spelled the same way, that
@@ -125,11 +125,11 @@ jobs:
         if: always()
         env:
           FORGE: https://git.hanzo.ai/v1
-          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+          GIT_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [ -n "${FORGE_TOKEN:-}" ] || { echo "::error::the re-pin reads hanzoai/cloud and pushes the result here, and needs FORGE_TOKEN"; exit 1; }
-          api() { curl -fsSL -H "Authorization: token $FORGE_TOKEN" "$@"; }
+          [ -n "${GIT_TOKEN:-}" ] || { echo "::error::the re-pin reads hanzoai/cloud and pushes the result here, and needs GIT_TOKEN"; exit 1; }
+          api() { curl -fsSL -H "Authorization: token $GIT_TOKEN" "$@"; }
           head=$(api "$FORGE/repos/hanzoai/cloud/branches/main" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["id"])')
           pinned=$(sed -n 's/^ref=//p' .spec-lock)
@@ -144,7 +144,7 @@ jobs:
           # `make spec` fetches that ref AGAIN and refuses if the bytes moved under
           # the digest just written — the lock checking itself — then regenerates
           # the surface and re-captures the evidence in the same act.
-          SPEC_TOKEN="$FORGE_TOKEN" make spec
+          SPEC_TOKEN="$GIT_TOKEN" make spec
           make verify
           git config user.name hanzo-dev
           git config user.email dev@hanzo.ai
@@ -158,6 +158,6 @@ jobs:
           # sitting unused in the environment. Clear first, then set one.
           git config --local --name-only --get-regexp '^http\..*extraheader$' 2>/dev/null \
             | while read -r k; do git config --local --unset-all "$k"; done || true
-          git config --local http.extraheader "Authorization: token $FORGE_TOKEN"
+          git config --local http.extraheader "Authorization: token $GIT_TOKEN"
           git push "${GITHUB_SERVER_URL:-https://git.hanzo.ai}/${{ github.repository }}" HEAD:main
           echo "main is pinned to hanzoai/cloud@$head"
