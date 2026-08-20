@@ -2,9 +2,10 @@
 
 ## Overview
 The `hanzo` CLI: one binary to drive Hanzo's top-level concerns — network,
-wallet, node/hanzo.network — plus cloud auth, cluster, deploy, and the
-TS/Python SDK proxies. It is the CLI half of "it all fits together" with the
-console + cloud + the fabric: ONE network model, ONE wallet model, ONE way.
+wallet, node/hanzo.network — plus cloud auth, cluster, deploy, and the TS
+proxies, with every operation api.hanzo.ai serves grafted on beside them. It is
+the CLI half of "it all fits together" with the console + cloud + the fabric:
+ONE network model, ONE wallet model, ONE way.
 
 ## Tech Stack
 - **Language**: Rust (crate `hanzo-cli`, binary `hanzo`), clap derive, tokio.
@@ -26,7 +27,14 @@ cargo clippy --bin hanzo
   (default node URL = the active network's `api`).
 - `deploy` — targets the active network; the active wallet signs (auto-provisions
   one if none, on a real deploy).
-- `agent`, `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
+- `build`, `dev`, `init`, `docs|mdx|ui|mcp` (TS proxies).
+- `<service> <verb>` — every operation the platform serves, read from
+  `/v1/commands` at startup (`src/catalog.rs`). Not generated, not committed:
+  the tree IS the document, so `hanzo agents delete <ref>` answers because the
+  platform publishes it. `deploy`, `docs` and `mcp` are both local verbs and
+  served services, so the served verbs graft under the local command and both
+  survive. `cargo test` fails if a published token names a subcommand the binary
+  does not answer, and fails loudly if it cannot read the document at all.
 
 ## Network model (`src/commands/network.rs`) — same as the console + fabric
 Sovereign L1 ⇒ `network_id == chain_id`. Built-ins mirror the console selector

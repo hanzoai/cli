@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -12,7 +12,9 @@ name = "hanzo"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive", "env"] }
+# `string` lets a command be named at runtime, which is what grafting the
+# platform's served command document onto this tree needs (src/catalog.rs).
+clap = { version = "4.5", features = ["derive", "env", "string"] }
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
