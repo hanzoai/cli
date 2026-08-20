@@ -76,7 +76,12 @@ fn the_committed_spec_names_the_release_it_was_generated_from() {
             .unwrap_or_else(|| panic!(".spec-lock has no {k}="))
             .to_string()
     };
-    let (r#ref, sha) = (field("ref"), field("sha256"));
+    // The REPO is read, not restated. It was the literal `hanzoai/cloud` in both
+    // assertions below, which made this a second place that knows which cloud the
+    // capture came from -- and when that path was repointed at the re-rooted OSS
+    // core, the lock could move to the product line and this test would still be
+    // asserting the old one. One fact, one reader.
+    let (r#ref, sha, repo) = (field("ref"), field("sha256"), field("repo"));
 
     // AN IMMUTABLE REF, which is a weaker word than "release" and the only one
     // that was ever true. This asked for a release TAG, on the grounds that main
@@ -92,14 +97,14 @@ fn the_committed_spec_names_the_release_it_was_generated_from() {
     let commit = r#ref.len() == 40 && r#ref.chars().all(|c| c.is_ascii_hexdigit());
     assert!(
         tag || commit,
-        ".spec-lock names {ref:?}, which is neither a hanzoai/cloud release tag nor a commit. A \
+        ".spec-lock names {ref:?}, which is neither a {repo} release tag nor a commit. A \
          capture must name IMMUTABLE bytes: a branch moves under the digest and a host is not a \
          version."
     );
     assert!(
-        prov.contains(&format!("hanzoai/cloud@{ref}")) && prov.contains(&format!("sha256:{sha}")),
+        prov.contains(&format!("{repo}@{ref}")) && prov.contains(&format!("sha256:{sha}")),
         "spec/cloud.json and .spec-lock disagree about which document this capture is.\n  \
-         spec says: {prov}\n  lock says: hanzoai/cloud@{ref} sha256:{sha}\n\
+         spec says: {prov}\n  lock says: {repo}@{ref} sha256:{sha}\n\
          Re-run `make spec`, then commit spec/cloud.json, generated.rs and .spec-lock together."
     );
 }

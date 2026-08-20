@@ -40,7 +40,7 @@ SHELL := /bin/bash
 # The forge serves its API at /v1/, NOT /api/v1/ — asking for /api/v1 returns a
 # 404 that reads exactly like a rejected credential and costs an hour.
 SPEC_HOST ?= https://git.hanzo.ai/v1
-SPEC_REPO ?= hanzoai/cloud
+SPEC_REPO ?= hanzo-inc/cloud
 SPEC_PATH ?= openapi.yaml
 LOCK      := .spec-lock
 
