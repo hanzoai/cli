@@ -1157,7 +1157,7 @@ mod tests {
         }
     }
 
-    /// MED-4: the keychain must NEVER be touched while the config lock is held.
+    /// The keychain must NEVER be touched while the config lock is held.
     ///
     /// A keyring read can block on a human (auto-locked collection → GUI prompt,
     /// no timeout). Under the lock that hangs every other `hanzo` process on the
@@ -1214,7 +1214,7 @@ mod tests {
         let _ = std::fs::remove_file(c.effective_path());
     }
 
-    /// LOW-1: never print a billing org for a credential we do not hold.
+    /// Never print a billing org for a credential we do not hold.
     #[test]
     fn switching_onto_an_indexed_but_unheld_identity_fails_closed() {
         let (v, mut c) = (MemVault::new(), cfg());

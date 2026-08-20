@@ -77,7 +77,7 @@ pub struct Config {
     pub api_base: String,
     /// The per-install device id used as `distinctId`.
     pub distinct_id: String,
-    /// A hanzo.id JWT (or `hk-`/`pk_` key) when one is cheaply available; else the
+    /// A hanzo.id JWT (or a `pk-`/`sk-` key) when one is cheaply available; else the
     /// handle falls back to [`KEY_ENV`], else it transmits nothing.
     pub bearer: Option<String>,
 }
