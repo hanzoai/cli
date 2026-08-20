@@ -124,13 +124,19 @@ jobs:
       - name: Re-pin to hanzoai/cloud's main
         if: always()
         env:
-          GIT.HANZO.AI: https://git.hanzo.ai/v1
+          # An env NAME, so it is an identifier and not prose: letters, digits and
+          # underscores only. Spelled `GIT.HANZO.AI` it is not a variable at all —
+          # `$GIT.HANZO.AI` expands the unset `$GIT` and appends a literal, which
+          # `set -u` on the next line turns into an immediate abort. The nightly
+          # re-pin died there silently. The host is named in the VALUE, and the
+          # messages a person reads say Hanzo Git; a shell identifier cannot.
+          GIT_API: https://git.hanzo.ai/v1
           GIT_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [ -n "${GIT_TOKEN:-}" ] || { echo "::error::the re-pin reads hanzoai/cloud and pushes the result here, and needs GIT_TOKEN"; exit 1; }
           api() { curl -fsSL -H "Authorization: token $GIT_TOKEN" "$@"; }
-          head=$(api "$GIT.HANZO.AI/repos/hanzoai/cloud/branches/main" \
+          head=$(api "$GIT_API/repos/hanzoai/cloud/branches/main" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["id"])')
           pinned=$(sed -n 's/^ref=//p' .spec-lock)
           if [ "$head" = "$pinned" ]; then
@@ -138,7 +144,7 @@ jobs:
             exit 0
           fi
           echo "hanzoai/cloud@$pinned -> @$head"
-          api "$GIT.HANZO.AI/repos/hanzoai/cloud/raw/openapi.yaml?ref=$head" -o /tmp/openapi.yaml
+          api "$GIT_API/repos/hanzoai/cloud/raw/openapi.yaml?ref=$head" -o /tmp/openapi.yaml
           printf 'ref=%s\nsha256=%s\nrepo=hanzoai/cloud\npath=openapi.yaml\n' \
             "$head" "$(sha256sum /tmp/openapi.yaml | cut -d' ' -f1)" > .spec-lock
           # `make spec` fetches that ref AGAIN and refuses if the bytes moved under
