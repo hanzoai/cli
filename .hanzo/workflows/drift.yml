@@ -124,13 +124,13 @@ jobs:
       - name: Re-pin to hanzoai/cloud's main
         if: always()
         env:
-          FORGE: https://git.hanzo.ai/v1
+          GIT.HANZO.AI: https://git.hanzo.ai/v1
           GIT_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [ -n "${GIT_TOKEN:-}" ] || { echo "::error::the re-pin reads hanzoai/cloud and pushes the result here, and needs GIT_TOKEN"; exit 1; }
           api() { curl -fsSL -H "Authorization: token $GIT_TOKEN" "$@"; }
-          head=$(api "$FORGE/repos/hanzoai/cloud/branches/main" \
+          head=$(api "$GIT.HANZO.AI/repos/hanzoai/cloud/branches/main" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["id"])')
           pinned=$(sed -n 's/^ref=//p' .spec-lock)
           if [ "$head" = "$pinned" ]; then
@@ -138,7 +138,7 @@ jobs:
             exit 0
           fi
           echo "hanzoai/cloud@$pinned -> @$head"
-          api "$FORGE/repos/hanzoai/cloud/raw/openapi.yaml?ref=$head" -o /tmp/openapi.yaml
+          api "$GIT.HANZO.AI/repos/hanzoai/cloud/raw/openapi.yaml?ref=$head" -o /tmp/openapi.yaml
           printf 'ref=%s\nsha256=%s\nrepo=hanzoai/cloud\npath=openapi.yaml\n' \
             "$head" "$(sha256sum /tmp/openapi.yaml | cut -d' ' -f1)" > .spec-lock
           # `make spec` fetches that ref AGAIN and refuses if the bytes moved under
