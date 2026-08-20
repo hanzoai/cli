@@ -57,7 +57,7 @@ jobs:
       # `toolchain: stable` is STATED, not inferred from the `@stable` ref.
       # dtolnay/rust-toolchain reads the branch name out of `github.action_ref`
       # to decide the toolchain — that is GitHub-runner behaviour, and act_runner
-      # on our own forge does not reproduce it, so the action received an empty
+      # on our own Hanzo Git does not reproduce it, so the action received an empty
       # input and failed with "'toolchain' is a required input".
       #
       # It only ever broke ONE target, which is why it looked like a linux-amd64
@@ -76,7 +76,7 @@ jobs:
       # It used to be a push: hanzoai/cloud's release was meant to send
       # `repository_dispatch: spec-update` and hand this repo the document at the
       # sha it deployed. Nothing ever arrived. The CLI has no `.github/workflows`,
-      # so GitHub recorded the event and ran nothing; the forge has no
+      # so GitHub recorded the event and ran nothing; Hanzo Git has no
       # repository_dispatch endpoint to send it to; and a push into this repo puts
       # hanzoai/ci's client lane in check-only at the LOCKED ref, so even a
       # delivered event could not have written a new one. Across 104 runs the pin
@@ -111,14 +111,14 @@ jobs:
       #
       # It COMMITS TO MAIN. This used to push a `repin` branch and open a pull
       # request; the request was never openable, because this repo has the pull
-      # unit turned off — the forge answers 500 to `POST /pulls` and 404 to `GET
+      # unit turned off — Hanzo Git answers 500 to `POST /pulls` and 404 to `GET
       # /pulls` when it is off — so the step failed every night it had anything to
       # do, after pushing a branch nobody could turn into a patch. Two ways to
       # land a re-pin, one of which does not exist, is one too many.
       #
       # FORGE_TOKEN READS THE DOCUMENT AND PUSHES THE RESULT — one credential
       # for the whole step. The actions token cannot do the second half: the
-      # forge knows it as User -2, and a protected branch refuses it however the
+      # Hanzo Git knows it as User -2, and a protected branch refuses it however the
       # rule is written. It is the same credential, spelled the same way, that
       # hanzoai/ci's client lane uses to land a regenerated client.
       - name: Re-pin to hanzoai/cloud's main
@@ -151,7 +151,7 @@ jobs:
           git commit -am "spec: re-pin to $head"
           # ONE CREDENTIAL ON THE WIRE. `http.extraHeader` is multi-valued, and a
           # url-specific entry does not displace a broader one: git sends every
-          # header that matches and the forge honours the first Authorization it
+          # header that matches and Hanzo Git honours the first Authorization it
           # reads. actions/checkout leaves its own behind, so merely adding ours
           # puts the actions token in front — and this step died on `Not allowed
           # to push to protected branch main` with the credential that IS allowed

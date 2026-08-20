@@ -1,9 +1,9 @@
 name: Release Matrix (CLI)
 
-# THIS FILE RUNS ON THE FORGE (git.hanzo.ai), and that is why it lives in
+# THIS FILE RUNS ON GIT.HANZO.AI (git.hanzo.ai), and that is why it lives in
 # `.hanzo/workflows/` rather than `.github/workflows/`.
 #
-# `runs-on: hanzo-build-linux-amd64` was always a FORGE label. It is one of 28
+# `runs-on: hanzo-build-linux-amd64` was always a GIT.HANZO.AI label. It is one of 28
 # advertised by the git-runner pool (hanzo/git-runner-0..9, registered to
 # http://hanzo-git.hanzo.svc), every one mapping to
 # docker://catthehacker/ubuntu:act-24.04. github.com has never had a runner
@@ -11,12 +11,12 @@ name: Release Matrix (CLI)
 # that once served this label is gone (no `autoscalingrunnersets` CRD remains in
 # the cluster).
 #
-# While this file sat in `.github/workflows/`, BOTH forges ran it: the forge
+# While this file sat in `.github/workflows/`, BOTH hosts ran it: Hanzo Git
 # reads `.hanzo/workflows` AND `.github/workflows`, so every tag started two
 # builds — one that worked and one that could never start. The GitHub copy
 # queued against a label nothing offered and sat there (v1.9.13 waited 17 hours
 # before it was cancelled). Moving the file leaves exactly one execution, on the
-# forge, because GitHub reads only `.github/workflows`. One tag, one build.
+# Hanzo Git, because GitHub reads only `.github/workflows`. One tag, one build.
 #
 # NEVER set `runs-on: ubuntu-latest` here. That label was removed from the pool
 # deliberately after an upstream workflow wedged all 10 runners; a job asking for
@@ -96,7 +96,7 @@ jobs:
       # `toolchain: stable` is STATED, not inferred from the `@stable` ref.
       # dtolnay/rust-toolchain reads the branch name out of `github.action_ref`
       # to decide the toolchain — that is GitHub-runner behaviour, and act_runner
-      # on our own forge does not reproduce it, so the action received an empty
+      # on our own Hanzo Git does not reproduce it, so the action received an empty
       # input and failed with "'toolchain' is a required input".
       #
       # It only ever broke ONE target, which is why it looked like a linux-amd64
@@ -190,7 +190,7 @@ jobs:
       # needs.
       #
       # GH_PAT, not `github.token`. This job runs on git.hanzo.ai, so
-      # `github.token` is a FORGE token — and these two URLs are github.com.
+      # `github.token` is a GIT.HANZO.AI token — and these two URLs are github.com.
       # api.github.com rejected it, both the GET and the POST returned no `.id`,
       # and the step died on its own diagnostic: `could not create or find
       # release v1.9.16`. Every step above it had already passed; the release
@@ -200,7 +200,7 @@ jobs:
       #
       # GH_PAT is an org secret at git.hanzo.ai/hanzoai (repo-level secrets are
       # empty; org secrets inherit) — the same one cloud publishes with. BUILD
-      # happens on the forge; DISTRIBUTION stays on GitHub Releases because
+      # happens on Hanzo Git; DISTRIBUTION stays on GitHub Releases because
       # hanzo.sh resolves api.github.com/repos/hanzoai/cli/releases/latest.
       # Crossing that boundary is the one thing this step needs a credential for.
       - name: Publish
@@ -331,7 +331,7 @@ jobs:
   # disagree, and the formula's own `v#{version}` urls make a release ONE version
   # line and four checksums.
   #
-  # It writes the FORGE, and the forge's push mirror carries it to github.com,
+  # It writes the GIT.HANZO.AI, and Hanzo Git's push mirror carries it to github.com,
   # where `brew tap` clones from. Writing github directly is what the first run
   # did, and it left git.hanzo.ai — the canonical copy — a commit behind, with a
   # mirror push aimed at a github main it no longer contained. So the credential
