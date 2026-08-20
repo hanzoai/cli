@@ -1,17 +1,20 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Arg, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 
+mod catalog;
 mod commands;
 mod config;
 mod iam;
-mod sdk;
 
 #[derive(Parser)]
 #[command(name = "hanzo")]
 #[command(author = "Hanzo AI")]
-#[command(version = "1.0.0")]
+// The version is the crate's, read at compile time. Written out as a literal it
+// was a second copy of a number that only ever moves in Cargo.toml, and a copy
+// that goes stale reports the wrong build to whoever is debugging one.
+#[command(version)]
 #[command(about = "Unified CLI for Hanzo AI development tools", long_about = None)]
 struct Cli {
     /// Sets a custom config file
@@ -26,8 +29,33 @@ struct Cli {
     command: Commands,
 }
 
+/// Starting the node, said once.
+///
+/// It answers to two spellings — `hanzo up`, which is what the site prints, and
+/// `hanzo node up`, which is where it lives among the other node verbs. Both
+/// parse into THIS struct and run `Up::run`, so a flag added here arrives at
+/// both spellings and there is no second implementation to keep agreeing.
+#[derive(Args)]
+struct Up {
+    /// Run attached instead of detached
+    #[arg(long)]
+    foreground: bool,
+    /// Also start the cloud control plane
+    #[arg(long)]
+    with_cloud: bool,
+}
+
+impl Up {
+    async fn run(self, config: &config::Config) -> Result<()> {
+        commands::node::up(config, self.foreground, self.with_cloud).await
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
+    /// Start hanzod on the active network (joins hanzo.network)
+    Up(Up),
+
     /// Initialize a new Hanzo project
     Init {
         /// Project template
@@ -47,12 +75,6 @@ enum Commands {
         /// Enable hot reload
         #[arg(long)]
         hot: bool,
-    },
-
-    /// AI agent operations (Python SDK)
-    Agent {
-        #[command(subcommand)]
-        command: AgentCommands,
     },
 
     /// Sign in to Hanzo Cloud (IAM OIDC, PKCE S256)
@@ -163,20 +185,6 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum AgentCommands {
-    /// Create a new agent
-    Create {
-        name: String,
-        #[arg(long)]
-        model: Option<String>,
-    },
-    /// List agents
-    List,
-    /// Run an agent
-    Run { name: String, task: String },
-}
-
-#[derive(Subcommand)]
 enum NetworkCommands {
     /// List built-in + custom networks
     List,
@@ -245,14 +253,7 @@ enum WalletCommands {
 #[derive(Subcommand)]
 enum NodeCommands {
     /// Start hanzod on the active network (joins hanzo.network)
-    Up {
-        /// Run attached instead of detached
-        #[arg(long)]
-        foreground: bool,
-        /// Also start the cloud control plane
-        #[arg(long)]
-        with_cloud: bool,
-    },
+    Up(Up),
     /// Show node + network status
     Status,
     /// Switch network and start hanzod
@@ -303,9 +304,67 @@ enum ClusterCommands {
     },
 }
 
+/// The tree before the platform is grafted onto it.
+///
+/// `help` is declared here rather than left to clap because the platform serves
+/// a product called `help` too, and a word can only mean one thing. Declared, it
+/// carries both: the served verbs as subcommands, and the command path clap's
+/// own `help` took, printed the same way.
+fn root() -> Command {
+    Cli::command().disable_help_subcommand(true).subcommand(
+        Command::new("help").about("Print help for a command").arg(
+            Arg::new("path")
+                .num_args(0..)
+                .value_name("COMMAND")
+                .help("Command to print help for, e.g. `node status`"),
+        ),
+    )
+}
+
+/// Print the help of the command a path names, the way `hanzo help node status`
+/// has always read.
+fn help(root: &mut Command, path: &[String]) -> Result<()> {
+    let mut at = &mut *root;
+    for step in path {
+        at = at
+            .find_subcommand_mut(step)
+            .ok_or_else(|| anyhow::anyhow!("no command named {step}"))?;
+    }
+    at.print_help()?;
+    println!();
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // The platform's own command document, grafted on before anything is
+    // parsed. This CLI keeps no second list of what the platform serves, so
+    // `hanzo <service> <verb>` answers whatever the document publishes today.
+    let base = std::env::var("HANZO_API_URL").unwrap_or_else(|_| "https://api.hanzo.ai".into());
+    let served = catalog::Catalog::open(&base).await.ok();
+    let mut tree = root();
+    if let Some(c) = &served {
+        tree = c.graft(tree);
+    }
+
+    let matches = tree.clone().get_matches();
+
+    if let Some((service, sub)) = matches.subcommand() {
+        if let Some((verb, leaf)) = sub.subcommand() {
+            if let Some(op) = served.as_ref().and_then(|c| c.op(service, verb)) {
+                return catalog::call(op, leaf, &base).await;
+            }
+        }
+        if service == "help" {
+            let path: Vec<String> = sub
+                .get_many::<String>("path")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            return help(&mut tree, &path);
+        }
+    }
+
+    let cli = Cli::from_arg_matches(&matches)?;
 
     // Setup logging
     let log_level = match cli.verbose {
@@ -322,14 +381,12 @@ async fn main() -> Result<()> {
 
     // Handle commands
     match cli.command {
+        Commands::Up(up) => up.run(&config).await?,
         Commands::Init { template, name } => {
             commands::init::run(template, name).await?;
         }
         Commands::Dev { port, hot } => {
             commands::dev::run(port, hot).await?;
-        }
-        Commands::Agent { command } => {
-            sdk::python::run_agent_command(command).await?;
         }
         Commands::Login { brand, device } => {
             iam::login::login(&brand, device).await?;
@@ -380,9 +437,7 @@ async fn main() -> Result<()> {
             WalletCommands::List => commands::wallet::list(&config)?,
         },
         Commands::Node { command } => match command {
-            NodeCommands::Up { foreground, with_cloud } => {
-                commands::node::up(&config, foreground, with_cloud).await?
-            }
+            NodeCommands::Up(up) => up.run(&config).await?,
             NodeCommands::Status => commands::node::status(&config).await?,
             NodeCommands::Join { network, foreground, with_cloud } => {
                 commands::node::join(&mut config, network, foreground, with_cloud).await?
@@ -442,4 +497,104 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Does the binary answer everything the platform publishes?
+///
+/// This is the whole point of reading the document instead of copying it, and
+/// it is worth failing a build over: the bug it replaces was a served token —
+/// `{Service: agents, Name: delete}` — that `hanzo agents delete` met with
+/// "unrecognized subcommand", so anyone building a palette from the platform's
+/// own surface shipped commands that do not run.
+///
+/// It reads the document LIVE and refuses to pass without it. A check that
+/// falls back to a copy when the platform is unreachable reports agreement it
+/// never observed, which is the failure mode it exists to catch.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base() -> String {
+        std::env::var("HANZO_API_URL").unwrap_or_else(|_| "https://api.hanzo.ai".into())
+    }
+
+    #[tokio::test]
+    async fn every_served_token_answers() {
+        let base = base();
+        let served = catalog::Catalog::live(&base)
+            .await
+            .unwrap_or_else(|e| panic!("could not read {}{}: {e:#}", base, catalog::PATH));
+
+        let mut tree = served.graft(root());
+        tree.build();
+
+        let missing: Vec<String> = served
+            .ops()
+            .filter(|op| {
+                let (service, verb) = op.token();
+                tree.find_subcommand(service)
+                    .and_then(|s| s.find_subcommand(verb))
+                    .is_none()
+            })
+            .map(|op| format!("{} {} ({})", op.service, op.name, op.id))
+            .collect();
+
+        // Neither is a token this binary can answer, and neither is this
+        // repo's to fix — printed so the gap is visible where it can be
+        // closed, in the projection that publishes it.
+        for op in served.nameless() {
+            println!("no service, so no command: {} {} {}", op.id, op.method, op.path);
+        }
+        for op in served.shadowed() {
+            println!("token already taken: {} {} ({})", op.service, op.name, op.id);
+        }
+        println!(
+            "{} served tokens · {} unreachable · {} nameless",
+            served.ops().count(),
+            served.shadowed().len(),
+            served.nameless().len()
+        );
+
+        assert!(
+            missing.is_empty(),
+            "{} served command(s) name a subcommand this binary does not answer:\n  {}",
+            missing.len(),
+            missing.join("\n  ")
+        );
+    }
+
+    /// The exact spelling the bug report carried, parsed end to end.
+    #[tokio::test]
+    async fn the_reported_token_parses() {
+        let base = base();
+        let served = catalog::Catalog::live(&base)
+            .await
+            .unwrap_or_else(|e| panic!("could not read {}{}: {e:#}", base, catalog::PATH));
+        let tree = served.graft(root());
+        let m = tree
+            .try_get_matches_from(["hanzo", "agents", "delete", "agent_1"])
+            .expect("hanzo agents delete <ref>");
+        let (service, sub) = m.subcommand().expect("a service");
+        let (verb, leaf) = sub.subcommand().expect("a verb");
+        assert_eq!((service, verb), ("agents", "delete"));
+        assert_eq!(served.op(service, verb).unwrap().id, "delete_agents_by_ref");
+        assert_eq!(leaf.get_one::<String>("ref").unwrap(), "agent_1");
+    }
+
+    /// A local verb keeps its own name and its own flags after the graft.
+    #[tokio::test]
+    async fn a_local_verb_survives_a_service_of_the_same_name() {
+        let served = catalog::Catalog::live(&base())
+            .await
+            .expect("the platform's command document");
+        let tree = served.graft(root());
+        let m = tree
+            .try_get_matches_from(["hanzo", "deploy", "--env", "staging"])
+            .expect("hanzo deploy --env");
+        let cli = Cli::from_arg_matches(&m).expect("the local deploy");
+        match cli.command {
+            Commands::Deploy { env, .. } => assert_eq!(env, "staging"),
+            _ => panic!("deploy stopped being deploy"),
+        }
+    }
 }
