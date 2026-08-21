@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-client"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "The Rust client for api.hanzo.ai — one credential scoped to one subject, held outcomes, typed errors"
