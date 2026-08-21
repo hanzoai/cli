@@ -30,7 +30,10 @@ impl Transport for Stub {
     async fn send(&self, request: Request) -> Result<Reply, Error> {
         self.seen.lock().unwrap().push(request);
         let next = self.script.lock().unwrap().pop_front();
-        Ok(next.unwrap_or(Reply { status: 200, body: Value::Null }))
+        Ok(next.unwrap_or(Reply {
+            status: 200,
+            body: Value::Null,
+        }))
     }
 }
 
@@ -67,10 +70,16 @@ async fn mint_addresses_iam_and_names_the_subject_in_the_query() {
 
     let seen = stub.seen();
     assert_eq!(seen.len(), 2, "one mint, one call");
-    assert_eq!(seen[0].url, "https://hanzo.id/v1/iam/tokens/issue?id=usr_42");
+    assert_eq!(
+        seen[0].url,
+        "https://hanzo.id/v1/iam/tokens/issue?id=usr_42"
+    );
     assert_eq!(seen[0].method, Method::POST);
     assert_eq!(seen[0].token.as_deref(), Some("hk-operator"));
-    assert!(seen[0].body.is_none(), "IAM reads the grant off the key, not a body");
+    assert!(
+        seen[0].body.is_none(),
+        "IAM reads the grant off the key, not a body"
+    );
 }
 
 /// The minted token — parsed from camelCase — is what the call rides on. The
@@ -80,7 +89,11 @@ async fn the_call_rides_the_minted_token_not_the_operator_key() {
     let stub = Stub::new(vec![minted("act_1", 3600), reply(200, json!({"ok": true}))]);
     let cloud = Client::over(stub.clone(), "hk-operator");
 
-    cloud.r#as("usr_42").call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    cloud
+        .r#as("usr_42")
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     let seen = stub.seen();
     assert_eq!(seen[1].url, "https://api.hanzo.ai/v1/card");
@@ -94,7 +107,11 @@ async fn the_subject_is_encoded_not_interpolated() {
     let stub = Stub::new(vec![minted("act_1", 3600)]);
     let cloud = Client::over(stub.clone(), "hk-operator");
 
-    cloud.r#as("a b&role=admin").call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    cloud
+        .r#as("a b&role=admin")
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     assert_eq!(
         stub.seen()[0].url,
@@ -112,8 +129,12 @@ async fn the_token_is_held_until_it_nears_expiry() {
     ]);
     let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
 
-    user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
-    user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    user.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
+    user.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     let seen = stub.seen();
     assert_eq!(seen.len(), 3, "mint once, then two calls");
@@ -132,8 +153,12 @@ async fn a_lifetime_iam_omitted_is_assumed_not_ignored() {
     ]);
     let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
 
-    user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
-    user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    user.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
+    user.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     assert_eq!(stub.seen().len(), 3, "mint once, then two calls");
 }
@@ -149,14 +174,24 @@ async fn a_401_remints_and_retries_once() {
     ]);
     let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
 
-    let out = user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    let out = user
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
     assert_eq!(out.done().unwrap(), json!({"ok": true}));
 
     let seen = stub.seen();
     assert_eq!(seen.len(), 4, "mint, 401, re-mint, retry");
     assert_eq!(seen[1].token.as_deref(), Some("act_1"));
-    assert_eq!(seen[2].url, "https://hanzo.id/v1/iam/tokens/issue?id=usr_42");
-    assert_eq!(seen[3].token.as_deref(), Some("act_2"), "the retry rides the NEW token");
+    assert_eq!(
+        seen[2].url,
+        "https://hanzo.id/v1/iam/tokens/issue?id=usr_42"
+    );
+    assert_eq!(
+        seen[3].token.as_deref(),
+        Some("act_2"),
+        "the retry rides the NEW token"
+    );
 }
 
 /// The retry is once, not a loop: a credential that is genuinely rejected
@@ -171,7 +206,10 @@ async fn a_second_401_surfaces_rather_than_looping() {
     ]);
     let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
 
-    let err = user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap_err();
+    let err = user
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap_err();
     assert!(matches!(err, Error::Api { status: 401, .. }));
     assert_eq!(err.to_string(), "401: revoked");
     assert_eq!(stub.seen().len(), 4, "exactly one retry");
@@ -183,7 +221,10 @@ async fn an_unscoped_client_never_mints() {
     let stub = Stub::new(vec![reply(200, json!({"ok": true}))]);
     let cloud = Client::over(stub.clone(), "hk-operator");
 
-    cloud.call::<Value>(Method::GET, "/v1/org", None).await.unwrap();
+    cloud
+        .call::<Value>(Method::GET, "/v1/org", None)
+        .await
+        .unwrap();
 
     let seen = stub.seen();
     assert_eq!(seen.len(), 1);
@@ -209,7 +250,9 @@ async fn a_202_is_held_and_carries_the_approval() {
         .await
         .unwrap();
 
-    let Outcome::Held(approval) = &out else { panic!("a 202 must not read as done") };
+    let Outcome::Held(approval) = &out else {
+        panic!("a 202 must not read as done")
+    };
     assert_eq!(approval.id, "apr_7");
     assert_eq!(approval.clause, "card.issue");
     assert_eq!(approval.reason, "over limit");
@@ -221,7 +264,10 @@ async fn a_202_is_held_and_carries_the_approval() {
 async fn done_on_a_held_call_is_an_error_naming_the_approval() {
     let stub = Stub::new(vec![
         minted("act_1", 3600),
-        reply(202, json!({"id": "apr_7", "clause": "card.issue", "reason": "over limit"})),
+        reply(
+            202,
+            json!({"status": "held", "id": "apr_7", "clause": "card.issue", "reason": "over limit"}),
+        ),
     ]);
     let user = Client::over(stub, "hk-operator").r#as("usr_42");
 
@@ -232,7 +278,9 @@ async fn done_on_a_held_call_is_an_error_naming_the_approval() {
         .done()
         .unwrap_err();
 
-    let Error::Held(approval) = &err else { panic!("expected a held error, got {err:?}") };
+    let Error::Held(approval) = &err else {
+        panic!("expected a held error, got {err:?}")
+    };
     assert_eq!(approval.id, "apr_7");
     assert_eq!(err.to_string(), "held for approval apr_7: card.issue");
 }
@@ -261,14 +309,40 @@ async fn the_polled_approval_reads_with_the_same_shape() {
 /// A field the server omitted reads as empty rather than failing the call.
 #[tokio::test]
 async fn an_omitted_approval_field_reads_empty() {
-    let stub = Stub::new(vec![reply(202, json!({"id": "apr_7"}))]);
+    let stub = Stub::new(vec![reply(202, json!({"status": "held", "id": "apr_7"}))]);
     let cloud = Client::over(stub, "hk-operator");
 
-    let out = cloud.call::<Value>(Method::POST, "/v1/card", None).await.unwrap();
+    let out = cloud
+        .call::<Value>(Method::POST, "/v1/card", None)
+        .await
+        .unwrap();
     let approval = out.held().unwrap();
     assert_eq!(approval.id, "apr_7");
     assert_eq!(approval.clause, "");
     assert_eq!(approval.reason, "");
+}
+
+/// A 202 alone does not mean a person was asked. A dozen platform operations
+/// answer 202 for "accepted, working on it" and carry a real schema, so the body
+/// decides: without `status: held` this is an ordinary answer, and reading the
+/// code alone would leave the caller waiting on somebody never asked.
+#[tokio::test]
+async fn an_accepted_answer_is_not_a_hold() {
+    let stub = Stub::new(vec![reply(202, json!({"id": "dep_1", "status": "queued"}))]);
+    let cloud = Client::over(stub, "hk-operator");
+
+    let out = cloud
+        .call::<Value>(Method::POST, "/v1/deploy", None)
+        .await
+        .unwrap();
+    assert!(
+        out.held().is_none(),
+        "an accepted answer was read as a held approval"
+    );
+    assert!(
+        out.done().is_ok(),
+        "an accepted answer did not decode as a value"
+    );
 }
 
 /// A refusal is typed: the server's status and body, both reachable.
@@ -280,8 +354,13 @@ async fn a_refusal_carries_the_status_and_the_body() {
     )]);
     let cloud = Client::over(stub, "hk-operator");
 
-    let err = cloud.call::<Value>(Method::GET, "/v1/org", None).await.unwrap_err();
-    let Error::Api { status, body } = &err else { panic!("expected an api error, got {err:?}") };
+    let err = cloud
+        .call::<Value>(Method::GET, "/v1/org", None)
+        .await
+        .unwrap_err();
+    let Error::Api { status, body } = &err else {
+        panic!("expected an api error, got {err:?}")
+    };
     assert_eq!(*status, 403);
     assert_eq!(body["error"]["message"], "no grant for that org");
     assert_eq!(err.to_string(), "403: no grant for that org");
@@ -294,7 +373,10 @@ async fn a_refused_mint_is_an_api_error() {
     let stub = Stub::new(vec![reply(401, json!({"msg": "bad key"}))]);
     let user = Client::over(stub, "hk-nope").r#as("usr_42");
 
-    let err = user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap_err();
+    let err = user
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap_err();
     assert!(matches!(err, Error::Api { status: 401, .. }));
     assert_eq!(err.to_string(), "401: bad key");
 }
@@ -305,7 +387,10 @@ async fn a_tokenless_mint_is_an_auth_error() {
     let stub = Stub::new(vec![reply(200, json!({"expiresIn": 3600}))]);
     let user = Client::over(stub, "hk-operator").r#as("usr_42");
 
-    let err = user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap_err();
+    let err = user
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap_err();
     assert!(matches!(&err, Error::Auth { subject } if subject == "usr_42"));
     assert_eq!(err.to_string(), "iam issued no token to act as usr_42");
 }
@@ -319,10 +404,15 @@ async fn a_private_estate_moves_both_addresses() {
         .base("https://api.estate.internal/")
         .r#as("usr_42");
 
-    user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    user.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     let seen = stub.seen();
-    assert_eq!(seen[0].url, "https://id.estate.internal/v1/iam/tokens/issue?id=usr_42");
+    assert_eq!(
+        seen[0].url,
+        "https://id.estate.internal/v1/iam/tokens/issue?id=usr_42"
+    );
     assert_eq!(seen[1].url, "https://api.estate.internal/v1/card");
 }
 
@@ -337,8 +427,16 @@ async fn each_subject_holds_its_own_token() {
     ]);
     let cloud = Client::over(stub.clone(), "hk-operator");
 
-    cloud.r#as("usr_a").call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
-    cloud.r#as("usr_b").call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    cloud
+        .r#as("usr_a")
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
+    cloud
+        .r#as("usr_b")
+        .call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     let seen = stub.seen();
     assert_eq!(seen[0].url, "https://hanzo.id/v1/iam/tokens/issue?id=usr_a");
@@ -358,8 +456,12 @@ async fn a_clone_shares_the_held_token() {
     let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
     let same = user.clone();
 
-    user.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
-    same.call::<Value>(Method::GET, "/v1/card", None).await.unwrap();
+    user.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
+    same.call::<Value>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap();
 
     assert_eq!(stub.seen().len(), 3, "one mint across both handles");
     assert_eq!(same.subject(), Some("usr_42"));
@@ -395,6 +497,12 @@ async fn a_body_that_does_not_fit_is_a_decode_error() {
     let stub = Stub::new(vec![reply(200, json!({"nope": 1}))]);
     let cloud = Client::over(stub, "hk-operator");
 
-    let err = cloud.call::<Card>(Method::GET, "/v1/card", None).await.unwrap_err();
-    assert!(matches!(err, Error::Decode { status: 200, .. }), "got {err:?}");
+    let err = cloud
+        .call::<Card>(Method::GET, "/v1/card", None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Decode { status: 200, .. }),
+        "got {err:?}"
+    );
 }
