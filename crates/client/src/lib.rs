@@ -134,10 +134,16 @@ impl<T: Transport> Client<T> {
             }
         }
         if reply.status == 202 {
-            // The server omits an empty field, so a partial body still reads.
-            return Ok(Outcome::Held(
-                serde_json::from_value(reply.body).unwrap_or_default(),
-            ));
+            // THE BODY DECIDES, NOT THE CODE. A 202 alone does not mean a person
+            // was asked: a dozen platform operations answer 202 for "accepted,
+            // working on it" and carry a real schema — a deployment, a preview, a
+            // build. Reading the code alone turns each of those into an approval
+            // nobody is waiting on. The server omits an empty field, so a partial
+            // body still reads.
+            let held: Approval = serde_json::from_value(reply.body.clone()).unwrap_or_default();
+            if held.status == "held" {
+                return Ok(Outcome::Held(held));
+            }
         }
         let status = reply.status;
         let value = reply.ok()?;
@@ -152,12 +158,7 @@ impl<T: Transport> Client<T> {
         &self.wire
     }
 
-    async fn once(
-        &self,
-        url: &str,
-        method: &Method,
-        body: &Option<Value>,
-    ) -> Result<Reply, Error> {
+    async fn once(&self, url: &str, method: &Method, body: &Option<Value>) -> Result<Reply, Error> {
         let token = match &self.grant {
             Some(grant) => grant.token(&*self.wire, &self.key).await?,
             None => self.key.clone(),
