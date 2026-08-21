@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 mod commands;
 mod config;
-mod http;
 mod private;
 mod iam;
 mod telemetry;

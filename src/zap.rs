@@ -35,7 +35,7 @@
 //! peer while that remains true, which is why only a local socket reaches here.
 
 use anyhow::{anyhow, bail, Context, Result};
-use reqwest::{Method, StatusCode};
+use hanzo_client::{Method, Reply};
 use serde_json::Value;
 use std::path::Path;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -67,16 +67,17 @@ const RESP_BODY: usize = 32;
 /// length prefix into a named error instead of a 4 GiB allocation.
 const MAX_FRAME: u32 = 64 << 20;
 
-/// Send one request over a local ZAP socket and return `(status, parsed body)`,
-/// the same shape [`crate::http::send`] returns so the two transports are
-/// interchangeable at the one call seam.
+/// Send one request over a local ZAP socket and return the same [`Reply`] the
+/// HTTPS transport returns, so the two wires are interchangeable at the one call
+/// seam. The status is HANDED BACK, never flattened — only a transport fault is
+/// an `Err`.
 pub(crate) async fn send(
     sock: &Path,
     method: &Method,
     target: &str,
     token: &str,
     body: Option<&Value>,
-) -> Result<(StatusCode, Value)> {
+) -> Result<Reply> {
     let payload = match body {
         Some(v) => serde_json::to_vec(v).context("encoding the request body")?,
         None => Vec::new(),
@@ -102,15 +103,14 @@ pub(crate) async fn send(
     let reply = read_frame(&mut conn).await.context("reading the response frame")?;
 
     let (status, body) = decode_response(&reply)?;
-    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
     if body.is_empty() {
-        return Ok((status, Value::Null));
+        return Ok(Reply { status, body: Value::Null });
     }
     // A body that is not JSON is still the caller's to show — the same rule the
     // HTTP seam follows, so an error page never becomes a parse failure here.
     let value = serde_json::from_slice(body)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()));
-    Ok((status, value))
+    Ok(Reply { status, body: value })
 }
 
 // ---- framing ----------------------------------------------------------------

@@ -5,7 +5,7 @@
 //! enrollment JWT under `~/.hanzo/net/`, `publish` names a local service on the
 //! network's DNS, `rm` deletes an identity. Auth is the seam every other cloud
 //! command uses — the active hanzo.id bearer against the active network's api
-//! origin, over [`crate::http`] — and the org is the gateway's to derive from
+//! origin, over [`hanzo_client::Http`] — and the org is the gateway's to derive from
 //! the JWT.
 //!
 //! The wire contract (`k3s-link` cloud branch): `POST /v1/network/identities`
@@ -14,11 +14,10 @@
 
 use crate::commands::network;
 use crate::config::Config;
-use crate::http;
 use crate::iam::{paths, store};
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
-use reqwest::{Client, Method};
+use hanzo_client::{Http, Method, Request, Transport};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -51,12 +50,21 @@ async fn signin(cfg: &mut Config) -> Result<(String, String)> {
 // ---- the wire calls, separated from the sign-in so a test can aim them at a
 // ---- fake server with a token of its own ------------------------------------
 
-async fn read_view(http: &Client, api: &str, token: &str) -> Result<Value> {
-    http::send_json::<Value>(http, Method::GET, &format!("{api}/v1/network"), token, None).await
+/// One call, and its 2xx body; a non-2xx is the server's own status and words.
+async fn send(http: &Http, method: Method, url: &str, token: &str, body: Option<Value>) -> Result<Value> {
+    let mut request = Request::new(method, url).token(token);
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+    Ok(http.send(request).await?.ok()?)
+}
+
+async fn read_view(http: &Http, api: &str, token: &str) -> Result<Value> {
+    send(http, Method::GET, &format!("{api}/v1/network"), token, None).await
 }
 
 async fn create_identity(
-    http: &Client,
+    http: &Http,
     api: &str,
     token: &str,
     name: &str,
@@ -68,12 +76,12 @@ async fn create_identity(
         body["roles"] = json!(roles);
     }
     let url = format!("{api}/v1/network/identities");
-    let v = http::send_json(http, Method::POST, &url, token, Some(&body)).await?;
+    let v = send(http, Method::POST, &url, token, Some(body)).await?;
     serde_json::from_value(v).context("decode network identity")
 }
 
 async fn create_service(
-    http: &Client,
+    http: &Http,
     api: &str,
     token: &str,
     name: &str,
@@ -82,16 +90,16 @@ async fn create_service(
 ) -> Result<String> {
     let body = json!({ "name": name, "host": host, "port": port });
     let url = format!("{api}/v1/network/services");
-    let v = http::send_json(http, Method::POST, &url, token, Some(&body)).await?;
+    let v = send(http, Method::POST, &url, token, Some(body)).await?;
     v.get("dns")
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| anyhow!("cloud answered without a dns name: {v}"))
 }
 
-async fn delete_identity(http: &Client, api: &str, token: &str, id: &str) -> Result<()> {
+async fn delete_identity(http: &Http, api: &str, token: &str, id: &str) -> Result<()> {
     let url = format!("{api}/v1/network/identities/{id}");
-    http::send_json::<Value>(http, Method::DELETE, &url, token, None).await?;
+    send(http, Method::DELETE, &url, token, None).await?;
     Ok(())
 }
 
@@ -149,7 +157,7 @@ fn write_jwt(path: &Path, jwt: &str) -> Result<()> {
 /// `hanzo net ls` — the network view, as cloud renders it.
 pub async fn ls(cfg: &mut Config) -> Result<()> {
     let (api, tok) = signin(cfg).await?;
-    let v = read_view(&Client::new(), &api, &tok).await?;
+    let v = read_view(&Http::default(), &api, &tok).await?;
     println!("{}", serde_json::to_string_pretty(&v)?);
     Ok(())
 }
@@ -163,7 +171,7 @@ pub async fn join(cfg: &mut Config, name: Option<String>, roles: Vec<String>) ->
         bail!("identity name {name:?} — use letters, digits, `-`, `_`, `.` (max 64)");
     }
     let (api, tok) = signin(cfg).await?;
-    let id = create_identity(&Client::new(), &api, &tok, &name, &roles).await?;
+    let id = create_identity(&Http::default(), &api, &tok, &name, &roles).await?;
     let path = jwt_path(&id.name)?;
     write_jwt(&path, &id.enrollment.jwt)?;
     println!("{} identity {} ({})", "✓".green(), id.name.cyan().bold(), id.id);
@@ -183,7 +191,7 @@ pub async fn publish(cfg: &mut Config, name: String, target: String) -> Result<S
     }
     let (host, port) = host_port(&target)?;
     let (api, tok) = signin(cfg).await?;
-    let dns = create_service(&Client::new(), &api, &tok, &name, &host, port).await?;
+    let dns = create_service(&Http::default(), &api, &tok, &name, &host, port).await?;
     println!("{} {} → {}", "✓".green(), dns.cyan().bold(), target);
     Ok(dns)
 }
@@ -194,7 +202,7 @@ pub async fn rm(cfg: &mut Config, id: String) -> Result<()> {
         bail!("identity id {id:?} is not an id this command will put in a url");
     }
     let (api, tok) = signin(cfg).await?;
-    delete_identity(&Client::new(), &api, &tok, &id).await?;
+    delete_identity(&Http::default(), &api, &tok, &id).await?;
     println!("{} removed identity {}", "✓".green(), id);
     Ok(())
 }
@@ -288,7 +296,7 @@ mod tests {
         )
         .await;
         let id = create_identity(
-            &Client::new(),
+            &Http::default(),
             &fake.base,
             "TOK",
             "box",
@@ -318,7 +326,7 @@ mod tests {
             r#"{"id":"idn_2","name":"box","enrollment":{"jwt":"J","expiresAt":"e"}}"#,
         )
         .await;
-        create_identity(&Client::new(), &fake.base, "TOK", "box", &[]).await.unwrap();
+        create_identity(&Http::default(), &fake.base, "TOK", "box", &[]).await.unwrap();
         let (_, _, _, body) = fake.one();
         let v: Value = serde_json::from_str(&body).unwrap();
         assert!(v.get("roles").is_none(), "empty roles must be omitted: {v}");
@@ -329,7 +337,7 @@ mod tests {
     #[tokio::test]
     async fn publish_sends_the_service_and_returns_its_dns() {
         let fake = Fake::serve(200, r#"{"dns":"k8s-dev.org.hanzo"}"#).await;
-        let dns = create_service(&Client::new(), &fake.base, "TOK", "k8s-dev", "127.0.0.1", 6443)
+        let dns = create_service(&Http::default(), &fake.base, "TOK", "k8s-dev", "127.0.0.1", 6443)
             .await
             .unwrap();
 
@@ -347,13 +355,13 @@ mod tests {
     #[tokio::test]
     async fn rm_deletes_the_identity_and_a_refusal_is_an_error() {
         let fake = Fake::serve(200, "{}").await;
-        delete_identity(&Client::new(), &fake.base, "TOK", "idn_1").await.unwrap();
+        delete_identity(&Http::default(), &fake.base, "TOK", "idn_1").await.unwrap();
         let (method, path, _, _) = fake.one();
         assert_eq!(method, "DELETE");
         assert_eq!(path, "/v1/network/identities/idn_1");
 
         let refusing = Fake::serve(403, r#"{"error":"not yours"}"#).await;
-        let err = delete_identity(&Client::new(), &refusing.base, "TOK", "idn_1")
+        let err = delete_identity(&Http::default(), &refusing.base, "TOK", "idn_1")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("403"), "got: {err}");

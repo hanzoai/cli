@@ -39,13 +39,12 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use reqwest::{Client, Method, StatusCode};
+use hanzo_client::{Http, Method, Reply, Request, Transport};
 use serde_json::{json, Map, Value};
 use std::io::Read;
 
 use crate::commands::host::{self, Origin};
 use crate::config::Config;
-use crate::http;
 #[cfg(unix)]
 use crate::zap;
 use crate::iam::{paths, store};
@@ -674,9 +673,9 @@ async fn call(
     raw: bool,
 ) -> Result<()> {
     let seam = Seam::open(cfg).await?;
-    let (status, resp) = seam.send(method, &path, &query, body).await?;
+    let Reply { status, body: resp } = seam.send(method, &path, &query, body).await?;
 
-    if status.is_success() {
+    if (200..300).contains(&status) {
         // A 2xx is NOT proof of success. Some planes (IAM) answer an error
         // with HTTP 200 and an `{"status":"error","msg":…}` envelope; rendering
         // only `data` then prints nothing and exits 0, silently swallowing the
@@ -697,7 +696,7 @@ async fn call(
         Value::String(s) => s.trim().to_string(),
         v => v.to_string(),
     };
-    if status == StatusCode::FORBIDDEN {
+    if status == 403 {
         if let Some(hint) = seam.hint {
             anyhow::bail!("{path} -> {status}: {shown}{hint}");
         }
@@ -727,7 +726,7 @@ pub(crate) struct Seam {
     /// 403. Resolved from the very identity we authenticate as, so it can never
     /// name someone else.
     pub(crate) hint: Option<String>,
-    http: Client,
+    wire: Http,
 }
 
 impl Seam {
@@ -749,7 +748,7 @@ impl Seam {
         let held = store::list(cfg, paths::DEFAULT_BRAND);
         let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
-        Ok(Self { origin, token, hint, org: cfg.org.clone(), http: Client::new() })
+        Ok(Self { origin, token, hint, org: cfg.org.clone(), wire: Http::default() })
     }
 
     /// Send one request over whichever wire the origin named. The STATUS is
@@ -761,7 +760,7 @@ impl Seam {
         path: &str,
         query: &[String],
         body: Option<Value>,
-    ) -> Result<(StatusCode, Value)> {
+    ) -> Result<Reply> {
         let target = target(path, query)?;
         match &self.origin {
             #[cfg(unix)]
@@ -769,15 +768,20 @@ impl Seam {
                 zap::send(sock, &method, &target, &self.token, body.as_ref()).await
             }
             #[cfg(not(unix))]
-            Origin::Local(base) => {
-                let url = format!("{base}{target}");
-                http::send(&self.http, method, &url, &self.token, body.as_ref(), self.org.as_deref()).await
-            }
-            Origin::Http(base) => {
-                let url = format!("{base}{target}");
-                http::send(&self.http, method, &url, &self.token, body.as_ref(), self.org.as_deref()).await
-            }
+            Origin::Local(base) => self.over_http(&format!("{base}{target}"), method, body).await,
+            Origin::Http(base) => self.over_http(&format!("{base}{target}"), method, body).await,
         }
+    }
+
+    async fn over_http(&self, url: &str, method: Method, body: Option<Value>) -> Result<Reply> {
+        let mut request = Request::new(method, url).token(&self.token);
+        if let Some(org) = &self.org {
+            request = request.org(org);
+        }
+        if let Some(body) = body {
+            request = request.body(body);
+        }
+        Ok(self.wire.send(request).await?)
     }
 }
 
