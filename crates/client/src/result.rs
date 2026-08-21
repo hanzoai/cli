@@ -23,6 +23,11 @@ use crate::error::Error;
 /// approval that claims to be done is not representable.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct Approval {
+    /// Always `held`. It is carried rather than assumed because the same field
+    /// names come back from `GET /v1/approvals/{id}`, where the status is how a
+    /// reader learns the approval was since answered — one shape, read twice.
+    #[serde(default)]
+    pub status: String,
     #[serde(default)]
     pub id: String,
     #[serde(default)]
