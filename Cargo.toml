@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "1.9.55"
+version = "1.9.56"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -46,13 +46,16 @@ required-features = ["maintainer"]
 [features]
 maintainer = ["dep:serde_norway"]
 
-# The canonical Event emitter lives in its own crate so `dev` can share the exact
-# same wire via a pinned git dependency — one source of truth, two consumers.
+# The two library crates the CLI is BUILT ON, each in its own crate so another
+# consumer shares the exact same wire via a pinned git dependency — one source of
+# truth, several consumers. `client` is the platform client itself: the act grant,
+# the held outcome and the typed refusal live there, not in this binary.
 [workspace]
-members = ["crates/event"]
+members = ["crates/event", "crates/client"]
 
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }
+hanzo-client = { path = "crates/client", version = "0.1.0" }
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
