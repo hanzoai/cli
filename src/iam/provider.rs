@@ -58,16 +58,29 @@ impl Provider {
         }
     }
 
-    /// Detect the provider from an API key's prefix — the "paste a key" path:
-    /// `hk-` is a Hanzo gateway key, `sk-ant-` an Anthropic key, and any other
-    /// `sk-` an OpenAI key. `None` when no known prefix matches, so a mystery
-    /// string is refused rather than filed under a guess.
+    /// Detect the provider from an API key's prefix — the "paste a key" path.
+    /// `None` when nothing matches, so a mystery string is refused rather than
+    /// filed under a guess.
     ///
-    /// Order matters: `sk-ant-` is a more specific prefix than `sk-`, so it is
-    /// tested first.
+    /// THREE VENDORS NOW SHARE `sk-`, so the prefix alone is not the answer.
+    /// Hanzo mints `{pk|sk}-{live|test}-{32 hex}` (iam `keys::Mint`), Anthropic
+    /// mints `sk-ant-`, and OpenAI takes the rest. Testing the bare `sk-` first
+    /// — which is what this did while our own keys were `hk-` — files a real
+    /// Hanzo secret key under OpenAI and sends the user's own credential to the
+    /// wrong vendor. Most specific first is the whole rule here.
+    ///
+    /// `hk-` is retired and cloud refuses it (`APIKeyPrefixes` is `pk-`/`sk-`),
+    /// but it is still claimed for Hanzo: an old key in an old config should
+    /// fail as a stale Hanzo credential, which a user can act on, rather than be
+    /// routed to OpenAI, which reads as OpenAI being broken.
     pub fn detect(key: &str) -> Option<Provider> {
         let k = key.trim();
-        if k.starts_with("hk-") {
+        if k.starts_with("pk-live-")
+            || k.starts_with("pk-test-")
+            || k.starts_with("sk-live-")
+            || k.starts_with("sk-test-")
+            || k.starts_with("hk-")
+        {
             Some(Provider::Hanzo)
         } else if k.starts_with("sk-ant-") {
             Some(Provider::Anthropic)
@@ -140,6 +153,13 @@ mod tests {
 
     #[test]
     fn detect_maps_prefixes_to_providers() {
+        // Hanzo mints {pk|sk}-{live|test}-{32 hex}; these are the keys the
+        // fleet issues TODAY, and they must not read as OpenAI.
+        assert_eq!(Provider::detect("sk-live-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
+        assert_eq!(Provider::detect("sk-test-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
+        assert_eq!(Provider::detect("pk-live-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
+        assert_eq!(Provider::detect("pk-test-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
+        // Retired, still ours: a stale key must fail as Hanzo, not misroute.
         assert_eq!(Provider::detect("hk-abc123"), Some(Provider::Hanzo));
         assert_eq!(Provider::detect("sk-ant-api03-xyz"), Some(Provider::Anthropic));
         assert_eq!(Provider::detect("sk-proj-abc"), Some(Provider::OpenAI));

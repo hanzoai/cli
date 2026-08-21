@@ -388,7 +388,7 @@ mod tests {
     // The argv-refusal law (`secret_source`) and the key reader (`read_trimmed`)
     // are pinned by `iam::secret`'s own tests — the ONE home for that law.
 
-    /// LOW-3: an identity JWT obeys the SAME stdin-only law as a provider key — a
+    /// An identity JWT obeys the SAME stdin-only law as a provider key — a
     /// literal on the command line is REFUSED (it would land in `ps`/shell
     /// history). The `-` (stdin) path is pinned by `secret_source` above.
     #[test]
@@ -401,7 +401,7 @@ mod tests {
         assert_eq!(secret_source(Some("-"), true), SecretSource::Stdin);
     }
 
-    /// MED-1: an OpenAI `sk-` key handed to `--provider anthropic` is REFUSED, and
+    /// An OpenAI `sk-` key handed to `--provider anthropic` is REFUSED, and
     /// because the guard runs BEFORE any store — exactly as `provider_key_login`
     /// sequences it with `?` — the vault and the provider index stay untouched.
     #[test]
