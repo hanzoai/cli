@@ -38,7 +38,7 @@
 
 use anyhow::{bail, Result};
 use colored::*;
-use reqwest::{Method, StatusCode};
+use hanzo_client::{Method, Reply};
 use serde_json::Value;
 
 use crate::commands::product::{envelope_error, Seam};
@@ -73,11 +73,11 @@ pub async fn run(cfg: &mut Config) -> Result<()> {
 /// answer with no list in it all become the SAME honest value — a reason string
 /// — so an empty page is only ever printed when the server actually said empty.
 async fn read(seam: &Seam, path: &str, key: &str) -> Reading {
-    let (status, body) = seam
+    let Reply { status, body } = seam
         .send(Method::GET, path, &[], None)
         .await
         .map_err(|e| format!("{e:#}"))?;
-    if !status.is_success() {
+    if !(200..300).contains(&status) {
         return Err(reason(status, &body));
     }
     if let Some(msg) = envelope_error(&body) {
@@ -95,13 +95,13 @@ async fn read(seam: &Seam, path: &str, key: &str) -> Reading {
 
 /// The server's own words for a refusal, behind its status: `403 not authorized
 /// for this deploy console`. Never a bare code, and never silence.
-fn reason(status: StatusCode, body: &Value) -> String {
+fn reason(status: u16, body: &Value) -> String {
     let msg = envelope_error(body).unwrap_or_else(|| match body {
         Value::Null => String::new(),
         Value::String(s) => s.to_string(),
         v => v.to_string(),
     });
-    format!("{} {}", status.as_u16(), terse(&msg)).trim_end().to_string()
+    format!("{status} {}", terse(&msg)).trim_end().to_string()
 }
 
 /// The server's words as ONE short line. A section heading must stay a heading,
@@ -386,7 +386,7 @@ mod tests {
     fn a_refusal_carries_the_status_and_the_servers_own_reason() {
         let body = json!({"status": 403, "error": "not authorized for this deploy console"});
         assert_eq!(
-            reason(StatusCode::FORBIDDEN, &body),
+            reason(403, &body),
             "403 not authorized for this deploy console"
         );
     }
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn an_html_error_page_is_clipped_to_one_marked_line() {
         let page = Value::String(format!("<html>\n  <body>{}</body>\n</html>", "x".repeat(500)));
-        let r = reason(StatusCode::NOT_FOUND, &page);
+        let r = reason(404, &page);
         assert!(r.starts_with("404 <html> <body>xxx"), "{r}");
         assert!(r.ends_with('…'), "a clip must be visible: {r}");
         assert!(r.chars().count() <= 126, "one line, not a page: {} chars", r.chars().count());

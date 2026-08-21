@@ -827,6 +827,35 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
 token store, HIP-0111 OIDC PKCE), `src/commands/code/` (coding wrapper). Secrets arrive
 on stdin only, never argv; credentials in OS keychain or a `0600` file.
 
+**`crates/client` — the Rust client for `api.hanzo.ai`, and the CLI is one consumer
+of it, not its owner.** The binary used to carry its own transport in `src/http.rs`;
+that file is gone. What was duplicated now lives in a library crate any Rust caller
+can take by path or pinned git dep, exactly as `crates/event` already does:
+
+- `Client::r#as(subject)` — one credential scoped to ONE end user. It mints through
+  IAM's act grant at `POST {issuer}/v1/iam/tokens/issue?id=<subject>` — IAM's OWN
+  host, the target in the `id` query, never a body, because IAM reads the grant off
+  the key. The response is camelCase (`accessToken`, `expiresIn`). The token is held
+  until 30s before expiry and dropped on a 401, which re-mints and retries ONCE. No
+  method takes a user id, so no caller can pass the wrong one.
+- `Outcome<T>` — an approval-gated call answers 202, and 202 is a success status. The
+  two states are arms of one enum sharing no value, so a held call cannot be read as
+  done: it does not misbehave at runtime, it fails to compile. The `Held` arm carries
+  the `Approval` (`id`, `clause`, `reason`) that `GET /v1/approvals/{id}` also answers.
+  `status: "held"` is not a field — the arm IS the status.
+- `Error` — one typed enum. A non-2xx is `Error::Api { status, body }`, the server's
+  own status and body, never a string.
+- `Transport` — one request in, one `Reply { status, body }` out; the status is handed
+  back, never flattened. `Http` is the shipped impl, and `src/zap.rs` returns the SAME
+  `Reply`, so the two wires the CLI speaks are interchangeable at `Seam::send` with no
+  conversion between them. A stub over the same trait is how `crates/client/tests/
+  contract.rs` proves the mint address, the cache, the re-mint and the held arm without
+  a network.
+
+Sibling of the shipped TypeScript contract in `@hanzo/ai` (`grant.ts`, `result.ts`,
+`http.ts`) — same four rules, same names. `as` keeps its name in Rust; `r#as` is the
+keyword escape, not a rename.
+
 **Brand rules (hard)**: Hanzo is a full AI cloud, never an "LLM gateway" and never
 positioned vs LiteLLM. `/v1/` paths only, never `/api/`. Zen models (`enso`, `zen5-…`)
 are our own family — never name upstream models.

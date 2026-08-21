@@ -26,7 +26,7 @@
 
 use anyhow::{bail, Context, Result};
 use colored::*;
-use reqwest::Method;
+use hanzo_client::Method;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -122,15 +122,15 @@ fn loopback_addr(origin: &str) -> Option<String> {
 async fn healthy(_addr: &str) -> bool {
     let Ok(sock) = zap_socket() else { return false };
     let probe = crate::zap::send(&sock, &Method::GET, "/healthz", "", None);
-    matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok((s, _))) if s.is_success())
+    matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status))
 }
 
 #[cfg(not(unix))]
 async fn healthy(addr: &str) -> bool {
+    use hanzo_client::{Http, Request, Transport};
     let url = format!("http://{addr}/healthz");
-    let client = reqwest::Client::new();
-    let probe = crate::http::send::<serde_json::Value>(&client, Method::GET, &url, "", None);
-    matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok((s, _))) if s.is_success())
+    let probe = Http::default().send(Request::new(Method::GET, url));
+    matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status))
 }
 
 /// Reuse a running host, or start one and wait for it to listen.
