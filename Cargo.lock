@@ -820,6 +820,7 @@ dependencies = [
  "dialoguer",
  "dirs",
  "flate2",
+ "hanzo-client",
  "hanzo-event",
  "k256",
  "libc",
@@ -841,6 +842,17 @@ dependencies = [
  "tracing-subscriber",
  "webbrowser",
  "which",
+]
+
+[[package]]
+name = "hanzo-client"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
