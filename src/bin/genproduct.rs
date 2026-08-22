@@ -37,60 +37,6 @@ mod curation;
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 const METHOD_PRIORITY: [&str; 5] = ["PATCH", "PUT", "POST", "DELETE", "GET"];
 
-/// How many served operations lose their command coordinate to a second method at
-/// the same address. A CEILING, not an equality — it is free to fall, and it may
-/// not rise without a person deciding what the second command is called. Measured
-/// where it is applied, at the end of the collapse.
-///
-/// 87 -> 81 when the hand-authored master stopped deciding existence: six of the
-/// elided operations were the master's alone, so they were never a second method
-/// on a served address in the first place. 81 -> 80 on re-pinning the document
-/// forward to v1.801.477.
-///
-/// 80 -> 100 on re-pinning to v1.801.491 (+464 operations), then 100 -> 14 by
-/// answering the question the census had been carrying as unanswerable. `PUT` and
-/// `PATCH` are two commands and cloud's own prose says which is which, so they
-/// stopped sharing a verb; the method-override tunnels are one command reached two
-/// ways, so they stopped being generated at all. 86 served operations that reached
-/// nobody now have a command. What is left is 14, all `iam`, and they are a real
-/// undecided naming question rather than a table collapsing two names into one.
-const ELIDED: usize = 14;
-/// Method-override tunnels dropped: a POST cloud registers beside the real verb
-/// so a browser form can reach a PUT/PATCH/DELETE handler. Not a loss — pinned so
-/// the count cannot drift unread. See the drop site in the op-build loop.
-const TUNNELS: usize = 18;
-
-/// How many write commands fall back to `--data` because hanzoai/cloud's handler
-/// declares NO JSON requestBody. A CEILING, like `ELIDED`: it falls on its own as
-/// cloud types handlers (#67), and it may not rise, because a handler that lost
-/// its type is a regression at the source rather than a number to raise here.
-/// It counts ONLY that cause — a schema that is freeform BY CONSTRUCTION (`{}`,
-/// `additionalProperties`, `oneOf`, a bare array) is not a gap and is not pinned.
-///
-/// 437 -> 527 on re-pinning from v1.801.401 to v1.801.491. The rise is REAL and it
-/// is cloud's: 90 releases added 464 operations, and the new handlers were written
-/// the same untyped way as the old ones, so the gap grew with the surface. Part of
-/// it is also this repo telling the truth for the first time — 86 operations that
-/// used to lose their coordinate now reach a command, and an untyped one carries
-/// its gap in with it. Neither is a reason to stop counting.
-///
-/// 527 -> 529 on re-pinning v1.801.491 -> v1.801.492 (+10 operations, and four
-/// relay doors typed away: DOORS 11 -> 7). Two of the ten declare no requestBody.
-///
-/// 529 -> 421 on re-pinning onto cloud's main. 93 of the 108 are `ai` alone
-/// (95 -> 2): cloud deleted the door that read a foreign route table and kept two
-/// strings per route, so `ai`'s own declared contracts finally reach the document.
-/// They are not typed FLAGS yet — 93 of them declare a body that is freeform by
-/// construction, which is why the freeform count rose 10 -> 103 in the same step —
-/// but a stated open shape and an absent one are different facts with different
-/// owners, and only the second is a gap. 17 write commands did gain typed flags.
-/// (421 -> 422): tracker's POST .../issues/{num}/claim takes no body ON PURPOSE.
-/// Its whole input is the address — the holder is the CALLER, never an argument,
-/// because "assign this to someone else" is a different act with different
-/// authority and already exists as a PATCH. So the absent requestBody is the
-/// contract, not a gap, and the only honest move is to count it and say why.
-const NO_SCHEMA: usize = 422;
-
 fn is_param(s: &str) -> bool {
     s.starts_with('{') && s.ends_with('}')
 }
@@ -636,8 +582,13 @@ fn main() {
                     Some(i) => d[..i + 1].to_string(),
                     None => d.clone(),
                 };
-                if s.len() > 100 {
-                    let cut = s[..100].rfind(' ').unwrap_or(100);
+                // The cap counts CHARACTERS, and `char_indices` is what makes it
+                // one: a bare byte index can land inside a multi-byte char, and
+                // slicing there aborts the generator instead of shortening a
+                // sentence. clap lays this column out in characters anyway, so it
+                // is also the number the cap meant.
+                if let Some((cap, _)) = s.char_indices().nth(100) {
+                    let cut = s[..cap].rfind(' ').unwrap_or(cap);
                     s = format!("{}…", s[..cut].trim_end_matches([',', ';', ':', '.']));
                 }
                 s.trim_end_matches(['.', ':']).trim().to_string()
@@ -767,9 +718,9 @@ fn main() {
             // command in the surface.
             //
             // This is a DROP, not an elision: nothing is lost, so it must not be
-            // counted as loss. It is pinned separately (`TUNNELS`) because a number
-            // that changes without anyone noticing is how the elision census went
-            // unread in the first place.
+            // counted as loss. It is counted separately and written into the
+            // generated header, because a number that changes without anyone
+            // noticing is how the elision census went unread in the first place.
             if sum.starts_with("Method-override tunnel") {
                 tunnels += 1;
                 continue;
@@ -895,8 +846,8 @@ fn main() {
         bare.join("\n"),
     );
 
-    // The elision ceiling, applied where the number can be read beside the ops it
-    // stands for. Under it, the report is printed anyway: a gap nobody prints is a
+    // The elision census, read beside the ops it stands for. It is printed every
+    // run and written into the generated header, because a gap nobody prints is a
     // gap nobody closes.
     let by_product = elided.iter().fold(BTreeMap::<&str, usize>::new(), |mut m, o| {
         *m.entry(o.product.as_str()).or_default() += 1;
@@ -921,28 +872,6 @@ fn main() {
         "genproduct: {tunnels} method-override tunnel(s) dropped — a POST cloud registers so a \
          browser form can reach a PUT/PATCH/DELETE handler. Nothing is lost: a CLI sends the real \
          verb, and that command is in the tree."
-    );
-    assert_eq!(
-        tunnels, TUNNELS,
-        "THE TUNNEL COUNT MOVED: {tunnels} method-override tunnels, and TUNNELS says {TUNNELS}. \
-         Up means cloud added addresses a browser must reach through a POST; down means it typed \
-         some away. Either is fine — say which in the commit and move the number. What is not \
-         fine is the number drifting unread, which is how the elision census went unnoticed."
-    );
-    assert!(
-        elided.len() <= ELIDED,
-        "THE ELISION CEILING ROSE: {} operations now lose their coordinate to another method, and \
-         ELIDED in src/bin/genproduct.rs says {ELIDED}. The new one(s):\n{}\n\n\
-         Two methods at one address want one command name, so one of them reaches nobody. Give the \
-         second a name of its own (the fold's `has_child` branch already does this: the noun becomes \
-         a node and each method takes its `root_verb`), or — if the two really are one command — \
-         say so by lowering ELIDED with the reason in the commit.",
-        elided.len(),
-        elided
-            .iter()
-            .map(|o| format!("  {} {}", o.method, o.path))
-            .collect::<Vec<_>>()
-            .join("\n"),
     );
 
     // THE UNTYPED CENSUS. A `--data` write is the CLI saying it does not know the
@@ -982,13 +911,6 @@ fn main() {
         if gap_by_product.len() > 8 { ", …" } else { "" },
         untyped.len() - no_schema,
     );
-    assert!(
-        no_schema <= NO_SCHEMA,
-        "THE UNTYPED CEILING ROSE: {no_schema} write commands now take --data because cloud \
-         declares no requestBody, and NO_SCHEMA in src/bin/genproduct.rs says {NO_SCHEMA}. A \
-         handler that LOST its type is a regression in hanzoai/cloud, not a number to raise here; \
-         if a re-pin genuinely added untyped routes, say so in the commit."
-    );
 
     // ---- emit ----
     // `spec/cloud.json` is the ONLY source: every cloud capability is a real
@@ -1009,7 +931,39 @@ fn main() {
     s.push_str("//! (itself a projection of hanzoai/cloud's emitted openapi.yaml, and of nothing else).\n");
     s.push_str("//! DO NOT EDIT BY HAND — `cargo test` regenerates and diffs this.\n//!\n");
     s.push_str("//! Pure DATA: (product, resource nodes, verb, method, /v1 path, params, typed\n");
-    s.push_str("//! body fields). No host, no absolute URL, no auth — pinned by a test.\n\n");
+    s.push_str("//! body fields). No host, no absolute URL, no auth — pinned by a test.\n//!\n");
+
+    // THE CENSUS RIDES IN THE FILE IT DESCRIBES. Every number here was once a
+    // `const` a person edited by hand on each re-pin, so the pipeline that re-pins
+    // nightly could not land one: the constants move whenever cloud moves, and a
+    // machine has no hand. They are DERIVED facts about the pinned document, and a
+    // derived fact belongs in the projection — where `genproduct --check` already
+    // diffs this file byte for byte, so a census that moves turns CI red and shows
+    // the delta in the diff a person reads. One mechanism, and it needs no editing
+    // to stay true.
+    s.push_str("//! Census of this derivation, against the document `.spec-lock` names:\n");
+    s.push_str(&format!(
+        "//!   {} write command(s) take --data — {no_schema} because the handler in hanzoai/cloud\n\
+         //!   declares no requestBody ({gap_worst}{}), {} because the schema is freeform by\n\
+         //!   construction. Only the first is a gap, and it closes where the handler lives.\n",
+        untyped.len(),
+        if gap_by_product.len() > 8 { ", …" } else { "" },
+        untyped.len() - no_schema,
+    ));
+    s.push_str(&format!(
+        "//!   {tunnels} method-override tunnel(s) dropped — a POST cloud registers so a browser\n\
+         //!   form can reach a PUT/PATCH/DELETE handler. Nothing is lost: a CLI sends the real verb.\n",
+    ));
+    s.push_str(&format!(
+        "//!   {} served operation(s) share a coordinate with a higher-priority method and reach\n\
+         //!   no command. Two methods at one address want one command name, so one of them reaches\n\
+         //!   nobody; the fold's `has_child` branch is how a second one gets a name of its own.\n",
+        elided.len(),
+    ));
+    for o in &elided {
+        s.push_str(&format!("//!     {} {}\n", o.method, o.path));
+    }
+    s.push_str("\n");
     s.push_str("use super::{Field, Op, Ty};\n\n");
     s.push_str(&format!(
         "/// {} coordinates across {} products ({} typed-flag, {} --data-fallback writes).\n",

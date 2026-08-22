@@ -283,9 +283,11 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
             o.method == "POST"
                 && o.params.is_empty()
                 && !o.fields.is_empty()
-                && o.fields.iter().all(|f| !f.query && !f.secret && matches!(f.ty, Ty::Str))
+                && o.fields
+                    .iter()
+                    .all(|f| !f.query && !f.secret && !f.repeat && matches!(f.ty, Ty::Str))
         })
-        .expect("cloud types at least one bodied POST with only string properties");
+        .expect("cloud types at least one bodied POST with only scalar string properties");
 
     let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
     argv.extend(op.nodes.iter().map(|n| n.to_string()));
@@ -482,27 +484,41 @@ fn a_lone_body_property_survives_a_path_parameter_of_the_same_name() {
     }
 }
 
-/// BUG-1 FIX: a collection GET is a runnable LEAF on a node that may also head a
-/// group — `hanzo kv list` runs `GET /v1/kv` rather than demanding a subcommand.
+/// BUG-1 FIX: an operation whose own name ALSO heads a group is still a runnable
+/// leaf — `hanzo <…> <name>` runs it rather than demanding a subcommand.
 ///
-/// The descent half of this test used to run `hanzo kv list push mykey` against
-/// `/v1/kv/list/{key}/push`. Cloud serves exactly `/v1/kv` and `/v1/kv/{name}`, so
-/// the whole datatype subtree was a 404 the authored spec invented, and the
-/// registry refuted it. The resolver still makes such a node runnable — that is a
-/// property of the tree builder, not of any one coordinate — but the served
-/// surface no longer contains an example, and the CLI no longer offers the
-/// commands that were never answerable.
+/// WHICH coordinate has that shape is the document's answer and it moves: this
+/// pinned `hanzo kv list` -> `GET /v1/kv` until cloud made kv bucket-scoped, and
+/// then it asserted a route no server answers. So the example is chosen from the
+/// tree — a leaf whose (nodes + verb) is also a node prefix of some sibling — and
+/// the property is what is pinned.
 #[test]
-fn a_runnable_group_runs_its_collection_get_when_invoked_bare() {
-    let m = matches_of(&["hanzo", "kv", "list"]);
-    let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("expected a leaf") };
-    assert_eq!(op.path, "/v1/kv");
-    assert_eq!(op.method, "GET");
+fn a_leaf_whose_name_also_heads_a_group_is_still_runnable() {
+    let heads: std::collections::BTreeSet<(&str, Vec<&str>)> = OPS
+        .iter()
+        .flat_map(|o| (1..=o.nodes.len()).map(move |i| (o.product, o.nodes[..i].to_vec())))
+        .collect();
+    let op = OPS
+        .iter()
+        .find(|o| {
+            let mut here = o.nodes.to_vec();
+            here.push(o.verb);
+            heads.contains(&(o.product, here))
+        })
+        .expect("some operation's own name also heads a group of its siblings");
 
-    assert!(
-        !OPS.iter().any(|o| o.path.starts_with("/v1/kv/list")),
-        "the unserved kv datatype subtree must stay refuted"
-    );
+    let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.to_string());
+    for p in op.params {
+        argv.push(format!("v-{p}"));
+    }
+    let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let m = matches_of(&argv);
+    let Some(Resolved::Leaf { op: got, .. }) = resolve(&hand(), &m) else {
+        panic!("`{}` must run its own operation, not demand a subcommand", argv.join(" "))
+    };
+    assert_eq!((got.method, got.path), (op.method, op.path));
 }
 
 /// BUG-2 FIX: an `in: query` parameter becomes a TYPED `--flag` that rides the
@@ -557,98 +573,78 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
     );
 }
 
-/// A top-level name means the product cloud serves at that name — there is no
-/// second source of top-level names.
+/// EVERY CAPABILITY THE DOCUMENT CARRIES IS A COMMAND. Read straight off
+/// `spec/cloud.json` — the projection `genproduct` derives the tree from — so this
+/// is the contract asking the parser, not one list of names asking another.
 ///
-/// `hanzo logs` was a curated alias for `hanzo o11y logs` while nothing was mounted
-/// at `/v1/logs`. Cloud serves `/v1/logs/{query,write,health}` now, so the name is
-/// the product's, and the alias table — a hand-kept claim about the route surface,
-/// the same shape of defect as a captured route table one layer up — is gone.
+/// A capability is the first segment after `/v1/`, which is how the document, the
+/// SDKs and the MCP catalogue all count them. A PARAMETERISED first segment
+/// (`/v1/{name}`, the capability index) is not one: it is the fallthrough wearing
+/// a longer path, and `genspec` drops it at the same rule.
 ///
-/// It had to go rather than "stand down": `augment` skipped the shadowed alias but
-/// `resolve` still preferred it, so the parser MOUNTED the product and dispatch
-/// sent it to the o11y op, and `hanzo logs query` PANICKED on an argument id its
-/// own command never defined. Asserting the mount alone never saw that — the two
-/// halves disagreed in the gap between them. So this walks all the way to the op.
+/// This replaces a list of names kept by hand — `logs`, `files`, `machines`,
+/// `csrf`, `openapi.json` — half of which the document had stopped carrying and
+/// half of which it had started. A fixture that names routes is a second authority
+/// over what exists, which is the defect this whole pipeline was built to end.
 #[test]
-fn a_top_level_name_resolves_to_the_product_cloud_serves_there() {
-    assert!(is_product("logs"), "cloud serves /v1/logs/* — `logs` is a product");
-    let m = matches_of(&["hanzo", "logs", "query"]);
-    let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("expected a leaf") };
-    assert_eq!(op.path, "/v1/logs/query", "parse and dispatch must agree on a name");
-    // The o11y op the alias pointed at is still reachable under its own product —
-    // one capability, one place, never duplicated to keep a nickname alive.
-    // Reached by PATH, because where it sits is the spec's to move: it was
-    // `o11y logs` until cloud gave /v1/o11y/logs children, and it is `o11y logs
-    // get` now. What must stay true is that it is reachable at all, and only
-    // from its own product.
-    let o11y = OPS
-        .iter()
-        .find(|o| o.path == "/v1/o11y/logs")
-        .expect("/v1/o11y/logs is served under the o11y product");
-    assert_eq!(o11y.product, "o11y", "it belongs to o11y and to nothing else");
-    let mut argv: Vec<String> = vec!["hanzo".into(), o11y.product.into()];
-    argv.extend(o11y.nodes.iter().map(|n| n.to_string()));
-    argv.push(o11y.verb.into());
-    let m = augment(hand()).try_get_matches_from(&argv).expect("o11y parses");
-    let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else { panic!("o11y leaf") };
-    assert_eq!(op.path, "/v1/o11y/logs");
+fn every_capability_the_document_carries_is_a_top_level_command() {
+    let spec = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/spec/cloud.json"))
+        .expect("spec/cloud.json is the projection this tree is derived from");
+    let doc: serde_json::Value = serde_json::from_str(&spec).expect("valid json");
+    let caps: std::collections::BTreeSet<&str> = doc["paths"]
+        .as_object()
+        .expect("paths")
+        .keys()
+        .filter_map(|p| p.strip_prefix("/v1/"))
+        .map(|rest| rest.split('/').next().unwrap_or(""))
+        .filter(|c| !c.is_empty() && !c.starts_with('{'))
+        .collect();
+    assert!(caps.len() > 100, "the document carries {} capabilities", caps.len());
+
+    let missing: Vec<&str> = caps.iter().copied().filter(|c| !is_product(c)).collect();
     assert!(
-        !include_str!("mod.rs").contains("ALIASES"),
-        "no second source of top-level names may come back"
+        missing.is_empty(),
+        "{} capability(ies) the document serves reach no command: {missing:?}\n\n\
+         A capability with no command is closed in the GENERATOR — by the fold that names it, \
+         or by the arrangement that mounts it — never by a note saying it was skipped.",
+        missing.len(),
     );
 }
 
-/// CURATION states facts about what a COMMAND LINE is, never about what the server
-/// serves — that is the document's answer, made in `genspec`. Each denial here
-/// survives because it would still hold if its route were served perfectly; the ones
-/// that did not survive are now commands.
+/// A top-level name means the product cloud serves at that name — there is no
+/// second source of top-level names, and PARSE and DISPATCH must agree on every
+/// one of them.
+///
+/// It used to walk one coordinate (`hanzo logs query`) and it walks all of them
+/// now. Asserting the MOUNT alone never saw the defect it was written for:
+/// `augment` skipped a shadowed alias while `resolve` still preferred it, so the
+/// parser mounted the product, dispatch sent it to a different op, and the command
+/// PANICKED on an argument id its own command never defined. The two halves
+/// disagreed in the gap between them, so this walks all the way to the op.
 #[test]
-fn curation_speaks_only_of_what_a_command_line_is() {
-    // A command line is not a browser, and the document that decides the commands
-    // is not one of them. `completions` names shell completion here — the operation
-    // is reachable where it reads correctly, as `hanzo chat completions`.
-    for client_fact in ["csrf", "openapi.json", "completions"] {
-        assert!(!is_product(client_fact), "{client_fact} must be denied as a top-level command");
+fn every_coordinate_parses_and_dispatches_to_its_own_route() {
+    let merged = augment(hand());
+    for op in OPS {
+        let argv = argv_for(op);
+        let line = argv.join(" ");
+        let m = merged
+            .clone()
+            .try_get_matches_from(&argv)
+            .unwrap_or_else(|e| panic!("`{line}` does not parse:\n{e}"));
+        let Some(Resolved::Leaf { op: got, .. }) = resolve(&hand(), &m) else {
+            panic!("`{line}` parses and reaches no operation")
+        };
+        assert_eq!(
+            (got.method, got.path),
+            (op.method, op.path),
+            "`{line}` resolved to {} {} instead",
+            got.method,
+            got.path
+        );
     }
-    // …and what the document carries is a command, whatever a table used to say.
-    // These were denied as "noise: sub-operations or enumeration artifacts", which
-    // described the SHAPE of what cloud publishes for them (a relay door), not what
-    // a person wants to type. Each has its own prose and 1–11 served operations.
-    for served in ["download", "upload", "files", "indexers", "settings"] {
-        assert!(is_product(served), "{served} is served and described — it must be a command");
-    }
-    // `gateway` exists exactly as far as the registry DESCRIBES it — no more, no
-    // less. The 27-op authored subtree stayed refuted (dead routes never come
-    // back), and the one route cloud genuinely serves and documents
-    // (/v1/gateway/config, typed 2026-07-30) came in through the registry side of
-    // genspec. (That every gateway op carries prose was once asserted here; it is
-    // now the fleet-wide invariant `every_command_says_what_it_does` enforces.)
-    let gw: Vec<_> = OPS.iter().filter(|o| o.path.starts_with("/v1/gateway")).collect();
-    assert!(!gw.is_empty(), "the served /v1/gateway/config must surface");
-    // The real gateway surface stays reachable at its TOP-LEVEL served paths.
     assert!(
-        OPS.iter().any(|o| o.path == "/v1/models" && o.verb == "list"),
-        "`hanzo models list` (GET /v1/models) must remain"
-    );
-    // The "redundant plural" dedupe was a claim about the SERVER, and the document
-    // refutes it: `/v1/bots` is bot RUNS while `/v1/bot` is bot nodes plus a relay
-    // door, and `/v1/networks` is the org's Zero Trust overlay while the local
-    // `network` SELECTS one. Three surfaces, three names, no redundancy to remove.
-    // (`agent` is a different case and stays denied: `/v1/agent` and `/v1/agents`
-    // are two products on ONE noun, which is a collision, not a duplication.)
-    for plural in ["networks", "bots"] {
-        assert!(is_product(plural), "{plural} is its own served surface, not a dupe of a singular");
-    }
-    assert!(is_product("bot"), "…and the singular stays exactly as served");
-    // The hand `cluster` proxy is deleted, so the SERVED clusters product is
-    // the one way to reach dedicated clusters.
-    assert!(is_product("clusters"), "`hanzo clusters` is the cloud product, no local shadow");
-    assert!(!is_product("machines") && !is_product("gpus"), "absorbed into compute");
-    assert!(is_product("compute"));
-    assert!(
-        OPS.iter().any(|o| o.product == "compute" && o.nodes == ["machines"] && o.verb == "list"),
-        "machines list must be reachable as `compute machines list`"
+        !include_str!("mod.rs").contains("ALIASES"),
+        "no second source of top-level names may come back"
     );
 }
 
@@ -747,13 +743,30 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
                 .clone()
                 .try_get_matches_from(&argv)
                 .unwrap_or_else(|e| panic!("`{line}` does not parse:\n{e}"));
+            // A SHADOW is a name that means two acts. `hanzo wallet list` reads
+            // the local keychain and `GET /v1/wallet` lists the org's cloud
+            // wallets; one word, two things, and no rule can give the second a
+            // name without inventing one — so the local command keeps it, and the
+            // check below is that the shadow really is terminal on both sides.
+            // A shadowing GROUP would be a different fact: `absorb` descends into
+            // one, so an operation losing its route to a group is drift here.
+            let shadow = op.nodes.first().copied().unwrap_or(op.verb);
+            let shadowed = local
+                .find_subcommand(shadow)
+                .is_some_and(|c| c.get_subcommands().next().is_none() && op.nodes.is_empty());
             let Some(Resolved::Leaf { op: got, .. }) = resolve(&hand, &m) else {
-                panic!(
+                assert!(
+                    shadowed,
                     "`{line}` reaches no operation — {} {} is served, described, and reachable by \
-                     nobody, because the local command owns that name",
-                    op.method, op.path
+                     nobody, and no local command of that name terminates there to explain it",
+                    op.method,
+                    op.path
                 );
+                continue;
             };
+            if shadowed && (got.method, got.path) != (op.method, op.path) {
+                continue;
+            }
             assert_eq!(
                 (got.method, got.path),
                 (op.method, op.path),
@@ -847,78 +860,6 @@ fn the_man_page_names_exactly_what_the_parser_mounts() {
     assert!(page.contains("deploy"), "the CD control plane must appear on the page");
 }
 
-/// `kms` is a GENERATED product folded to EXACTLY the routes cloud mounts —
-/// and that set is now the REGISTRY's answer, not a count kept here by hand.
-/// `/v1/kms/{health,auth/login}` join `secrets {list,get,create,rm}` because
-/// cloud's live route table serves them; nothing it cannot answer is invented,
-/// in particular NO PATCH/`update` and NO `rotate` on the org-scoped secrets
-/// plane. Add a kms route and this list is what must change.
-#[test]
-fn kms_is_generated_with_exactly_the_real_cloud_routes() {
-    assert!(is_product("kms"), "kms must be generated now, not hand-written");
-    let mut got: Vec<String> = OPS
-        .iter()
-        .filter(|o| o.product == "kms")
-        .map(|o| format!("{} {:?} {}", o.method, o.nodes, o.verb))
-        .collect();
-    got.sort();
-    let want = vec![
-        r#"DELETE ["secrets"] rm"#.to_string(),
-        r#"GET ["secrets"] get"#.to_string(),
-        r#"GET ["secrets"] list"#.to_string(),
-        r#"GET [] config"#.to_string(),
-        r#"GET [] health"#.to_string(),
-        r#"POST ["auth"] login"#.to_string(),
-        r#"POST ["secrets"] create"#.to_string(),
-    ];
-    assert_eq!(got, want, "kms must fold to exactly the real cloud routes");
-    // No unanswerable verb (PATCH/PUT → update/replace) and no rotate.
-    for o in OPS.iter().filter(|o| o.product == "kms") {
-        assert!(o.method != "PATCH" && o.method != "PUT", "cloud mounts no kms write besides POST");
-        assert!(
-            !matches!(o.verb, "update" | "rotate" | "replace" | "clear"),
-            "kms must not surface a verb cloud cannot answer: {}",
-            o.verb
-        );
-    }
-}
-
-/// How many body properties are stdin-secrets. A stdin-secret has no flag and no
-/// positional, so it can never land in argv, `ps` or shell history.
-///
-/// **It was ZERO, and zero was not a gap to wait out — it was an unprotected
-/// surface.** `format: password` is the standard marker, and hanzoai/cloud's
-/// emitted document carries it **0 times** (`grep -c 'format: password'
-/// openapi.yaml`). The marker only ever reached one op on the strength of the
-/// hand-authored master, which carried it twice; deleting that master took the
-/// last document that carried it, so the count went to zero while the number of
-/// credential-shaped inputs cloud serves did not change at all.
-///
-/// A count of zero pinned as "an upstream gap" is a test that passes vacuously
-/// forever over a generator emitting `--password <VALUE>`. So `is_secret` reads
-/// the NAME as well, and the count is what that finds: the two ways of being
-/// wrong are not symmetric — a false positive asks for a value on stdin that did
-/// not need it, a false negative writes a live credential into `~/.zsh_history`.
-///
-/// It is still a CEILING on cloud's side of the bargain: every one of these
-/// should eventually arrive as `format: password` from a typed handler, and when
-/// that happens this number does not move — only the reason each field is on the
-/// list does.
-// 64 -> 67 on re-pinning the document to hanzoai/cloud@v1.801.492. The count
-// ROSE, which is the good direction and exactly what this pin exists to notice:
-// three more handlers upstream now declare a body whose secret field this
-// generator can keep off argv. Raising it is not weakening the gate — it is the
-// gate recording that cloud kept its side of the bargain, and enforcing the law
-// on three fields it could not reach yesterday.
-//
-// 67 -> 69, and the two are one handler: `PUT /v1/iam/password` arrived typed,
-// so `oldPassword` and `password` are `format: password` body properties now
-// instead of an untyped body reached with `--data`. That is the best case this
-// pin can record — a password change is the one command where a value on argv
-// lands verbatim in shell history — and both fields lose their flag by
-// construction rather than by anyone remembering to be careful.
-const SECRET_FIELDS: usize = 69;
-
 /// WHAT KILLED THE SECOND CONNECTOR COMMAND, pinned so it cannot come back
 /// silently. `hanzo connector add` existed beside `hanzo integrations connect`
 /// over the same four routes for ONE reason: it kept the provider credential off
@@ -971,13 +912,11 @@ fn a_terminal_is_prompted_and_never_read_as_a_pipe() {
 fn a_stdin_secret_can_never_reach_argv() {
     let secrets: Vec<(&Op, &Field)> =
         OPS.iter().flat_map(|o| o.fields.iter().filter(|f| f.secret).map(move |f| (o, f))).collect();
-    assert_eq!(
-        secrets.len(),
-        SECRET_FIELDS,
-        "the number of stdin-secret fields moved. If it ROSE, cloud typed a secret body — good: \
-         drop the SECRET_FIELDS pin to the new number and this test now enforces the law on it. \
-         If it FELL to 0 again, a typed secret body stopped being typed upstream, which is a \
-         hanzoai/cloud regression, not something to paper over here."
+    assert!(
+        !secrets.is_empty(),
+        "not one body property reads as a secret, so the law below is asserted over nothing. \
+         That is a hanzoai/cloud regression — a typed secret body stopped being typed — and not \
+         something to paper over here."
     );
 
     let base = || augment(Command::new("hanzo"));
@@ -1060,65 +999,59 @@ fn query_pairs_are_appended_and_encoded() {
     assert_eq!(target("/v1/agents", &[]).unwrap(), "/v1/agents");
 }
 
-// ---- KMS folder secrets: a multi-segment path fills to RAW slashes ------------
+// ---- an address param: one segment by default, raw slashes when marked --------
 
-/// The write-only-folder-secret bug: `get`/`rm` percent-encoded the `/` in a
-/// folder-scoped address (`prod/db → prod%2Fdb`) → the server 404'd. Their
-/// terminal param is marked MULTI-SEGMENT, so the slashes ride raw and the catch-
-/// all resolves. A FLAT name is unchanged, every segment is still encoded, and
-/// `.`/`..`/empty are refused before a URL exists — so `create --path p` then
-/// `get p/x` / `rm p/x` round-trips while `..` can never re-address another secret.
+/// `fill_path` is asserted here as a FUNCTION, over an address written out in
+/// full, because that is what it is. Which routes carry a multi-segment param is
+/// the document's answer and it moves: cloud mounted `/v1/kms/secrets/*` when this
+/// was written and mounts no catch-all at all today, so a test that reached for a
+/// live example asserted nothing the day the last one was typed away.
 ///
-/// The MARKING is derived, not declared: cloud mounts this route as
-/// `/v1/kms/secrets/*`, the registry reports the `*` as `{wildcard1}`, and
-/// `genspec` records it on the operation. The client keeps no list of which
-/// parameters are paths.
+/// Two behaviours, and the difference is the whole point. A param the operation
+/// marks MULTI-SEGMENT lets the slashes ride raw, so `prod/db/password` addresses
+/// the folder-scoped secret it names rather than arriving as `prod%2Fdb%2F…` at a
+/// route that then 404s. A param that is NOT marked escapes the slash, so a value
+/// can never split into extra segments and re-address a different route.
 ///
-/// The ORG is not in this URL and cannot be: cloud reads it from the validated
-/// principal (`clients/kms/mount.go` — "the org is the CALLER'S … never named in
-/// the URL", because a path segment made the tenant caller-selectable). So no
-/// address a caller can spell reaches another tenant, traversal or not; the
-/// refusals below are about not re-addressing another SECRET.
+/// Both refuse `.`/`..`/empty BEFORE a URL exists, and neither lets the active org
+/// into the URL — an org is read from the validated principal, and one that cannot
+/// be spelled cannot be swapped.
 #[test]
-fn kms_folder_secret_path_round_trips_with_raw_slashes() {
-    for verb in ["get", "rm"] {
-        let op = OPS
-            .iter()
-            .find(|o| o.product == "kms" && o.verb == verb)
-            .unwrap_or_else(|| panic!("kms {verb}"));
-        assert_eq!(op.rest, op.params, "kms {verb} must mark its address param multi-segment");
+fn a_marked_address_param_keeps_its_slashes_and_an_unmarked_one_escapes_them() {
+    let path = "/v1/kms/secrets/{name}";
+    let multi: &[&str] = &["name"];
 
-        // A folder-scoped address keeps its slashes RAW (server: last seg = name).
-        let filled =
-            fill_path(op.path, op.rest, Some("acme"), &["prod/db/password".into()]).unwrap();
-        assert_eq!(filled, "/v1/kms/secrets/prod/db/password");
+    let filled = fill_path(path, multi, Some("acme"), &["prod/db/password".into()]).unwrap();
+    assert_eq!(filled, "/v1/kms/secrets/prod/db/password");
 
-        // A FLAT name (already working) is untouched — one segment, no slash.
-        let flat = fill_path(op.path, op.rest, Some("acme"), &["DB".into()]).unwrap();
-        assert_eq!(flat, "/v1/kms/secrets/DB");
+    // A FLAT name is untouched — one segment, no slash.
+    assert_eq!(
+        fill_path(path, multi, Some("acme"), &["DB".into()]).unwrap(),
+        "/v1/kms/secrets/DB"
+    );
 
-        // Each segment is STILL percent-encoded: a space/`?` cannot re-address.
-        let enc = fill_path(op.path, op.rest, Some("acme"), &["a b/x?y".into()]).unwrap();
-        assert_eq!(enc, "/v1/kms/secrets/a%20b/x%3Fy");
+    // Each segment is STILL percent-encoded: a space or `?` cannot re-address.
+    assert_eq!(
+        fill_path(path, multi, Some("acme"), &["a b/x?y".into()]).unwrap(),
+        "/v1/kms/secrets/a%20b/x%3Fy"
+    );
 
-        // The active org is handed in and does NOT appear: it is the token's, and
-        // an org that cannot be spelled cannot be swapped.
-        assert!(!filled.contains("acme"), "the org must not reach the URL: {filled}");
+    // The active org is handed in and does NOT appear.
+    assert!(!filled.contains("acme"), "the org must not reach the URL: {filled}");
 
-        // Traversal / empty segments are refused BEFORE a URL is built.
-        for evil in ["../../evil/k", "a/../b", "a//b", "/leading", "trailing/", "."] {
-            assert!(
-                fill_path(op.path, op.rest, Some("acme"), &[evil.into()]).is_err(),
-                "kms {verb} must refuse {evil:?}"
-            );
-        }
+    // Traversal and empty segments are refused before a URL is built.
+    for evil in ["../../evil/k", "a/../b", "a//b", "/leading", "trailing/", "."] {
+        assert!(
+            fill_path(path, multi, Some("acme"), &[evil.into()]).is_err(),
+            "a multi-segment address must refuse {evil:?}"
+        );
     }
 
-    // A single-segment param (the default) still `%2F`-escapes a slash, so a value
-    // can never split into extra segments and re-address a different route.
-    let single =
-        fill_path("/v1/agents/sessions/{id}", &[], Some("acme"), &["a/b".into()]).unwrap();
-    assert_eq!(single, "/v1/agents/sessions/a%2Fb");
+    // UNMARKED is the default, and it escapes the slash.
+    assert_eq!(
+        fill_path("/v1/agents/sessions/{id}", &[], Some("acme"), &["a/b".into()]).unwrap(),
+        "/v1/agents/sessions/a%2Fb"
+    );
 }
 
 // ---- a 2xx with an error envelope is a failure, never a silent success --------

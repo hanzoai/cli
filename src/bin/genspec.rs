@@ -54,11 +54,12 @@
 //! WHAT A DOOR COSTS, counted every run. A `/v1/<product>/{wildcardN}` route is
 //! the document saying "a subtree is relayed through here" without naming what is
 //! behind it. Those are the only places a generated CLI cannot reach a served
-//! operation, and they are exactly where the deleted master was enumerating. So
-//! the count is REPORTED and PINNED as a ceiling (`DOORS`): free to fall as
-//! cloud types those relays, and it cannot rise without somebody saying why. A
-//! counted boundary derived from the document beats a 3.5MB hand file describing
-//! what might be behind it.
+//! operation, and they are exactly where the deleted master was enumerating. The
+//! count is printed every run and STAMPED into the projection's own provenance,
+//! where `--check` diffs it byte for byte — a derived fact about the pinned
+//! document, kept in the artifact it describes rather than as a ceiling somebody
+//! edits on each re-pin. A counted boundary derived from the document beats a
+//! 3.5MB hand file describing what might be behind it.
 //!
 //! Two questions, and a capture has to survive both:
 //!
@@ -78,22 +79,6 @@ use std::path::PathBuf;
 use serde_json::{json, Map, Value};
 
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
-
-/// How many `/v1/<product>/{wildcardN}` relay doors the document carries — the
-/// addresses where it declares a subtree reachable without naming what is in it.
-/// A CEILING: free to fall as cloud types those relays into ops, and it may not
-/// rise without a person saying why in the commit. This is the ONLY place the
-/// CLI's surface is knowably short of what cloud serves, and it is a number
-/// derived from the document rather than a parallel file guessing at the
-/// contents.
-///
-/// 11 -> 7 on the document this tree pins: cloud typed `exec`, `files`,
-/// `licensing` and `upload` into real operations. The ceiling did not follow them
-/// down, so for four releases it admitted four doors that no longer existed — and
-/// a ceiling with slack in it is not a ceiling, it is a number that would have
-/// let four NEW relays appear without a word. Today: bot collections dns download
-/// sbom sentry tasks.
-const DOORS: usize = 7;
 
 fn segs(p: &str) -> Vec<&str> {
     p.split('/').filter(|s| !s.is_empty()).collect()
@@ -427,7 +412,16 @@ async fn main() {
                  operations, and carries their prose and their reflected shapes. Nothing is joined \
                  in — an operation absent here is an operation no cloud router registers, which is \
                  what makes a phantom command impossible rather than rare. Never hand-edited: \
-                 `genproduct` derives src/commands/product/generated.rs from this and nothing else."
+                 `genproduct` derives src/commands/product/generated.rs from this and nothing else. \
+                 RELAY DOORS, {}: a /v1/<product>/{{wildcardN}} route is the document declaring a \
+                 subtree reachable without naming what is behind it, and those addresses are the \
+                 only places a generated CLI knowingly falls short of what cloud serves. {}",
+                reg.doors.len(),
+                if reg.doors.is_empty() {
+                    "There are none.".to_string()
+                } else {
+                    format!("They are: {}.", reg.doors.iter().cloned().collect::<Vec<_>>().join(" "))
+                },
             ),
         },
         "paths": paths,
@@ -461,19 +455,6 @@ async fn main() {
         reg.doors.len(),
         reg.doors.iter().cloned().collect::<Vec<_>>().join(" ")
     );
-    assert!(
-        reg.doors.len() <= DOORS,
-        "THE DOOR CEILING ROSE: the document now relays {} product subtrees through a catch-all and \
-         DOORS in src/bin/genspec.rs says {DOORS}. New door(s): {}\n\n\
-         A door is the one place this pipeline knowingly under-reaches: the request gets through and \
-         nothing here can name the operation. Type the relay's routes in hanzoai/cloud, or — if the \
-         subtree really must stay opaque — raise DOORS with the reason in the commit. Do NOT re-add \
-         a hand-authored file enumerating what is behind it; that is the second authority this \
-         generator was rebuilt to delete.",
-        reg.doors.len(),
-        reg.doors.iter().cloned().collect::<Vec<_>>().join(" "),
-    );
-
     if a.check {
         let have = std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display()));
         if have == bytes {

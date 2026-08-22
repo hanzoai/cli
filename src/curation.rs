@@ -71,48 +71,7 @@ pub struct Curated {
     pub why: &'static str,
 }
 
-pub const CURATED: &[Curated] = &[
-    Curated {
-        product: "csrf",
-        instead: Instead::Nothing,
-        why: "a command line is not a browser — /v1/csrf mints the anti-CSRF token a browser echoes back with a form POST, and nothing a person types has a form",
-    },
-    Curated {
-        product: "openapi.json",
-        instead: Instead::Nothing,
-        why: "the document that decides the commands is not one of them",
-    },
-    Curated {
-        product: "completions",
-        instead: Instead::Claimed("chat completions"),
-        why: "in a command line `completions` names SHELL completion; the operation is already reachable where it reads correctly, as `hanzo chat completions`",
-    },
-    Curated {
-        product: "help",
-        instead: Instead::Nothing,
-        why: "clap's own builtin `help` owns the name — a generated `help` product panics the parser with a duplicate command — so the served /v1/help operations are reachable by nothing",
-    },
-    Curated {
-        product: "agent",
-        instead: Instead::Nothing,
-        why: "/v1/agent (one tool-calling round) and /v1/agents (the registry, sessions and targets) are two products sharing one noun, and the plural keeps it; the fix is a route move in hanzoai/agent (/v1/agent → /v1/agents/run), not a local command — none exists",
-    },
-    // Absorbed, losslessly. `machines`/`gpus` live at their own path prefixes with
-    // a colliding `get`, so a FLAT `compute list` is impossible without ambiguity;
-    // sub-namespacing makes the compute plane ONE command instead of three
-    // top-levels. A flat surface would need the cloud specs reorganized under one
-    // `/v1/compute` tag.
-    Curated {
-        product: "machines",
-        instead: Instead::Under("compute"),
-        why: "the compute plane is one command — every machine operation is reachable as `hanzo compute machines …`",
-    },
-    Curated {
-        product: "gpus",
-        instead: Instead::Under("compute"),
-        why: "the compute plane is one command — every GPU operation is reachable as `hanzo compute gpus …`",
-    },
-];
+pub const CURATED: &[Curated] = &[];
 
 /// The entry deciding this product, if it is curated at all.
 pub fn curated(product: &str) -> Option<&'static Curated> {

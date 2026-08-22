@@ -172,7 +172,7 @@ const CONFIRM: usize = 3;
 /// fleet, and a claim that changed must be restated by a person in the same
 /// commit that changes it. Up means a new gap was excused without a decision;
 /// down means one was closed and the ceiling should come with it.
-const EXCUSED: usize = 7;
+const EXCUSED: usize = 0;
 
 /// Routes cloud's own live table names and cloud's own host answers 404 to — a
 /// route registered with a dead mount behind it. A CEILING, not an equality, and

@@ -89,6 +89,22 @@ pub(crate) fn mounted(cmd: &Command) -> Vec<&'static str> {
 /// it is an arrangement of it — so it is settled here, by arranging, and
 /// `src/curation.rs` no longer carries an entry that says "taken".
 pub fn augment(mut cmd: Command) -> Command {
+    // The parser MINTS a `help` subcommand of its own, during `build`, after this
+    // has run — so a generated product of that name arrives second and clap
+    // refuses two commands with one name. The collision law above settles it the
+    // same way it settles every other clash, and here it is the parser's own
+    // affordance that stands down: `/v1/help` is the customer help center
+    // (articles, categories, support tickets), four served operations that
+    // reached nobody while clap held the word.
+    //
+    // clap carries this setting to every subcommand, so `hanzo iam help` goes with
+    // it and not only the root one — which is the right size of change rather than
+    // collateral. `--help` sits on every command and is the spelling the man page
+    // teaches; bare `hanzo` prints that page. `help` as a positional was a second
+    // spelling of one act, and one act has one spelling.
+    if product_names().contains(&"help") {
+        cmd = cmd.disable_help_subcommand(true);
+    }
     for product in product_names() {
         cmd = match cmd.find_subcommand(product).is_some() {
             false => cmd.subcommand(build_product(product)),

@@ -136,7 +136,7 @@ hanzo wallet show|address|create [--local]|import|use|list   # PQ cloud custody 
 ### Fabric & fleet — hanzo.network
 
 ```bash
-hanzo fabric …                  # run/join the L1 fabric with hanzod, query its model cluster
+hanzo fabric …                  # run/join the L1 fabric with hanzod
 hanzo runner …                  # provide this machine as a CI runner
 hanzo link                      # put this shell on the fabric so the console can drive it
 ```
