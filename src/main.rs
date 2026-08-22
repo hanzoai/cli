@@ -459,39 +459,6 @@ enum FabricCommands {
     },
     /// Stop the hanzod started by this CLI
     Stop,
-    /// Query the model cluster a running node serves
-    Cluster {
-        /// Node API base URL (defaults to the active network's api endpoint)
-        #[arg(long, env = "HANZO_NODE_URL")]
-        node: Option<String>,
-        #[command(subcommand)]
-        command: FabricClusterCommands,
-    },
-}
-
-#[derive(Subcommand)]
-enum FabricClusterCommands {
-    /// Show cluster topology (this node + discovered peers)
-    Topology,
-    /// List all models available across the cluster
-    Models,
-    /// Show which node would serve a given model
-    Route { model: String },
-    /// Show where to load a model that isn't served yet
-    Placement { model: String },
-    /// Route a chat prompt to whichever node serves the model
-    Chat {
-        model: String,
-        message: String,
-        #[arg(long, default_value = "256")]
-        max_tokens: u32,
-    },
-    /// Federated RAG search across the cluster
-    Search {
-        query: String,
-        #[arg(long, default_value = "10")]
-        max_results: u32,
-    },
 }
 
 /// The local cloud host's lifecycle. Every other cloud command starts it on
@@ -746,27 +713,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::fabric::join(&mut config, network, foreground, with_cloud).await?
             }
             FabricCommands::Stop => commands::fabric::stop(&config)?,
-            FabricCommands::Cluster { node, command } => {
-                let node = node.unwrap_or_else(|| commands::network::active(&config).api);
-                match command {
-                    FabricClusterCommands::Topology => {
-                        commands::fabric::cluster::topology(node).await?
-                    }
-                    FabricClusterCommands::Models => commands::fabric::cluster::models(node).await?,
-                    FabricClusterCommands::Route { model } => {
-                        commands::fabric::cluster::route(node, model).await?
-                    }
-                    FabricClusterCommands::Placement { model } => {
-                        commands::fabric::cluster::placement(node, model).await?
-                    }
-                    FabricClusterCommands::Chat { model, message, max_tokens } => {
-                        commands::fabric::cluster::chat(node, model, message, max_tokens).await?
-                    }
-                    FabricClusterCommands::Search { query, max_results } => {
-                        commands::fabric::cluster::search(node, query, max_results).await?
-                    }
-                }
-            }
         },
         Commands::Host { command } => match command {
             HostCommands::Start => commands::host::start(&config).await?,
@@ -985,13 +931,16 @@ mod tests {
         ));
     }
 
-    /// The hanzod fabric moved to `fabric` (its own home), keeping the node-talk
-    /// cluster verbs under `fabric cluster` — reachable, not lost.
+    /// The hanzod fabric has its own home: start it, ask how it is doing, stop it.
+    /// The six `fabric cluster` verbs are gone with the routes they sent — cloud
+    /// owns `/v1/node` and declares no `cluster` subtree under it, and the live
+    /// host answers all six 404 beside a 403 at `/v1/node`.
     #[test]
-    fn fabric_keeps_the_hanzod_node_and_its_cluster() {
+    fn fabric_runs_the_hanzod_node() {
         assert!(Cli::try_parse_from(["hanzo", "fabric", "up"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "fabric", "status"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "fabric", "cluster", "topology"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "fabric", "stop"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "fabric", "cluster", "topology"]).is_err());
     }
 
     /// The merged tree (derive + generated products) builds without a clap panic.

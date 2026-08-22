@@ -259,13 +259,17 @@ a capture taken from it could never be re-derived and never be checked.
   is no second reading to arbitrate with. Multi-segment path params come from the same
   reading: a fiber `*` arrives as `{wildcardN}`, and a `{wildcardN}` at
   `/v1/<product>/` is a DOOR (counted, below) rather than a parameter.
-- What still needs a HAND decision: `src/curation.rs` — ONE table naming every
-  product the tree does not surface at its own bare name (`Instead::Nothing`), the
-  ones another command answers to (`Instead::Claimed`), and the ones absorbed
-  elsewhere (`Instead::Under("compute")` for machines+gpus) — plus
-  `METHOD_PRIORITY`, `VERBS`, `ELIDED` and the path→verb fold in `genproduct.rs`.
-  Those are POLICY — none of them may encode "the server 404s this", and that is
-  now ENFORCED, not promised (the curation law, below).
+- What still needs a HAND decision: `METHOD_PRIORITY`, `VERBS` and the path→verb
+  fold in `genproduct.rs`. `src/curation.rs` — ONE table naming every product the
+  tree does not surface at its own bare name — is **EMPTY**, and that is the
+  strongest form of the law it exists to state: every capability the document
+  carries is a command at its own name. Each of the seven entries it used to hold
+  named a product the document had stopped carrying (`csrf`, `agent`, `machines`,
+  `gpus`) or a name the parser had stopped spending (`help`, `completions`,
+  `openapi.json`); the curation law refuses the first kind outright, and the second
+  kind is now settled by ARRANGING the clash rather than declaring it — the
+  collision law in `commands/product/mod.rs::augment` gives the word to whoever the
+  document names, and the parser's own `help` subcommand stands down for it.
 - **The reason is DATA, and the gate falsifies it.** `DENY`/`REMAP` were two tables
   with their reasons in comments, and a comment cannot be checked. Each entry now
   carries a `why` sentence and, where it claims another spelling reaches the
@@ -292,10 +296,23 @@ a capture taken from it could never be re-derived and never be checked.
   local command declares can never be routed to the cloud seam, and the two halves
   cannot disagree. It used to DROP the collision, and the bill was 7 `/v1/code`,
   25 `/v1/billing` and 4 `/v1/engine` operations served, described, and reachable
-  by nothing, each excused by an entry whose own `why` admitted it. `agent` is
-  still `Instead::Nothing` for a different reason and says so: `/v1/agent` (one
-  tool-calling round) and `/v1/agents` (the registry) are two products on one noun,
-  and the fix is a route move in hanzoai/agent.
+  by nothing, each excused by an entry whose own `why` admitted it. The law reaches
+  the PARSER'S own affordances too: clap mints a `help` subcommand during `build`,
+  which is after `augment` runs, so a generated `help` product arrived second and
+  the parser refused two commands with one name. The word goes to the capability
+  the document names — `/v1/help` is the customer help center, four served
+  operations — and `disable_help_subcommand` stands the builtin down. Nothing about
+  ASKING for help moves: `--help` is on every command and is what the man page
+  teaches, bare `hanzo` prints that page, and `hanzo <cmd> help` was a second
+  spelling of one act.
+
+  Three operations are still SHADOWED, and it is the one thing the law cannot
+  settle: `GET /v1/network`, `GET /v1/wallet` and `POST /v1/wallet` want `list` and
+  `create` inside local commands that already terminate at those words with a
+  different act (the local keychain, the chain selector). One word, two acts, and no
+  rule can name the second without inventing a name — so the local command keeps it,
+  and the test asserts the exception is exactly that shape: a shadowing GROUP would
+  have descended, so an operation losing its route to one is drift.
 - **AN ABSORBED LOCAL COMMAND IS A RUNNABLE GROUP, and the test walks to the OP.**
   `every_operation_of_an_absorbed_product_resolves_to_its_own_route` parses an argv
   a person could type for EVERY operation of every absorbed product and asserts the
@@ -332,27 +349,19 @@ a capture taken from it could never be re-derived and never be checked.
   the other two readers, where `SecretSource::Prompt` already named it, and both
   `iam::onboarding` and the generated tree use that one implementation. It existed
   twice before and neither copy was reachable from the generated tree.
-- **THE ELISION CEILING — the one remaining silent loss, now counted.** The fold
-  names a leaf after its own noun, so two methods at one address want one command:
-  `PUT` and `PATCH` on an item both read as `update`, `GET` and `POST` on
-  `/v1/billing/payment-methods` both read as `payment-methods`. The
-  higher-priority method takes the name and the other reached nobody, with no
-  number anywhere. `genproduct` now reports the loss every run and pins it:
-  **`ELIDED = 14`**, a CEILING — free to fall, and it cannot rise without somebody
-  naming the second command. Which name that is, is a verb decision this generator
-  cannot make (is a `PUT` beside a `PATCH` a different command or the same one?),
-  and the fold already shows the shape of the answer in its `has_child` branch: the
-  noun becomes a node and each method takes its `root_verb`. All 14 are `iam`, a
-  real undecided naming question rather than a table folding two names into one —
-  `PUT` and `PATCH` became two commands the day cloud said which is which. Beside
-  them sit **18 method-override tunnels**, a POST cloud registers so a browser form
-  can reach a PUT/PATCH/DELETE handler: dropped, and nothing is lost, because a CLI
-  sends the real verb and that command is in the tree. With the 11 that curation
-  drops (`agent` 4, `help` 4, `completions` `csrf` `openapi.json` 1 each) that is
-  the WHOLE distance, exactly:
-  **2378 spec operations − 18 tunnels − 14 elided − 11 curated = 2335 commands.**
-  Nothing else is lost anywhere in the derivation, and the arithmetic closing is
-  the check.
+- **THE CENSUS RIDES IN THE FILE IT DESCRIBES.** The fold names a leaf after its
+  own noun, so two methods at one address want one command: `PUT` and `PATCH` on an
+  item both read as `update`. The higher-priority method takes the name and the
+  other reaches nobody. That loss, the method-override tunnels dropped beside it,
+  and the `--data` split are all DERIVED facts about the pinned document, so they
+  are written into `generated.rs`'s own header — which `genproduct --check` diffs
+  byte for byte — instead of being pinned as `const`s somebody edited on each
+  re-pin. They were `ELIDED`, `TUNNELS` and `NO_SCHEMA`, and pinning them is what
+  froze the nightly: the numbers move whenever cloud moves, a machine has no hand,
+  and the write step aborted rather than committing. One mechanism now, and it
+  needs no editing to stay true.
+  **2252 spec operations − 18 tunnels − 1 elided = 2233 commands.** Nothing is lost
+  anywhere else in the derivation, and the arithmetic closing is the check.
 - **A capability missing from the CLI is missing from the SERVER. There is no
   second place, and that is the change.** It used to read "author it in
   hanzoai/openapi, or serve it in hanzoai/cloud", and the first half was the
@@ -398,17 +407,17 @@ and why.
   matched a literal route the pinned document simply had not caught up with, which
   re-pinning fixes. A door is not a list. Enumerating behind one is guessing with a
   citation.
-- **WHAT REPLACED IT — a DOOR CENSUS, derived, counted, and pinned.** The doors are
-  the one place the CLI knowingly under-reaches: `/v1/<product>/{wildcardN}` says a
-  subtree is relayed through here without naming what is in it. `genspec` counts
-  them off the document every run — BOTH runs, `--check` included, because the
-  census is a fact about the document and not about writing a file — and pins the
-  count as a ceiling (`DOORS`, today **7**: `bot collections dns download sbom
-  sentry tasks`). A number derived from the document, that falls on its own as
-  cloud types those relays, beats a 3.5MB parallel file guessing at their
-  contents. The ceiling has already proved itself: regenerating against the older
-  v1.801.360 document trips it at 12, because `/v1/o11y/*` was still a door there
-  and is now 363 typed operations.
+- **WHAT REPLACED IT — a DOOR CENSUS, derived and counted.** The doors are the one
+  place the CLI knowingly under-reaches: `/v1/<product>/{wildcardN}` says a subtree
+  is relayed through here without naming what is in it. `genspec` counts them off
+  the document every run — BOTH runs, `--check` included, because the census is a
+  fact about the document and not about writing a file — and STAMPS the count into
+  `spec/cloud.json`'s own provenance, where `--check` diffs it byte for byte. Today
+  it is **0**. A number derived from the document, that falls on its own as cloud
+  types those relays, beats a 3.5MB parallel file guessing at their contents. It
+  used to be a `const` ceiling as well, which is how it sat at 7 while the truth was
+  0 — and a ceiling with slack in it would have let seven new relays appear without
+  a word.
 - **THERE IS NO EDGE EXCEPTION — and that claim was the load-bearing lie.** Prose
   in this file, in `genspec.rs` and in `driftgate.rs` all said the inference surface
   (`/v1/models`, `/v1/chat/completions`) is "answered at the edge, not by that
@@ -447,13 +456,15 @@ and why.
   `indexers` `settings`). 1.9.23 struck the last three that were not facts about a
   command line at all — `code` `billing` `engine`, held on the grounds that a local
   command owns the name, which is now settled by ARRANGING the collision instead of
-  recording it. What survives — seven entries, all seven applied, `driftgate` says
-  so — states a fact about what a COMMAND LINE is: a CLI is not a browser (`csrf`),
-  the document that decides the commands is not one of them (`openapi.json`),
-  `completions` names shell completion here (the operation is `hanzo chat
-  completions`), clap's own builtin owns `help`, one noun cannot name two products
-  (`agent` vs `agents`), and the compute plane is one command (`machines` `gpus`
-  under `compute`).
+  recording it. **Nothing survives.** Re-pinning onto today's document struck the
+  last four the curation law refuses outright — `csrf`, `agent`, `machines` and
+  `gpus` are names it no longer carries — and the three that remained were settled
+  by the same arrangement as `code`: `help` because the parser's own subcommand
+  stands down for the capability the document names, `completions` and
+  `openapi.json` because no local command was spending either word (`hanzo chat
+  completions` is `/v1/chat/completions`, a DIFFERENT address, so the claim read
+  true while `/v1/completions` reached nobody). `driftgate` says `0 applied of 0`,
+  and `EXCUSED = 0` is what pins it there.
 - **Refresh: `make spec`. Gate: `make spec-check`.** Both go through
   `scripts/generate.sh`, which is also what hanzoai/ci's `client:` lane calls, so
   a maintainer, the push gate and the release all run ONE derivation. `--check`
@@ -489,9 +500,38 @@ and why.
 
   What MOVES the ref is one step in `.hanzo/workflows/drift.yml`: read hanzoai/
   cloud's main off git.hanzo.ai, fetch the document at that COMMIT, write the lock,
-  regenerate, re-capture the evidence, open the patch. It runs even when
+  regenerate, re-capture the evidence, commit to main. It runs even when
   `live-check` failed, because production having moved is exactly when the pin
   wants moving.
+
+  **A GENERATOR THAT REFUSES IS A PIN THAT FREEZES, and that is what happened.**
+  The re-pin's write step is `make spec`, under `set -euo pipefail`: anything that
+  aborts the generator aborts the step, and nothing is committed. Landed re-pins ran
+  nightly at 06:20 UTC through 2026-08-17 and then stopped for five nights while
+  cloud's main moved 507 commits, leaving the tree pinned at a document carrying 191
+  products and 2445 operations against a contract of 129 and 2252 — and 98 of those
+  products answered 404 on api.hanzo.ai beside a 404 control, i.e. phantom commands.
+  Three separate refusals were live in the pinned generator, each on its own enough:
+
+  1. `genproduct` sliced a tag description at BYTE 100 to cap the group help line.
+     The `lsp` tag's prose puts an em dash across that byte, so the slice split a
+     character and the process aborted — `end byte index 100 is not a char
+     boundary`. The cap counts CHARACTERS now (`char_indices().nth(100)`), which is
+     also what clap lays the column out in.
+  2. THE CURATION LAW refused to generate while `csrf`, `agent`, `machines` and
+     `gpus` named products the document had stopped carrying. That refusal is
+     correct and its remedy is stated: delete the entry.
+  3. `ELIDED`, `TUNNELS`, `NO_SCHEMA` and `DOORS` were `const`s a person edited on
+     every re-pin, with a paragraph of reasoning each time. They are a CENSUS of the
+     pinned document — derived facts — so they now ride in the artifact they
+     describe (`generated.rs`'s header, `spec/cloud.json`'s provenance), where
+     `--check` diffs them byte for byte and a change still cannot pass unread. A
+     number that moves whenever cloud moves cannot be gated on a hand a nightly
+     does not have.
+
+  The lesson generalises past this repo: a ratchet a machine cannot satisfy is not
+  a ratchet, it is a stop. Refuse on what a person must DECIDE (a stale curation
+  entry, a phantom route); record what a person must READ.
 
   **It reads main, not the newest tag, and the tag was the second authority
   wearing a hat.** The document is emitted from cloud's SOURCE, so the ref that
@@ -511,10 +551,13 @@ and why.
   is check-only at the LOCKED ref anyway. Across 104 runs the pin moved once, by
   hand. The trigger is deleted; the side WITH runners asks.
 
-  **A RE-PIN OPENS A PATCH, IT DOES NOT LAND.** cloud's source states a route the
+  **A RE-PIN LANDS ONLY BEHIND `make verify`.** cloud's source states a route the
   moment it is written and production deploys it some time later, so the newest
   document can name a route the running server does not serve yet — which the
-  drift gate calls `AHEAD`, counts and pins. Measured: `GET /v1/commerce/org` 404s
+  drift gate calls `AHEAD`, counts and pins. The pull request this used to open was
+  never openable (this repo has the pull unit off), so the step commits to main
+  behind the gate instead, and a refusal leaves the lock untouched with the gate's
+  own reasons in the red nightly. Measured: `GET /v1/commerce/org` 404s
   against a `/v1/commerce/<nonsense>` control that also 404s, so the prefix
   discriminates and the denial is real, while production answers
   `x-api-version: sha-716c08370361`. That is a wait, not a defect, and how long a
@@ -583,9 +626,12 @@ and why.
     `/v1` path literal out of the shipped source and holds it against the same
     document; a literal under a product cloud OWNS that the document does not
     declare is a phantom by the same law. The document is authority only over the
-    products it carries, which is what lets this need no exception list: `hanzo
-    fabric` talks to a hanzo NODE, and `/v1/node/*` is not cloud's to refute. The
-    count is printed and an empty sweep aborts — a lexical read that quietly
+    products it carries, and there is no exception list. That rule caught `hanzo
+    fabric cluster`'s six `/v1/node/cluster/*` literals the moment cloud grew a
+    `node` product: they had defaulted to the active network's api — cloud — where
+    all six answer 404 beside a 403 at `/v1/node`, so as shipped the six commands
+    reached nothing. They are deleted, which is what the gate's own remedy says.
+    The count is printed and an empty sweep aborts — a lexical read that quietly
     matches zero reports "no drift" for the one reason a gate may never report it.
   - **Whose defect it is turns on who claimed the route**, and there are THREE
     owners, not two. No document claims it and the host 404s → the CLI's PHANTOM,
@@ -619,7 +665,8 @@ and why.
   - **A served product with no command is drift unless `src/curation.rs` says
     otherwise**, and every entry naming a spelling gets that spelling RUN, so an
     excuse that stopped being true turns CI red. The applied count is pinned
-    EXACTLY (`EXCUSED`, today 7): an exception nobody counts is how 21 served
+    EXACTLY (`EXCUSED`, today **0** — the table is empty and every capability the
+    document carries is a command): an exception nobody counts is how 21 served
     `/v1/deploy` operations came to be reachable by nothing while the table
     dropping them still called it a decision.
   - **BLIND fails.** No answer at all is not "no drift" — it is "I could not look".
@@ -894,9 +941,12 @@ a projection that repairs its source hides the defect at the one place it can be
   `experiments` 3, `benchmark` 2, `functions` 2, `security` 1) — those are the ones
   cloud typed rather than merely published.
 
-  `NO_SCHEMA = 421` is a CEILING beside `ELIDED`: free to fall as cloud types
-  handlers (#67, #92–#158), and it may not rise, because a handler that LOST its
-  type is a regression at the source rather than a number to raise here. The
+  The count is **440 of 454** today, and it is written into `generated.rs`'s header
+  rather than pinned as a `const`: it moves whenever cloud moves, so a `const` was a
+  hand a nightly re-pin does not have, and the write step aborted on it instead of
+  landing. `genproduct --check` diffs that header byte for byte, so the number still
+  cannot change unread. A handler that LOST its type is a regression at the source.
+  The
   freeform ones are not a gap and are not pinned — `{}`, `additionalProperties`
   (incl. `POST /v1/admin/credits`, whose Go input type genuinely IS
   `map[string]any`), a bare `type: array`, and `oneOf` (`POST /v1/event`, which
@@ -952,7 +1002,7 @@ a projection that repairs its source hides the defect at the one place it can be
   is the ROLE being assigned — and it was the ONE `--data` write in the tree that
   no cloud typing gap explained. It is the one command that moved from `--data` to
   a typed flag in 1.9.35; every other `--data` write is upstream, by construction.
-- **THE STDIN-SECRET CHANNEL BINDS TO 67 FIELDS, and that is security-relevant.**
+- **THE STDIN-SECRET CHANNEL BINDS TO 65 FIELDS, and that is security-relevant.**
   `format: password` marks a body property the CLI reads from stdin and gives no
   flag and no positional, so it can never land in argv, `ps` or shell history.
   It bound to **zero** when cloud's emitted document carried no `format: password`
@@ -961,36 +1011,35 @@ a projection that repairs its source hides the defect at the one place it can be
   reads the NAME as well as the format — the two ways of being wrong are not
   symmetric: a false positive asks for a value on stdin that did not need it, a
   false negative writes a live credential into `~/.zsh_history`.
-  `a_stdin_secret_can_never_reach_argv` pins the count at **`SECRET_FIELDS = 67`**,
-  asserted EXACTLY. A RISE is the good direction and the reason the pin exists:
-  cloud typed a body whose secret field the generator can now keep off argv, so
-  raise it and the law starts enforcing itself on those fields too. A FALL to zero
-  is a regression at the source. Do not restate the rule here — a client that knows
+  `a_stdin_secret_can_never_reach_argv` asserts the law over every one of them and
+  refuses to run over NONE — a count of zero is a regression at the source, and it
+  is the emptiness that makes the test vacuous, not the exact number. The number
+  itself was `SECRET_FIELDS`, pinned exactly, and it moved on every re-pin like the
+  rest of the census. Do not restate the rule here — a client that knows
   a constraint the document does not is the second authority wearing a different
   hat. **`--data -` still reads the body from stdin**, so a secret can always be
   kept off argv even where nothing is typed.
-- **SEVEN RELAY DOORS are the whole remaining under-reach, and they are the
-  worklist.** `bot collections dns download sbom sentry tasks` — each is a
-  `/v1/<product>/{wildcardN}` in cloud's own document, so the
-  CLI can offer `get`/`rm`/`update` at the door and nothing past it. It was ELEVEN;
-  cloud typed `exec`, `files`, `licensing` and `upload` into real operations, which
-  is the whole point of counting them. `genspec`
-  prints the list every run and `DOORS` pins the count. The fix is one of two
-  things, both upstream: type the relay's routes as zip ops in hanzoai/cloud (what
-  `/v1/o11y` did — it was a door at v1.801.360 and is 363 typed operations at
-  v1.801.383), or have the mounted service publish its own document for the weave
-  to carry. `bot` is the odd one: hanzoai/bot-hub implements the subtree but is
-  served on its own host with an `/api/` prefix, and cloud's `/v1/bot/*` relay
-  targets a different service and strips the prefix — so that one is a routing
-  decision before it is a typing one. **Do NOT close any of these by re-authoring a
-  file here.** That is what was just deleted, and a door is exactly where it caused
-  the damage: 66 of the master's 71 operations were "confirmed" by a door that
-  answers the same for a real path and an invented one.
-- **A catch-all positional is named `wildcard1`, and it shows in `--help`.**
+- **THERE ARE NO RELAY DOORS LEFT, and that number is the worklist's receipt.** A
+  `/v1/<product>/{wildcardN}` in cloud's own document is the document declaring a
+  subtree relayed through one address without naming what is behind it, so the CLI
+  could offer `get`/`rm`/`update` at the door and nothing past it. It was ELEVEN,
+  then seven (`bot collections dns download sbom sentry tasks`), and re-pinning onto
+  today's document makes it **zero**: cloud typed every one of them, which is the
+  whole point of counting them. `genspec` prints the count every run and stamps it
+  into `spec/cloud.json`'s own provenance, where `--check` diffs it. The fix for a
+  door was always one of two things, both upstream — type the relay's routes as zip
+  ops in hanzoai/cloud (what `/v1/o11y` did: a door at v1.801.360, 363 typed
+  operations at v1.801.383), or have the mounted service publish its own document
+  for the weave to carry. **Do NOT close one by re-authoring a file here.** That is
+  what was deleted, and a door is exactly where it caused the damage: 66 of the
+  master's 71 operations were "confirmed" by a door that answers the same for a real
+  path and an invented one.
+- **A catch-all positional is named `wildcard1` where one exists.**
   `openapi.translate` names an unnamed fiber `*` `{wildcardN}`, so `hanzo kms
-  secrets get <WILDCARD1>` is what a person now sees where it used to read
-  `<REST>` — that spelling came from the hand-authored master and went with it.
-  The name is honest (the router really has a nameless catch-all there) and the fix
-  is upstream in zip's translate, which should give the artifact a conventional
+  secrets get <WILDCARD1>` is what a person saw where it used to read `<REST>` —
+  that spelling came from the hand-authored master and went with it. Today's
+  document carries no `{wildcardN}` at all, so no command shows one. The name is
+  honest where it appears (the router really has a nameless catch-all there) and the
+  fix is upstream in zip's translate, which should give the artifact a conventional
   name. The CLI must not rename it locally: a projection that improves its source's
   vocabulary is a projection nobody can check against the source.
