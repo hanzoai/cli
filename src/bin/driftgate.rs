@@ -205,11 +205,16 @@ const EXCUSED: usize = 0;
 /// wire. Measured with a control: each answers 404 three times while
 /// `/v1/billing/balance` and `/v1/billing/usage` answer 401 under the SAME
 /// prefix, so the prefix discriminates and the denial belongs to the route
-/// rather than to a wall in front of it. The live table cloud publishes names
-/// all sixteen. Sixteen mounts registered with nothing behind them is cloud's to
-/// reconnect, and the number sits here so it cannot be settled by forgetting. It
-/// goes back on the floor the day billing answers.
-const CONTRADICTED: usize = 16;
+/// rather than to a wall in front of it.
+///
+/// 16 -> 5 on re-pinning onto cloud's main: billing answers, and the whole class
+/// is `/v1/o11y/{healthz,livez,readyz,complete/google,complete/oidc}`. The ceiling
+/// comes down with it, because a ceiling with eleven units of slack is not a
+/// ceiling — it is room for eleven new dead mounts to ship as commands that 404.
+/// This is the one census the gate still REFUSES on rather than merely recording,
+/// and the line is user-visible breakage: an untyped write still works through
+/// `--data`, while a command addressing a dead mount cannot work at all.
+const CONTRADICTED: usize = 5;
 
 /// Coordinates the PINNED document declares, the live table does not name, and
 /// the host denies. That is the document running AHEAD of the deploy: cloud's
