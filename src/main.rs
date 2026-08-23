@@ -184,10 +184,15 @@ impl CodeArgs {
     /// `hanzo desktop`.
     fn into_options(self) -> Result<commands::code::Options> {
         let named = self.named_backend();
+        // The reader's configured agent, if any. Loaded best-effort — the coding
+        // agent must start even when `$HOME` is odd — so an unreadable settings
+        // file leaves this None and the built-in default stands.
+        let configured = commands::code::configured_agent();
         let (backend, task) = commands::code::backend::select(commands::code::backend::Selection {
             positional: self.positional,
             tail: self.tail,
             named,
+            configured,
         })?;
         Ok(commands::code::Options {
             backend,
