@@ -1,6 +1,6 @@
 //! `hanzo auth` — identities and credentials, signed in through Hanzo IAM.
 //!
-//! The resource-noun front door for the identity model. Every verb delegates to
+//! The resource-noun entry point for the identity model. Every verb delegates to
 //! the ONE identity seam (`iam`): sign-in is Hanzo IAM's OIDC PKCE flow (or a
 //! provider key), the session is stored in the portable credential vault, and the
 //! active identity changes ONLY by explicit `login`/`use`. There is exactly one

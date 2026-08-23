@@ -596,7 +596,7 @@ async fn main() -> Result<()> {
             outcome
         }
         None => {
-            // A truly-bare `hanzo [flags] [task]`: the front door, so linking is
+            // A truly-bare `hanzo [flags] [task]`: the entry point, so linking is
             // forced on. Everything past that is the SAME session path `hanzo
             // code` takes — `code_session`, not a second launcher.
             let mut code = cli.code;
@@ -614,7 +614,7 @@ async fn main() -> Result<()> {
 /// `hanzo [flags] [task]`, `hanzo code …`, `hanzo code <backend> …`,
 /// `hanzo code --<backend> …` and `hanzo dev …` — arrives here, and they differ
 /// in NOTHING but how the backend was named (resolved once, in
-/// `commands::code::backend::select`) and whether the bare front door forced
+/// `commands::code::backend::select`) and whether the bare invocation forced
 /// linking on.
 ///
 /// Do not add a second launcher for a new spelling: add the spelling to
@@ -876,7 +876,7 @@ mod tests {
     /// not a removed local verb, so it stays reachable.)
     ///
     /// `code`, `dev` and `desktop` are NOT in these lists: starting a session is
-    /// the CLI's front door, so it keeps its own name. `code`/`dev` are spellings
+    /// the CLI's entry point, so it keeps its own name. `code`/`dev` are spellings
     /// of one session path and `desktop` only points it elsewhere — see
     /// [`code_session`]. `agent` IS gone: `agent run --mode code` was a second
     /// spelling of `hanzo code`, and its desktop mode became `hanzo desktop`.
@@ -976,7 +976,7 @@ mod tests {
         assert!(commands::product::resolve(&hand, &m).is_none(), "a local command is not a product");
     }
 
-    /// THE FRONT DOOR SURVIVES ABSORPTION. `hanzo code` gained six cloud verbs, so
+    /// THE ENTRY POINT SURVIVES ABSORPTION. `hanzo code` gained six cloud verbs, so
     /// its own grammar — a bare task, a backend name, a backend plus a task — is
     /// now parsed against a command that has subcommands, and a token that is not
     /// one of them must still reach the positional.

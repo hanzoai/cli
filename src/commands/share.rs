@@ -121,7 +121,7 @@ pub async fn run(
 ///
 /// This is the ONE implementation of "publish a local port on the fabric";
 /// `hanzo share` prints the URL and waits, `hanzo link` puts it on a session and
-/// holds it. Two front doors, one tunnel.
+/// holds it. Two commands, one tunnel.
 pub async fn start(
     cfg: &mut Config,
     target: String,

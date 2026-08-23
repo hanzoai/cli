@@ -3,7 +3,7 @@ name = "hanzo-event"
 version = "0.1.0"
 edition = "2021"
 authors = ["Hanzo AI"]
-description = "Canonical Event emitter — best-effort, privacy-respecting telemetry to the /v1/event front door"
+description = "Canonical Event emitter — best-effort, privacy-respecting telemetry to the /v1/event endpoint"
 license = "MIT"
 repository = "https://github.com/hanzoai/cli"
 

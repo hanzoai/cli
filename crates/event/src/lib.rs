@@ -1,7 +1,7 @@
 //! The canonical Event emitter for Hanzo terminal tools.
 //!
 //! A terminal app speaks the SAME analytics wire the web and product surfaces do:
-//! one POST to the `/v1/event` front door, body `Event | [Event]`, tenant resolved
+//! one POST to the `/v1/event` endpoint, body `Event | [Event]`, tenant resolved
 //! SERVER-SIDE from the bearer. This crate is the Rust half of `@hanzo/event` — the
 //! four-field [`Event`] and a best-effort [`Telemetry`] handle that both `hanzo`
 //! (the CLI) and `dev` wire into their command-dispatch seam.
@@ -17,7 +17,7 @@
 //!
 //! Auth is one bearer header: a hanzo.id JWT when the caller is signed in, else a
 //! write-only publishable key (`pk_…`) supplied via config or `HANZO_EVENT_KEY`.
-//! The `/v1/event` door is fail-closed, so a run with neither credential resolves a
+//! The `/v1/event` endpoint is fail-closed, so a run with neither credential resolves a
 //! device id but does not transmit — provisioning a `pk_` turns anonymous telemetry
 //! on with no code change.
 
@@ -223,7 +223,7 @@ impl Telemetry {
             _ => return,
         };
         let (Some(http), Some(auth)) = (&self.http, &self.auth) else {
-            return; // the fail-closed door rejects an unauthenticated event; don't send it
+            return; // the fail-closed edge rejects an unauthenticated event; don't send it
         };
         let _ = http
             .post(&self.endpoint)
@@ -493,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn flush_without_credential_sends_nothing() {
-        // No auth -> the fail-closed door would 403; the handle must not transmit.
+        // No auth -> the fail-closed edge would 403; the handle must not transmit.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
