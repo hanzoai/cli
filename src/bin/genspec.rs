@@ -116,9 +116,12 @@ struct Registry {
 /// Does the serving binary call this address a legacy spelling of another one?
 ///
 /// SERVED and PUBLISHED are different questions, and this is the only place the
-/// answers differ. `/v1/iam/get-users` and `/v1/iam/users` are two live routes on
-/// ONE handler; nothing in a route table relates them, so hanzoai/iam tags the
-/// older spelling `compat` and hanzoai/cloud's weave carries the tag out.
+/// answers differ. Two addresses can sit on ONE handler while a caller migrates,
+/// and nothing in a route table relates them, so the serving app tags the older
+/// spelling `compat` and hanzoai/cloud's weave carries the tag out. IAM's
+/// verb-noun spellings went further and now answer 410 with a `Link` naming
+/// their successor, so the document at the pinned ref carries no `compat`
+/// operation at all — the rule stands for the next one.
 ///
 /// A compat op is REAL — it is served, and a caller using it gets an answer — but
 /// it does not become a command. Publishing both would put two spellings of one
@@ -518,12 +521,12 @@ mod tests {
     #[test]
     fn a_compat_address_never_becomes_a_command() {
         let doc = json!({"openapi": "3.1.0", "paths": {
-            "/v1/iam/users":     {"get": {"summary": "List users", "tags": ["iam"]}},
-            "/v1/iam/get-users": {"get": {"summary": "List users (legacy verb)", "tags": ["iam", "compat"]}},
+            "/v1/thing":     {"get": {"summary": "List things", "tags": ["thing"]}},
+            "/v1/list-thing": {"get": {"summary": "List things (legacy verb)", "tags": ["thing", "compat"]}},
         }});
         let reg = Registry::read(&doc);
         let commands: Vec<&String> = reg.ops.keys().map(|(_, p)| p).collect();
-        assert_eq!(commands, vec!["/v1/iam/users"], "the legacy spelling became a command");
+        assert_eq!(commands, vec!["/v1/thing"], "the legacy spelling became a command");
     }
 
     /// The tag is read off the operation, not guessed from the path shape: a
