@@ -222,10 +222,13 @@ const CONTRADICTED: usize = 5;
 /// before it did. It falls on its own at the next deploy.
 ///
 /// A CEILING, like [`CONTRADICTED`], and for the same reason — no edit in this
-/// repo makes `GET /v1/commerce/org` answer, and a gate that reddens for it is a
-/// gate people switch off. Today it is 3 (`GET /v1/commerce/org`,
-/// `POST /v1/iam/link`, `PUT /v1/iam/password`), all three among the eleven
-/// operations this re-pin added.
+/// repo makes `GET /v1/meet/call` answer, and a gate that reddens for it is a
+/// gate people switch off. Today it is 4 (`GET /v1/meet/call`,
+/// `GET /v1/team/rooms`, `PUT /v1/team/rooms/{id}`, `GET /v1/todo/rooms/{room}`)
+/// — one family, the rooms meet and todo grew in the release this pin names. The
+/// three it replaces (`GET /v1/commerce/org`, `POST /v1/iam/link`,
+/// `PUT /v1/iam/password`) are gone because their deploy landed, which is the
+/// only way an entry here is ever meant to leave.
 ///
 /// IT USED TO BE CALLED A PHANTOM, and that was false by construction. A phantom
 /// is a command addressing a route NO DOCUMENT claims; every generated coordinate
@@ -234,7 +237,7 @@ const CONTRADICTED: usize = 5;
 /// "the deploy has not landed" as "this repo invented a route" points a hard
 /// failure at the wrong owner and buries the real phantom class — the
 /// hand-written literals, which keep the name and keep failing hard.
-const AHEAD: usize = 3;
+const AHEAD: usize = 4;
 
 /// Coordinates whose evidence cannot decide anything, because the prefix that
 /// answers for them answers the same way for a route nobody wrote — a relay door
