@@ -6,8 +6,8 @@
 //! body fields). No host, no absolute URL, no auth — pinned by a test.
 //!
 //! Census of this derivation, against the document `.spec-lock` names:
-//!   443 write command(s) take --data — 429 because the handler in hanzoai/cloud
-//!   declares no requestBody (ai 128, commerce 85, iam 35, integrations 12, o11y 10, git 9, company 8, guide 8, …), 14 because the schema is freeform by
+//!   444 write command(s) take --data — 430 because the handler in hanzoai/cloud
+//!   declares no requestBody (ai 128, commerce 85, iam 35, integrations 13, o11y 10, git 9, company 8, guide 8, …), 14 because the schema is freeform by
 //!   construction. Only the first is a gap, and it closes where the handler lives.
 //!   18 method-override tunnel(s) dropped — a POST cloud registers so a browser
 //!   form can reach a PUT/PATCH/DELETE handler. Nothing is lost: a CLI sends the real verb.
@@ -18,7 +18,7 @@
 
 use super::{Field, Op, Ty};
 
-/// 2249 coordinates across 130 products (823 typed-flag, 443 --data-fallback writes).
+/// 2251 coordinates across 130 products (823 typed-flag, 444 --data-fallback writes).
 pub(crate) static OPS: &[Op] = &[
     Op { product: "account", nodes: &[], verb: "csrf", method: "GET", path: "/v1/account/csrf", params: &[], rest: &[], fields: &[], sum: "IssueCSRFToken mints the anti-forgery token a browser echoes as X-CSRF-Token on every change it asks for." },
     Op { product: "account", nodes: &[], verb: "embed", method: "GET", path: "/v1/account/embed", params: &[], rest: &[], fields: &[Field { key: "app", id: "query.app", flag: "app", ty: Ty::Str, required: false, choices: &[], query: true, secret: false, repeat: false }], sum: "Reports whether one of this brand's shared embedded apps (cms, erp, help) may be framed by the caller and is actually running, so a console module can choose between the embed and the provision panel." },
@@ -1298,6 +1298,8 @@ pub(crate) static OPS: &[Op] = &[
     Op { product: "integrations", nodes: &["telegram", "link"], verb: "auth", method: "GET", path: "/v1/integrations/telegram/link/auth", params: &[], rest: &[], fields: &[], sum: "Telegram Login Widget return leg" },
     Op { product: "integrations", nodes: &["telegram", "link"], verb: "callback", method: "GET", path: "/v1/integrations/telegram/link/callback", params: &[], rest: &[], fields: &[], sum: "Complete the Telegram account link" },
     Op { product: "integrations", nodes: &["telegram", "link"], verb: "get", method: "GET", path: "/v1/integrations/telegram/link", params: &[], rest: &[], fields: &[], sum: "Begin linking a Hanzo account from Telegram" },
+    Op { product: "integrations", nodes: &["whatsapp", "webhook"], verb: "create", method: "POST", path: "/v1/integrations/whatsapp/webhook", params: &[], rest: &[], fields: &[], sum: "WhatsApp Cloud API webhook" },
+    Op { product: "integrations", nodes: &["whatsapp", "webhook"], verb: "get", method: "GET", path: "/v1/integrations/whatsapp/webhook", params: &[], rest: &[], fields: &[], sum: "WhatsApp Cloud API subscription challenge" },
     Op { product: "kms", nodes: &[], verb: "config", method: "GET", path: "/v1/kms/config", params: &[], rest: &[], fields: &[], sum: "Returns the runtime configuration for the KMS console." },
     Op { product: "kms", nodes: &[], verb: "health", method: "GET", path: "/v1/kms/health", params: &[], rest: &[], fields: &[], sum: "Reports whether this broker can actually serve secrets." },
     Op { product: "kms", nodes: &["auth"], verb: "login", method: "POST", path: "/v1/kms/auth/login", params: &[], rest: &[], fields: &[Field { key: "clientId", id: "field.clientId", flag: "client-id", ty: Ty::Str, required: false, choices: &[], query: false, secret: false, repeat: false }, Field { key: "clientSecret", id: "field.clientSecret", flag: "client-secret", ty: Ty::Str, required: false, choices: &[], query: false, secret: true, repeat: false }], sum: "Exchanges a machine credential for an IAM bearer token." },
