@@ -51,7 +51,7 @@ on:
 jobs:
   live:
     name: The live server still says what the committed evidence records
-    runs-on: hanzo-build-linux-amd64
+    runs-on: [hanzo-build-linux-amd64]
     steps:
       - uses: actions/checkout@v4
       # `toolchain: stable` is STATED, not inferred from the `@stable` ref.
