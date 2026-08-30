@@ -29,7 +29,18 @@ pub const DEVICE: &str = "/v1/iam/oauth/device";
 /// the origin it is reached on. This is the SINGLE place the mapping lives.
 pub fn server_url_for_brand(brand: &str) -> Option<&'static str> {
     match brand {
-        "hanzo" => Some("https://api.hanzo.ai"),
+        // hanzo.id, not api.hanzo.ai. The two are different services: api is
+        // the API, hanzo.id is where a person signs in. IAM's authorize
+        // endpoint answers on both, but it 302s to /login/oauth/authorize on
+        // whatever origin it was reached on, and on api.hanzo.ai that path
+        // belongs to the Cloud Console — which renders "No such page" and ends
+        // the sign-in. The console answers 200 while doing it, so nothing in
+        // the CLI could tell. Every other brand below already names its login
+        // host; hanzo was the one that named its API.
+        //
+        // api.hanzo.ai's own discovery document agrees: it publishes
+        // issuer = https://hanzo.id and both endpoints under it.
+        "hanzo" => Some("https://hanzo.id"),
         "lux" => Some("https://lux.id"),
         "zoo" => Some("https://zoo.id"),
         "bootnode" => Some("https://id.bootno.de"),
@@ -60,7 +71,7 @@ pub fn trim_server_url(server_url: &str) -> &str {
 ///
 /// ```
 /// # use hanzo::iam::paths::{iam_url, TOKEN};
-/// assert_eq!(iam_url("https://api.hanzo.ai", TOKEN), "https://api.hanzo.ai/v1/iam/oauth/token");
+/// assert_eq!(iam_url("https://hanzo.id", TOKEN), "https://hanzo.id/v1/iam/oauth/token");
 /// ```
 pub fn iam_url(server_url: &str, path: &str) -> String {
     format!("{}{}", trim_server_url(server_url), path)
@@ -72,7 +83,8 @@ mod tests {
 
     #[test]
     fn brand_origins_are_canonical() {
-        assert_eq!(server_url_for_brand("hanzo"), Some("https://api.hanzo.ai"));
+        // The login host, not the API host — see server_url_for_brand.
+        assert_eq!(server_url_for_brand("hanzo"), Some("https://hanzo.id"));
         assert_eq!(server_url_for_brand("lux"), Some("https://lux.id"));
         assert_eq!(server_url_for_brand("zoo"), Some("https://zoo.id"));
         assert_eq!(server_url_for_brand("bootnode"), Some("https://id.bootno.de"));
@@ -80,12 +92,34 @@ mod tests {
         assert_eq!(server_url_for_brand("nope"), None);
     }
 
+    /// No brand may point IAM at an `api.` host.
+    ///
+    /// This is the shape of the bug that broke `hanzo auth login`: the origin
+    /// named api.hanzo.ai, IAM's authorize endpoint answered there and 302'd to
+    /// /login/oauth/authorize on that same origin, and the Cloud Console owns
+    /// that path — so the browser landed on "No such page" and the sign-in
+    /// ended. The console answered 200 the whole way, so nothing could tell.
+    ///
+    /// An API host and a login host are different services. Asserting the shape
+    /// catches the next brand added with the wrong one, which reading each
+    /// entry does not.
+    #[test]
+    fn no_brand_signs_in_against_an_api_host() {
+        for brand in ["hanzo", "lux", "zoo", "bootnode", "pars"] {
+            let origin = server_url_for_brand(brand).expect("brand has an origin");
+            assert!(
+                !origin.contains("://api."),
+                "{brand} signs in against {origin}, which is an API host, not a login host"
+            );
+        }
+    }
+
     #[test]
     fn endpoints_are_hip0111_exact() {
         // No /api/ prefix, no legacy /oauth/*. Exactly the HIP-0111 paths.
-        assert_eq!(iam_url("https://api.hanzo.ai", AUTHORIZE), "https://api.hanzo.ai/v1/iam/oauth/authorize");
-        assert_eq!(iam_url("https://api.hanzo.ai", TOKEN), "https://api.hanzo.ai/v1/iam/oauth/token");
-        assert_eq!(iam_url("https://api.hanzo.ai", USERINFO), "https://api.hanzo.ai/v1/iam/oauth/userinfo");
+        assert_eq!(iam_url("https://hanzo.id", AUTHORIZE), "https://hanzo.id/v1/iam/oauth/authorize");
+        assert_eq!(iam_url("https://hanzo.id", TOKEN), "https://hanzo.id/v1/iam/oauth/token");
+        assert_eq!(iam_url("https://hanzo.id", USERINFO), "https://hanzo.id/v1/iam/oauth/userinfo");
     }
 
     #[test]
