@@ -7,11 +7,21 @@
 //! one place. It is transport ONLY: it knows nothing of the plane it is calling,
 //! which is why three unrelated concerns can share it without braiding.
 //!
-//! It sends the BEARER AND NOTHING ELSE — no org header, ever. Cloud decides the
-//! tenant from the JWT `owner` claim it verifies, so a caller cannot assert (or
-//! forge) one from here. Where a route names the org in its PATH (KMS does), that
-//! segment is the caller's OWN `owner` and the server re-checks it against the
-//! same claim — the value is addressed, never trusted.
+//! It sends the bearer, and an `X-Org-Id` ONLY when a caller names one.
+//!
+//! Cloud derives the tenant from the verified JWT `owner` claim by default, so
+//! omitting the header is right for everything that acts in the caller's own org
+//! — the session and target clients pass None and their tests pin that.
+//!
+//! Naming one is not a forgery risk, and this seam used to say it was. The
+//! gateway validates a selection against the IAM-SIGNED `orgs` membership claim
+//! and DISCARDS anything outside it (cloud middleware_identity.go: "a caller can
+//! only ever land on an org it already belongs to"). Refusing to send it did not
+//! close a hole; it made the org switcher unreachable, so an operator who
+//! belongs to several orgs could read and manage exactly one of them.
+//!
+//! Where a route names the org in its PATH (KMS does), that segment is still
+//! re-checked server-side against the same claim — addressed, never trusted.
 
 use anyhow::{bail, Context, Result};
 use reqwest::{Client, Method, StatusCode};
@@ -31,8 +41,12 @@ pub(crate) async fn send<B: Serialize>(
     url: &str,
     token: &str,
     body: Option<&B>,
+    org: Option<&str>,
 ) -> Result<(StatusCode, Value)> {
     let mut req = http.request(method, url).bearer_auth(token);
+    if let Some(o) = org {
+        req = req.header("X-Org-Id", o);
+    }
     if let Some(b) = body {
         req = req.json(b);
     }
@@ -57,7 +71,7 @@ pub(crate) async fn send_json<B: Serialize>(
     token: &str,
     body: Option<&B>,
 ) -> Result<Value> {
-    let (status, body) = send(http, method, url, token, body).await?;
+    let (status, body) = send(http, method, url, token, body, None).await?;
     if !status.is_success() {
         let shown = match &body {
             Value::Null => String::new(),

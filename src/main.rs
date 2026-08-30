@@ -45,6 +45,22 @@ struct Cli {
     #[arg(short, long, value_name = "FILE", global = true)]
     config: Option<PathBuf>,
 
+    /// Act as this org instead of your own
+    ///
+    /// GLOBAL, and a SELECTION rather than an assertion: it rides as `X-Org-Id`
+    /// and the gateway checks it against the IAM-signed `orgs` membership claim,
+    /// discarding anything outside it. Naming an org you do not belong to is a
+    /// no-op, not an escalation. Without it someone who belongs to several orgs
+    /// can only ever reach their home one.
+    ///
+    /// `--as`, not `--org`: forty-three generated operations already take an
+    /// `org` of their own as a path or query value, and a global of that name
+    /// collides with every one of them. `--as` is the same word kubectl uses for
+    /// acting as someone else, and it says WHO the request is from rather than
+    /// what it is about.
+    #[arg(long = "as", value_name = "ORG", global = true)]
+    org: Option<String>,
+
     /// Increase logging verbosity
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     verbose: u8,
@@ -592,6 +608,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(log_level).init();
 
     let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
+    // The org selection belongs to this invocation, so it is read from the command
+    // line and never written to the file the line above loaded.
+    // Keyed by the FIELD name, which is clap's arg id — `--as` is only the long
+    // spelling, and get_one("as") is always None.
+    config.org = matches.get_one::<String>("org").cloned();
     let telemetry = telemetry::build(&config);
 
     // A matched generated operation dispatches first, through the shared seam.

@@ -78,6 +78,15 @@ impl Drop for Lock {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// The org to act in for this invocation only (`--org`), never persisted.
+    ///
+    /// It rides as `X-Org-Id` on cloud calls. A SELECTION, not an assertion: the
+    /// gateway checks it against the IAM-signed `orgs` membership claim and
+    /// discards anything outside it, so naming an org one does not belong to is a
+    /// no-op. Skipped by serde because it belongs to the command line, not to the
+    /// file on disk.
+    #[serde(skip)]
+    pub org: Option<String>,
     /// Signed-in identities + the active one per brand. NEVER holds a token.
     #[serde(default)]
     pub auth: AuthState,
@@ -349,6 +358,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            org: None,
             auth: AuthState::default(),
             sdk_paths: SdkPaths::default(),
             network: NetworkState::default(),

@@ -711,9 +711,18 @@ async fn call(
 /// re-deriving them per call and drifting.
 pub(crate) struct Seam {
     origin: Origin,
-    /// The bearer AND NOTHING ELSE goes on the wire — cloud derives the tenant
-    /// from the `owner` claim it verifies, so nothing here can name a tenant.
+    /// The bearer. Cloud derives the tenant from the `owner` claim it verifies,
+    /// so a request that names no org acts in the caller's own — which is every
+    /// request unless [`Seam::org`] is set.
     token: String,
+    /// The org to act in, when the caller named one (`--org`).
+    ///
+    /// It rides as `X-Org-Id` and is a SELECTION, not an assertion: the gateway
+    /// checks it against the IAM-signed `orgs` membership claim and discards a
+    /// value outside that set, so naming an org one does not belong to is a
+    /// no-op rather than an escalation. Without it an operator who belongs to
+    /// several orgs could only ever see one of them.
+    pub(crate) org: Option<String>,
     /// The identity-switch hint to offer if — and only if — the SERVER returns a
     /// 403. Resolved from the very identity we authenticate as, so it can never
     /// name someone else.
@@ -740,7 +749,7 @@ impl Seam {
         let held = store::list(cfg, paths::DEFAULT_BRAND);
         let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
-        Ok(Self { origin, token, hint, http: Client::new() })
+        Ok(Self { origin, token, hint, org: cfg.org.clone(), http: Client::new() })
     }
 
     /// Send one request over whichever wire the origin named. The STATUS is
@@ -762,11 +771,11 @@ impl Seam {
             #[cfg(not(unix))]
             Origin::Local(base) => {
                 let url = format!("{base}{target}");
-                http::send(&self.http, method, &url, &self.token, body.as_ref()).await
+                http::send(&self.http, method, &url, &self.token, body.as_ref(), self.org.as_deref()).await
             }
             Origin::Http(base) => {
                 let url = format!("{base}{target}");
-                http::send(&self.http, method, &url, &self.token, body.as_ref()).await
+                http::send(&self.http, method, &url, &self.token, body.as_ref(), self.org.as_deref()).await
             }
         }
     }
