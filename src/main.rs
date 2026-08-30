@@ -258,6 +258,24 @@ enum Commands {
         command: AuthCommands,
     },
 
+    /// Sign in through Hanzo IAM (OIDC) — `hanzo auth login` at the top level.
+    ///
+    /// Signing in is the first thing anyone does and the one command they have
+    /// not read the help for yet, so it answers where they will type it. The
+    /// flags are `auth login`'s and it runs the same function; there is one
+    /// implementation, reachable by two names.
+    Login {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+        /// Non-interactive provider: hanzo | openai | anthropic
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+        /// `--token -` reads the credential from stdin (never argv)
+        #[arg(long, value_name = "TOKEN")]
+        token: Option<String>,
+    },
+
     /// Put this shell on the fabric so it can be driven from the console
     Link {
         /// What to run: your $SHELL by default, or name one — `bash`, `zsh`, or
@@ -664,6 +682,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             args.dev = true;
             code_session(&mut config, args, Target::Repo).await?
         }
+        Commands::Login { brand, provider, token } => {
+            commands::auth::login(&mut config, &brand, provider, token).await?
+        }
         Commands::Auth { command } => match command {
             AuthCommands::Login { brand, provider, token } => {
                 commands::auth::login(&mut config, &brand, provider, token).await?
@@ -875,6 +896,10 @@ mod tests {
     /// their resource nouns. (`kms` is NOT here: it is a generated cloud product,
     /// not a removed local verb, so it stays reachable.)
     ///
+    /// `login` is NOT in these lists either, and is the single exception to the
+    /// relocation: signing in is the entry point to everything else, so it keeps a
+    /// top-level name. It aliases `auth login` rather than reimplementing it.
+    ///
     /// `code`, `dev` and `desktop` are NOT in these lists: starting a session is
     /// the CLI's entry point, so it keeps its own name. `code`/`dev` are spellings
     /// of one session path and `desktop` only points it elsewhere — see
@@ -884,7 +909,13 @@ mod tests {
     fn old_top_level_verbs_are_removed() {
         let names: Vec<String> =
             Cli::command().get_subcommands().map(|s| s.get_name().to_string()).collect();
-        for gone in ["login", "logout", "whoami", "switch", "deploy", "build"] {
+        // `login` is the ONE exception, and deliberately so: it is the first thing
+        // anyone types and the one command they have not read the help for yet, so
+        // it answers where they will reach for it. It is an alias, not a second
+        // implementation — the variant dispatches to commands::auth::login, the
+        // same function `auth login` reaches, and telemetry labels both "auth".
+        // Everything else below stays under its noun.
+        for gone in ["logout", "whoami", "switch", "deploy", "build"] {
             assert!(
                 !names.iter().any(|n| n == gone),
                 "`{gone}` must no longer be a top-level subcommand"
