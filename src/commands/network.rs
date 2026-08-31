@@ -50,7 +50,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             label: "Hanzo Local".into(),
             network_id: 1337,
             chain_id: 1337,
-            rpc: "http://localhost:9630/v1/bc/C/rpc".into(),
+            rpc: "http://localhost:9630/v1/chain/C/rpc".into(),
             api: "http://localhost:3690".into(),
             explorer: None,
         },
