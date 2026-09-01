@@ -365,6 +365,12 @@ enum Commands {
         command: NetworkCommands,
     },
 
+    /// The org's zero-trust network — identities, services, private DNS
+    Net {
+        #[command(subcommand)]
+        command: NetCommands,
+    },
+
     /// The local cloud host — every cloud command, served from a checkout
     Host {
         #[command(subcommand)]
@@ -542,6 +548,33 @@ enum NetworkCommands {
         #[arg(long)]
         activate: bool,
     },
+}
+
+/// The zero-trust org network (`/v1/network`) — distinct from `hanzo network`,
+/// which selects the CHAIN network. `net` is machines and services; `network`
+/// is ledgers.
+#[derive(Subcommand)]
+enum NetCommands {
+    /// Show the network as cloud sees it (identities, services)
+    Ls,
+    /// Mint an identity and file its enrollment JWT under ~/.hanzo/net/
+    Join {
+        /// Identity name (defaults to this machine's hostname)
+        #[arg(long)]
+        name: Option<String>,
+        /// Role attributes, comma-separated (e.g. k8s-dev-host)
+        #[arg(long, value_delimiter = ',')]
+        roles: Vec<String>,
+    },
+    /// Name a local service on the network's DNS
+    Publish {
+        /// Service name
+        name: String,
+        /// What it fronts, as host:port (e.g. 127.0.0.1:6443)
+        target: String,
+    },
+    /// Delete an identity by id
+    Rm { id: String },
 }
 
 #[derive(Subcommand)]
@@ -810,6 +843,16 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 &mut config, name, network_id, chain_id, rpc, api, explorer, label, activate,
             )?,
         },
+        Commands::Net { command } => match command {
+            NetCommands::Ls => commands::net::ls(&mut config).await?,
+            NetCommands::Join { name, roles } => {
+                commands::net::join(&mut config, name, roles).await?;
+            }
+            NetCommands::Publish { name, target } => {
+                commands::net::publish(&mut config, name, target).await?;
+            }
+            NetCommands::Rm { id } => commands::net::rm(&mut config, id).await?,
+        },
         Commands::Wallet { command } => match command {
             WalletCommands::Show => commands::wallet::show(&config)?,
             WalletCommands::Address => commands::wallet::address(&config)?,
@@ -1041,6 +1084,24 @@ mod tests {
         assert_eq!(w(&["--config", "/tmp/x", "-v", "chain", "up"]).as_deref(), Some("chain"));
         assert_eq!(w(&["--as", "fabric", "chain", "up"]).as_deref(), Some("chain"));
         assert_eq!(w(&["-v"]), None);
+    }
+
+    /// The zero-trust org network: read it, join it, publish on it, prune it.
+    /// `net` (machines and services) is not `network` (chain selection).
+    #[test]
+    fn net_speaks_the_network_plane() {
+        assert!(Cli::try_parse_from(["hanzo", "net", "ls"]).is_ok());
+        let cli = Cli::try_parse_from(["hanzo", "net", "join", "--name", "box", "--roles", "a,b"])
+            .expect("join parses");
+        let Some(Commands::Net { command: NetCommands::Join { name, roles } }) = cli.command
+        else {
+            panic!("expected net join")
+        };
+        assert_eq!(name.as_deref(), Some("box"));
+        assert_eq!(roles, ["a", "b"]);
+        assert!(Cli::try_parse_from(["hanzo", "net", "publish", "k8s-dev", "127.0.0.1:6443"])
+            .is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "net", "rm", "idn_1"]).is_ok());
     }
 
     /// The merged tree (derive + generated products) builds without a clap panic.
