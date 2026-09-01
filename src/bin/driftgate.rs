@@ -457,7 +457,7 @@ fn declares(doc: &Value, path: &str) -> bool {
 /// table.
 ///
 /// The DOCUMENT is authority only over the products it owns, and that is enough
-/// to decide this without an exception list: `hanzo fabric` talks to a hanzo
+/// to decide this without an exception list: `hanzo chain` talks to a hanzo
 /// NODE, whose `/v1/node/cluster/*` routes cloud does not own and does not
 /// publish, so they are not cloud's to refute and are left alone. A literal
 /// under a product cloud DOES own is a claim about cloud's surface, and the
@@ -1530,7 +1530,7 @@ mod tests {
         assert!(local.keys().all(|p| !p.contains(' ') && !p.contains('?')), "{local:?}");
     }
 
-    /// THE DOCUMENT DECIDES, and only for the products it owns. `hanzo fabric`
+    /// THE DOCUMENT DECIDES, and only for the products it owns. `hanzo chain`
     /// talks to a hanzo NODE, so `/v1/node/*` is not cloud's to refute — which is
     /// why the sweep needs no exception list beside the document.
     #[test]

@@ -350,10 +350,13 @@ enum Commands {
     Version,
 
     // ── kept resources (additive) ────────────────────────────────────────────
-    /// Run / join hanzo.network (the L1 fabric) with hanzod, and query its cluster
-    Fabric {
+    /// Run the L1 chain node (hanzod) on hanzo.network
+    ///
+    /// `hanzo fabric` is a deprecated alias for one release — use `hanzo chain`.
+    #[command(alias = "fabric")]
+    Chain {
         #[command(subcommand)]
-        command: FabricCommands,
+        command: ChainCommands,
     },
 
     /// Network selection + custom/sovereign networks (mirrors the console)
@@ -478,7 +481,7 @@ enum RunnerCommands {
 }
 
 #[derive(Subcommand)]
-enum FabricCommands {
+enum ChainCommands {
     /// Start hanzod on the active network (joins hanzo.network)
     Up {
         #[arg(long)]
@@ -682,6 +685,23 @@ enum Target {
     Desktop,
 }
 
+/// The first subcommand token on an argv tail: flags are skipped, and so are the
+/// values of the value-taking globals (`--config`/`-c`, `--as`). Aliases resolve
+/// to their canonical name before matches exist, so raw argv is the only place a
+/// deprecated spelling like `hanzo fabric` survives to be warned about.
+fn first_word(mut args: impl Iterator<Item = String>) -> Option<String> {
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--config" | "-c" | "--as" => {
+                args.next();
+            }
+            _ if a.starts_with('-') => {}
+            _ => return Some(a),
+        }
+    }
+    None
+}
+
 /// Run one resolved top-level command.
 async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
     match command {
@@ -751,16 +771,22 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         }
         Commands::Status => commands::status::run(&mut config).await?,
         Commands::Version => commands::version::run(),
-        Commands::Fabric { command } => match command {
-            FabricCommands::Up { foreground, with_cloud } => {
-                commands::fabric::up(&config, foreground, with_cloud).await?
+        Commands::Chain { command } => {
+            // The deprecated spelling forwards, but says so — one release only.
+            if first_word(std::env::args().skip(1)).as_deref() == Some("fabric") {
+                warn("`hanzo fabric` is now `hanzo chain`; the alias goes away next release");
             }
-            FabricCommands::Status => commands::fabric::status(&config).await?,
-            FabricCommands::Join { network, foreground, with_cloud } => {
-                commands::fabric::join(&mut config, network, foreground, with_cloud).await?
+            match command {
+                ChainCommands::Up { foreground, with_cloud } => {
+                    commands::chain::up(&config, foreground, with_cloud).await?
+                }
+                ChainCommands::Status => commands::chain::status(&config).await?,
+                ChainCommands::Join { network, foreground, with_cloud } => {
+                    commands::chain::join(&mut config, network, foreground, with_cloud).await?
+                }
+                ChainCommands::Stop => commands::chain::stop(&config)?,
             }
-            FabricCommands::Stop => commands::fabric::stop(&config)?,
-        },
+        }
         Commands::Host { command } => match command {
             HostCommands::Start => commands::host::start(&config).await?,
             HostCommands::Status => commands::host::status(&config).await?,
@@ -988,16 +1014,33 @@ mod tests {
         ));
     }
 
-    /// The hanzod fabric has its own home: start it, ask how it is doing, stop it.
-    /// The six `fabric cluster` verbs are gone with the routes they sent — cloud
-    /// owns `/v1/node` and declares no `cluster` subtree under it, and the live
-    /// host answers all six 404 beside a 403 at `/v1/node`.
+    /// The hanzod node has its own home under `chain`: start it, ask how it is
+    /// doing, stop it. `fabric` forwards for one release as a hidden alias. The
+    /// six old `cluster` verbs stay gone with the routes they sent — cloud owns
+    /// `/v1/node` and declares no `cluster` subtree under it.
     #[test]
-    fn fabric_runs_the_hanzod_node() {
-        assert!(Cli::try_parse_from(["hanzo", "fabric", "up"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "fabric", "status"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "fabric", "stop"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "fabric", "cluster", "topology"]).is_err());
+    fn chain_runs_the_hanzod_node() {
+        assert!(Cli::try_parse_from(["hanzo", "chain", "up"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "join", "testnet"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "stop"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "cluster", "topology"]).is_err());
+
+        // The deprecated spelling still parses — to the SAME variant.
+        let cli = Cli::try_parse_from(["hanzo", "fabric", "up"]).expect("alias parses");
+        assert!(matches!(cli.command, Some(Commands::Chain { .. })));
+    }
+
+    /// `first_word` is how the dispatch tells `hanzo fabric` from `hanzo chain`
+    /// after clap has erased the alias: it reads the raw argv, skipping flags and
+    /// the values the value-taking globals consume.
+    #[test]
+    fn first_word_finds_the_subcommand_past_the_globals() {
+        let w = |argv: &[&str]| first_word(argv.iter().map(|s| s.to_string()));
+        assert_eq!(w(&["fabric", "up"]).as_deref(), Some("fabric"));
+        assert_eq!(w(&["--config", "/tmp/x", "-v", "chain", "up"]).as_deref(), Some("chain"));
+        assert_eq!(w(&["--as", "fabric", "chain", "up"]).as_deref(), Some("chain"));
+        assert_eq!(w(&["-v"]), None);
     }
 
     /// The merged tree (derive + generated products) builds without a clap panic.

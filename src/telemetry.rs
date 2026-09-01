@@ -58,7 +58,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Up { .. } => "up",
         Commands::Status => "status",
         Commands::Version => "version",
-        Commands::Fabric { .. } => "fabric",
+        Commands::Chain { .. } => "chain",
         Commands::Network { .. } => "network",
         Commands::Host { .. } => "host",
         Commands::Wallet { .. } => "wallet",
