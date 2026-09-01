@@ -24,7 +24,7 @@
 //! still told to bind loopback TCP because `cmd/host` always listens on both, but
 //! nothing here dials it — a bound port is never what "running" means to us.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
 use reqwest::Method;
 use std::path::{Path, PathBuf};
@@ -348,6 +348,39 @@ fn local_origin(cfg: &Config) -> Result<(String, String)> {
         );
     };
     Ok((api, addr))
+}
+
+// ---- `hanzo host serve` -------------------------------------------------------
+
+/// Resolve the ONE cloud binary (`HANZO_CLOUD_BIN`, then PATH), shared with
+/// `hanzo chain up --with-cloud` — so "where is cloud?" is answered in exactly
+/// one place.
+pub fn resolve_cloud_bin() -> Option<PathBuf> {
+    crate::commands::launch::resolve("HANZO_CLOUD_BIN", &["hanzo-cloud", "cloud"])
+}
+
+/// `hanzo host serve [service] [-- args…]` — the Hanzo Cloud API in the
+/// FOREGROUND: the whole API (`cloud`, the default) or one subsystem alone
+/// (iam | kms | gateway | storage | pubsub). The service name is the Go
+/// binary's own subcommand, and the binary is the authority on which names it
+/// serves — an unknown one is its error, not a guess here. We never BUILD it
+/// (CI/CD does). This is what `hanzo up` used to do; `up` now boots k3s, and
+/// the old spelling forwards here for one release.
+pub async fn serve(service: String, passthrough: Vec<String>) -> Result<()> {
+    let bin = resolve_cloud_bin().ok_or_else(|| {
+        anyhow!(
+            "cloud binary not found. Set HANZO_CLOUD_BIN=/path/to/hanzo-cloud or put \
+             `hanzo-cloud` on PATH (we do not build it here — CI/CD does)."
+        )
+    })?;
+    if service == "cloud" {
+        println!("{} running the Hanzo Cloud API", "→".cyan());
+    } else {
+        println!("{} running the {} service", "→".cyan(), service.cyan().bold());
+    }
+    let mut argv = vec![service];
+    argv.extend(passthrough);
+    crate::commands::launch::exec(&bin, &argv)
 }
 
 #[cfg(test)]

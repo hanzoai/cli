@@ -342,16 +342,28 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Bring the cloud up on this machine. Bare `hanzo up` runs the whole API;
-    /// name one service to run it alone (iam | kms | gateway | storage | pubsub)
+    /// A local Kubernetes — k3s in a Hanzo microVM, kubeconfig in hand
+    ///
+    /// Bare `hanzo up` boots k3s inside a hanzo-vm microVM (API forwarded to
+    /// 127.0.0.1:6443) and writes ~/.kube/hanzo.yaml; `up status` and `up down`
+    /// manage it. What ran here before — the local cloud API — is `hanzo host
+    /// serve` now, and `hanzo up <service>` forwards there for one release.
     Up {
-        /// A single service name (iam | kms | gateway | storage | pubsub).
-        /// Omitted means the whole API.
-        #[arg(default_value = "cloud")]
-        service: String,
-        /// Extra args passed verbatim to the service (after `--`)
-        #[arg(last = true, allow_hyphen_values = true)]
-        passthrough: Vec<String>,
+        #[command(subcommand)]
+        command: Option<UpCommands>,
+        /// CPUs for the VM
+        #[arg(long, default_value_t = 4)]
+        cpus: u32,
+        /// Memory in MB
+        #[arg(long, default_value_t = 4096)]
+        memory: u64,
+        /// Disk size in MB
+        #[arg(long, default_value_t = 16384)]
+        disk_size: u64,
+        /// After the node is Ready, put the cluster on the org network
+        /// (`hanzo net`) under this name
+        #[arg(long, value_name = "CLUSTER")]
+        link: Option<String>,
     },
 
     /// Show the whole cloud: what is unhealthy first, then clusters,
@@ -532,6 +544,31 @@ enum HostCommands {
     Status,
     /// Stop the local cloud host and every subsystem it started
     Stop,
+    /// Run the Hanzo Cloud API in the foreground — whole (`cloud`, the
+    /// default) or one service alone (iam | kms | gateway | storage | pubsub)
+    Serve {
+        /// The service — the cloud binary's own subcommand name
+        #[arg(default_value = "cloud")]
+        service: String,
+        /// Extra args passed verbatim to the service (after `--`)
+        #[arg(last = true, allow_hyphen_values = true)]
+        passthrough: Vec<String>,
+    },
+}
+
+/// The local k3s lifecycle: bare `hanzo up` boots it, these manage it.
+#[derive(Subcommand)]
+enum UpCommands {
+    /// Supervisor and node status (node via ~/.kube/hanzo.yaml)
+    Status,
+    /// Stop the supervisor — the VM dies with it
+    Down,
+    /// The daemonized supervisor `hanzo up` leaves behind (internal)
+    #[command(hide = true)]
+    Supervise,
+    /// The old `hanzo up <service>` — forwarded to `hanzo host serve`
+    #[command(external_subcommand)]
+    Service(Vec<String>),
 }
 
 #[derive(Subcommand)]
@@ -808,11 +845,16 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             RunnerCommands::Stop => commands::runner::stop().await?,
             RunnerCommands::Status => commands::runner::status().await?,
         },
-        Commands::Up { service, passthrough } => {
-            if service == "cloud" {
-                commands::up::cloud(passthrough).await?
-            } else {
-                commands::up::service(service, passthrough).await?
+        Commands::Up { command, cpus, memory, disk_size, link } => {
+            let boot = commands::up::Boot { cpus, memory_mb: memory, disk_mb: disk_size };
+            match command {
+                None => commands::up::up(&mut config, boot, link).await?,
+                Some(UpCommands::Status) => commands::up::status().await?,
+                Some(UpCommands::Down) => commands::up::down()?,
+                Some(UpCommands::Supervise) => commands::up::supervise(boot).await?,
+                Some(UpCommands::Service(argv)) => {
+                    commands::up::deprecated_service(argv).await?
+                }
             }
         }
         Commands::Status => commands::status::run(&mut config).await?,
@@ -837,6 +879,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             HostCommands::Start => commands::host::start(&config).await?,
             HostCommands::Status => commands::host::status(&config).await?,
             HostCommands::Stop => commands::host::stop(&config).await?,
+            HostCommands::Serve { service, passthrough } => {
+                commands::host::serve(service, passthrough).await?
+            }
         },
 
         Commands::Network { command } => match command {
@@ -1112,6 +1157,40 @@ mod tests {
         let cli = Cli::try_parse_from(["hanzo", "vm", "--help"]).expect("--help passes through");
         let Some(Commands::Vm { args }) = cli.command else { panic!("expected vm") };
         assert_eq!(args, ["--help"]);
+    }
+
+    /// `hanzo up` is the local k3s now: bare boots it, `status`/`down` manage
+    /// it, and the old `up <service>` still parses so the forwarder can catch
+    /// it and send it to `host serve` — which owns what `up` used to do.
+    #[test]
+    fn up_boots_k3s_and_the_old_service_spelling_still_forwards() {
+        let cli = Cli::try_parse_from(["hanzo", "up"]).expect("bare up parses");
+        let Some(Commands::Up { command: None, cpus, memory, disk_size, link }) = cli.command
+        else {
+            panic!("expected bare up")
+        };
+        assert_eq!((cpus, memory, disk_size, link), (4, 4096, 16384, None));
+
+        assert!(Cli::try_parse_from(["hanzo", "up", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "up", "down"]).is_ok());
+
+        let cli = Cli::try_parse_from(["hanzo", "up", "--link", "dev"]).expect("--link parses");
+        let Some(Commands::Up { link, .. }) = cli.command else { panic!("expected up") };
+        assert_eq!(link.as_deref(), Some("dev"));
+
+        // The deprecated spelling lands on the forwarder, argv intact.
+        let cli = Cli::try_parse_from(["hanzo", "up", "iam"]).expect("old spelling parses");
+        let Some(Commands::Up { command: Some(UpCommands::Service(argv)), .. }) = cli.command
+        else {
+            panic!("expected the forwarder")
+        };
+        assert_eq!(argv, ["iam"]);
+
+        // `host serve` is the new home, with the old grammar.
+        assert!(Cli::try_parse_from(["hanzo", "host", "serve"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["hanzo", "host", "serve", "iam", "--", "--port", "1"]).is_ok()
+        );
     }
 
     /// The zero-trust org network: read it, join it, publish on it, prune it.
