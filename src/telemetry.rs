@@ -55,6 +55,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Link { .. } => "link",
         Commands::Runner { .. } => "runner",
         Commands::Scan { .. } => "scan",
+        Commands::Vm { .. } => "vm",
         Commands::Up { .. } => "up",
         Commands::Status => "status",
         Commands::Version => "version",

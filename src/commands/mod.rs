@@ -26,4 +26,5 @@ pub mod init;
 pub mod network;
 pub mod net;
 pub mod share;
+pub mod vm;
 pub mod wallet;

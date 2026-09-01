@@ -330,6 +330,18 @@ enum Commands {
     /// Scan local files for exposed secrets (exits non-zero on a find)
     Scan { path: PathBuf },
 
+    /// Run the hanzo-vm microVM CLI, args passed through verbatim
+    ///
+    /// The native microVM (hanzoai/vm): `hanzo vm run …`, `hanzo vm checkpoint
+    /// …`. Every flag reaches hanzo-vm untouched — `hanzo vm --help` is its
+    /// help, not this one.
+    #[command(disable_help_flag = true)]
+    Vm {
+        /// Arguments handed to hanzo-vm verbatim
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Bring the cloud up on this machine. Bare `hanzo up` runs the whole API;
     /// name one service to run it alone (iam | kms | gateway | storage | pubsub)
     Up {
@@ -779,6 +791,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
         },
         Commands::Scan { path } => commands::scan::scan(path).await?,
+        Commands::Vm { args } => commands::vm::run(args)?,
         Commands::Link {
             shell,
             read_only,
@@ -1084,6 +1097,21 @@ mod tests {
         assert_eq!(w(&["--config", "/tmp/x", "-v", "chain", "up"]).as_deref(), Some("chain"));
         assert_eq!(w(&["--as", "fabric", "chain", "up"]).as_deref(), Some("chain"));
         assert_eq!(w(&["-v"]), None);
+    }
+
+    /// `hanzo vm …` passes argv through verbatim — flags included, because the
+    /// help flag is disabled on the passthrough: `hanzo vm --help` is hanzo-vm's
+    /// help, not ours.
+    #[test]
+    fn vm_is_a_verbatim_passthrough() {
+        let cli = Cli::try_parse_from(["hanzo", "vm", "run", "--cpus", "2", "echo", "hi"])
+            .expect("vm parses");
+        let Some(Commands::Vm { args }) = cli.command else { panic!("expected vm") };
+        assert_eq!(args, ["run", "--cpus", "2", "echo", "hi"]);
+
+        let cli = Cli::try_parse_from(["hanzo", "vm", "--help"]).expect("--help passes through");
+        let Some(Commands::Vm { args }) = cli.command else { panic!("expected vm") };
+        assert_eq!(args, ["--help"]);
     }
 
     /// The zero-trust org network: read it, join it, publish on it, prune it.
