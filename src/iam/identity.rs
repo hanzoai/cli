@@ -231,14 +231,14 @@ mod tests {
     /// dead end (v1.9.9 did exactly this to "Grace Hopper").
     #[test]
     fn human_usernames_are_legal_claims() {
-        let id = Identity::from_access_token(&jwt("hanzo", "Zach Kelling")).unwrap();
-        assert_eq!(id.to_string(), "hanzo/Zach Kelling");
+        let id = Identity::from_access_token(&jwt("hanzo", "Grace Hopper")).unwrap();
+        assert_eq!(id.to_string(), "hanzo/Grace Hopper");
         let id = Identity::from_access_token(&jwt("hanzo", "José")).unwrap();
         assert_eq!(id.name, "José");
         // And the selector round-trips it, quoted at the shell like any name.
         assert_eq!(
-            "hanzo/Zach Kelling".parse::<Selector>().unwrap(),
-            Selector::Exact(Identity::new("hanzo", "Zach Kelling").unwrap())
+            "hanzo/Grace Hopper".parse::<Selector>().unwrap(),
+            Selector::Exact(Identity::new("hanzo", "Grace Hopper").unwrap())
         );
     }
 

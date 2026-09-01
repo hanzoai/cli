@@ -1445,7 +1445,7 @@ mod tests {
     #[test]
     fn the_credential_from_an_hour_old_login_is_already_spent() {
         const LOGIN: i64 = 1_785_521_882; // 2026-07-31T18:18:02Z, from the keychain
-        let tok = jwt_until("hanzo", "Zach Kelling", LOGIN + 3600);
+        let tok = jwt_until("hanzo", "Grace Hopper", LOGIN + 3600);
         assert!(!expiring(&tok, LOGIN), "brand new at the moment of login");
         assert!(expiring(&tok, LOGIN + 7_200), "and spent two hours later");
     }
