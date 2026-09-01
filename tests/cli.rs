@@ -111,6 +111,20 @@ fn help_lists_the_resource_nouns() {
     }
 }
 
+/// `hanzo vm` is a pure passthrough. With the binary nowhere to be found it
+/// refuses with the install line — it never reimplements a microVM.
+#[test]
+fn vm_without_the_binary_names_the_install_line() {
+    let home = tmp();
+    hanzo()
+        .args(["vm", "--version"])
+        .env("PATH", "/nonexistent")
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cargo install hanzo-vm"));
+}
+
 // ── Network model (hermetic, config-isolated) ────────────────────────────────
 
 /// `network list` shows the four built-ins, mainnet active by default, and the
