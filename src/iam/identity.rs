@@ -112,7 +112,7 @@ impl Identity {
 /// (`{brand}/{owner}/{name}`) or the `owner/name` index string. A claim is
 /// attacker-influenced data: an `owner` of `../hanzo` or `a/b` would let a
 /// forged token address ANOTHER identity's storage slot. Structure over trust
-/// — and ONLY structure: IAM mints usernames like "Zach Kelling" or "José",
+/// — and ONLY structure: IAM mints usernames like "Grace Hopper" or "José",
 /// so the rule is a deny-list of what actually escapes a slot (separators,
 /// control bytes, non-space whitespace), never an allowlist of blessed ASCII.
 fn check_component(field: &str, v: &str) -> Result<()> {
@@ -228,7 +228,7 @@ mod tests {
 
     /// IAM mints human usernames — an interior space or a non-ASCII letter is a
     /// legal claim, and rejecting it turns a successful browser sign-in into a
-    /// dead end (v1.9.9 did exactly this to "Zach Kelling").
+    /// dead end (v1.9.9 did exactly this to "Grace Hopper").
     #[test]
     fn human_usernames_are_legal_claims() {
         let id = Identity::from_access_token(&jwt("hanzo", "Zach Kelling")).unwrap();
