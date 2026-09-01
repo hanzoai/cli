@@ -9,7 +9,7 @@ pub mod product;
 pub mod man;
 pub mod auth;
 pub mod config;
-pub mod fabric;
+pub mod chain;
 pub mod engine;
 pub mod runner;
 pub mod scan;

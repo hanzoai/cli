@@ -1,5 +1,4 @@
-//! `hanzo fabric` — run/join hanzo.network (the L1 fabric) with hanzod, and talk
-//! to the model cluster it serves.
+//! `hanzo chain` — run/join hanzo.network (the L1 chain) with hanzod.
 //!
 //! hanzod (`~/work/hanzo/node`) is Hanzo's L1 node on the Lux Network (same Quasar
 //! consensus, same ZAP transport as luxd). This command drives it: `up` starts it
@@ -8,10 +7,6 @@
 //! never a blind pkill). Per CI/CD policy we never BUILD the node here; we resolve
 //! an existing binary (`HANZO_NODE_BIN`, then `hanzod` on PATH) and, if absent,
 //! print how to get it.
-//!
-//! `fabric cluster …` queries the model cluster a running node exposes
-//! (topology/models/route/placement/chat/search) — distinct from `hanzo clusters`
-//! (dedicated cloud Kubernetes) and `hanzo compute` (the compute fleet).
 
 use crate::commands::network;
 use crate::commands::up;
@@ -94,7 +89,7 @@ fn spawn_cloud() -> Result<()> {
     Ok(())
 }
 
-/// `hanzo fabric up [--foreground] [--with-cloud]`
+/// `hanzo chain up [--foreground] [--with-cloud]`
 pub async fn up(cfg: &Config, foreground: bool, with_cloud: bool) -> Result<()> {
     let net = network::active(cfg);
     println!(
@@ -126,7 +121,7 @@ pub async fn up(cfg: &Config, foreground: bool, with_cloud: bool) -> Result<()> 
     let pid = child.id();
     write_pid(pid)?;
     println!("{} hanzod started (pid {pid}) on {}", "✓".green(), net.name.cyan().bold());
-    println!("  {} hanzo fabric status   {} hanzo fabric stop", "→".dimmed(), "→".dimmed());
+    println!("  {} hanzo chain status   {} hanzo chain stop", "→".dimmed(), "→".dimmed());
 
     if with_cloud {
         spawn_cloud()?;
@@ -136,13 +131,13 @@ pub async fn up(cfg: &Config, foreground: bool, with_cloud: bool) -> Result<()> 
     Ok(())
 }
 
-/// `hanzo fabric join <network> [--foreground] [--with-cloud]`
+/// `hanzo chain join <network> [--foreground] [--with-cloud]`
 pub async fn join(cfg: &mut Config, network_name: String, foreground: bool, with_cloud: bool) -> Result<()> {
     network::use_network(cfg, network_name)?;
     up(cfg, foreground, with_cloud).await
 }
 
-/// `hanzo fabric status`
+/// `hanzo chain status`
 pub async fn status(cfg: &Config) -> Result<()> {
     let net = network::active(cfg);
     println!(
@@ -166,7 +161,7 @@ pub async fn status(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-/// `hanzo fabric stop`
+/// `hanzo chain stop`
 pub fn stop(_cfg: &Config) -> Result<()> {
     match read_pid() {
         None => {

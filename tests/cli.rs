@@ -98,7 +98,7 @@ fn help_lists_the_resource_nouns() {
     let help = String::from_utf8_lossy(&out.get_output().stdout).to_string();
     for surface in [
         "agent", "auth", "cluster", "config", "model", "node", "runner", "secret",
-        "serve", "version", "fabric", "network", "wallet", "billing", "connector", "usage",
+        "serve", "version", "chain", "network", "wallet", "billing", "connector", "usage",
     ] {
         assert!(help.contains(surface), "`hanzo --help` must list the `{surface}` resource");
     }
