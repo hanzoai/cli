@@ -9,7 +9,7 @@
 //! print how to get it.
 
 use crate::commands::network;
-use crate::commands::up;
+use crate::commands::host;
 use crate::config::Config;
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
@@ -68,9 +68,9 @@ fn missing_bin_err() -> anyhow::Error {
 }
 
 /// Best-effort start of the cloud control plane alongside the node, through the
-/// ONE cloud-binary resolver (`up::resolve_cloud_bin`).
+/// ONE cloud-binary resolver (`host::resolve_cloud_bin`).
 fn spawn_cloud() -> Result<()> {
-    match up::resolve_cloud_bin() {
+    match host::resolve_cloud_bin() {
         Some(b) => {
             let child = Command::new(&b)
                 .arg("cloud")

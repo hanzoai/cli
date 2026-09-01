@@ -120,7 +120,8 @@ hanzo agents run <agent>                 # run one of your org's agents, keep th
 hanzo clusters create|list|pools|rm      # the compute you rent, and BYO clusters
 hanzo cloud list|accounts                # bring your own DigitalOcean / AWS / GCP
 hanzo engine serve <model>               # serve a model locally on an OpenAI-compatible endpoint
-hanzo up cloud|iam|kms|gateway|storage|pubsub      # bring a Hanzo service up on your machine
+hanzo up [--link <cluster>]     # local k3s in a microVM; writes ~/.kube/hanzo.yaml
+hanzo host serve [service]      # the Hanzo Cloud API from this machine (was `hanzo up`)
 ```
 
 `engine serve` needs the Hanzo engine binary on PATH (or `HANZO_ENGINE_BIN`); it is not
