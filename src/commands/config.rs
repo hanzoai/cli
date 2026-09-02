@@ -38,6 +38,16 @@ pub fn set(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         // load; `update` writes with its own captured path regardless.
         *fresh = serde_json::from_value(v)
             .with_context(|| format!("`{key} = {value}` would make the config invalid"))?;
+        // AND IT MUST HAVE SURVIVED THE ROUND TRIP. serde drops a field the type
+        // does not declare rather than refusing it, so a key this Config has no
+        // home for is silently discarded here — the write then succeeds, the file
+        // is unchanged, and `set` prints the assignment it did not make. That is
+        // how `network.local.api` reported success and `get` answered "no such
+        // key" a moment later. Read it back off the value actually being written.
+        let back = tree(fresh)?;
+        if walk(&back, key).is_none() {
+            bail!("`{key}` is not a setting this config holds — nothing was written");
+        }
         Ok(())
     })?;
     println!("{key} = {value}");
