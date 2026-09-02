@@ -111,18 +111,32 @@ fn help_lists_the_resource_nouns() {
     }
 }
 
-/// `hanzo vm` is a pure passthrough. With the binary nowhere to be found it
-/// refuses with the install line — it never reimplements a microVM.
+/// `hanzo vm` is a pure passthrough: a resolvable, current-enough `hanzo-vm`
+/// runs verbatim — no reinstall, its stdout and exit are ours. (The bootstrap
+/// that installs an absent or stale binary is unit-tested in commands/vm.rs;
+/// this stays hermetic.)
 #[test]
-fn vm_without_the_binary_names_the_install_line() {
+fn vm_passes_through_to_a_resolved_binary() {
     let home = tmp();
+    let bin_dir = home.path().join(".local/bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    // First line is the version contract (last token); second proves the args
+    // arrived verbatim.
+    let fake = bin_dir.join("hanzo-vm");
+    std::fs::write(&fake, "#!/bin/sh\necho \"hanzo-vm 99.0.0\"\necho \"args: $@\"\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     hanzo()
         .args(["vm", "--version"])
         .env("PATH", "/nonexistent")
         .env("HOME", home.path())
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("cargo install hanzo-vm"));
+        .success()
+        .stdout(predicate::str::contains("hanzo-vm 99.0.0"))
+        .stdout(predicate::str::contains("args: --version"));
 }
 
 // ── Network model (hermetic, config-isolated) ────────────────────────────────
