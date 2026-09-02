@@ -24,13 +24,8 @@ MCP server) and `dev` (the coding agent `hanzo code` runs). Re-run to upgrade.
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
 "fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh/cli | sh`.
 
-Or from Homebrew:
-
-```bash
-brew install hanzoai/tap/hanzo
-```
-
-From source (Rust toolchain):
+That is the only install method. Contributors hacking on the CLI itself build from
+source (Rust toolchain):
 
 ```bash
 git clone https://github.com/hanzoai/cli && cd cli

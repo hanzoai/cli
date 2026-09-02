@@ -65,6 +65,8 @@ colored = "2.1"
 dialoguer = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "http2", "charset"] }
 which = "6.0"
+flate2 = "1.1"                                             # vm bootstrap: gunzip the release tarball
+tar = "0.4"                                                # vm bootstrap: extract hanzo-vm from it
 libc = "0.2"                                               # SIGTERM/liveness for the local cloud host daemon
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -347,7 +347,10 @@ impl Rpc {
 pub async fn supervise(boot: Boot) -> Result<()> {
     let dir = up_dir()?;
     write_pid(&dir, std::process::id())?;
-    let out = drive(&dir, &boot);
+    // The same one resolver `hanzo up` used — by now the binary exists, but a
+    // supervisor started by hand on a bare box bootstraps identically.
+    let bin = vm::resolve_or_install().await?;
+    let out = drive(&dir, &boot, &bin);
     if let Err(e) = &out {
         write_state(&dir, &format!("error: {e:#}"));
     }
@@ -357,11 +360,10 @@ pub async fn supervise(boot: Boot) -> Result<()> {
 
 /// Boot → k3s → Ready → kubeconfig → hold. Every phase lands in the state file
 /// so the foreground (and `up status`) reads facts, not hope.
-fn drive(dir: &Path, boot: &Boot) -> Result<()> {
-    let bin = vm::resolve().ok_or_else(vm::missing)?;
+fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     write_state(dir, "boot");
     let log = dir.join("supervisor.log");
-    let mut rpc = Rpc::start(&bin, &run_args(boot), &log)?;
+    let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
     rpc.wait_ready()?;
 
     write_state(dir, "k3s");
@@ -406,7 +408,7 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
         return finish_link(cfg, link).await;
     }
 
-    let bin = vm::resolve().ok_or_else(vm::missing)?;
+    let bin = vm::resolve_or_install().await?;
     ensure_checkpoint(&bin)?;
 
     write_state(&dir, "starting");

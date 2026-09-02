@@ -828,7 +828,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
         },
         Commands::Scan { path } => commands::scan::scan(path).await?,
-        Commands::Vm { args } => commands::vm::run(args)?,
+        Commands::Vm { args } => commands::vm::run(args).await?,
         Commands::Link {
             shell,
             read_only,
