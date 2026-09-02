@@ -129,7 +129,7 @@ async fn healthy(_addr: &str) -> bool {
 async fn healthy(addr: &str) -> bool {
     let url = format!("http://{addr}/healthz");
     let client = reqwest::Client::new();
-    let probe = crate::http::send::<serde_json::Value>(&client, Method::GET, &url, "", None);
+    let probe = crate::http::send::<serde_json::Value>(&client, Method::GET, &url, "", None, None);
     matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok((s, _))) if s.is_success())
 }
 
