@@ -223,15 +223,21 @@ const CONTRADICTED: usize = 5;
 ///
 /// A CEILING, like [`CONTRADICTED`], and for the same reason — no edit in this
 /// repo makes `GET /v1/meet/call` answer, and a gate that reddens for it is a
-/// gate people switch off. Today it is 6: the rooms team and todo grew
-/// (`GET /v1/team/rooms`, `PUT /v1/team/rooms/{id}`, `GET /v1/todo/rooms/{room}`),
-/// the progress an agent run now reports
-/// (`GET /v1/agents/sessions/{id}/progress`), and the WhatsApp webhook Meta calls
-/// (`GET` and `POST /v1/integrations/whatsapp/webhook`). `GET /v1/meet/call` was
-/// here and is not, because its deploy landed -- the ceiling comes down with each
-/// one that does, since a ceiling left high is slack a later drift hides in. The three they replace (`GET /v1/commerce/org`, `POST /v1/iam/link`,
-/// `PUT /v1/iam/password`) are gone because their deploy landed, which is the
-/// only way an entry here is ever meant to leave.
+/// gate people switch off.
+///
+/// 6 -> 8 on re-pinning @529be4ccb9 -> @39bc7972da, and the membership turned
+/// over whole: the deploy landed for all six that were here (the team and todo
+/// rooms, `GET /v1/agents/sessions/{id}/progress`, and both halves of the
+/// WhatsApp webhook Meta calls), and eight the new pin declares took their place
+/// — a repo's deploy targets (`GET`, `POST /v1/git/repos/{name}/targets` and
+/// `DELETE /v1/git/repos/{name}/targets/{id}`), joining a Slack workspace
+/// (`POST /v1/integrations/slack/join`), the identities and services a network
+/// is made of (`POST`, `DELETE /v1/network/identities[/{id}]`,
+/// `POST /v1/network/services`), and a team's public face
+/// (`GET /v1/team/public`). Landing is the only way an entry here is ever meant
+/// to leave, and the ceiling moves to whatever is measured after it does — held
+/// on the count and not on slack, since a ceiling left high is room a later
+/// drift hides in.
 ///
 /// IT USED TO BE CALLED A PHANTOM, and that was false by construction. A phantom
 /// is a command addressing a route NO DOCUMENT claims; every generated coordinate
@@ -240,7 +246,7 @@ const CONTRADICTED: usize = 5;
 /// "the deploy has not landed" as "this repo invented a route" points a hard
 /// failure at the wrong owner and buries the real phantom class — the
 /// hand-written literals, which keep the name and keep failing hard.
-const AHEAD: usize = 6;
+const AHEAD: usize = 8;
 
 /// Coordinates whose evidence cannot decide anything, because the prefix that
 /// answers for them answers the same way for a route nobody wrote — a relay door
