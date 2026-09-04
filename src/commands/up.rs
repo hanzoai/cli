@@ -614,6 +614,31 @@ fn resolve_hanzod_binary() -> Option<PathBuf> {
     None
 }
 
+fn dev_master_key() -> Result<String> {
+    if let Ok(k) = std::env::var("CLOUD_KMS_MASTER_KEY_REF") {
+        if !k.is_empty() {
+            return Ok(k);
+        }
+    }
+    let key_file = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".hanzo")
+        .join("cloud")
+        .join("master.key");
+    if let Ok(existing) = std::fs::read_to_string(&key_file) {
+        let trimmed = existing.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+    let dev_key = "fHjRpKEMONHdXfEY4VFM9tE+x8gamQA9ap+W1oy9vGI=".to_string();
+    if let Some(parent) = key_file.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let _ = std::fs::write(&key_file, &dev_key);
+    Ok(dev_key)
+}
+
 async fn ensure_cloud_dev(dir: &Path) -> Result<()> {
     let health_url = format!("http://127.0.0.1:{CLOUD_HTTP_PORT}/healthz");
     if probe_url(&health_url).await {
@@ -647,18 +672,21 @@ async fn ensure_cloud_dev(dir: &Path) -> Result<()> {
     let log_file = std::fs::File::create(&log_path)
         .with_context(|| format!("creating {}", log_path.display()))?;
 
+    let master_key = dev_master_key()?;
+
     let mut cmd = Command::new(&bin);
-    cmd.args([
-        "-data-dir",
-        &data_dir.to_string_lossy(),
-        "-listen",
-        &format!("127.0.0.1:{CLOUD_HTTP_PORT}"),
-        "-zap",
-        &format!("127.0.0.1:{CLOUD_ZAP_PORT}"),
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::from(log_file.try_clone().context("duplicating cloud log handle")?))
-    .stderr(Stdio::from(log_file));
+    cmd.env("CLOUD_KMS_MASTER_KEY_REF", master_key)
+        .args([
+            "-data-dir",
+            &data_dir.to_string_lossy(),
+            "-listen",
+            &format!("127.0.0.1:{CLOUD_HTTP_PORT}"),
+            "-zap",
+            &format!("127.0.0.1:{CLOUD_ZAP_PORT}"),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file.try_clone().context("duplicating cloud log handle")?))
+        .stderr(Stdio::from(log_file));
 
     #[cfg(unix)]
     {
