@@ -113,6 +113,54 @@ fn terminate(_pid: i32) -> Result<()> {
     bail!("the k3s supervisor is a unix daemon")
 }
 
+#[cfg(target_os = "linux")]
+fn reap_stale_vms() {
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        let my_pid = std::process::id() as i32;
+        let mut pids_to_kill = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if let Some(pid) = name.to_str().and_then(|s| s.parse::<i32>().ok()) {
+                if pid == my_pid {
+                    continue;
+                }
+                let cmdline_path = format!("/proc/{pid}/cmdline");
+                if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
+                    let is_ch = cmdline.contains("cloud-hypervisor") && cmdline.contains("hanzo-vm");
+                    let is_vm = cmdline.contains("hanzo-vm") && cmdline.contains("run");
+                    if is_ch || is_vm {
+                        pids_to_kill.push(pid);
+                    }
+                }
+            }
+        }
+        for pid in &pids_to_kill {
+            unsafe { libc::kill(*pid, libc::SIGTERM); }
+        }
+        if !pids_to_kill.is_empty() {
+            std::thread::sleep(Duration::from_millis(200));
+            for pid in pids_to_kill {
+                if alive(pid) {
+                    unsafe { libc::kill(pid, libc::SIGKILL); }
+                }
+            }
+        }
+    }
+    for base in &["/dev/shm/gotmp", "/dev/shm"] {
+        if let Ok(entries) = std::fs::read_dir(base) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("hanzo-vm") {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reap_stale_vms() {}
+
 /// The supervisor's phase, written where the foreground (and `status`) can read
 /// it: `boot` → `k3s` → `ready` → `down (…)`, or `error: …`. Best-effort — a
 /// phase we cannot record is not a reason to stop booting.
@@ -246,6 +294,7 @@ struct Rpc {
     child: Child,
     stdin: ChildStdin,
     out: BufReader<ChildStdout>,
+    log: PathBuf,
     next: u64,
 }
 
@@ -266,7 +315,7 @@ impl Rpc {
         unsafe {
             use std::os::unix::process::CommandExt;
             cmd.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
@@ -276,7 +325,7 @@ impl Rpc {
             .with_context(|| format!("starting {}", bin.display()))?;
         let stdin = child.stdin.take().expect("piped stdin");
         let out = BufReader::new(child.stdout.take().expect("piped stdout"));
-        Ok(Rpc { child, stdin, out, next: 0 })
+        Ok(Rpc { child, stdin, out, log: log.to_path_buf(), next: 0 })
     }
 
     fn rpc_child_id(&self) -> u32 {
@@ -299,7 +348,25 @@ impl Rpc {
         loop {
             line.clear();
             if self.out.read_line(&mut line)? == 0 {
-                bail!("hanzo-vm exited mid-conversation — see the supervisor log");
+                let exit_info = match self.child.try_wait() {
+                    Ok(Some(status)) => format!(" (exit status {status})"),
+                    _ => String::new(),
+                };
+                let last_log = std::fs::read_to_string(&self.log)
+                    .unwrap_or_default()
+                    .lines()
+                    .rev()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !last_log.is_empty() {
+                    bail!("hanzo-vm exited mid-conversation{exit_info}:\n{last_log}\nsee {}", self.log.display());
+                } else {
+                    bail!("hanzo-vm exited mid-conversation{exit_info} — see {}", self.log.display());
+                }
             }
             let t = line.trim();
             if t.is_empty() {
@@ -454,6 +521,7 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
         }
         clear_vm_pid(&dir);
     }
+    reap_stale_vms();
 
     let bin = vm::resolve_or_install().await?;
     ensure_checkpoint(&bin)?;
@@ -600,6 +668,7 @@ pub fn down() -> Result<()> {
     let vm_pid = read_vm_pid(&dir).filter(|p| alive(*p));
 
     if sup_pid.is_none() && vm_pid.is_none() {
+        reap_stale_vms();
         clear_pid(&dir);
         clear_vm_pid(&dir);
         write_state(&dir, "down");
@@ -608,29 +677,38 @@ pub fn down() -> Result<()> {
     }
 
     if let Some(pid) = sup_pid {
-        let _ = terminate(pid);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while alive(pid) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(100));
+        #[cfg(unix)]
+        unsafe {
+            // Signal the entire process group (negative pid)
+            let _ = libc::kill(-pid, libc::SIGTERM);
+            let _ = libc::kill(pid, libc::SIGTERM);
         }
-        if alive(pid) {
-            #[cfg(unix)]
-            unsafe { libc::kill(pid, libc::SIGKILL); }
-        }
-    }
-
-    if let Some(pid) = vm_pid {
-        let _ = terminate(pid);
         let deadline = Instant::now() + Duration::from_secs(5);
         while alive(pid) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
         if alive(pid) {
             #[cfg(unix)]
+            unsafe {
+                let _ = libc::kill(-pid, libc::SIGKILL);
+                let _ = libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+
+    if let Some(pid) = vm_pid {
+        let _ = terminate(pid);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if alive(pid) {
+            #[cfg(unix)]
             unsafe { libc::kill(pid, libc::SIGKILL); }
         }
     }
 
+    reap_stale_vms();
     clear_pid(&dir);
     clear_vm_pid(&dir);
     write_state(&dir, "down");
