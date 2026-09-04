@@ -75,6 +75,19 @@ fn clear_pid(dir: &Path) {
     let _ = std::fs::remove_file(dir.join("pid"));
 }
 
+fn write_vm_pid(dir: &Path, pid: u32) -> Result<()> {
+    let f = dir.join("vm.pid");
+    std::fs::write(&f, pid.to_string()).with_context(|| format!("writing {}", f.display()))
+}
+
+fn read_vm_pid(dir: &Path) -> Option<i32> {
+    std::fs::read_to_string(dir.join("vm.pid")).ok()?.trim().parse().ok()
+}
+
+fn clear_vm_pid(dir: &Path) {
+    let _ = std::fs::remove_file(dir.join("vm.pid"));
+}
+
 /// Signal 0 — the standard liveness test, and the only way to tell a live
 /// supervisor from a stale pidfile.
 #[cfg(unix)]
@@ -244,17 +257,40 @@ impl Rpc {
             .append(true)
             .open(log)
             .with_context(|| format!("opening {}", log.display()))?;
-        let mut child = Command::new(bin)
-            .args(args)
+        let mut cmd = Command::new(bin);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr))
-            .spawn()
+            .stderr(Stdio::from(stderr));
+        #[cfg(target_os = "linux")]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            cmd.pre_exec(|| {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = cmd.spawn()
             .with_context(|| format!("starting {}", bin.display()))?;
         let stdin = child.stdin.take().expect("piped stdin");
         let out = BufReader::new(child.stdout.take().expect("piped stdout"));
         Ok(Rpc { child, stdin, out, next: 0 })
     }
+
+    fn rpc_child_id(&self) -> u32 {
+        self.child.id()
+    }
+}
+
+impl Drop for Rpc {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
+impl Rpc {
 
     /// One protocol line. EOF is the vm being gone — its own last words are in
     /// the log, so say where to look rather than guessing why.
@@ -355,6 +391,7 @@ pub async fn supervise(boot: Boot) -> Result<()> {
         write_state(&dir, &format!("error: {e:#}"));
     }
     clear_pid(&dir);
+    clear_vm_pid(&dir);
     out
 }
 
@@ -364,6 +401,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     write_state(dir, "boot");
     let log = dir.join("supervisor.log");
     let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
+    let _ = write_vm_pid(dir, rpc.rpc_child_id());
     rpc.wait_ready()?;
 
     write_state(dir, "k3s");
@@ -406,6 +444,15 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
         println!("{} already running (supervisor pid {pid}, {state})", "●".green());
         kubeconfig_hint()?;
         return finish_link(cfg, link).await;
+    }
+    if let Some(vmpid) = read_vm_pid(&dir).filter(|p| alive(*p)) {
+        let _ = terminate(vmpid);
+        std::thread::sleep(Duration::from_millis(300));
+        if alive(vmpid) {
+            #[cfg(unix)]
+            unsafe { libc::kill(vmpid, libc::SIGKILL); }
+        }
+        clear_vm_pid(&dir);
     }
 
     let bin = vm::resolve_or_install().await?;
@@ -545,24 +592,48 @@ pub async fn status() -> Result<()> {
     Ok(())
 }
 
-/// `hanzo up down` — SIGTERM the supervisor; the vm's stdin closes with it and
-/// the guest stops on the EOF.
+/// `hanzo down` / `hanzo up down` — SIGTERM the supervisor; the vm's stdin closes with it and
+/// the guest stops on the EOF. Cleans up the VM and supervisor.
 pub fn down() -> Result<()> {
     let dir = up_dir()?;
-    let Some(pid) = read_pid(&dir).filter(|p| alive(*p)) else {
+    let sup_pid = read_pid(&dir).filter(|p| alive(*p));
+    let vm_pid = read_vm_pid(&dir).filter(|p| alive(*p));
+
+    if sup_pid.is_none() && vm_pid.is_none() {
         clear_pid(&dir);
+        clear_vm_pid(&dir);
+        write_state(&dir, "down");
         println!("{} not running", "○".dimmed());
         return Ok(());
-    };
-    terminate(pid)?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(pid) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
     }
-    if alive(pid) {
-        bail!("supervisor (pid {pid}) did not exit within 30s");
+
+    if let Some(pid) = sup_pid {
+        let _ = terminate(pid);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if alive(pid) {
+            #[cfg(unix)]
+            unsafe { libc::kill(pid, libc::SIGKILL); }
+        }
     }
+
+    if let Some(pid) = vm_pid {
+        let _ = terminate(pid);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if alive(pid) {
+            #[cfg(unix)]
+            unsafe { libc::kill(pid, libc::SIGKILL); }
+        }
+    }
+
     clear_pid(&dir);
+    clear_vm_pid(&dir);
+    write_state(&dir, "down");
     println!("{} down", "✓".green());
     Ok(())
 }
