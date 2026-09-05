@@ -46,6 +46,7 @@ const UP_TIMEOUT: Duration = Duration::from_secs(300);
 /// Hanzo Cloud local dev ports
 pub const CLOUD_HTTP_PORT: u16 = 8080;
 pub const CLOUD_ZAP_PORT: u16 = 9653;
+pub const CONSOLE_PORT: u16 = 4000;
 
 /// Hanzo Node (hanzod) local dev ports
 pub const HANZOD_API_PORT: u16 = 3680;
@@ -523,7 +524,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
         if Instant::now() >= deadline {
             bail!("k3s reported no Ready node within {}s", READY_TIMEOUT.as_secs());
         }
-        std::thread::sleep(Duration::from_secs(3));
+        std::thread::sleep(Duration::from_millis(500));
     }
 
     let yaml = String::from_utf8(rpc.read_file("/etc/rancher/k3s/k3s.yaml")?)
@@ -560,6 +561,14 @@ async fn probe_json(url: &str) -> Option<Value> {
         resp.json::<Value>().await.ok()
     } else {
         None
+    }
+}
+
+async fn console_suffix() -> String {
+    if probe_url(&format!("http://127.0.0.1:{CONSOLE_PORT}")).await {
+        format!(", Console at http://127.0.0.1:{CONSOLE_PORT}")
+    } else {
+        String::new()
     }
 }
 
@@ -641,9 +650,10 @@ fn dev_master_key() -> Result<String> {
 
 async fn ensure_cloud_dev(dir: &Path) -> Result<()> {
     let health_url = format!("http://127.0.0.1:{CLOUD_HTTP_PORT}/healthz");
+    let console = console_suffix().await;
     if probe_url(&health_url).await {
         println!(
-            "{} Hanzo Cloud already running (API at http://127.0.0.1:{CLOUD_HTTP_PORT}, ZAP at 127.0.0.1:{CLOUD_ZAP_PORT})",
+            "{} Hanzo Cloud already running (API at http://127.0.0.1:{CLOUD_HTTP_PORT}{console}, ZAP at 127.0.0.1:{CLOUD_ZAP_PORT})",
             "●".green()
         );
         return Ok(());
@@ -708,8 +718,9 @@ async fn ensure_cloud_dev(dir: &Path) -> Result<()> {
     }
 
     if up {
+        let console = console_suffix().await;
         println!(
-            "{} Hanzo Cloud is up — API at http://127.0.0.1:{CLOUD_HTTP_PORT}, ZAP at 127.0.0.1:{CLOUD_ZAP_PORT} (108 services, NATS :4222, Kafka :9092)",
+            "{} Hanzo Cloud is up — API at http://127.0.0.1:{CLOUD_HTTP_PORT}{console}, ZAP at 127.0.0.1:{CLOUD_ZAP_PORT} (108 services, NATS :4222, Kafka :9092)",
             "✓".green()
         );
     } else {
@@ -815,7 +826,7 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
     let dir = up_dir()?;
     if let Some(pid) = read_pid(&dir).filter(|p| alive(*p)) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
-        println!("{} k3s already running (supervisor pid {pid}, {state})", "●".green());
+        println!("{} k8s already running (supervisor pid {pid}, {state})", "●".green());
         kubeconfig_hint()?;
     } else {
         if let Some(vmpid) = read_vm_pid(&dir).filter(|p| alive(*p)) {
@@ -835,21 +846,24 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
         write_state(&dir, "starting");
         spawn_supervisor(&dir, &boot)?;
         wait_ready_state(&dir)?;
-        println!("{} k3s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
+        println!("{} k8s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
         kubeconfig_hint()?;
     }
 
-    // Ensure Hanzo Cloud control plane
-    ensure_cloud_dev(&dir).await?;
-
-    // Ensure Hanzo L1 Node (hanzod) with AI compute & consensus
-    ensure_hanzod_dev(&dir).await?;
+    // Ensure Hanzo Cloud control plane and Hanzo Node concurrently
+    tokio::try_join!(
+        ensure_cloud_dev(&dir),
+        ensure_hanzod_dev(&dir)
+    )?;
 
     println!();
     println!("{}", "Hanzo sovereign local cloud & blockchain stack is active:".bold());
-    println!("  {} Kubernetes (k3s): https://127.0.0.1:{K3S_PORT} (export KUBECONFIG={})", "•".cyan(), kubeconfig_path()?.display());
-    println!("  {} Hanzo Cloud:      http://127.0.0.1:{CLOUD_HTTP_PORT} (108 services, NATS :4222, Kafka :9092)", "•".cyan());
-    println!("  {} Hanzo Node:       http://127.0.0.1:{HANZOD_API_PORT} (Quasar consensus, P2P :{HANZOD_P2P_PORT}, AI compute active)", "•".cyan());
+    println!("  {} Kubernetes (k8s):  https://127.0.0.1:{K3S_PORT} (export KUBECONFIG={})", "•".cyan(), kubeconfig_path()?.display());
+    println!("  {} Hanzo Cloud API:   http://127.0.0.1:{CLOUD_HTTP_PORT} (108 services, NATS :4222, Kafka :9092)", "•".cyan());
+    if probe_url(&format!("http://127.0.0.1:{CONSOLE_PORT}")).await {
+        println!("  {} Hanzo Console:     http://127.0.0.1:{CONSOLE_PORT}", "•".cyan());
+    }
+    println!("  {} Hanzo Node (L1):   http://127.0.0.1:{HANZOD_API_PORT} (Quasar consensus, P2P :{HANZOD_P2P_PORT}, AI compute active)", "•".cyan());
 
     finish_link(cfg, link).await
 }
@@ -957,12 +971,12 @@ pub async fn status() -> Result<()> {
     let dir = up_dir()?;
     println!("{}", "Hanzo Local Dev Stack:".bold());
 
-    // 1. K3s Kubernetes microVM
+    // 1. Kubernetes microVM
     let sup_pid = read_pid(&dir).filter(|p| alive(*p));
     match sup_pid {
         Some(pid) => {
             let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
-            println!("{} k3s supervisor running (pid {pid}, {state})", "●".green());
+            println!("{} k8s supervisor running (pid {pid}, {state})", "●".green());
             println!("  API https://127.0.0.1:{K3S_PORT}");
             let kc = kubeconfig_path()?;
             if kc.exists() {
@@ -986,7 +1000,7 @@ pub async fn status() -> Result<()> {
             println!("  logs {}", dir.join("supervisor.log").display().to_string().dimmed());
         }
         None => {
-            println!("{} k3s: not running", "○".dimmed());
+            println!("{} k8s: not running", "○".dimmed());
         }
     }
 
@@ -1001,8 +1015,9 @@ pub async fn status() -> Result<()> {
 
     if cloud_healthy {
         let pid_str = cloud_pid.map(|p| format!("pid {p}, ")).unwrap_or_default();
+        let console = console_suffix().await;
         println!("{} Hanzo Cloud: running ({pid_str}healthy)", "●".green());
-        println!("  API http://127.0.0.1:{CLOUD_HTTP_PORT} | ZAP 127.0.0.1:{CLOUD_ZAP_PORT}");
+        println!("  API http://127.0.0.1:{CLOUD_HTTP_PORT} | ZAP 127.0.0.1:{CLOUD_ZAP_PORT}{console}");
         println!("  Services: 108 micro-services mounted | NATS :4222 | Kafka :9092");
         println!("  logs {}", dir.join("cloud.log").display().to_string().dimmed());
     } else if cloud_fallback {
