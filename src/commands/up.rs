@@ -54,9 +54,16 @@ pub struct Boot {
 
 /// The k3s API port, forwarded host→guest one-to-one.
 const K3S_PORT: u16 = 6443;
-/// The cloud's API on the host, and the node port inside the guest it reaches.
+/// The cloud's own port, in the pod and on the Service; the node port the
+/// Service is published at inside the guest; and the host port the forward
+/// lands on. The last is 3690 because that is already what `local` means —
+/// `hanzo network`'s built-in local network names `http://localhost:3690` as
+/// its API, so a cluster published there is reachable by every other command
+/// with no second number to remember. It also stays out of the way of 8080,
+/// which on a developer's machine is usually somebody else's.
 const CLOUD_PORT: u16 = 8080;
 const CLOUD_NODE_PORT: u16 = 30080;
+const LOCAL_PORT: u16 = 3690;
 /// The image deployed when the caller names none.
 ///
 /// `main` and not `latest` because it is the tag that publishes an index with
@@ -170,7 +177,7 @@ fn run_args(boot: &Boot) -> Vec<String> {
         "-p",
         &format!("{K3S_PORT}:{K3S_PORT}"),
         "-p",
-        &format!("{CLOUD_PORT}:{CLOUD_NODE_PORT}"),
+        &format!("{LOCAL_PORT}:{CLOUD_NODE_PORT}"),
         "--from",
         CHECKPOINT,
     ]
@@ -221,6 +228,13 @@ stringData:
 /// and a value it cannot read means it assumes the 6 GiB reservation it was
 /// tuned against. `CLOUD_HEALTH_LISTEN` opens the ops port on the pod address:
 /// its default binds loopback, where no probe can reach it.
+///
+/// The security context is production's, and `fsGroup` is the load-bearing
+/// line: the image runs as 65532, an `emptyDir` arrives owned by root, and the
+/// data root is the first thing the process opens. Without it the cloud starts,
+/// cannot write, and sits there — no port, no second log line, 18 microcores.
+/// `readOnlyRootFilesystem` then costs a `/tmp` volume, which is why one is
+/// mounted.
 fn workload(image: &str) -> String {
     format!(
         "apiVersion: apps/v1
@@ -240,9 +254,20 @@ spec:
       labels:
         app: cloud
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
       containers:
         - name: cloud
           image: {image}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: api
               containerPort: {CLOUD_PORT}
@@ -280,8 +305,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/cloud
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
+          emptyDir: {{}}
+        - name: tmp
           emptyDir: {{}}
 ---
 apiVersion: v1
@@ -700,7 +729,7 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
 
 fn endpoints() -> Result<()> {
     println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
-    println!("  the cloud             http://127.0.0.1:{CLOUD_PORT}");
+    println!("  the cloud             http://127.0.0.1:{LOCAL_PORT}  (hanzo network use local)");
     println!("  what this cluster is  hanzo up --attest");
     Ok(())
 }
@@ -732,8 +761,19 @@ fn ensure_checkpoint(bin: &Path) -> Result<()> {
 /// log — so it survives this command and Ctrl-C never reaches it.
 fn spawn_supervisor(dir: &Path, boot: &Boot) -> Result<u32> {
     let exe = std::env::current_exe().context("resolving our own binary")?;
-    let log = std::fs::File::create(dir.join("supervisor.log"))
-        .with_context(|| format!("creating {}", dir.join("supervisor.log").display()))?;
+    // Emptied here, then APPENDED to. The supervisor and the vm it holds both
+    // write to this file from separate processes; an offset of their own would
+    // have each overwrite the other from byte zero, and the half that survived
+    // was the half that said the least — "exited mid-conversation" landing on
+    // top of the bind error that explained it.
+    let path = dir.join("supervisor.log");
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .truncate(false)
+        .open(&path)
+        .and_then(|f| f.set_len(0).map(|()| f))
+        .with_context(|| format!("creating {}", path.display()))?;
     let mut cmd = Command::new(exe);
     cmd.args([
         "up",
@@ -893,7 +933,7 @@ mod tests {
             run_args(&boot()),
             [
                 "run", "--stdio", "--allow-net", "--cpus", "4", "--memory", "4096",
-                "--disk-size", "16384", "-p", "6443:6443", "-p", "8080:30080",
+                "--disk-size", "16384", "-p", "6443:6443", "-p", "3690:30080",
                 "--from", "k3s",
             ]
         );
