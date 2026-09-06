@@ -120,6 +120,7 @@ verify: ## Refuse a tree the committed evidence contradicts. Hermetic. The drift
 # because stopping at the first failing package is how they stayed unrun: the
 # drift gate is upstream of them and fails on real drift by design.
 test: ## Everything, including the derivation gates in tests/ — `verify` among them.
+	@python3 -m unittest discover -s tests -p test_installer.py
 	@cargo build --quiet --features maintainer --bin driftgate --bin genproduct --locked
 	@cargo test --workspace --locked --no-fail-fast
 
