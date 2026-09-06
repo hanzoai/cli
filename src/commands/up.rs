@@ -1,15 +1,25 @@
-//! `hanzo up` — a local Kubernetes: k3s in a Hanzo microVM.
+//! `hanzo up` — a local Kubernetes running the cloud, in a Hanzo microVM.
 //!
-//! Bare `hanzo up` boots k3s inside a `hanzo-vm` microVM and hands back a
-//! kubeconfig. The VM lives exactly as long as its supervisor — a daemonized
-//! re-exec of this binary (`up supervise`, hidden) that holds `hanzo-vm run
-//! --stdio` as a child and speaks its JSON-RPC over that stdio: exec k3s, poll
-//! the node Ready, read the kubeconfig out of the guest. The vm's stdin is the
-//! supervisor's leash — the supervisor dying closes it, the guest sees EOF and
-//! stops — so `up down` is one SIGTERM.
+//! Bare `hanzo up` boots k3s inside a `hanzo-vm` microVM, deploys the Hanzo
+//! cloud into it as the cluster's first workload, and hands back a kubeconfig.
+//! The VM lives exactly as long as its supervisor — a daemonized re-exec of
+//! this binary (`up supervise`, hidden) that holds `hanzo-vm run --stdio` as a
+//! child and speaks its JSON-RPC over that stdio: write the workload where k3s
+//! will find it, exec k3s, poll the node Ready, read the kubeconfig out of the
+//! guest. The vm's stdin is the supervisor's leash — the supervisor dying
+//! closes it, the guest sees EOF and stops — so `up down` is one SIGTERM.
 //!
 //! First boot creates a `k3s` disk checkpoint (downloads the binary once, in
 //! the foreground so the download is visible); every later boot starts from it.
+//!
+//! Every boot is measured. The vm reports what it launched — kernel, command
+//! line, root image, shape — as an extend-only SHA-384 register; this
+//! supervisor extends a second register with what it then deploys, asks the
+//! guest what its platform will sign for the pair, and files all three in
+//! `~/.hanzo/up/measure.json`. `hanzo up --attest` prints that. The two halves
+//! are separate because they are decided by different programs at different
+//! times, and because on confidential hardware they map onto separate runtime
+//! registers.
 //!
 //! What ran here before — the local cloud API — is `hanzo host serve` now;
 //! `hanzo up <service>` forwards there for one release.
@@ -17,25 +27,50 @@
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use colored::*;
+use rand::RngCore;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
+use vm_measure::{attest, Log, Measurement};
 
 use crate::commands::{host, net, vm};
 use crate::config::Config;
+use crate::image;
 
-/// The VM's shape — one value through every layer, so the supervisor boots
-/// exactly what the caller asked for.
+/// The VM's shape and what it runs — one value through every layer, so the
+/// supervisor boots exactly what the caller asked for.
 pub struct Boot {
     pub cpus: u32,
     pub memory_mb: u64,
     pub disk_mb: u64,
+    /// The cloud image as `registry/repository@sha256:…`. Resolved in the
+    /// foreground and handed to the supervisor already pinned, so the digest
+    /// the manifest names, the bytes containerd verifies and the register the
+    /// measurement extends are one thing decided once.
+    pub cloud: String,
 }
 
 /// The k3s API port, forwarded host→guest one-to-one.
 const K3S_PORT: u16 = 6443;
+/// The cloud's API on the host, and the node port inside the guest it reaches.
+const CLOUD_PORT: u16 = 8080;
+const CLOUD_NODE_PORT: u16 = 30080;
+/// The image deployed when the caller names none.
+///
+/// `main` and not `latest` because it is the tag that publishes an index with
+/// both architectures; `latest` is a lone linux/amd64 manifest, which no arm64
+/// guest can run. Either way the tag is resolved to a digest before it reaches
+/// the cluster, so what floats here is only which bytes a fresh `up` picks.
+pub const CLOUD: &str = "ghcr.io/hanzoai/cloud:main";
+/// The two files put where k3s applies anything it finds at startup: the
+/// cluster's own ground, and the workload. Separate files because the workload
+/// is measured and a per-boot key has no business in a measurement, and named
+/// so the ground sorts first — k3s applies them in order, and the namespace
+/// and secret have to exist before what needs them.
+const GROUND: &str = "/var/lib/rancher/k3s/server/manifests/cloud-key.yaml";
+const WORKLOAD: &str = "/var/lib/rancher/k3s/server/manifests/cloud.yaml";
 /// The disk checkpoint every boot starts from.
 const CHECKPOINT: &str = "k3s";
 /// How long the guest gets to report a Ready node.
@@ -60,6 +95,12 @@ fn kubeconfig_path() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("no home directory"))?
         .join(".kube")
         .join("hanzo.yaml"))
+}
+
+/// Where the running cluster's measurement is filed, for `--attest` and for
+/// anything else that wants to know what this machine is.
+fn measure_path(dir: &Path) -> PathBuf {
+    dir.join("measure.json")
 }
 
 fn write_pid(dir: &Path, pid: u32) -> Result<()> {
@@ -128,12 +169,197 @@ fn run_args(boot: &Boot) -> Vec<String> {
         &boot.disk_mb.to_string(),
         "-p",
         &format!("{K3S_PORT}:{K3S_PORT}"),
+        "-p",
+        &format!("{CLOUD_PORT}:{CLOUD_NODE_PORT}"),
         "--from",
         CHECKPOINT,
     ]
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+/// The cluster's ground: the namespace the workload lands in, and the at-rest
+/// key the cloud opens its stores with.
+///
+/// Deliberately NOT measured, and deliberately its own file. The key is 32
+/// fresh bytes per cluster — per-instance state, not software identity — and
+/// folding it into the workload register would make every boot of the same
+/// image measure differently, which is the opposite of what a measurement is
+/// for. It sorts before the workload file, so k3s creates the namespace and
+/// the secret before it applies what needs them.
+fn ground(key: &str) -> String {
+    format!(
+        "apiVersion: v1
+kind: Namespace
+metadata:
+  name: hanzo
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud
+  namespace: hanzo
+type: Opaque
+stringData:
+  master: {key}
+"
+    )
+}
+
+/// The workload: one cloud, its API published on a node port the host forwards.
+///
+/// The image is pinned to a digest before this is written, so the manifest
+/// says exactly which bytes containerd must verify. The environment is the
+/// production Deployment's, minus everything that names a cluster this is not:
+///
+/// `ZIP_RUNTIME_DIR` puts the plugin sockets inside the writable data volume —
+/// a distroless image has no writable `/run`, and the host exits when it
+/// cannot bind them. `CLOUD_MEMORY_REQUEST_MIB` is projected from the pod's
+/// own request through the downward API, exactly as production does it,
+/// because the host sizes how many plugin children it holds from that number
+/// and a value it cannot read means it assumes the 6 GiB reservation it was
+/// tuned against. `CLOUD_HEALTH_LISTEN` opens the ops port on the pod address:
+/// its default binds loopback, where no probe can reach it.
+fn workload(image: &str) -> String {
+    format!(
+        "apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud
+  namespace: hanzo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cloud
+  template:
+    metadata:
+      labels:
+        app: cloud
+    spec:
+      containers:
+        - name: cloud
+          image: {image}
+          ports:
+            - name: api
+              containerPort: {CLOUD_PORT}
+          env:
+            - name: CLOUD_HEALTH_LISTEN
+              value: \":9090\"
+            - name: ZIP_RUNTIME_DIR
+              value: /var/lib/cloud/run
+            - name: CLOUD_KMS_MASTER_KEY_REF
+              valueFrom:
+                secretKeyRef:
+                  name: cloud
+                  key: master
+            - name: CLOUD_MEMORY_REQUEST_MIB
+              valueFrom:
+                resourceFieldRef:
+                  containerName: cloud
+                  resource: requests.memory
+                  divisor: 1Mi
+          resources:
+            requests:
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            periodSeconds: 10
+            failureThreshold: 30
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/cloud
+      volumes:
+        - name: data
+          emptyDir: {{}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud
+  namespace: hanzo
+spec:
+  type: NodePort
+  selector:
+    app: cloud
+  ports:
+    - name: api
+      port: {CLOUD_PORT}
+      targetPort: {CLOUD_PORT}
+      nodePort: {CLOUD_NODE_PORT}
+"
+    )
+}
+
+/// 32 fresh bytes, base64 — the shape the cloud reads its at-rest key in. From
+/// the OS generator, never a derivation: a key a second machine could guess is
+/// not one.
+fn key() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+// ---- the measurement ----------------------------------------------------------
+
+/// The workload half of the measurement: what this cluster was asked to run.
+///
+/// Two events, and the order is the order they decide things in. `image` is
+/// the digest containerd must verify before a byte of the cloud executes.
+/// `manifest` is the exact text k3s applies — a second cluster with the same
+/// image but a different Deployment is a different cluster, and the register
+/// says so. The at-rest key is NOT here: it is 32 fresh bytes per cluster, and
+/// per-instance state in a register would make identical software measure
+/// differently every boot, which is the opposite of what a register is for.
+fn deployed(image: &str, manifest: &str) -> Log {
+    let mut log = Log::default();
+    log.text("image", image);
+    log.bytes("manifest", WORKLOAD, manifest.as_bytes());
+    log
+}
+
+/// File what this cluster is: the launch the vm reported, the workload we
+/// deployed, and whatever the guest's platform would sign for the pair.
+///
+/// The report is asked for LAST because it is taken over the bind, which
+/// covers both registers — anything extended afterwards would be outside what
+/// the platform signed.
+fn record(dir: &Path, rpc: &mut Rpc, launch: Log, image: &str, manifest: &str) -> Result<()> {
+    let mut m = Measurement {
+        launch,
+        workload: deployed(image, manifest),
+        ..Measurement::default()
+    };
+    m.hardware = rpc.attest(&m.bind_hex())?;
+    let path = measure_path(dir);
+    std::fs::write(&path, m.to_json_pretty()).with_context(|| format!("writing {}", path.display()))
+}
+
+/// `hanzo up --attest` — what the running cluster is, as its own document.
+pub fn attest() -> Result<()> {
+    println!("{}", measured(&up_dir()?)?.to_json_pretty());
+    Ok(())
+}
+
+/// The filed measurement, read back through [`Measurement::from_json`], which
+/// folds both registers and the bind again: a file edited on disk is refused
+/// rather than repeated.
+fn measured(dir: &Path) -> Result<Measurement> {
+    let path = measure_path(dir);
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {} — is a cluster up?", path.display()))?;
+    Measurement::from_json(&text).with_context(|| format!("in {}", path.display()))
 }
 
 /// Which k3s release asset this host's architecture boots. The guest runs the
@@ -275,11 +501,32 @@ impl Rpc {
         }
     }
 
-    /// Block until the guest's `ready` notification.
-    fn wait_ready(&mut self) -> Result<()> {
+    /// Block until the guest is up, and come back with what was booted.
+    ///
+    /// The vm sends its launch measurement before it says `ready` — that
+    /// ordering is the point: the register is over the images the hypervisor
+    /// was handed, taken before the guest could touch anything. A vm that
+    /// reports no measurement is refused rather than run unmeasured.
+    fn wait_ready(&mut self) -> Result<Log> {
+        let mut launch = None;
         loop {
-            if self.read_line()?.get("method").and_then(Value::as_str) == Some("ready") {
-                return Ok(());
+            let line = self.read_line()?;
+            match line.get("method").and_then(Value::as_str) {
+                Some("measurement") => {
+                    let params = line
+                        .get("params")
+                        .ok_or_else(|| anyhow!("the vm sent a measurement with no log"))?;
+                    launch = Some(
+                        serde_json::from_value(params.clone())
+                            .context("reading the vm's launch measurement")?,
+                    );
+                }
+                Some("ready") => {
+                    return launch.ok_or_else(|| {
+                        anyhow!("this hanzo-vm booted without reporting a measurement")
+                    })
+                }
+                _ => {}
             }
         }
     }
@@ -322,6 +569,23 @@ impl Rpc {
             .ok_or_else(|| anyhow!("spawn answered without a pid: {r}"))
     }
 
+    /// Write a guest file (the wire carries it base64), creating its directory.
+    fn write_file(&mut self, path: &str, content: &str) -> Result<()> {
+        let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("/");
+        self.call("mkdir", json!({ "path": dir, "recursive": true }))?;
+        let content = base64::engine::general_purpose::STANDARD.encode(content);
+        self.call("write_file", json!({ "path": path, "content": content }))?;
+        Ok(())
+    }
+
+    /// Ask the guest's platform for a report over `bind`. On hardware with
+    /// neither `/dev/sev-guest` nor `/dev/tdx_guest` the answer is `none`,
+    /// which the document records as the fact it is.
+    fn attest(&mut self, bind: &str) -> Result<attest::Status> {
+        let r = self.call("attest", json!({ "bind": bind }))?;
+        serde_json::from_value(r).context("reading the guest's attestation status")
+    }
+
     /// Read a guest file (the wire carries it base64).
     fn read_file(&mut self, path: &str) -> Result<Vec<u8>> {
         let r = self.call("read_file", json!({ "path": path }))?;
@@ -358,13 +622,22 @@ pub async fn supervise(boot: Boot) -> Result<()> {
     out
 }
 
-/// Boot → k3s → Ready → kubeconfig → hold. Every phase lands in the state file
-/// so the foreground (and `up status`) reads facts, not hope.
+/// Boot → workload → k3s → Ready → kubeconfig → hold. Every phase lands in the
+/// state file so the foreground (and `up status`) reads facts, not hope.
 fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     write_state(dir, "boot");
     let log = dir.join("supervisor.log");
     let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
-    rpc.wait_ready()?;
+    let launch = rpc.wait_ready()?;
+
+    // The workload goes in before k3s starts, so the cluster's first act is to
+    // apply it — no second tool, no window in which the cluster is up and
+    // running nothing. It is written and MEASURED in the same breath: what the
+    // register covers is the file the cluster will read.
+    let manifest = workload(&boot.cloud);
+    rpc.write_file(GROUND, &ground(&key()))?;
+    rpc.write_file(WORKLOAD, &manifest)?;
+    record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
 
     write_state(dir, "k3s");
     rpc.spawn(&["k3s", "server", "--disable", "traefik", "--disable", "metrics-server"])?;
@@ -397,17 +670,23 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
 
 // ---- `hanzo up` and friends ---------------------------------------------------
 
-/// Bare `hanzo up`: ensure the checkpoint, leave a supervisor behind, wait for
-/// `ready`, print the one line to paste.
+/// Bare `hanzo up`: pin the image, ensure the checkpoint, leave a supervisor
+/// behind, wait for `ready`, print the lines to paste.
 pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()> {
     let dir = up_dir()?;
     if let Some(pid) = read_pid(&dir).filter(|p| alive(*p)) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
         println!("{} already running (supervisor pid {pid}, {state})", "●".green());
-        kubeconfig_hint()?;
-        return finish_link(cfg, link).await;
+        return endpoints().and(finish_link(cfg, link).await);
     }
 
+    // Pinned HERE, once, in the foreground: the digest reaches the supervisor
+    // as an argument, so the cluster and the measurement cannot end up naming
+    // different bytes, and a tag that moves mid-boot cannot change what runs.
+    let boot = Boot {
+        cloud: image::pin(&reqwest::Client::new(), &boot.cloud, image::architecture()).await?,
+        ..boot
+    };
     let bin = vm::resolve_or_install().await?;
     ensure_checkpoint(&bin)?;
 
@@ -415,12 +694,14 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
     spawn_supervisor(&dir, &boot)?;
     wait_ready_state(&dir)?;
     println!("{} k3s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
-    kubeconfig_hint()?;
+    endpoints()?;
     finish_link(cfg, link).await
 }
 
-fn kubeconfig_hint() -> Result<()> {
+fn endpoints() -> Result<()> {
     println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
+    println!("  the cloud             http://127.0.0.1:{CLOUD_PORT}");
+    println!("  what this cluster is  hanzo up --attest");
     Ok(())
 }
 
@@ -462,6 +743,8 @@ fn spawn_supervisor(dir: &Path, boot: &Boot) -> Result<u32> {
         &boot.memory_mb.to_string(),
         "--disk-size",
         &boot.disk_mb.to_string(),
+        "--cloud",
+        &boot.cloud,
         "supervise",
     ])
     .stdin(Stdio::null())
@@ -593,18 +876,99 @@ pub async fn deprecated_service(argv: Vec<String>) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The exact argv the k3s VM boots with — the stdio wire, the API forward,
+    fn boot() -> Boot {
+        Boot {
+            cpus: 4,
+            memory_mb: 4096,
+            disk_mb: 16384,
+            cloud: "ghcr.io/hanzoai/cloud@sha256:c10d".into(),
+        }
+    }
+
+    /// The exact argv the k3s VM boots with — the stdio wire, both forwards,
     /// the checkpoint.
     #[test]
-    fn the_vm_is_booted_with_the_stdio_wire_and_the_forward() {
-        let boot = Boot { cpus: 4, memory_mb: 4096, disk_mb: 16384 };
+    fn the_vm_is_booted_with_the_stdio_wire_and_the_forwards() {
         assert_eq!(
-            run_args(&boot),
+            run_args(&boot()),
             [
                 "run", "--stdio", "--allow-net", "--cpus", "4", "--memory", "4096",
-                "--disk-size", "16384", "-p", "6443:6443", "--from", "k3s",
+                "--disk-size", "16384", "-p", "6443:6443", "-p", "8080:30080",
+                "--from", "k3s",
             ]
         );
+    }
+
+    /// The workload names the pinned image, publishes the API on the node port
+    /// the host forwards, and carries the three environment values a cluster
+    /// this small still has to state: the ops listener on the pod address, the
+    /// plugin sockets inside the writable volume, and the memory reservation
+    /// the host sizes itself from.
+    #[test]
+    fn the_workload_deploys_the_pinned_image_on_the_forwarded_port() {
+        let y = workload("ghcr.io/hanzoai/cloud@sha256:c10d");
+        assert!(y.contains("image: ghcr.io/hanzoai/cloud@sha256:c10d"), "{y}");
+        assert!(y.contains("nodePort: 30080"), "{y}");
+        assert!(y.contains("containerPort: 8080"), "{y}");
+        assert!(y.contains("namespace: hanzo"), "{y}");
+        for env in ["CLOUD_HEALTH_LISTEN", "ZIP_RUNTIME_DIR", "CLOUD_MEMORY_REQUEST_MIB"] {
+            assert!(y.contains(env), "{env} missing from\n{y}");
+        }
+        // The at-rest key is referenced, never inlined.
+        assert!(y.contains("secretKeyRef"), "{y}");
+        assert!(!y.contains("stringData"), "{y}");
+    }
+
+    /// The ground carries the namespace and a key that is fresh every time —
+    /// two clusters never share one, and no derivation makes it guessable.
+    #[test]
+    fn the_ground_carries_a_fresh_key() {
+        let (a, b) = (key(), key());
+        assert_ne!(a, b);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.decode(&a).unwrap().len(),
+            32
+        );
+        let y = ground(&a);
+        assert!(y.contains("kind: Namespace"), "{y}");
+        assert!(y.contains(&format!("master: {a}")), "{y}");
+        // The ground is applied first, so its filename sorts before the workload's.
+        assert!(GROUND < WORKLOAD, "{GROUND} must sort before {WORKLOAD}");
+    }
+
+    /// The workload register moves with the image AND with the manifest text:
+    /// the same cloud deployed differently is a different cluster, and the
+    /// number says so.
+    #[test]
+    fn the_workload_register_covers_the_image_and_the_manifest() {
+        let one = deployed("ghcr.io/hanzoai/cloud@sha256:aa", "kind: Deployment");
+        let same = deployed("ghcr.io/hanzoai/cloud@sha256:aa", "kind: Deployment");
+        assert_eq!(one.register(), same.register(), "same inputs, same register");
+
+        let other_image = deployed("ghcr.io/hanzoai/cloud@sha256:bb", "kind: Deployment");
+        assert_ne!(one.register(), other_image.register());
+
+        let other_manifest = deployed("ghcr.io/hanzoai/cloud@sha256:aa", "kind: DaemonSet");
+        assert_ne!(one.register(), other_manifest.register());
+
+        // The manifest is measured by content; the path it lands at is recorded
+        // for the reader, not hashed.
+        assert_eq!(one.events()[1].source, WORKLOAD);
+    }
+
+    /// A key never enters the measurement: two clusters differing only in
+    /// their at-rest key are the same software, and measure the same.
+    #[test]
+    fn the_at_rest_key_is_outside_the_measurement() {
+        let manifest = workload("ghcr.io/hanzoai/cloud@sha256:aa");
+        let register = deployed("ghcr.io/hanzoai/cloud@sha256:aa", &manifest).register();
+        for _ in 0..2 {
+            let _ = ground(&key());
+            assert_eq!(
+                deployed("ghcr.io/hanzoai/cloud@sha256:aa", &manifest).register(),
+                register
+            );
+        }
     }
 
     /// The checkpoint downloads THIS architecture's k3s and marks it runnable.
@@ -713,23 +1077,42 @@ mod tests {
         assert!(wait_ready_state(dir.path()).is_err());
     }
 
-    /// The RPC client against a fake peer speaking the real protocol: `ready`
-    /// first, notifications skipped, results matched by id, errors surfaced.
+    /// A fake peer speaking the real protocol, driven by a script.
+    fn peer(dir: &Path, script: &str) -> Rpc {
+        Rpc::start(Path::new("sh"), &["-c".into(), script.into()], &dir.join("log")).unwrap()
+    }
+
+    /// One `printf` of a protocol line, single-quoted for `sh`.
+    fn line(json: &str) -> String {
+        format!("printf '%s\\n' '{json}'; ")
+    }
+
+    /// A launch log as the vm would report one.
+    fn launched() -> Log {
+        let mut log = Log::default();
+        log.text("kernel", "K");
+        log.text("cmdline", "root=/dev/vda rw");
+        log
+    }
+
+    /// The RPC client against a fake peer: the measurement before `ready`,
+    /// notifications skipped, results matched by id, errors surfaced.
     #[test]
     fn the_rpc_client_speaks_the_stdio_protocol() {
         let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join("log");
-        let script = concat!(
-            r#"printf '%s\n' '{"jsonrpc":"2.0","method":"ready"}'; "#,
-            r#"read line; "#,
-            r#"printf '%s\n' '{"jsonrpc":"2.0","method":"output","params":{"pid":"p1","stream":"stdout","data":""}}'; "#,
-            r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"stdout":"ok","stderr":"","exit_code":0}}'; "#,
-            r#"read line; "#,
-            r#"printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"exec failed"}}'"#,
+        let measurement = json!({"jsonrpc": "2.0", "method": "measurement", "params": launched()});
+        let script = format!(
+            "{}{}{}{}{}{}{}",
+            line(&measurement.to_string()),
+            line(r#"{"jsonrpc":"2.0","method":"ready"}"#),
+            "read line; ",
+            line(r#"{"jsonrpc":"2.0","method":"output","params":{"pid":"p1","stream":"stdout","data":""}}"#),
+            line(r#"{"jsonrpc":"2.0","id":1,"result":{"stdout":"ok","stderr":"","exit_code":0}}"#),
+            "read line; ",
+            line(r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"exec failed"}}"#),
         );
-        let mut rpc =
-            Rpc::start(Path::new("sh"), &["-c".into(), script.into()], &log).unwrap();
-        rpc.wait_ready().unwrap();
+        let mut rpc = peer(dir.path(), &script);
+        assert_eq!(rpc.wait_ready().unwrap(), launched());
 
         let (out, err, code) = rpc.exec(&["true"]).unwrap();
         assert_eq!((out.as_str(), err.as_str(), code), ("ok", "", 0));
@@ -740,6 +1123,61 @@ mod tests {
         // The peer is done; the next read is an honest EOF error, not a hang.
         assert!(rpc.read_line().is_err());
         let _ = rpc.child.wait();
+    }
+
+    /// A vm that says `ready` without saying what it booted is refused. An
+    /// unmeasured cluster is not one this can file a document about, and
+    /// filing nothing quietly would be worse than not starting.
+    #[test]
+    fn a_vm_that_reports_no_measurement_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut rpc = peer(dir.path(), &line(r#"{"jsonrpc":"2.0","method":"ready"}"#));
+        let e = rpc.wait_ready().unwrap_err();
+        assert!(e.to_string().contains("without reporting a measurement"), "{e}");
+        let _ = rpc.child.wait();
+    }
+
+    /// The whole record: the launch the vm reported, the workload we deployed,
+    /// and what the guest's platform said — filed, and read back through the
+    /// fold. The peer answers `attest` with `none`, which is what every
+    /// machine this runs on today answers.
+    #[test]
+    fn the_measurement_is_filed_and_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let measurement = json!({"jsonrpc": "2.0", "method": "measurement", "params": launched()});
+        let script = format!(
+            "{}{}{}{}",
+            line(&measurement.to_string()),
+            line(r#"{"jsonrpc":"2.0","method":"ready"}"#),
+            "read line; ",
+            line(r#"{"jsonrpc":"2.0","id":1,"result":{"platform":"none"}}"#),
+        );
+        let mut rpc = peer(dir.path(), &script);
+        let launch = rpc.wait_ready().unwrap();
+
+        let manifest = workload(&boot().cloud);
+        record(dir.path(), &mut rpc, launch, &boot().cloud, &manifest).unwrap();
+        let _ = rpc.child.wait();
+
+        let m = measured(dir.path()).unwrap();
+        assert_eq!(m.launch, launched());
+        assert_eq!(m.workload.register(), deployed(&boot().cloud, &manifest).register());
+        assert_eq!(m.hardware.platform, "none");
+        assert!(m.hardware.report.is_none());
+
+        // An edited document is refused, not repeated: the registers and the
+        // bind are folded again on the way in.
+        let path = measure_path(dir.path());
+        let edited = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace(&m.launch.register().hex(), &"ab".repeat(48));
+        std::fs::write(&path, edited).unwrap();
+        assert!(measured(dir.path()).is_err());
+
+        // And a machine with nothing filed says so rather than inventing one.
+        std::fs::remove_file(&path).unwrap();
+        let e = measured(dir.path()).unwrap_err();
+        assert!(e.to_string().contains("is a cluster up?"), "{e}");
     }
 
     /// The old spelling splits into service + tail, with clap's `--` shed.

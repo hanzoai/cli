@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod commands;
 mod config;
+mod image;
 mod private;
 mod iam;
 mod telemetry;
@@ -341,12 +342,14 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// A local Kubernetes — k3s in a Hanzo microVM, kubeconfig in hand
+    /// A local Kubernetes running the cloud — k3s in a Hanzo microVM
     ///
-    /// Bare `hanzo up` boots k3s inside a hanzo-vm microVM (API forwarded to
-    /// 127.0.0.1:6443) and writes ~/.kube/hanzo.yaml; `up status` and `up down`
-    /// manage it. What ran here before — the local cloud API — is `hanzo host
-    /// serve` now, and `hanzo up <service>` forwards there for one release.
+    /// Bare `hanzo up` boots k3s inside a hanzo-vm microVM, deploys the Hanzo
+    /// cloud into it (API forwarded to 127.0.0.1:8080, kube to 6443) and writes
+    /// ~/.kube/hanzo.yaml; `up status` and `up down` manage it. Every boot is
+    /// measured — `--attest` prints what the running cluster is. What ran here
+    /// before, the local cloud API, is `hanzo host serve` now, and `hanzo up
+    /// <service>` forwards there for one release.
     Up {
         #[command(subcommand)]
         command: Option<UpCommands>,
@@ -359,6 +362,14 @@ enum Commands {
         /// Disk size in MB
         #[arg(long, default_value_t = 16384)]
         disk_size: u64,
+        /// The cloud image to deploy. A tag is resolved to a digest before it
+        /// reaches the cluster; name a digest to skip the registry entirely
+        #[arg(long, value_name = "IMAGE", default_value = commands::up::CLOUD)]
+        cloud: String,
+        /// Print the running cluster's measurement — what booted, what it
+        /// runs, and what its platform will sign for the pair
+        #[arg(long)]
+        attest: bool,
         /// After the node is Ready, put the cluster on the org network
         /// (`hanzo net`) under this name
         #[arg(long, value_name = "CLUSTER")]
@@ -844,9 +855,13 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             RunnerCommands::Stop => commands::runner::stop().await?,
             RunnerCommands::Status => commands::runner::status().await?,
         },
-        Commands::Up { command, cpus, memory, disk_size, link } => {
-            let boot = commands::up::Boot { cpus, memory_mb: memory, disk_mb: disk_size };
+        Commands::Up { command, cpus, memory, disk_size, cloud, attest, link } => {
+            let boot =
+                commands::up::Boot { cpus, memory_mb: memory, disk_mb: disk_size, cloud };
             match command {
+                // `--attest` reads the running cluster rather than booting a
+                // second one: what a machine IS is a question, not a boot.
+                None if attest => commands::up::attest()?,
                 None => commands::up::up(&mut config, boot, link).await?,
                 Some(UpCommands::Status) => commands::up::status().await?,
                 Some(UpCommands::Down) => commands::up::down()?,
@@ -1158,17 +1173,31 @@ mod tests {
         assert_eq!(args, ["--help"]);
     }
 
-    /// `hanzo up` is the local k3s now: bare boots it, `status`/`down` manage
-    /// it, and the old `up <service>` still parses so the forwarder can catch
-    /// it and send it to `host serve` — which owns what `up` used to do.
+    /// `hanzo up` is the local k3s running the cloud now: bare boots it,
+    /// `--attest` asks what it is, `status`/`down` manage it, and the old
+    /// `up <service>` still parses so the forwarder can catch it and send it
+    /// to `host serve` — which owns what `up` used to do.
     #[test]
     fn up_boots_k3s_and_the_old_service_spelling_still_forwards() {
         let cli = Cli::try_parse_from(["hanzo", "up"]).expect("bare up parses");
-        let Some(Commands::Up { command: None, cpus, memory, disk_size, link }) = cli.command
+        let Some(Commands::Up { command: None, cpus, memory, disk_size, cloud, attest, link }) =
+            cli.command
         else {
             panic!("expected bare up")
         };
         assert_eq!((cpus, memory, disk_size, link), (4, 4096, 16384, None));
+        assert_eq!(cloud, commands::up::CLOUD);
+        assert!(!attest);
+
+        // The image is nameable, and asking what a cluster is takes no boot.
+        let cli = Cli::try_parse_from(["hanzo", "up", "--cloud", "ghcr.io/hanzoai/cloud@sha256:ab"])
+            .expect("--cloud parses");
+        let Some(Commands::Up { cloud, .. }) = cli.command else { panic!("expected up") };
+        assert_eq!(cloud, "ghcr.io/hanzoai/cloud@sha256:ab");
+
+        let cli = Cli::try_parse_from(["hanzo", "up", "--attest"]).expect("--attest parses");
+        let Some(Commands::Up { attest, .. }) = cli.command else { panic!("expected up") };
+        assert!(attest);
 
         assert!(Cli::try_parse_from(["hanzo", "up", "status"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "up", "down"]).is_ok());

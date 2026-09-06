@@ -190,8 +190,34 @@ in the program exec'd, so a third is a const, not a file. The `model_catalog_jso
 write for them must carry EVERY field their parser requires: it rejects the whole
 document on the first missing one, and that took the session down with it (a lost
 context window is survivable, a session that cannot start is not).
+**`hanzo up` is the cloud, local, measured** (`commands/up.rs`). It boots k3s in
+a hanzo-vm microVM from the `k3s` disk checkpoint, writes two manifests where
+k3s applies what it finds at startup, and holds the vm in a daemonized `up
+supervise`. Three things are worth knowing:
+- **The workload goes in BEFORE k3s starts**, so the cluster's first act is to
+  apply it — there is no second tool and no window in which the cluster is up
+  running nothing. `cloud-key.yaml` (namespace + a fresh 32-byte at-rest key)
+  sorts before `cloud.yaml` (Deployment + NodePort), which is why k3s creates
+  what the workload needs first. The API lands on 127.0.0.1:8080 through a
+  vsock forward to node port 30080; kube stays on 6443.
+- **The image is PINNED in the foreground** (`image.rs`: the registry's
+  manifest endpoint, the anonymous token dance, platform selection) and the
+  digest is handed to the supervisor as `--cloud`, so what the manifest names,
+  what containerd verifies and what the measurement covers are one decision.
+  The default is `ghcr.io/hanzoai/cloud:main` because that is the tag with an
+  index for both architectures — `:latest` is a lone linux/amd64 manifest and
+  no arm64 guest can run it.
+- **Every boot is measured.** The vm reports its launch register before it says
+  `ready` (a vm that reports none is refused); the supervisor extends a second
+  register with the image digest and the manifest text, asks the guest what its
+  platform will sign for `SHA-512(launch ‖ workload)`, and files all three in
+  `~/.hanzo/up/measure.json`. `hanzo up --attest` prints it, folded again on
+  the way in so an edited file is refused. The at-rest key is deliberately
+  OUTSIDE the measurement: per-cluster state in a register would make identical
+  software measure differently every boot. `vm-measure` (crates.io, from
+  hanzoai/vm) owns the fold — the CLI does not have a second copy of it.
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage`
-- cloud: `hanzo up`; network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
+- cloud: `hanzo up` (+ `--attest`); network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
 - fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 - the whole cloud, one screen: `hanzo status` (see below)

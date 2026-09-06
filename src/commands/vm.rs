@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// The hanzoai/vm release this CLI installs and spawns.
-pub(crate) const VM_VERSION: &str = "2.0.0";
+pub(crate) const VM_VERSION: &str = "2.0.1";
 
 /// The Virtualization.framework entitlement (hanzoai/vm's `vm.entitlements`),
 /// vendored so signing needs no second download.
@@ -259,6 +259,9 @@ mod tests {
 
     #[test]
     fn version_ordering_drives_the_update() {
+        // A vm older than the pin is replaced — 2.0.0 has no measurement to
+        // report, and `hanzo up` refuses a vm that reports none.
+        assert!(older("2.0.0", VM_VERSION));
         assert!(older("0.1.3", "2.0.0"));
         assert!(older("1.9.9", "2.0.0"));
         assert!(!older("2.0.0", "2.0.0"));

@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "8.5.157"
+version = "8.5.158"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -71,6 +71,7 @@ which = "6.0"
 flate2 = "1.1"                                             # vm bootstrap: gunzip the release tarball
 tar = "0.4"                                                # vm bootstrap: extract hanzo-vm from it
 libc = "0.2"                                               # SIGTERM/liveness for the local cloud host daemon
+vm-measure = "2.0.1"                                       # `hanzo up`: the boot measurement the vm reports, and the workload half we extend
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3.10"
