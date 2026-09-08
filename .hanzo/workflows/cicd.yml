@@ -2,7 +2,7 @@
 # real detail lives there; this file is the trigger set and nothing else.
 #
 # It lives in `.hanzo/workflows/` because the runners are the GIT.HANZO.AI's. The pool
-# that answers `hanzo-build-linux-amd64` is registered to git.hanzo.ai;
+# that answers `linux-amd64` is registered to git.hanzo.ai;
 # github.com has zero runners at any level. Hanzo Git reads BOTH
 # `.hanzo/workflows` and `.github/workflows`, so a caller left under `.github/`
 # runs twice — once here, and once on GitHub where nothing can ever pick it up
