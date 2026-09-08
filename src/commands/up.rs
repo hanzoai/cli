@@ -71,13 +71,18 @@ const LOCAL_PORT: u16 = 3690;
 /// guest can run. Either way the tag is resolved to a digest before it reaches
 /// the cluster, so what floats here is only which bytes a fresh `up` picks.
 pub const CLOUD: &str = "ghcr.io/hanzoai/cloud:main";
+/// Where the cluster keeps everything it owns, and where it writes the
+/// credential for reaching it. k3s defaults both to paths named after the
+/// company that wrote it; we run our own machine, so ours are named for it.
+const DATA: &str = "/var/lib/hanzo";
+const KUBECONFIG: &str = "/etc/hanzo/kubeconfig";
 /// The two files put where k3s applies anything it finds at startup: the
 /// cluster's own ground, and the workload. Separate files because the workload
 /// is measured and the ground is not, and named so the ground sorts first —
 /// k3s applies them in order, and the namespace has to exist before what needs
 /// it. Neither carries the at-rest key; see [`plant_key`].
-const GROUND: &str = "/var/lib/rancher/k3s/server/manifests/cloud-ns.yaml";
-const WORKLOAD: &str = "/var/lib/rancher/k3s/server/manifests/cloud.yaml";
+const GROUND: &str = "/var/lib/hanzo/server/manifests/cloud-ns.yaml";
+const WORKLOAD: &str = "/var/lib/hanzo/server/manifests/cloud.yaml";
 /// The disk checkpoint every boot starts from.
 const CHECKPOINT: &str = "k3s";
 /// How long the guest gets to report a Ready node.
@@ -520,6 +525,25 @@ fn has_checkpoint(listing: &str, name: &str) -> bool {
         .any(|first| first == name)
 }
 
+/// How the cluster is started. Both paths are passed rather than defaulted:
+/// k3s files its state and its kubeconfig under the name of the company that
+/// wrote it, and this is our machine. Traefik and metrics-server are off
+/// because the cloud brings its own ingress and nothing here reads a metric.
+fn server_argv() -> [&'static str; 10] {
+    [
+        "k3s",
+        "server",
+        "--data-dir",
+        DATA,
+        "--write-kubeconfig",
+        KUBECONFIG,
+        "--disable",
+        "traefik",
+        "--disable",
+        "metrics-server",
+    ]
+}
+
 /// Whether `k3s kubectl get nodes --no-headers` reports a Ready node. The
 /// status column is a comma-joined condition list, so `Ready` is matched as a
 /// member, never as a substring — `NotReady` must not read as ready.
@@ -825,7 +849,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
 
     write_state(dir, "k3s");
-    rpc.spawn(&["k3s", "server", "--disable", "traefik", "--disable", "metrics-server"])?;
+    rpc.spawn(&server_argv())?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         // A failing poll is k3s not answering YET — unless the vm itself is
@@ -846,11 +870,11 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     // written to the node's disk. This is why the workload may spend its first
     // moments unable to start: it mounts a Secret that does not exist yet, and
     // the kubelet retries until it does. That is the trade — a brief retry
-    // instead of the cloud's at-rest key sitting in cleartext under
-    // /var/lib/rancher for the life of the machine.
+    // instead of the cloud's at-rest key sitting in cleartext under the data
+    // directory for the life of the machine.
     plant_key(&mut rpc)?;
 
-    let yaml = String::from_utf8(rpc.read_file("/etc/rancher/k3s/k3s.yaml")?)
+    let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
         .context("the guest kubeconfig is not utf-8")?;
     write_kubeconfig(&kubeconfig_path()?, &rewrite_server(&yaml))?;
     write_state(dir, "ready");
@@ -1182,6 +1206,24 @@ mod tests {
         }
         // The ground is applied first, so its filename sorts before the workload's.
         assert!(GROUND < WORKLOAD, "{GROUND} must sort before {WORKLOAD}");
+    }
+
+    /// Every path the guest keeps state at is one we named. k3s defaults its
+    /// data directory and its kubeconfig to paths carrying the name of the
+    /// company that wrote it; we pass both, so nothing on our machine is filed
+    /// under someone else's.
+    #[test]
+    fn the_cluster_keeps_its_state_under_our_own_name() {
+        for path in [DATA, KUBECONFIG, GROUND, WORKLOAD] {
+            assert!(path.contains("hanzo"), "{path} is not ours");
+        }
+        assert!(GROUND.starts_with(DATA) && WORKLOAD.starts_with(DATA));
+        // Passing them is what makes them true: k3s uses its own otherwise.
+        let argv = server_argv();
+        for flag in ["--data-dir", "--write-kubeconfig"] {
+            assert!(argv.contains(&flag), "{flag} is not passed: {argv:?}");
+        }
+        assert!(argv.contains(&DATA) && argv.contains(&KUBECONFIG), "{argv:?}");
     }
 
     /// Neither file k3s applies may contain the key, whatever the key is. The
