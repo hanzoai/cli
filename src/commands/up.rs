@@ -73,10 +73,10 @@ const LOCAL_PORT: u16 = 3690;
 pub const CLOUD: &str = "ghcr.io/hanzoai/cloud:main";
 /// The two files put where k3s applies anything it finds at startup: the
 /// cluster's own ground, and the workload. Separate files because the workload
-/// is measured and a per-boot key has no business in a measurement, and named
-/// so the ground sorts first — k3s applies them in order, and the namespace
-/// and secret have to exist before what needs them.
-const GROUND: &str = "/var/lib/rancher/k3s/server/manifests/cloud-key.yaml";
+/// is measured and the ground is not, and named so the ground sorts first —
+/// k3s applies them in order, and the namespace has to exist before what needs
+/// it. Neither carries the at-rest key; see [`plant_key`].
+const GROUND: &str = "/var/lib/rancher/k3s/server/manifests/cloud-ns.yaml";
 const WORKLOAD: &str = "/var/lib/rancher/k3s/server/manifests/cloud.yaml";
 /// The disk checkpoint every boot starts from.
 const CHECKPOINT: &str = "k3s";
@@ -231,32 +231,72 @@ fn run_args(boot: &Boot) -> Vec<String> {
     .collect()
 }
 
-/// The cluster's ground: the namespace the workload lands in, and the at-rest
-/// key the cloud opens its stores with.
+/// The cluster's ground: the namespace the workload lands in.
 ///
-/// Deliberately NOT measured, and deliberately its own file. The key is 32
-/// fresh bytes per cluster — per-instance state, not software identity — and
-/// folding it into the workload register would make every boot of the same
-/// image measure differently, which is the opposite of what a measurement is
-/// for. It sorts before the workload file, so k3s creates the namespace and
-/// the secret before it applies what needs them.
-fn ground(key: &str) -> String {
-    format!(
-        "apiVersion: v1
+/// Deliberately NOT measured, and deliberately its own file. It sorts before
+/// the workload file, so k3s creates the namespace before it applies what
+/// needs it.
+///
+/// The at-rest key is NOT here. A manifest in this directory is a file k3s
+/// leaves on the node's disk, so putting the key in one wrote the cloud's
+/// at-rest master key to persistent storage in cleartext, where it outlived
+/// the boot that made it — and it could not simply be deleted afterwards,
+/// because k3s auto-deploy treats a vanished manifest as a deletion and would
+/// take the Secret with it. It is created after the cluster answers instead,
+/// from a file that only ever exists in RAM: see [`plant_key`].
+fn ground() -> String {
+    "apiVersion: v1
 kind: Namespace
 metadata:
   name: hanzo
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cloud
-  namespace: hanzo
-type: Opaque
-stringData:
-  master: {key}
 "
-    )
+    .to_string()
+}
+
+/// Where the key is handed to kubectl. A tmpfs path, so the bytes never reach
+/// the node's disk, and it is unlinked as soon as the Secret exists.
+const KEYFILE: &str = "/dev/shm/.hanzo-cloud-master";
+const KEYFILE_FALLBACK: &str = "/run/.hanzo-cloud-master";
+
+/// Create the cloud's at-rest key as a Secret, without the key touching disk
+/// or a command line.
+///
+/// Not `--from-literal`: that puts the key in argv, where every process on the
+/// node can read it out of /proc. Not a manifest: k3s leaves those on disk.
+/// The bytes go to tmpfs, kubectl reads the file, and the file is removed.
+fn plant_key(rpc: &mut Rpc) -> Result<()> {
+    let k = key();
+    let path = match rpc.write_file(KEYFILE, &k) {
+        Ok(()) => KEYFILE,
+        // A guest without /dev/shm still has a tmpfs on /run.
+        Err(_) => {
+            rpc.write_file(KEYFILE_FALLBACK, &k)?;
+            KEYFILE_FALLBACK
+        }
+    };
+    let _ = rpc.exec(&["chmod", "600", path]);
+    let made = rpc.exec(&[
+        "k3s",
+        "kubectl",
+        "create",
+        "secret",
+        "generic",
+        "cloud",
+        "-n",
+        "hanzo",
+        &format!("--from-file=master={path}"),
+    ]);
+    // Remove the key before reporting anything, including a failure.
+    let _ = rpc.exec(&["rm", "-f", path]);
+    match made {
+        // Already there: a re-entered boot keeps the key the stores were
+        // opened with. Replacing it would strand every store on the node.
+        Ok((_, err, code)) if code != 0 && !err.contains("already exists") => {
+            bail!("creating the at-rest key: {}", err.trim())
+        }
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// The workload: one cloud, its API published on a node port the host forwards.
@@ -780,7 +820,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     // running nothing. It is written and MEASURED in the same breath: what the
     // register covers is the file the cluster will read.
     let manifest = workload(&boot.cloud);
-    rpc.write_file(GROUND, &ground(&key()))?;
+    rpc.write_file(GROUND, &ground())?;
     rpc.write_file(WORKLOAD, &manifest)?;
     record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
 
@@ -801,6 +841,14 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
         }
         std::thread::sleep(Duration::from_secs(3));
     }
+
+    // The cluster answers, so the key can be handed to it without ever being
+    // written to the node's disk. This is why the workload may spend its first
+    // moments unable to start: it mounts a Secret that does not exist yet, and
+    // the kubelet retries until it does. That is the trade — a brief retry
+    // instead of the cloud's at-rest key sitting in cleartext under
+    // /var/lib/rancher for the life of the machine.
+    plant_key(&mut rpc)?;
 
     let yaml = String::from_utf8(rpc.read_file("/etc/rancher/k3s/k3s.yaml")?)
         .context("the guest kubeconfig is not utf-8")?;
@@ -1109,21 +1157,49 @@ mod tests {
         assert!(!y.contains("stringData"), "{y}");
     }
 
-    /// The ground carries the namespace and a key that is fresh every time —
-    /// two clusters never share one, and no derivation makes it guessable.
+    /// The key is fresh every time — two clusters never share one, and no
+    /// derivation makes it guessable.
     #[test]
-    fn the_ground_carries_a_fresh_key() {
+    fn the_key_is_fresh_every_time() {
         let (a, b) = (key(), key());
         assert_ne!(a, b);
         assert_eq!(
             base64::engine::general_purpose::STANDARD.decode(&a).unwrap().len(),
             32
         );
-        let y = ground(&a);
+    }
+
+    /// The ground carries the namespace and NOTHING secret. A manifest here is
+    /// a file k3s leaves on the node's disk, so a key written into one is the
+    /// cloud's at-rest key in cleartext on persistent storage, outliving the
+    /// boot that made it.
+    #[test]
+    fn the_ground_carries_no_secret() {
+        let y = ground();
         assert!(y.contains("kind: Namespace"), "{y}");
-        assert!(y.contains(&format!("master: {a}")), "{y}");
+        for leak in ["Secret", "stringData", "master:"] {
+            assert!(!y.contains(leak), "the ground must not carry `{leak}`:\n{y}");
+        }
         // The ground is applied first, so its filename sorts before the workload's.
         assert!(GROUND < WORKLOAD, "{GROUND} must sort before {WORKLOAD}");
+    }
+
+    /// Neither file k3s applies may contain the key, whatever the key is. The
+    /// workload references it; the ground does not carry it; it reaches the
+    /// cluster only through tmpfs.
+    #[test]
+    fn no_manifest_ever_contains_the_key() {
+        let k = key();
+        let g = ground();
+        let w = workload("ghcr.io/hanzoai/cloud@sha256:aa");
+        assert!(!g.contains(&k), "the ground leaked the key");
+        assert!(!w.contains(&k), "the workload leaked the key");
+        // The workload names it by reference, which is the only way it should
+        // ever learn it.
+        assert!(w.contains("secretKeyRef"), "{w}");
+        // And the file it is handed through is RAM, not disk.
+        assert!(KEYFILE.starts_with("/dev/shm/"), "{KEYFILE}");
+        assert!(KEYFILE_FALLBACK.starts_with("/run/"), "{KEYFILE_FALLBACK}");
     }
 
     /// The workload register moves with the image AND with the manifest text:
@@ -1153,7 +1229,7 @@ mod tests {
         let manifest = workload("ghcr.io/hanzoai/cloud@sha256:aa");
         let register = deployed("ghcr.io/hanzoai/cloud@sha256:aa", &manifest).register();
         for _ in 0..2 {
-            let _ = ground(&key());
+            let _ = (ground(), key());
             assert_eq!(
                 deployed("ghcr.io/hanzoai/cloud@sha256:aa", &manifest).register(),
                 register
