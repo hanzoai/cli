@@ -3,7 +3,7 @@ name: Release Matrix (CLI)
 # THIS FILE RUNS ON GIT.HANZO.AI (git.hanzo.ai), and that is why it lives in
 # `.hanzo/workflows/` rather than `.github/workflows/`.
 #
-# `runs-on: hanzo-build-linux-amd64` was always a GIT.HANZO.AI label. It is one of 28
+# `runs-on: linux-amd64` was always a GIT.HANZO.AI label. It is one of 28
 # advertised by the git-runner pool (hanzo/git-runner-0..9, registered to
 # http://hanzo-git.hanzo.svc), every one mapping to
 # docker://catthehacker/ubuntu:act-24.04. github.com has never had a runner
@@ -58,7 +58,7 @@ env:
 jobs:
   build:
     name: ${{ matrix.target.id }}
-    runs-on: [hanzo-build-linux-amd64]
+    runs-on: [linux-amd64]
     strategy:
       fail-fast: false
       matrix:
@@ -257,7 +257,7 @@ jobs:
     name: npm
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [hanzo-build-linux-amd64]
+    runs-on: [linux-amd64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -343,7 +343,7 @@ jobs:
     name: homebrew tap
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [hanzo-build-linux-amd64]
+    runs-on: [linux-amd64]
     steps:
       - name: Point the formula at this release
         env:
