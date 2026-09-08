@@ -376,6 +376,9 @@ enum Commands {
         link: Option<String>,
     },
 
+    /// Stop the local k3s microVM started by `hanzo up`
+    Down,
+
     /// Show the whole cloud: what is unhealthy first, then clusters,
     /// applications and the machines on the fleet
     Status,
@@ -871,6 +874,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 }
             }
         }
+        Commands::Down => commands::up::down()?,
         Commands::Status => commands::status::run(&mut config).await?,
         Commands::Version => commands::version::run(),
         Commands::Chain { command } => {
@@ -1201,6 +1205,7 @@ mod tests {
 
         assert!(Cli::try_parse_from(["hanzo", "up", "status"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "up", "down"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "down"]).is_ok());
 
         let cli = Cli::try_parse_from(["hanzo", "up", "--link", "dev"]).expect("--link parses");
         let Some(Commands::Up { link, .. }) = cli.command else { panic!("expected up") };

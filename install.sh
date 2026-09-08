@@ -17,7 +17,7 @@
 #   HANZO_INSTALL_BIN    binary + asset prefix  (default hanzo)
 #   HANZO_INSTALL_ALIAS  second name, same build (default hanzo-node; "" = none)
 #   HANZO_INSTALL_PREFIX install dir            (default ~/.local/bin)
-#   HANZO_VERSION        pin a tag              (default: latest release)
+#   HANZO_VERSION        pin a tag              (default: highest stable semver)
 #
 # The convention every published Hanzo binary follows, and the only thing this
 # needs to know: the asset is <BIN>-<os>-<arch>.tar.gz, it is accompanied by
@@ -36,6 +36,7 @@ need() { command -v "$1" >/dev/null 2>&1 || die "need $1 on PATH"; }
 
 need curl
 need tar
+need awk
 
 # A private repo answers 404 to an anonymous asset fetch, so carry a token when
 # one is available. Public installs need none.
@@ -79,10 +80,87 @@ esac
 target="${os}-${arch}"
 
 TAG="${HANZO_VERSION:-}"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# GitHub's /latest follows release chronology, which can select an older
+# maintenance release over a higher version. Parse release objects (including
+# compact JSON and escaped body text), then compare stable semantic versions.
+# Only releases containing this native product participate: MCP also publishes
+# independent JavaScript versions in the same repository.
+release_tags() {
+  awk -v bin="$BIN" '
+    function scalar(value) {
+      if (depth == 2) {
+        if (key[depth] == "tag_name") tag = value
+        if (key[depth] == "draft") draft = value
+        if (key[depth] == "prerelease") prerelease = value
+      }
+      if (depth == 4 && context[3] == "assets" && key[depth] == "name" &&
+          index(value, bin "-") == 1 && value ~ /\.tar\.gz$/) native = 1
+    }
+    { document = document $0 "\n" }
+    END {
+      for (i = 1; i <= length(document); i++) {
+        c = substr(document, i, 1)
+        if (c == "\"") {
+          value = ""; closed = 0
+          while (++i <= length(document)) {
+            c = substr(document, i, 1)
+            if (c == "\\") { value = value c substr(document, ++i, 1); continue }
+            if (c == "\"") { closed = 1; break }
+            value = value c
+          }
+          if (!closed) exit 3
+          nextchar = i + 1
+          while (substr(document, nextchar, 1) ~ /[ \t\r\n]/) nextchar++
+          if (substr(document, nextchar, 1) == ":") key[depth] = value
+          else scalar(value)
+        } else if (c == "{" || c == "[") {
+          context[depth + 1] = key[depth]; depth++
+          if (depth == 2 && c == "{") {
+            tag = ""; draft = ""; prerelease = ""; native = 0
+          }
+        } else if (c == "}" || c == "]") {
+          if (depth == 2 && c == "}") {
+            count++
+            version = tag; sub(/^(rust-)?v/, "", version)
+            if (native && draft == "false" && prerelease == "false" &&
+                version ~ /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z.-]+)?$/) {
+              sub(/\+.*/, "", version)
+              print version "\t" tag
+            }
+          }
+          delete key[depth]; delete context[depth]; depth--
+          if (depth < 0) exit 3
+        } else if (c ~ /[a-z0-9-]/) {
+          value = c
+          while (substr(document, i + 1, 1) ~ /[a-z0-9.+-]/)
+            value = value substr(document, ++i, 1)
+          scalar(value)
+        }
+      }
+      if (depth != 0) exit 3
+      print "COUNT\t" count + 0
+    }
+  ' "$1"
+}
+
 if [ -z "$TAG" ]; then
-  TAG="$(get_stdout "https://api.github.com/repos/$REPO/releases/latest" \
-        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
-  [ -n "$TAG" ] || die "could not resolve the latest release of $REPO.
+  page=1
+  : > "$tmp/tags"
+  while :; do
+    get "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page" "$tmp/releases.json" \
+      || die "could not list releases of $REPO"
+    release_tags "$tmp/releases.json" > "$tmp/page-tags" \
+      || die "invalid release metadata from $REPO"
+    sed '/^COUNT/d' "$tmp/page-tags" >> "$tmp/tags"
+    count="$(awk '$1 == "COUNT" { print $2 }' "$tmp/page-tags")"
+    [ "$count" -ge 100 ] || break
+    page=$((page + 1))
+  done
+  TAG="$(sort -t . -k1,1n -k2,2n -k3,3n "$tmp/tags" | tail -1 | awk '{print $2}')"
+  [ -n "$TAG" ] || die "could not resolve a stable native release of $REPO.
   If $REPO is private, set GH_TOKEN (or run \`gh auth login\`); or pin HANZO_VERSION=vX.Y.Z."
 fi
 
@@ -109,9 +187,6 @@ fetch() { # fetch <asset-name> <dest>
   curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" \
     "https://api.github.com/repos/$REPO/releases/assets/$id" -o "$2"
 }
-
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 
 printf '%s: %s %s\n' "$BIN" "$TAG" "$target"
 fetch "$asset" "$tmp/$asset" \

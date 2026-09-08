@@ -110,17 +110,33 @@ fn measure_path(dir: &Path) -> PathBuf {
     dir.join("measure.json")
 }
 
-fn write_pid(dir: &Path, pid: u32) -> Result<()> {
-    let f = dir.join("pid");
+/// The two processes a running cluster is: the supervisor, and the vm it
+/// holds. Each records its pid under its own name, and the pair is the whole
+/// reason `down` can finish a job a crash left half-done.
+const SUPERVISOR: &str = "supervisor";
+const VM: &str = "vm";
+
+fn write_pid(dir: &Path, who: &str, pid: u32) -> Result<()> {
+    let f = dir.join(format!("{who}.pid"));
     std::fs::write(&f, pid.to_string()).with_context(|| format!("writing {}", f.display()))
 }
 
-fn read_pid(dir: &Path) -> Option<i32> {
-    std::fs::read_to_string(dir.join("pid")).ok()?.trim().parse().ok()
+fn read_pid(dir: &Path, who: &str) -> Option<i32> {
+    std::fs::read_to_string(dir.join(format!("{who}.pid")))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
-fn clear_pid(dir: &Path) {
-    let _ = std::fs::remove_file(dir.join("pid"));
+fn clear_pid(dir: &Path, who: &str) {
+    let _ = std::fs::remove_file(dir.join(format!("{who}.pid")));
+}
+
+/// A recorded pid, if it is still that process. Returns `None` for both "never
+/// recorded" and "recorded and gone", which are the same thing to every caller.
+fn running(dir: &Path, who: &str) -> Option<i32> {
+    read_pid(dir, who).filter(|p| alive(*p))
 }
 
 /// Signal 0 — the standard liveness test, and the only way to tell a live
@@ -135,17 +151,46 @@ fn alive(_pid: i32) -> bool {
     false
 }
 
+/// Signal a recorded process and everything it started. Both processes we
+/// record are process-group leaders, so `-pid` reaches the group; the direct
+/// signal follows in case it is not one. `ESRCH` from either is the answer
+/// "already gone", which is the outcome we wanted.
+///
+/// The group is what makes this complete on x86-64, where the vm runs
+/// cloud-hypervisor as a child of its own: signalling only `hanzo-vm` would
+/// leave the hypervisor holding the guest's memory and its ports.
 #[cfg(unix)]
-fn terminate(pid: i32) -> Result<()> {
-    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-        bail!("signalling pid {pid}: {}", std::io::Error::last_os_error());
+fn signal(pid: i32, sig: i32) {
+    unsafe {
+        libc::kill(-pid, sig);
+        libc::kill(pid, sig);
     }
-    Ok(())
+}
+
+/// Ask `pid` to stop, and make sure it did: SIGTERM, then SIGKILL if it is
+/// still there after `grace`. Answers whether the process is gone.
+///
+/// Signalling only pids WE recorded is the whole discipline here. Scanning the
+/// process table for anything whose command line looks like a vm would also
+/// find a colleague's on a shared machine, and killing that is not a repair.
+#[cfg(unix)]
+fn stop(pid: i32, grace: Duration) -> bool {
+    for (sig, patience) in [(libc::SIGTERM, grace), (libc::SIGKILL, Duration::from_secs(2))] {
+        signal(pid, sig);
+        let deadline = Instant::now() + patience;
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if !alive(pid) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(not(unix))]
-fn terminate(_pid: i32) -> Result<()> {
-    bail!("the k3s supervisor is a unix daemon")
+fn stop(_pid: i32, _grace: Duration) -> bool {
+    false
 }
 
 /// The supervisor's phase, written where the foreground (and `status`) can read
@@ -486,7 +531,9 @@ fn write_kubeconfig(path: &Path, yaml: &str) -> Result<()> {
 /// dedicated process with nothing else to do.
 struct Rpc {
     child: Child,
-    stdin: ChildStdin,
+    /// Closing this is the designed stop: the guest sees EOF and shuts down.
+    /// An `Option` so [`Drop`] can close it while the child is still held.
+    stdin: Option<ChildStdin>,
     out: BufReader<ChildStdout>,
     next: u64,
 }
@@ -499,16 +546,25 @@ impl Rpc {
             .append(true)
             .open(log)
             .with_context(|| format!("opening {}", log.display()))?;
-        let mut child = Command::new(bin)
-            .args(args)
+        let mut cmd = Command::new(bin);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr))
+            .stderr(Stdio::from(stderr));
+        // Its own process group, so a later `stop` reaches whatever the vm
+        // started — on x86-64 that is a cloud-hypervisor process holding the
+        // guest's memory and its ports.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("starting {}", bin.display()))?;
         let stdin = child.stdin.take().expect("piped stdin");
         let out = BufReader::new(child.stdout.take().expect("piped stdout"));
-        Ok(Rpc { child, stdin, out, next: 0 })
+        Ok(Rpc { child, stdin: Some(stdin), out, next: 0 })
     }
 
     /// One protocol line. EOF is the vm being gone — its own last words are in
@@ -566,8 +622,12 @@ impl Rpc {
         self.next += 1;
         let id = self.next;
         let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        writeln!(self.stdin, "{req}").context("writing to hanzo-vm")?;
-        self.stdin.flush().context("flushing to hanzo-vm")?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("the vm's stdin is closed"))?;
+        writeln!(stdin, "{req}").context("writing to hanzo-vm")?;
+        stdin.flush().context("flushing to hanzo-vm")?;
         loop {
             let v = self.read_line()?;
             if v.get("id").and_then(Value::as_u64) != Some(id) {
@@ -630,6 +690,53 @@ impl Rpc {
     fn exited(&mut self) -> Option<std::process::ExitStatus> {
         self.child.try_wait().ok().flatten()
     }
+
+    /// Whether the child is finished within `patience`, reaping it if so. A
+    /// child we killed is a zombie until we collect it, and `kill(pid, 0)`
+    /// calls a zombie alive — so liveness for our OWN child is `try_wait`,
+    /// never a signal.
+    fn gone(&mut self, patience: Duration) -> bool {
+        let deadline = Instant::now() + patience;
+        loop {
+            if self.exited().is_some() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// The vm does not outlive the conversation. Closing its stdin is the designed
+/// stop and drop does that by itself — but only `hanzo-vm` is listening, and on
+/// x86-64 it holds a cloud-hypervisor of its own. So the group is signalled and
+/// the child is reaped here, where no error path can skip it.
+///
+/// Reaping through [`Child::wait`] rather than by polling for liveness is the
+/// distinction that matters for a process we own: a killed child is a zombie
+/// until its parent collects it, and `kill(pid, 0)` says a zombie is alive. The
+/// parent is us.
+impl Drop for Rpc {
+    fn drop(&mut self) {
+        // The leash, dropped: the guest sees EOF and shuts its disk down
+        // cleanly. Everything below is for a vm that does not take the hint.
+        self.stdin.take();
+        if self.gone(Duration::from_secs(2)) {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            let pid = self.child.id() as i32;
+            signal(pid, libc::SIGTERM);
+            if self.gone(Duration::from_secs(3)) {
+                return;
+            }
+            signal(pid, libc::SIGKILL);
+        }
+        let _ = self.child.wait();
+    }
 }
 
 // ---- the supervisor -----------------------------------------------------------
@@ -639,7 +746,7 @@ impl Rpc {
 /// closes the vm's stdin, and EOF is how the guest stops.
 pub async fn supervise(boot: Boot) -> Result<()> {
     let dir = up_dir()?;
-    write_pid(&dir, std::process::id())?;
+    write_pid(&dir, SUPERVISOR, std::process::id())?;
     // The same one resolver `hanzo up` used — by now the binary exists, but a
     // supervisor started by hand on a bare box bootstraps identically.
     let bin = vm::resolve_or_install().await?;
@@ -647,7 +754,11 @@ pub async fn supervise(boot: Boot) -> Result<()> {
     if let Err(e) = &out {
         write_state(&dir, &format!("error: {e:#}"));
     }
-    clear_pid(&dir);
+    // `drive` has returned, so its `Rpc` is dropped and the vm with it, by any
+    // path including the failing ones. A supervisor that was KILLED never gets
+    // here — that is the case `down` collects from the recorded pid.
+    clear_pid(&dir, VM);
+    clear_pid(&dir, SUPERVISOR);
     out
 }
 
@@ -657,6 +768,11 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
     write_state(dir, "boot");
     let log = dir.join("supervisor.log");
     let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
+    // Recorded before the first word of protocol: a supervisor killed between
+    // the spawn and `ready` still leaves a pid `down` can collect. Without it
+    // the vm outlives everything that knows about it, holding 6443 against the
+    // next boot.
+    write_pid(dir, VM, rpc.child.id())?;
     let launch = rpc.wait_ready()?;
 
     // The workload goes in before k3s starts, so the cluster's first act is to
@@ -703,10 +819,21 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
 /// behind, wait for `ready`, print the lines to paste.
 pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()> {
     let dir = up_dir()?;
-    if let Some(pid) = read_pid(&dir).filter(|p| alive(*p)) {
+    if let Some(pid) = running(&dir, SUPERVISOR) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
         println!("{} already running (supervisor pid {pid}, {state})", "●".green());
         return endpoints().and(finish_link(cfg, link).await);
+    }
+    // No supervisor, but a vm we started is still there: its supervisor died
+    // without closing anything, and it is holding 6443 against this boot. It is
+    // ours and nothing is watching it, so collect it rather than fail on a port
+    // conflict whose cause is invisible.
+    if let Some(pid) = running(&dir, VM) {
+        crate::warn(&format!("collecting an orphaned vm (pid {pid}) from an earlier boot"));
+        if !stop(pid, Duration::from_secs(10)) {
+            bail!("an earlier vm (pid {pid}) is still running — `hanzo down` first");
+        }
+        clear_pid(&dir, VM);
     }
 
     // Pinned HERE, once, in the foreground: the digest reaches the supervisor
@@ -843,8 +970,14 @@ async fn finish_link(cfg: &mut Config, link: Option<String>) -> Result<()> {
 /// pidfile answers for the first, the kubeconfig (via kubectl) for the second.
 pub async fn status() -> Result<()> {
     let dir = up_dir()?;
-    let Some(pid) = read_pid(&dir).filter(|p| alive(*p)) else {
-        println!("{} not running", "○".dimmed());
+    let Some(pid) = running(&dir, SUPERVISOR) else {
+        // A vm with no supervisor is the one state worth naming: it is running
+        // and nothing is driving it.
+        if let Some(vm) = running(&dir, VM) {
+            println!("{} a vm (pid {vm}) is running with no supervisor — `hanzo down`", "●".yellow());
+        } else {
+            println!("{} not running", "○".dimmed());
+        }
         return Ok(());
     };
     let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
@@ -868,24 +1001,41 @@ pub async fn status() -> Result<()> {
     Ok(())
 }
 
-/// `hanzo up down` — SIGTERM the supervisor; the vm's stdin closes with it and
-/// the guest stops on the EOF.
+/// `hanzo down` (and `hanzo up down`) — stop the supervisor, then make sure the
+/// vm it held is gone.
+///
+/// The supervisor first: closing the vm's stdin is the designed shutdown, and a
+/// guest that stops on the EOF flushes its disk. The vm second, because that
+/// path is not the only way this ends. A supervisor that was SIGKILLed, or died
+/// with the machine, never closed anything — and the vm it left behind holds
+/// 6443 against the next boot while nothing on the system explains why. Its
+/// recorded pid is how we collect it, and a pid we recorded is the only thing
+/// we will signal.
 pub fn down() -> Result<()> {
     let dir = up_dir()?;
-    let Some(pid) = read_pid(&dir).filter(|p| alive(*p)) else {
-        clear_pid(&dir);
+    let (supervisor, vm) = (running(&dir, SUPERVISOR), running(&dir, VM));
+    if supervisor.is_none() && vm.is_none() {
+        clear_pid(&dir, SUPERVISOR);
+        clear_pid(&dir, VM);
         println!("{} not running", "○".dimmed());
         return Ok(());
-    };
-    terminate(pid)?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(pid) && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
     }
-    if alive(pid) {
-        bail!("supervisor (pid {pid}) did not exit within 30s");
+
+    if let Some(pid) = supervisor {
+        if !stop(pid, Duration::from_secs(30)) {
+            bail!("supervisor (pid {pid}) did not exit");
+        }
+        clear_pid(&dir, SUPERVISOR);
     }
-    clear_pid(&dir);
+    // Re-read: a supervisor that exited cleanly reaped the vm and cleared it.
+    if let Some(pid) = running(&dir, VM) {
+        if !stop(pid, Duration::from_secs(10)) {
+            bail!("the vm (pid {pid}) did not exit");
+        }
+    }
+    clear_pid(&dir, VM);
+
+    write_state(&dir, "down");
     println!("{} down", "✓".green());
     Ok(())
 }
@@ -1076,25 +1226,130 @@ mod tests {
         }
     }
 
-    /// The pidfile lifecycle, proven on a real child (`sleep`): recorded, seen
-    /// alive, terminated, seen gone, cleared.
+    /// Start a process that is NOT our child, and answer with its pid and the
+    /// pid of a child of ITS own. That is the shape `stop` meets in production:
+    /// `down` signals a supervisor and a vm it did not spawn and cannot reap,
+    /// and the vm has a hypervisor under it on x86-64. Modelling them as our
+    /// own children would test something else — a killed child is a zombie
+    /// until its parent collects it, and `kill(pid, 0)` calls a zombie alive.
+    #[cfg(unix)]
+    fn orphan(dir: &Path) -> (i32, i32) {
+        let leader = dir.join("leader");
+        let child = dir.join("child");
+        // `set -m` is job control, which puts a background job in a process
+        // group of its OWN — the shape `Rpc::start` gives the vm. The shell we
+        // spawn exits as soon as it has backgrounded that job, so the leader is
+        // reparented to init and is never ours to reap.
+        let script = format!(
+            "set -m; sh -c 'sleep 60 & echo $! > {c}; echo $$ > {l}; wait' &",
+            c = child.display(),
+            l = leader.display()
+        );
+        Command::new("sh")
+            .args(["-c", &script])
+            .status()
+            .expect("sh runs");
+
+        let read = |p: &Path| -> Option<i32> {
+            std::fs::read_to_string(p).ok()?.trim().parse().ok().filter(|p| alive(*p))
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let (Some(l), Some(c)) = (read(&leader), read(&child)) {
+                return (l, c);
+            }
+            assert!(Instant::now() < deadline, "the orphan never started");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// The pidfile lifecycle, proven on a real process: recorded under its own
+    /// name, seen running, stopped, seen gone, cleared.
     #[cfg(unix)]
     #[test]
     fn the_pidfile_follows_a_real_process() {
         let dir = tempfile::tempdir().unwrap();
-        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-        write_pid(dir.path(), child.id()).unwrap();
+        let (pid, _) = orphan(dir.path());
+        write_pid(dir.path(), SUPERVISOR, pid as u32).unwrap();
 
-        let pid = read_pid(dir.path()).expect("pid reads back");
-        assert_eq!(pid as u32, child.id());
-        assert!(alive(pid));
+        assert_eq!(read_pid(dir.path(), SUPERVISOR), Some(pid));
+        assert_eq!(running(dir.path(), SUPERVISOR), Some(pid));
+        // The two names are separate files: a supervisor is not a vm.
+        assert_eq!(read_pid(dir.path(), VM), None);
 
-        terminate(pid).unwrap();
-        child.wait().unwrap(); // reap, so liveness is about the pid, not a zombie
-        assert!(!alive(pid));
+        assert!(stop(pid, Duration::from_secs(5)));
+        assert_eq!(running(dir.path(), SUPERVISOR), None, "stopped is not running");
 
-        clear_pid(dir.path());
-        assert_eq!(read_pid(dir.path()), None);
+        clear_pid(dir.path(), SUPERVISOR);
+        assert_eq!(read_pid(dir.path(), SUPERVISOR), None);
+    }
+
+    /// `stop` reaches what the process started, not just the process. On x86-64
+    /// the vm runs cloud-hypervisor as a child of its own, and signalling only
+    /// `hanzo-vm` would leave it holding the guest's memory and its ports.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_group_leader_takes_its_children() {
+        let dir = tempfile::tempdir().unwrap();
+        let (leader, child) = orphan(dir.path());
+        assert!(alive(child));
+
+        assert!(stop(leader, Duration::from_secs(5)));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(child) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(child), "the hypervisor outlived the vm's group");
+    }
+
+    /// Stopping something already gone is the outcome we wanted, not an error.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_what_is_already_gone_succeeds() {
+        let mut child = Command::new("true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(stop(pid, Duration::from_millis(200)));
+    }
+
+    /// The vm does not outlive its conversation, by any path. Dropping the Rpc
+    /// closes the leash and collects the child — and takes the group with it,
+    /// so a hypervisor started underneath goes too.
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_conversation_stops_the_vm() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("grandchild");
+        // A peer that ignores EOF and holds a child of its own: SIGTERM to the
+        // group is the only thing that ends it.
+        let script = format!(
+            "trap '' HUP; sleep 60 & echo $! > {}; sleep 60",
+            file.display()
+        );
+        let mut rpc = peer(dir.path(), &script);
+        let pid = rpc.child.id() as i32;
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let grandchild = loop {
+            if let Some(p) = std::fs::read_to_string(&file)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+                .filter(|p| alive(*p))
+            {
+                break p;
+            }
+            assert!(Instant::now() < deadline, "the grandchild never started");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+
+        drop(rpc);
+        assert!(!alive(pid), "the vm survived the drop");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(grandchild) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(grandchild), "the grandchild survived the drop");
     }
 
     /// The state file phases round-trip; the ready-watcher believes `ready`,
