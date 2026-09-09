@@ -1,22 +1,21 @@
 # The canonical fleet pipeline, driven by this repo's root hanzo.yml. Every
 # real detail lives there; this file is the trigger set and nothing else.
 #
-# It lives in `.hanzo/workflows/` because the runners are the GIT.HANZO.AI's. The pool
-# that answers `linux-amd64` is registered to git.hanzo.ai;
-# github.com has zero runners at any level. Hanzo Git reads BOTH
-# `.hanzo/workflows` and `.github/workflows`, so a caller left under `.github/`
-# runs twice — once here, and once on GitHub where nothing can ever pick it up
-# and the job simply queues. `.hanzo/` is the half that runs.
+# The runners are git.hanzo.ai's. The pool that answers `linux-amd64` is
+# registered there; github.com has none at any level, so a job github.com picks
+# up simply queues. Hanzo Git reads BOTH `.hanzo/workflows` and
+# `.github/workflows`, and one directory serving both planes is why this sits
+# under `.github/` now.
 #
-# The `uses:` pin below names `.hanzo/workflows/build.yml`, which is where
-# hanzoai/ci publishes the reusable and the only place it exists — the
-# `.github/workflows` path this used to name is a 404 at v1. Hanzo Git resolves
-# a reusable by name across its workflow directories, so the wrong path ran
-# anyway; the pin is now true rather than merely lucky.
+# The `uses:` pin names `.github/workflows/build.yml`, which is where hanzoai/ci
+# publishes the reusable. Checked at tag v1 against a deliberately bogus path as
+# the control: `.github/workflows/build.yml` resolves at 182,611 bytes and
+# `.hanzo/workflows/build.yml` answers Not Found, identically to the control.
+# The tag carries `.hanzo/workflows/cicd.yml` and no build.yml beside it.
 #
 # `repository_dispatch: spec-update` used to be here, described as the coupling
 # that carries a hanzoai/cloud release into this repo. It never carried one. The
-# CLI has no `.github/workflows` at all, so GitHub recorded the event and ran
+# CLI had no `.github/workflows` at the time, so GitHub recorded the event and ran
 # nothing; Hanzo Git has no repository_dispatch endpoint to send it to; and the
 # pin's whole history is one hand-typed commit against 104 runs. A trigger that
 # is undeliverable in both directions is not a coupling, it is a story about one,
