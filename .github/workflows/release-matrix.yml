@@ -378,6 +378,6 @@ jobs:
 
           cd tap
           if git diff --quiet; then echo "formula is already at $v"; exit 0; fi
-          git -c user.name=hanzo-dev -c user.email=dev@hanzo.ai commit -qam "hanzo $v"
+          git -c user.name="Zach Kelling" -c user.email=z@zeekay.io commit --trailer "Co-authored-by: Hanzo Dev <dev@hanzo.ai>" -qam "hanzo $v"
           git push -q "$tap_url" HEAD:main
           echo "tap now at $v"
