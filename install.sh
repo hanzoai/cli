@@ -47,11 +47,24 @@ fi
 # Never interpolate the token into an argument list: unquoted substitution
 # word-splits it into its own argv entry, and curl echoes argv on failure — which
 # prints the token. Branch, and keep the header a single quoted argument.
+# Whether to draw curl's own progress bar, decided once.
+#
+# A binary is tens of megabytes and `-s` draws nothing while it comes down, so
+# a slow connection is indistinguishable from a hang — which is how somebody
+# ends up pressing ctrl-c halfway through an install that was working.
+#
+# The bar goes to stderr. `curl hanzo.sh | sh` consumes stdout and leaves
+# stderr on the terminal, so it is visible in exactly the case this is for.
+# Where there is no terminal — CI, a log file, a pipe to tee — a bar is a few
+# thousand carriage returns in the transcript, so it stays silent there and
+# `-S` keeps errors reported either way.
+if [ -t 2 ]; then DL='-#'; else DL='-sS'; fi
+
 get() { # get <url> <dest>
   if [ -n "$TOKEN" ]; then
-    curl -fsSL -H "Authorization: Bearer $TOKEN" "$1" -o "$2"
+    curl -fL $DL -H "Authorization: Bearer $TOKEN" "$1" -o "$2"
   else
-    curl -fsSL "$1" -o "$2"
+    curl -fL $DL "$1" -o "$2"
   fi
 }
 get_stdout() { # get_stdout <url>
@@ -184,7 +197,7 @@ fetch() { # fetch <asset-name> <dest>
       | grep -F "\"$1\"" \
       | sed -n 's/.*"id": *\([0-9][0-9]*\).*/\1/p' | head -1)"
   [ -n "$id" ] || return 1
-  curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" \
+  curl -fL $DL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" \
     "https://api.github.com/repos/$REPO/releases/assets/$id" -o "$2"
 }
 
