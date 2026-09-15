@@ -61,6 +61,13 @@ jobs:
     runs-on: [linux-amd64]
     strategy:
       fail-fast: false
+      # ONE TARGET AT A TIME. Five cross-builds are five rustup downloads, five
+      # `cargo install cargo-zigbuild` compiles and five release links landing
+      # on one runner host's disk at once. On 2026-09-15 that host was already
+      # at ~50% iowait and 86% full, and the fleet's edge went down with it. A
+      # release that takes five times as long is worth a fleet that stays up;
+      # raise this only on a pool that is not sharing a disk with the cluster.
+      max-parallel: 1
       matrix:
         target:
           - { id: linux-amd64,   rust: x86_64-unknown-linux-gnu,  bin: hanzo,     host: true }
