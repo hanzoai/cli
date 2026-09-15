@@ -87,11 +87,22 @@ jobs:
       # Zig IS the C toolchain now. `build-essential` is only for the host link
       # (`cargo install`, the host test); OpenSSL and dbus dev packages are GONE
       # because nothing links them anymore. curl+jq publish; xz extracts Zig+SDK.
+      #
+      # ASK WHETHER THEY ARE THERE FIRST. The runner image carries all five, and
+      # the job runs as a user who cannot become root: under the sandbox `sudo`
+      # is on a nosuid filesystem and answers "effective uid is not 0", which
+      # failed v8.5.158 on every target in twenty seconds with the toolchain it
+      # wanted already installed. Installing stays for a bare machine that is
+      # missing one.
       - name: Toolchain deps
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential curl jq tar xz-utils
+          missing=""
+          for t in cc curl jq tar xz; do command -v "$t" >/dev/null || missing="$missing $t"; done
+          [ -n "$missing" ] || { echo "the toolchain is here: cc curl jq tar xz"; exit 0; }
+          apt=apt-get; [ "$(id -u)" = 0 ] || apt="sudo apt-get"
+          $apt update
+          $apt install -y --no-install-recommends build-essential curl jq tar xz-utils
 
       # `toolchain: stable` is STATED, not inferred from the `@stable` ref.
       # dtolnay/rust-toolchain reads the branch name out of `github.action_ref`
