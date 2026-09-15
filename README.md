@@ -145,6 +145,7 @@ One build, two names, so the two can never be different versions.
 
 ```bash
 hanzo init [template]           # scaffold a new project
+hanzo build [path] -t <ref> --push  # an image built by BuildKit in its own microVM; -o <file> for an OCI archive
 hanzo share <port|host:port|url># public https://<token>.share.hanzo.ai URL on the zero-trust fabric
 hanzo scan <path>               # find exposed secrets before you commit (non-zero on a find)
 hanzo mcp                       # every tool your org can call, in one list

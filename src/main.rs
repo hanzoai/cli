@@ -330,6 +330,14 @@ enum Commands {
     /// Scan local files for exposed secrets (exits non-zero on a find)
     Scan { path: PathBuf },
 
+    /// Build a container image with BuildKit, inside a hanzo-vm microVM
+    ///
+    /// Each build boots its own microVM from a BuildKit checkpoint and drives
+    /// the buildkitd in it with buildctl; the context and the registry
+    /// credentials stay on this machine. `-t REF --push` publishes the image,
+    /// `-o FILE` writes it as an OCI archive, and with neither it only builds.
+    Build(commands::build::Args),
+
     /// Run the hanzo-vm microVM CLI, args passed through verbatim
     ///
     /// The native microVM (hanzoai/vm): `hanzo vm run …`, `hanzo vm checkpoint
@@ -841,6 +849,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
         },
         Commands::Scan { path } => commands::scan::scan(path).await?,
+        Commands::Build(args) => commands::build::run(args).await?,
         Commands::Vm { args } => commands::vm::run(args).await?,
         Commands::Link {
             shell,
@@ -1081,7 +1090,7 @@ mod tests {
         // implementation — the variant dispatches to commands::auth::login, the
         // same function `auth login` reaches, and telemetry labels both "auth".
         // Everything else below stays under its noun.
-        for gone in ["logout", "whoami", "switch", "deploy", "build"] {
+        for gone in ["logout", "whoami", "switch", "deploy"] {
             assert!(
                 !names.iter().any(|n| n == gone),
                 "`{gone}` must no longer be a top-level subcommand"
@@ -1098,10 +1107,27 @@ mod tests {
             );
         }
         for present in
-            ["auth", "code", "config", "desktop", "dev", "engine", "runner", "scan", "up"]
+            ["auth", "build", "code", "config", "desktop", "dev", "engine", "runner", "scan", "up"]
         {
             assert!(names.iter().any(|n| n == present), "`{present}` must be a resource noun");
         }
+    }
+
+    /// `hanzo build` is its own command on the tree `main` parses, never a
+    /// coding-session task.
+    #[test]
+    fn build_is_a_command_not_a_task() {
+        let hand = Cli::command();
+        let m = commands::product::augment(hand.clone())
+            .try_get_matches_from(["hanzo", "build", "app", "-t", "ghcr.io/hanzoai/app:1.0.0", "--push"])
+            .expect("build parses");
+        assert!(commands::product::resolve(&hand, &m).is_none(), "build is not a cloud operation");
+        let Some(Commands::Build(args)) = Cli::from_arg_matches(&m).unwrap().command else {
+            panic!("expected build")
+        };
+        assert_eq!(args.context, PathBuf::from("app"));
+        assert_eq!(args.tags, ["ghcr.io/hanzoai/app:1.0.0"]);
+        assert!(args.push);
     }
 
     /// The identity model now lives under `auth` (login/logout/show/list/use/token).
