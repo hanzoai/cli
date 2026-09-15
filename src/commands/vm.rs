@@ -1,4 +1,6 @@
-//! `hanzo vm <args…>` — the native microVM CLI (hanzoai/vm), run verbatim.
+//! `hanzo vm <args…>` — the native microVM CLI (hanzoai/vm), run verbatim — and
+//! the one way this CLI drives it: install, checkpoints, and the stdio wire that
+//! `hanzo up` and `hanzo build` both boot their vms through.
 //!
 //! One resolver, no reimplementation: `hanzo-vm` on PATH, else the place its
 //! installer puts it (`~/.local/bin/hanzo-vm`) — and when neither exists, or the
@@ -16,11 +18,18 @@
 
 use crate::commands::launch;
 use anyhow::{anyhow, bail, Context, Result};
+use base64::Engine;
+use colored::*;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
+use vm_measure::{attest, Log};
 
 /// The hanzoai/vm release this CLI installs and spawns.
-pub(crate) const VM_VERSION: &str = "2.0.1";
+pub(crate) const VM_VERSION: &str = "2.0.2";
 
 /// The Virtualization.framework entitlement (hanzoai/vm's `vm.entitlements`),
 /// vendored so signing needs no second download.
@@ -100,7 +109,7 @@ async fn install() -> Result<PathBuf> {
         .join(".local/bin");
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let bin = dir.join("hanzo-vm");
-    extract(&tarball, &bin)?;
+    extract(&tarball, "hanzo-vm", &bin)?;
     #[cfg(target_os = "macos")]
     codesign(&bin)?;
     Ok(bin)
@@ -108,7 +117,7 @@ async fn install() -> Result<PathBuf> {
 
 /// One GET, whole body, non-2xx is an error (a release asset either exists in
 /// full or the install is off).
-async fn fetch(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
+pub(crate) async fn fetch(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
     let resp = http
         .get(url)
         .send()
@@ -124,13 +133,13 @@ async fn fetch(http: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-/// Unpack the release tarball's `hanzo-vm` entry to `dest`, atomically (temp
-/// file in the same directory, then rename) and executable.
-fn extract(tar_gz: &[u8], dest: &Path) -> Result<()> {
+/// Unpack the tarball entry whose file name is `name` to `dest`, atomically
+/// (temp file in the same directory, then rename) and executable.
+pub(crate) fn extract(tar_gz: &[u8], name: &str, dest: &Path) -> Result<()> {
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(tar_gz));
     for entry in archive.entries().context("reading the release tarball")? {
         let mut entry = entry.context("reading a tarball entry")?;
-        if entry.path().context("tarball entry path")?.file_name() != Some("hanzo-vm".as_ref()) {
+        if entry.path().context("tarball entry path")?.file_name() != Some(name.as_ref()) {
             continue;
         }
         let tmp = dest.with_extension("tmp");
@@ -145,7 +154,7 @@ fn extract(tar_gz: &[u8], dest: &Path) -> Result<()> {
         std::fs::rename(&tmp, dest).with_context(|| format!("installing {}", dest.display()))?;
         return Ok(());
     }
-    bail!("the release tarball has no hanzo-vm binary");
+    bail!("the release tarball has no {name} binary");
 }
 
 /// Ad-hoc sign with the virtualization entitlement. Without it the kernel
@@ -169,6 +178,369 @@ fn codesign(bin: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+// ---- booting one ----------------------------------------------------------------
+
+/// The argv a driver boots a vm with: the stdio wire, the network, the shape, a
+/// `-p host:guest` per forward, and the checkpoint the disk starts from.
+pub(crate) fn run_args(
+    cpus: u32,
+    memory_mb: u64,
+    disk_mb: u64,
+    forwards: &[(u16, u16)],
+    from: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = ["run", "--stdio", "--allow-net"].map(String::from).to_vec();
+    for (flag, value) in [
+        ("--cpus", cpus as u64),
+        ("--memory", memory_mb),
+        ("--disk-size", disk_mb),
+    ] {
+        args.extend([flag.to_string(), value.to_string()]);
+    }
+    for (host, guest) in forwards {
+        args.extend(["-p".to_string(), format!("{host}:{guest}")]);
+    }
+    args.extend(["--from".to_string(), from.to_string()]);
+    args
+}
+
+/// Create checkpoint `name` when the store lacks it — in the FOREGROUND, with
+/// inherited stdio, so its one-time download is visible rather than a silent
+/// minute.
+pub(crate) fn ensure_checkpoint(bin: &Path, name: &str, install: &str) -> Result<()> {
+    let out = Command::new(bin)
+        .args(["checkpoint", "list"])
+        .output()
+        .with_context(|| format!("running {} checkpoint list", bin.display()))?;
+    if has_checkpoint(&String::from_utf8_lossy(&out.stdout), name) {
+        return Ok(());
+    }
+    println!("{} creating the {name} checkpoint (once)…", "→".cyan());
+    let status = Command::new(bin)
+        .args(checkpoint_args(name, install))
+        .status()
+        .with_context(|| format!("running {} checkpoint create", bin.display()))?;
+    if !status.success() {
+        bail!("checkpoint create failed ({status})");
+    }
+    Ok(())
+}
+
+/// The one-time checkpoint: `install` run in the base image, the disk saved as
+/// `name`.
+pub(crate) fn checkpoint_args(name: &str, install: &str) -> Vec<String> {
+    [
+        "checkpoint",
+        "create",
+        name,
+        "--allow-net",
+        "--",
+        "sh",
+        "-c",
+        install,
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// Whether `hanzo-vm checkpoint list` names ours (the first column of a row).
+fn has_checkpoint(listing: &str, name: &str) -> bool {
+    listing
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .any(|first| first == name)
+}
+
+// ---- the processes ----------------------------------------------------------------
+
+/// Signal 0 — the standard liveness test, and the only way to tell a live
+/// process from a stale pid.
+#[cfg(unix)]
+pub(crate) fn alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn alive(_pid: i32) -> bool {
+    false
+}
+
+/// Signal a process and everything it started. Every vm this CLI starts is a
+/// process-group leader, so `-pid` reaches the group; the direct signal
+/// follows in case it is not one. `ESRCH` from either is the answer
+/// "already gone", which is the outcome we wanted.
+///
+/// The group is what makes this complete on x86-64, where the vm runs
+/// cloud-hypervisor as a child of its own: signalling only `hanzo-vm` would
+/// leave the hypervisor holding the guest's memory and its ports.
+#[cfg(unix)]
+pub(crate) fn signal(pid: i32, sig: i32) {
+    unsafe {
+        libc::kill(-pid, sig);
+        libc::kill(pid, sig);
+    }
+}
+
+// ---- the stdio wire -------------------------------------------------------------
+
+/// The `hanzo-vm --stdio` peer: JSON-lines JSON-RPC 2.0 on the child's
+/// stdin/stdout (`vm-cli/src/stdio.rs`). Spoken BLOCKING — a driver holds one vm
+/// and has nothing else to do while it waits.
+pub(crate) struct Rpc {
+    pub(crate) child: Child,
+    /// Closing this is the designed stop: the guest sees EOF and shuts down.
+    /// An `Option` so [`Drop`] can close it while the child is still held.
+    stdin: Option<ChildStdin>,
+    out: BufReader<ChildStdout>,
+    next: u64,
+    /// Where the vm's stderr goes, named when it stops mid-conversation.
+    log: PathBuf,
+}
+
+impl Rpc {
+    /// Spawn the vm with its stderr appended to `log`; stdout is the protocol.
+    pub(crate) fn start(bin: &Path, args: &[String], log: &Path) -> Result<Rpc> {
+        let stderr = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .with_context(|| format!("opening {}", log.display()))?;
+        let mut cmd = Command::new(bin);
+        cmd.args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::from(stderr));
+        // Its own process group, so a later `stop` reaches whatever the vm
+        // started — on x86-64 that is a cloud-hypervisor process holding the
+        // guest's memory and its ports.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("starting {}", bin.display()))?;
+        let stdin = child.stdin.take().expect("piped stdin");
+        let out = BufReader::new(child.stdout.take().expect("piped stdout"));
+        Ok(Rpc {
+            child,
+            stdin: Some(stdin),
+            out,
+            next: 0,
+            log: log.to_path_buf(),
+        })
+    }
+
+    /// One protocol line. EOF is the vm being gone — its own last words are in
+    /// the log, so say where to look rather than guessing why.
+    fn read_line(&mut self) -> Result<Value> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if self.out.read_line(&mut line)? == 0 {
+                bail!(
+                    "hanzo-vm exited mid-conversation — see {}",
+                    self.log.display()
+                );
+            }
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(t) {
+                return Ok(v);
+            }
+        }
+    }
+
+    /// Block until the guest is up, and come back with what was booted.
+    ///
+    /// The vm sends its launch measurement before it says `ready` — that
+    /// ordering is the point: the register is over the images the hypervisor
+    /// was handed, taken before the guest could touch anything. A vm that
+    /// reports no measurement is refused rather than run unmeasured.
+    pub(crate) fn wait_ready(&mut self) -> Result<Log> {
+        let mut launch = None;
+        loop {
+            let line = self.read_line()?;
+            match line.get("method").and_then(Value::as_str) {
+                Some("measurement") => {
+                    let params = line
+                        .get("params")
+                        .ok_or_else(|| anyhow!("the vm sent a measurement with no log"))?;
+                    launch = Some(
+                        serde_json::from_value(params.clone())
+                            .context("reading the vm's launch measurement")?,
+                    );
+                }
+                Some("ready") => {
+                    return launch.ok_or_else(|| {
+                        anyhow!("this hanzo-vm booted without reporting a measurement")
+                    })
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// One call: request out, notifications skipped, this id's result back. An
+    /// `error` member is our error, never a silent null.
+    fn call(&mut self, method: &str, params: Value) -> Result<Value> {
+        self.next += 1;
+        let id = self.next;
+        let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("the vm's stdin is closed"))?;
+        writeln!(stdin, "{req}").context("writing to hanzo-vm")?;
+        stdin.flush().context("flushing to hanzo-vm")?;
+        loop {
+            let v = self.read_line()?;
+            if v.get("id").and_then(Value::as_u64) != Some(id) {
+                continue; // a notification (spawned k3s narrating), or nothing of ours
+            }
+            if let Some(e) = v.get("error") {
+                bail!("{method}: {e}");
+            }
+            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
+        }
+    }
+
+    /// Run to completion in the guest: (stdout, stderr, exit code).
+    pub(crate) fn exec(&mut self, argv: &[&str]) -> Result<(String, String, i64)> {
+        let r = self.call("exec", json!({ "argv": argv }))?;
+        let s = |k: &str| {
+            r.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let code = r.get("exit_code").and_then(Value::as_i64).unwrap_or(-1);
+        Ok((s("stdout"), s("stderr"), code))
+    }
+
+    /// Start a long-lived guest process; its output arrives as notifications,
+    /// which [`Rpc::call`] skips past.
+    pub(crate) fn spawn(&mut self, argv: &[&str]) -> Result<String> {
+        let r = self.call("spawn", json!({ "argv": argv }))?;
+        r.get("pid")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("spawn answered without a pid: {r}"))
+    }
+
+    /// Write a guest file (the wire carries it base64), creating its directory.
+    pub(crate) fn write_file(&mut self, path: &str, content: &str) -> Result<()> {
+        let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("/");
+        self.call("mkdir", json!({ "path": dir, "recursive": true }))?;
+        let content = base64::engine::general_purpose::STANDARD.encode(content);
+        self.call("write_file", json!({ "path": path, "content": content }))?;
+        Ok(())
+    }
+
+    /// Ask the guest's platform for a report over `bind`. On hardware with
+    /// neither `/dev/sev-guest` nor `/dev/tdx_guest` the answer is `none`,
+    /// which the document records as the fact it is.
+    pub(crate) fn attest(&mut self, bind: &str) -> Result<attest::Status> {
+        let r = self.call("attest", json!({ "bind": bind }))?;
+        serde_json::from_value(r).context("reading the guest's attestation status")
+    }
+
+    /// Read a guest file (the wire carries it base64).
+    pub(crate) fn read_file(&mut self, path: &str) -> Result<Vec<u8>> {
+        let r = self.call("read_file", json!({ "path": path }))?;
+        let content = r
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("read_file answered without content: {r}"))?;
+        base64::engine::general_purpose::STANDARD
+            .decode(content)
+            .context("decode read_file content")
+    }
+
+    pub(crate) fn exited(&mut self) -> Option<std::process::ExitStatus> {
+        self.child.try_wait().ok().flatten()
+    }
+
+    /// Whether the child is finished within `patience`, reaping it if so. A
+    /// child we killed is a zombie until we collect it, and `kill(pid, 0)`
+    /// calls a zombie alive — so liveness for our OWN child is `try_wait`,
+    /// never a signal.
+    fn gone(&mut self, patience: Duration) -> bool {
+        let deadline = Instant::now() + patience;
+        loop {
+            if self.exited().is_some() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// The vm does not outlive the conversation. Closing its stdin is the designed
+/// stop and drop does that by itself — but only `hanzo-vm` is listening, and on
+/// x86-64 it holds a cloud-hypervisor of its own. So the group is signalled and
+/// the child is reaped here, where no error path can skip it.
+///
+/// Reaping through [`Child::wait`] rather than by polling for liveness is the
+/// distinction that matters for a process we own: a killed child is a zombie
+/// until its parent collects it, and `kill(pid, 0)` says a zombie is alive. The
+/// parent is us.
+impl Drop for Rpc {
+    fn drop(&mut self) {
+        // The leash, dropped: the guest sees EOF and shuts its disk down
+        // cleanly. Everything below is for a vm that does not take the hint.
+        self.stdin.take();
+        if self.gone(Duration::from_secs(2)) {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            let pid = self.child.id() as i32;
+            signal(pid, libc::SIGTERM);
+            if self.gone(Duration::from_secs(3)) {
+                return;
+            }
+            signal(pid, libc::SIGKILL);
+        }
+        let _ = self.child.wait();
+    }
+}
+
+/// Test peers for the wire, shared by every module that drives one.
+#[cfg(test)]
+pub(crate) mod wire {
+    use super::*;
+
+    /// A fake peer speaking the real protocol, driven by a script.
+    pub(crate) fn peer(dir: &Path, script: &str) -> Rpc {
+        Rpc::start(
+            Path::new("sh"),
+            &["-c".into(), script.into()],
+            &dir.join("log"),
+        )
+        .unwrap()
+    }
+
+    /// One `printf` of a protocol line, single-quoted for `sh`.
+    pub(crate) fn line(json: &str) -> String {
+        format!("printf '%s\\n' '{json}'; ")
+    }
+
+    /// A launch log as the vm would report one.
+    pub(crate) fn launched() -> Log {
+        let mut log = Log::default();
+        log.text("kernel", "K");
+        log.text("cmdline", "root=/dev/vda rw");
+        log
+    }
 }
 
 // ---- pure helpers (unit-tested) -----------------------------------------------
@@ -225,7 +597,7 @@ fn older(found: &str, pin: &str) -> bool {
 
 /// Compare the tarball against its `.sha256` sidecar (`<hex>  <filename>`).
 /// A mismatch refuses the install — never run what we cannot verify.
-fn verify_sha256(bytes: &[u8], sidecar: &str, asset: &str) -> Result<()> {
+pub(crate) fn verify_sha256(bytes: &[u8], sidecar: &str, asset: &str) -> Result<()> {
     let want = sidecar
         .split_whitespace()
         .next()
@@ -246,6 +618,7 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::wire::*;
     use super::*;
 
     #[test]
@@ -262,6 +635,9 @@ mod tests {
         // A vm older than the pin is replaced — 2.0.0 has no measurement to
         // report, and `hanzo up` refuses a vm that reports none.
         assert!(older("2.0.0", VM_VERSION));
+        // 2.0.1's `run --stdio` could outlive its closed stdin, holding the
+        // forwarded ports; closing stdin is how every driver here stops a vm.
+        assert!(older("2.0.1", VM_VERSION));
         assert!(older("0.1.3", "2.0.0"));
         assert!(older("1.9.9", "2.0.0"));
         assert!(!older("2.0.0", "2.0.0"));
@@ -310,7 +686,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("hanzo-vm");
-        extract(&tarball, &dest).unwrap();
+        extract(&tarball, "hanzo-vm", &dest).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), body);
         #[cfg(unix)]
         {
@@ -335,7 +711,105 @@ mod tests {
         let tarball = gz.finish().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let err = extract(&tarball, &dir.path().join("hanzo-vm")).unwrap_err();
+        let err = extract(&tarball, "hanzo-vm", &dir.path().join("hanzo-vm")).unwrap_err();
         assert!(err.to_string().contains("no hanzo-vm binary"), "{err}");
+    }
+
+    /// `checkpoint list` is parsed by its first column; the header is not a
+    /// checkpoint and prose ("No checkpoints found.") is not one either.
+    #[test]
+    fn the_checkpoint_listing_is_read_by_name() {
+        let listing = "NAME                       SIZE CREATED\nk3s                      512 MB 2h ago\nbuild                    128 MB 1d ago\n";
+        assert!(has_checkpoint(listing, "k3s"));
+        assert!(has_checkpoint(listing, "build"));
+        assert!(!has_checkpoint(listing, "k3"));
+        assert!(!has_checkpoint("", "k3s"));
+        assert!(!has_checkpoint("No checkpoints found.\n", "k3s"));
+    }
+
+    /// The vm does not outlive its conversation, by any path. Dropping the Rpc
+    /// closes the leash and collects the child — and takes the group with it,
+    /// so a hypervisor started underneath goes too.
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_conversation_stops_the_vm() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("grandchild");
+        // A peer that ignores EOF and holds a child of its own: SIGTERM to the
+        // group is the only thing that ends it.
+        let script = format!(
+            "trap '' HUP; sleep 60 & echo $! > {}; sleep 60",
+            file.display()
+        );
+        let rpc = peer(dir.path(), &script);
+        let pid = rpc.child.id() as i32;
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let grandchild = loop {
+            if let Some(p) = std::fs::read_to_string(&file)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+                .filter(|p| alive(*p))
+            {
+                break p;
+            }
+            assert!(Instant::now() < deadline, "the grandchild never started");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+
+        drop(rpc);
+        assert!(!alive(pid), "the vm survived the drop");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(grandchild) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(grandchild), "the grandchild survived the drop");
+    }
+
+    /// The RPC client against a fake peer: the measurement before `ready`,
+    /// notifications skipped, results matched by id, errors surfaced.
+    #[test]
+    fn the_rpc_client_speaks_the_stdio_protocol() {
+        let dir = tempfile::tempdir().unwrap();
+        let measurement = json!({"jsonrpc": "2.0", "method": "measurement", "params": launched()});
+        let script = format!(
+            "{}{}{}{}{}{}{}",
+            line(&measurement.to_string()),
+            line(r#"{"jsonrpc":"2.0","method":"ready"}"#),
+            "read line; ",
+            line(
+                r#"{"jsonrpc":"2.0","method":"output","params":{"pid":"p1","stream":"stdout","data":""}}"#
+            ),
+            line(r#"{"jsonrpc":"2.0","id":1,"result":{"stdout":"ok","stderr":"","exit_code":0}}"#),
+            "read line; ",
+            line(r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"exec failed"}}"#),
+        );
+        let mut rpc = peer(dir.path(), &script);
+        assert_eq!(rpc.wait_ready().unwrap(), launched());
+
+        let (out, err, code) = rpc.exec(&["true"]).unwrap();
+        assert_eq!((out.as_str(), err.as_str(), code), ("ok", "", 0));
+
+        let e = rpc.exec(&["false"]).unwrap_err();
+        assert!(e.to_string().contains("exec failed"), "{e}");
+
+        // The peer is done; the next read is an honest EOF error, not a hang.
+        assert!(rpc.read_line().is_err());
+        let _ = rpc.child.wait();
+    }
+
+    /// A vm that says `ready` without saying what it booted is refused. An
+    /// unmeasured cluster is not one this can file a document about, and
+    /// filing nothing quietly would be worse than not starting.
+    #[test]
+    fn a_vm_that_reports_no_measurement_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut rpc = peer(dir.path(), &line(r#"{"jsonrpc":"2.0","method":"ready"}"#));
+        let e = rpc.wait_ready().unwrap_err();
+        assert!(
+            e.to_string().contains("without reporting a measurement"),
+            "{e}"
+        );
+        let _ = rpc.child.wait();
     }
 }
