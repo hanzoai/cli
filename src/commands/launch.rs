@@ -14,7 +14,7 @@ use std::process::Command;
 
 /// Resolve a binary: `$env` (when it points at a real file), then each PATH
 /// candidate in order. `None` when nothing resolves — the caller crafts the
-/// honest, binary-specific error (engine vs cloud vs arcd differ).
+/// honest, binary-specific error (engine and cloud differ).
 pub fn resolve(env: &str, candidates: &[&str]) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(env) {
         let pb = PathBuf::from(p);

@@ -523,12 +523,8 @@ enum EngineCommands {
 
 #[derive(Subcommand)]
 enum RunnerCommands {
-    /// Register + run this machine as a CI runner
+    /// Register + run this machine as a CI runner (foreground; Ctrl-C stops it)
     Start,
-    /// Stop the runner on this machine
-    Stop,
-    /// Report the runner's state
-    Status,
 }
 
 #[derive(Subcommand)]
@@ -864,8 +860,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         },
         Commands::Runner { command } => match command {
             RunnerCommands::Start => commands::runner::start().await?,
-            RunnerCommands::Stop => commands::runner::stop().await?,
-            RunnerCommands::Status => commands::runner::status().await?,
         },
         Commands::Up { command, cpus, memory, disk_size, cloud, attest, link } => {
             let boot =

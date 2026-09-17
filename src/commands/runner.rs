@@ -1,36 +1,26 @@
 //! `hanzo runner` — provide THIS machine as a Hanzo CI runner.
 //!
-//! The runner daemon is `arcd` (Hanzo's self-hosted CI on our own fleet — NO
-//! GitHub builders). We resolve an EXISTING `arcd` binary and pass the verb
-//! through — `start` runs the runner, `stop` stops it, `status` reports it. We
-//! never BUILD here (CI/CD does); an absent `arcd` is an honest error naming the
-//! override. This is a transparent launcher over `arcd`, not a reimplementation.
+//! The runner is the cloud binary's own `runner` command, so this is a
+//! transparent launcher over it rather than a reimplementation. It runs in the
+//! FOREGROUND, which is how it runs: the process owns the terminal and Ctrl-C
+//! stops it, so there is nothing else to start or stop. We never BUILD here
+//! (CI/CD does); an absent binary is an honest error naming the override.
 
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 
 use crate::commands::launch;
 
-fn arcd() -> Result<PathBuf> {
-    launch::resolve("HANZO_RUNNER_BIN", &["arcd"]).ok_or_else(|| {
+fn cloud() -> Result<PathBuf> {
+    launch::resolve("HANZO_CLOUD_BIN", &["hanzo-cloud", "cloud"]).ok_or_else(|| {
         anyhow!(
-            "arcd not found. Set HANZO_RUNNER_BIN=/path/to/arcd or put `arcd` on PATH (the \
-             self-hosted CI runner; we do not build it here — CI/CD does)."
+            "cloud binary not found. Set HANZO_CLOUD_BIN=/path/to/hanzo-cloud or put \
+             `hanzo-cloud` on PATH — it carries the runner; we do not build it here (CI/CD does)."
         )
     })
 }
 
 /// `hanzo runner start` — register + run this machine as a CI runner.
 pub async fn start() -> Result<()> {
-    launch::exec(&arcd()?, &["start".to_string()])
-}
-
-/// `hanzo runner stop` — stop the runner on this machine.
-pub async fn stop() -> Result<()> {
-    launch::exec(&arcd()?, &["stop".to_string()])
-}
-
-/// `hanzo runner status` — report the runner's state.
-pub async fn status() -> Result<()> {
-    launch::exec(&arcd()?, &["status".to_string()])
+    launch::exec(&cloud()?, &["runner".to_string()])
 }
