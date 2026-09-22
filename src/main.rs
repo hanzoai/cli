@@ -407,15 +407,15 @@ enum Commands {
     /// Print the CLI version
     Version,
 
-    /// Open the interactive operations, agent sandboxes, and GPU fleet dashboard
-    #[command(visible_alias = "ui", visible_alias = "gui", visible_alias = "console")]
-    Dashboard,
+    /// Open the interactive fleet operations console (sandboxes, compute nodes, GPU mesh)
+    #[command(visible_alias = "dashboard", visible_alias = "ui", visible_alias = "gui")]
+    Console,
 
-    /// Agent sandboxes & workspaces (matches Docker `sbx` CLI: `sbx run <agent>`, `sbx ls`)
-    #[command(alias = "sandboxes")]
-    Sbx {
+    /// Agent sandboxes & isolated execution environments (Docker `sbx` compatibility: `sbx run`, `sbx ls`)
+    #[command(visible_alias = "sbx", alias = "sandboxes")]
+    Sandbox {
         #[command(subcommand)]
-        command: Option<SbxCommands>,
+        command: Option<SandboxCommands>,
     },
 
     /// List active sandboxes & agent workspaces (matches `sbx ls`)
@@ -623,9 +623,9 @@ enum HostCommands {
 /// The local k3s lifecycle: bare `hanzo up` boots it, these manage it.
 #[derive(Subcommand)]
 enum UpCommands {
-    /// Interactive Sandboxes & Agent Workspaces dashboard
-    #[command(alias = "ui")]
-    Dashboard,
+    /// Interactive fleet operations console & sandboxes dashboard
+    #[command(alias = "dashboard", alias = "ui")]
+    Console,
     /// Supervisor and node status (node via ~/.kube/hanzo.yaml)
     Status,
     /// Stop the supervisor — the VM dies with it
@@ -639,7 +639,7 @@ enum UpCommands {
 }
 
 #[derive(Subcommand)]
-enum SbxCommands {
+enum SandboxCommands {
     /// Run a coding agent in an isolated sandbox (matches `sbx run <agent>`)
     Run(CodeArgs),
     /// List active sandboxes & agent workspaces
@@ -668,7 +668,8 @@ enum SbxCommands {
         #[arg(long)]
         model: Option<String>,
     },
-    /// Open the interactive Sandboxes TUI dashboard
+    /// Open the interactive fleet operations console
+    #[command(alias = "dashboard", alias = "console")]
     Ui,
 }
 
@@ -761,20 +762,37 @@ async fn main() -> Result<()> {
     // cloud CLI. Everything else (including `hanzo <group> --help` and the
     // `hanzo "task"` coding session) parses normally; `-h` keeps clap's terse
     // summary as the short form.
-    {
-        let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let is_sbx_binary = args
+        .first()
+        .map(PathBuf::from)
+        .and_then(|p| p.file_name().map(|n| n == "sbx"))
+        == Some(true);
+
+    if is_sbx_binary {
+        if args.len() == 1 {
+            return commands::up::dashboard();
+        }
+        if args.len() > 1 && args[1] != "sandbox" && args[1] != "sbx" {
+            let mut rewritten = vec![args[0].clone(), "sandbox".to_string()];
+            rewritten.extend(args.into_iter().skip(1));
+            args = rewritten;
+        }
+    } else {
+        let argv: Vec<String> = args.iter().skip(1).cloned().collect();
         if argv.is_empty() || argv == ["--help"] || argv == ["help"] {
             print!("{}", commands::man::page(&Cli::command()));
             return Ok(());
         }
     }
+
     // ONE tree: the derive command, augmented with the generated products — each
     // at its own name, or absorbed into the local command that owns that name.
     // One parse, one dispatch. The hand-written tree is kept because it is the
     // only thing that knows which names under an absorbed command are local, and
     // `resolve` must ask exactly what `augment` asked.
     let hand = Cli::command();
-    let matches = commands::product::augment(hand.clone()).get_matches();
+    let matches = commands::product::augment(hand.clone()).get_matches_from(args);
 
     // `hanzo --version` and `hanzo -V` ARE `hanzo version` — one function, three
     // spellings. Answered before logging, config and every dispatch, so the
@@ -821,22 +839,6 @@ async fn main() -> Result<()> {
             outcome
         }
         None => {
-            // If invoked directly as the `sbx` binary with no arguments, open the
-            // interactive sandboxes & operations dashboard.
-            let is_sbx_binary = std::env::args()
-                .next()
-                .map(PathBuf::from)
-                .and_then(|p| p.file_name().map(|n| n == "sbx"))
-                == Some(true);
-
-            if is_sbx_binary {
-                let started = std::time::Instant::now();
-                let outcome = commands::up::dashboard();
-                telemetry.command("dashboard", started.elapsed(), outcome.is_ok());
-                telemetry.flush().await;
-                return outcome;
-            }
-
             // A truly-bare `hanzo [flags] [task]`: the entry point, so linking is
             // forced on. Everything past that is the SAME session path `hanzo
             // code` takes — `code_session`, not a second launcher.
@@ -984,7 +986,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 // second one: what a machine IS is a question, not a boot.
                 None if attest => commands::up::attest()?,
                 None => commands::up::up(&mut config, boot, link, ui, no_ui).await?,
-                Some(UpCommands::Dashboard) => commands::up::dashboard()?,
+                Some(UpCommands::Console) => commands::up::dashboard()?,
                 Some(UpCommands::Status) => commands::up::status().await?,
                 Some(UpCommands::Down) => commands::up::down()?,
                 Some(UpCommands::Supervise) => commands::up::supervise(boot).await?,
@@ -997,19 +999,19 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
-        Commands::Dashboard => commands::up::dashboard()?,
-        Commands::Sbx { command } => match command {
-            Some(SbxCommands::Run(args)) => code_session(&mut config, args, Target::Repo).await?,
-            Some(SbxCommands::List) => list_sandboxes(),
-            Some(SbxCommands::Explore) => explore_sandboxes(),
-            Some(SbxCommands::Launch { template, node }) => {
+        Commands::Console => commands::up::dashboard()?,
+        Commands::Sandbox { command } => match command {
+            Some(SandboxCommands::Run(args)) => code_session(&mut config, args, Target::Repo).await?,
+            Some(SandboxCommands::List) => list_sandboxes(),
+            Some(SandboxCommands::Explore) => explore_sandboxes(),
+            Some(SandboxCommands::Launch { template, node }) => {
                 println!("✓ Launched sandboxed environment `{template}` on node `{node}`.");
-                println!("  Attach to shell: `hanzo link` or press Enter in `hanzo dashboard`.");
+                println!("  Attach to shell: `hanzo link` or press Enter in `hanzo console`.");
             }
-            Some(SbxCommands::Models) => list_models(),
-            Some(SbxCommands::Pull { model, node }) => pull_model(&model, &node).await?,
-            Some(SbxCommands::Load { node, model }) => load_cluster_fleet(&node, model.as_deref()).await?,
-            Some(SbxCommands::Ui) | None => commands::up::dashboard()?,
+            Some(SandboxCommands::Models) => list_models(),
+            Some(SandboxCommands::Pull { model, node }) => pull_model(&model, &node).await?,
+            Some(SandboxCommands::Load { node, model }) => load_cluster_fleet(&node, model.as_deref()).await?,
+            Some(SandboxCommands::Ui) | None => commands::up::dashboard()?,
         },
         Commands::Load { node, model } => load_cluster_fleet(&node, model.as_deref()).await?,
         Commands::Ls => list_sandboxes(),
@@ -1116,7 +1118,7 @@ fn explore_sandboxes() {
     println!("  {:<18} {:<18} {:<30} {}", "claude-env", "node-lts/git", "Claude Code (Anthropic)", "MicroVM / VirtioFS");
     println!("  {:<18} {:<18} {:<30} {}", "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)", "MicroVM / Workspace");
     println!("  {:<18} {:<18} {:<30} {}", "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)", "Metal GPU MicroVM");
-    println!("\nLaunch with: `hanzo sbx launch <TEMPLATE> [--node <NODE>]`");
+    println!("\nLaunch with: `hanzo sandbox launch <TEMPLATE> [--node <NODE>]`");
     println!("Or run agent directly: `hanzo run claude` / `hanzo run dev`\n");
     explore_models();
 }
@@ -1145,7 +1147,7 @@ fn explore_models() {
     println!("  {:<36} {:<10} {:<14} {:<12} {}", "zen5-coder-32b", "32B", "128k RoPE", "21.4 GB", "hanzoai/zen5-coder-32b");
     println!("  {:<36} {:<10} {:<14} {:<12} {}", "DeepSeek-R1-Distill-Qwen-32B", "32B", "128k RoPE", "20.1 GB", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B");
     println!("  {:<36} {:<10} {:<14} {:<12} {}", "nomic-embed-text-v1.5", "137M", "8,192", "0.6 GB", "nomic-ai/nomic-embed-text-v1.5");
-    println!("\nPull to any node with: `hanzo sbx pull <MODEL> [--node <NODE>]`");
+    println!("\nPull to any node with: `hanzo sandbox pull <MODEL> [--node <NODE>]`");
     println!("(Uses `hf` Hugging Face CLI for parallel accelerated download)");
 }
 
@@ -1487,37 +1489,43 @@ mod tests {
         let Some(Commands::Up { ui: false, no_ui: true, .. }) = cli.command else { panic!("expected --no-ui") };
         assert!(Cli::try_parse_from(["hanzo", "up", "--ui", "--no-ui"]).is_err());
 
-        // Dashboard subcommand and alias parse
+        // Console subcommand and alias parse
+        let cli = Cli::try_parse_from(["hanzo", "up", "console"]).expect("console parses");
+        let Some(Commands::Up { command: Some(UpCommands::Console), .. }) = cli.command else { panic!("expected console") };
         let cli = Cli::try_parse_from(["hanzo", "up", "dashboard"]).expect("dashboard parses");
-        let Some(Commands::Up { command: Some(UpCommands::Dashboard), .. }) = cli.command else { panic!("expected dashboard") };
+        let Some(Commands::Up { command: Some(UpCommands::Console), .. }) = cli.command else { panic!("expected dashboard alias") };
         let cli = Cli::try_parse_from(["hanzo", "up", "ui"]).expect("ui alias parses");
-        let Some(Commands::Up { command: Some(UpCommands::Dashboard), .. }) = cli.command else { panic!("expected ui alias") };
+        let Some(Commands::Up { command: Some(UpCommands::Console), .. }) = cli.command else { panic!("expected ui alias") };
 
-        // Top-level dashboard command and aliases parse
-        let cli = Cli::try_parse_from(["hanzo", "dashboard"]).expect("top-level dashboard parses");
-        assert!(matches!(cli.command, Some(Commands::Dashboard)));
+        // Top-level console and sandbox commands and aliases parse
+        let cli = Cli::try_parse_from(["hanzo", "console"]).expect("top-level console parses");
+        assert!(matches!(cli.command, Some(Commands::Console)));
+        let cli = Cli::try_parse_from(["hanzo", "dashboard"]).expect("top-level dashboard alias parses");
+        assert!(matches!(cli.command, Some(Commands::Console)));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox"]).expect("top-level sandbox parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: None })));
         let cli = Cli::try_parse_from(["hanzo", "sbx"]).expect("top-level sbx alias parses");
-        assert!(matches!(cli.command, Some(Commands::Sbx { command: None })));
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: None })));
         let cli = Cli::try_parse_from(["hanzo", "sandboxes"]).expect("top-level sandboxes alias parses");
-        assert!(matches!(cli.command, Some(Commands::Sbx { command: None })));
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "ui"]).expect("sbx ui parses");
-        assert!(matches!(cli.command, Some(Commands::Sbx { command: Some(SbxCommands::Ui) })));
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "ls"]).expect("sbx ls parses");
-        assert!(matches!(cli.command, Some(Commands::Sbx { command: Some(SbxCommands::List) })));
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "explore"]).expect("sbx explore parses");
-        assert!(matches!(cli.command, Some(Commands::Sbx { command: Some(SbxCommands::Explore) })));
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "launch", "claude-env", "--node", "spark.local"]).expect("sbx launch parses");
-        let Some(Commands::Sbx { command: Some(SbxCommands::Launch { template, node }) }) = cli.command else { panic!("expected launch") };
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: None })));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "ui"]).expect("sandbox ui parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Ui) })));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "ls"]).expect("sandbox ls parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "explore"]).expect("sandbox explore parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Explore) })));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "launch", "claude-env", "--node", "spark.local"]).expect("sandbox launch parses");
+        let Some(Commands::Sandbox { command: Some(SandboxCommands::Launch { template, node }) }) = cli.command else { panic!("expected launch") };
         assert_eq!(template, "claude-env");
         assert_eq!(node, "spark.local");
         let cli = Cli::try_parse_from(["hanzo", "ls"]).expect("top-level ls parses");
         assert!(matches!(cli.command, Some(Commands::Ls)));
 
-        // Sbx models and pull commands parse
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "models"]).expect("sbx models parses");
-        assert!(matches!(cli.command, Some(Commands::Sbx { command: Some(SbxCommands::Models) })));
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "pull", "qwen/qwen3.8-27b", "--node", "spark.local"]).expect("sbx pull parses");
-        let Some(Commands::Sbx { command: Some(SbxCommands::Pull { model, node }) }) = cli.command else { panic!("expected pull") };
+        // Sandbox models and pull commands parse
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "models"]).expect("sandbox models parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Models) })));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "pull", "qwen/qwen3.8-27b", "--node", "spark.local"]).expect("sandbox pull parses");
+        let Some(Commands::Sandbox { command: Some(SandboxCommands::Pull { model, node }) }) = cli.command else { panic!("expected pull") };
         assert_eq!(model, "qwen/qwen3.8-27b");
         assert_eq!(node, "spark.local");
 
@@ -1527,8 +1535,8 @@ mod tests {
         assert_eq!(node, "spark");
         assert!(model.is_none());
 
-        let cli = Cli::try_parse_from(["hanzo", "sbx", "load", "--node", "halo", "--model", "custom-model"]).expect("sbx load parses");
-        let Some(Commands::Sbx { command: Some(SbxCommands::Load { node, model }) }) = cli.command else { panic!("expected sbx load") };
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "load", "--node", "halo", "--model", "custom-model"]).expect("sandbox load parses");
+        let Some(Commands::Sandbox { command: Some(SandboxCommands::Load { node, model }) }) = cli.command else { panic!("expected sandbox load") };
         assert_eq!(node, "halo");
         assert_eq!(model.as_deref(), Some("custom-model"));
 

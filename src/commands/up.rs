@@ -668,6 +668,12 @@ pub fn dashboard() -> Result<()> {
     tui::run_dashboard()
 }
 
+/// Launch the interactive fleet operations console directly.
+#[allow(dead_code)]
+pub fn console() -> Result<()> {
+    tui::run_dashboard()
+}
+
 fn endpoints() -> Result<()> {
     println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
     println!("  the cloud             http://127.0.0.1:{LOCAL_PORT}  (hanzo network use local)");
