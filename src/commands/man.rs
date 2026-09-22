@@ -111,7 +111,12 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   MCP tools serve.\n\n\
          \x20   `hanzo \"fix the failing test\"` starts an AI coding session on the task\n\
          \x20   (`hanzo code` for the interactive form). Sign in with `hanzo auth\n\
-         \x20   login`; see your money with `hanzo billing balance` and `hanzo usage`.\n\n",
+         \x20   login`; see your money with `hanzo billing balance` and `hanzo usage`.\n\n\
+         \x20   `hanzo dashboard` (or `sbx`) launches the interactive terminal operations\n\
+         \x20   dashboard over agent sandboxes, compute nodes, and local model mesh.\n\
+         \x20   `hanzo monitor` (or `hanzo top`) inspects real-time cluster GPU inference\n\
+         \x20   telemetry, token throughput, KV cache usage, and speculative MTP heads.\n\
+         \x20   `hanzo status` shows cloud health and local inference cluster status.\n\n",
     );
 
     o.push_str(&format!("{}\n", b("GLOBAL FLAGS")));

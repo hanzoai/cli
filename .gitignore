@@ -6,3 +6,8 @@
 # a clone with its own .git, and untracked it is one `git add -A` away from
 # landing here as orphaned cargo.
 .openapi/
+
+# Python test caches
+__pycache__/
+*.pyc
+

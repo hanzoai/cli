@@ -50,19 +50,39 @@ type Reading = std::result::Result<Vec<Value>, String>;
 /// One thing that needs attention: `(what it is, its name, the verdict)`.
 type Problem = (&'static str, String, String);
 
-pub async fn run(cfg: &mut Config) -> Result<()> {
-    let seam = Seam::open(cfg).await?;
-    // Concurrent: three independent reads, so the page costs one round trip.
-    let (clusters, apps, nodes) = tokio::join!(
-        read(&seam, "/v1/k8s/clusters", "clusters"),
-        read(&seam, "/v1/deploy/applications", "items"),
-        read(&seam, "/v1/fleet/workers", "workers"),
-    );
+pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
+    if infer_only {
+        let telem = crate::commands::monitor::collect_telemetry().await;
+        crate::commands::monitor::render_dashboard(&telem);
+        return Ok(());
+    }
 
-    render(&clusters, &apps, &nodes);
+    let seam = Seam::open(cfg).await;
+    let (clusters, apps, nodes) = match &seam {
+        Ok(s) => tokio::join!(
+            read(s, "/v1/k8s/clusters", "clusters"),
+            read(s, "/v1/deploy/applications", "items"),
+            read(s, "/v1/fleet/workers", "workers"),
+        ),
+        Err(e) => (
+            Err(format!("{e:#}")),
+            Err(format!("{e:#}")),
+            Err(format!("{e:#}")),
+        ),
+    };
 
-    if clusters.is_err() && apps.is_err() && nodes.is_err() {
-        bail!("no surface answered — nothing above was read from the cloud");
+    let cloud_answered = clusters.is_ok() || apps.is_ok() || nodes.is_ok();
+    if cloud_answered {
+        render(&clusters, &apps, &nodes);
+        println!();
+    }
+
+    // Always report local GPU inference cluster state
+    let telem = crate::commands::monitor::collect_telemetry().await;
+    crate::commands::monitor::render_dashboard(&telem);
+
+    if !cloud_answered && !telem.router_online && telem.nodes.iter().all(|n| !n.online) {
+        bail!("no surface answered — neither cloud nor local GPU inference cluster responded");
     }
     Ok(())
 }

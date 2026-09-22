@@ -28,6 +28,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use colored::*;
 use rand::RngCore;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -37,6 +38,8 @@ use crate::commands::vm::{self, alive, Rpc};
 use crate::commands::{host, net};
 use crate::config::Config;
 use crate::image;
+
+pub mod tui;
 
 /// The VM's shape and what it runs — one value through every layer, so the
 /// supervisor boots exactly what the caller asked for.
@@ -606,13 +609,25 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
 // ---- `hanzo up` and friends ---------------------------------------------------
 
 /// Bare `hanzo up`: pin the image, ensure the checkpoint, leave a supervisor
-/// behind, wait for `ready`, print the lines to paste.
-pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()> {
+/// behind, wait for `ready`, print the lines to paste. If interactive, launches
+/// the Sandboxes TUI dashboard.
+pub async fn up(
+    cfg: &mut Config,
+    boot: Boot,
+    link: Option<String>,
+    ui: bool,
+    no_ui: bool,
+) -> Result<()> {
     let dir = up_dir()?;
     if let Some(pid) = running(&dir, SUPERVISOR) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
         println!("{} already running (supervisor pid {pid}, {state})", "●".green());
-        return endpoints().and(finish_link(cfg, link).await);
+        endpoints()?;
+        let res = finish_link(cfg, link).await;
+        if ui || (!no_ui && std::io::stdout().is_terminal()) {
+            return tui::run_dashboard();
+        }
+        return res;
     }
     // No supervisor, but a vm we started is still there: its supervisor died
     // without closing anything, and it is holding 6443 against this boot. It is
@@ -641,7 +656,16 @@ pub async fn up(cfg: &mut Config, boot: Boot, link: Option<String>) -> Result<()
     wait_ready_state(&dir)?;
     println!("{} k3s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
     endpoints()?;
-    finish_link(cfg, link).await
+    let res = finish_link(cfg, link).await;
+    if ui || (!no_ui && std::io::stdout().is_terminal()) {
+        return tui::run_dashboard();
+    }
+    res
+}
+
+/// Launch the interactive Sandboxes TUI dashboard directly.
+pub fn dashboard() -> Result<()> {
+    tui::run_dashboard()
 }
 
 fn endpoints() -> Result<()> {

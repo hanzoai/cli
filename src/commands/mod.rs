@@ -15,6 +15,7 @@ pub mod engine;
 pub mod runner;
 pub mod scan;
 pub mod status;
+pub mod monitor;
 pub mod version;
 pub mod up;
 

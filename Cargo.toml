@@ -76,6 +76,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3.10"
 chrono = { version = "0.4", features = ["serde"] }
+ratatui = "0.29"
+crossterm = "0.28"
 
 # Cloud auth (HIP-0111 OIDC PKCE S256).
 sha2 = "0.10"                                              # PKCE S256 challenge
