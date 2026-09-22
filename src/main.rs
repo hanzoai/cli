@@ -643,11 +643,12 @@ enum SandboxCommands {
     /// Run a coding agent in an isolated sandbox (matches `sbx run <agent>`)
     Run(CodeArgs),
     /// List active sandboxes & agent workspaces
-    #[command(alias = "ls")]
+    #[command(alias = "ls", alias = "ps")]
     List,
     /// Explore container environments, sandbox templates, and model catalog
     Explore,
     /// Launch an environment from a template
+    #[command(alias = "start")]
     Launch {
         template: String,
         #[arg(long, default_value = "local")]
@@ -762,24 +763,8 @@ async fn main() -> Result<()> {
     // cloud CLI. Everything else (including `hanzo <group> --help` and the
     // `hanzo "task"` coding session) parses normally; `-h` keeps clap's terse
     // summary as the short form.
-    let mut args: Vec<String> = std::env::args().collect();
-    let is_sbx_binary = args
-        .first()
-        .map(PathBuf::from)
-        .and_then(|p| p.file_name().map(|n| n == "sbx"))
-        == Some(true);
-
-    if is_sbx_binary {
-        if args.len() == 1 {
-            return commands::up::dashboard();
-        }
-        if args.len() > 1 && args[1] != "sandbox" && args[1] != "sbx" {
-            let mut rewritten = vec![args[0].clone(), "sandbox".to_string()];
-            rewritten.extend(args.into_iter().skip(1));
-            args = rewritten;
-        }
-    } else {
-        let argv: Vec<String> = args.iter().skip(1).cloned().collect();
+    {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
         if argv.is_empty() || argv == ["--help"] || argv == ["help"] {
             print!("{}", commands::man::page(&Cli::command()));
             return Ok(());
@@ -792,7 +777,7 @@ async fn main() -> Result<()> {
     // only thing that knows which names under an absorbed command are local, and
     // `resolve` must ask exactly what `augment` asked.
     let hand = Cli::command();
-    let matches = commands::product::augment(hand.clone()).get_matches_from(args);
+    let matches = commands::product::augment(hand.clone()).get_matches();
 
     // `hanzo --version` and `hanzo -V` ARE `hanzo version` — one function, three
     // spellings. Answered before logging, config and every dispatch, so the
@@ -1514,8 +1499,16 @@ mod tests {
         assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
         let cli = Cli::try_parse_from(["hanzo", "sandbox", "explore"]).expect("sandbox explore parses");
         assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Explore) })));
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "ps"]).expect("sandbox ps parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
+        let cli = Cli::try_parse_from(["hanzo", "sbx", "ps"]).expect("sbx ps parses");
+        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
         let cli = Cli::try_parse_from(["hanzo", "sandbox", "launch", "claude-env", "--node", "spark.local"]).expect("sandbox launch parses");
         let Some(Commands::Sandbox { command: Some(SandboxCommands::Launch { template, node }) }) = cli.command else { panic!("expected launch") };
+        assert_eq!(template, "claude-env");
+        assert_eq!(node, "spark.local");
+        let cli = Cli::try_parse_from(["hanzo", "sandbox", "start", "claude-env", "--node", "spark.local"]).expect("sandbox start parses");
+        let Some(Commands::Sandbox { command: Some(SandboxCommands::Launch { template, node }) }) = cli.command else { panic!("expected start") };
         assert_eq!(template, "claude-env");
         assert_eq!(node, "spark.local");
         let cli = Cli::try_parse_from(["hanzo", "ls"]).expect("top-level ls parses");

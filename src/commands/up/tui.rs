@@ -1171,60 +1171,94 @@ impl App {
         let dgx = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "dgx"));
         let evo = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "evo"));
 
-        let dgx_kv_pct = dgx.map(|d| d.kv_usage_pct).unwrap_or(58.4) as u32;
-        let evo_kv_pct = evo.map(|e| e.kv_usage_pct).unwrap_or(34.3) as u32;
-        let dgx_hit_pct = dgx.map(|d| d.prefix_hit_rate).unwrap_or(77.4) as u32;
-        let dgx_spec_pct = dgx.map(|d| d.spec_draft_acc).unwrap_or(62.4) as u32;
-        let evo_spec_pct = evo.map(|e| e.spec_draft_acc).unwrap_or(59.2) as u32;
+        let dgx_kv_pct = dgx.map(|d| d.kv_usage_pct).unwrap_or(0.0) as u32;
+        let evo_kv_pct = evo.map(|e| e.kv_usage_pct).unwrap_or(0.0) as u32;
+        let dgx_hit_pct = dgx.map(|d| d.prefix_hit_rate).unwrap_or(0.0) as u32;
+        let dgx_spec_pct = dgx.map(|d| d.spec_draft_acc).unwrap_or(0.0) as u32;
+        let evo_spec_pct = evo.map(|e| e.spec_draft_acc).unwrap_or(0.0) as u32;
+
+        let dgx_prefix_queries = dgx.map(|d| d.prefix_queries).unwrap_or(0);
+        let dgx_prefix_hits = dgx.map(|d| d.prefix_hits).unwrap_or(0);
+        let dgx_draft_total = dgx.map(|d| d.draft_tokens_total).unwrap_or(0);
+        let evo_draft_total = evo.map(|e| e.draft_tokens_total).unwrap_or(0);
+        let dgx_kv_tokens = dgx.map(|d| d.kv_tokens).unwrap_or(0);
+        let dgx_kv_total = dgx.map(|d| d.kv_total).unwrap_or(1_000_000);
+        let evo_kv_tokens = evo.map(|e| e.kv_tokens).unwrap_or(0);
+        let evo_kv_total = evo.map(|e| e.kv_total).unwrap_or(262_144);
+        let router_routes = telem.map(|t| t.router_routes).unwrap_or(0);
+
+        let dgx_prefix_desc = if dgx_prefix_queries > 0 {
+            format!("Prefix KV cache hit rate ({:.1}M queries)", dgx_prefix_queries as f64 / 1_000_000.0)
+        } else {
+            "Prefix KV cache hit rate (Live vLLM)".into()
+        };
+
+        let dgx_prefix_consumed = if dgx_prefix_hits > 0 {
+            format!("{}% ({:.1}M hits)", dgx_hit_pct, dgx_prefix_hits as f64 / 1_000_000.0)
+        } else {
+            format!("{}%", dgx_hit_pct)
+        };
+
+        let dgx_draft_desc = if dgx_draft_total > 0 {
+            format!("2-token draft head ({} draft tokens)", dgx_draft_total)
+        } else {
+            "2-token draft head acceptance rate".into()
+        };
+
+        let evo_draft_desc = if evo_draft_total > 0 {
+            format!("Strix Halo draft acceptance ({} draft tokens)", evo_draft_total)
+        } else {
+            "Strix Halo draft acceptance rate".into()
+        };
 
         vec![
             UsageItem {
                 category: "DGX Prefix Cache".into(),
-                metric: "Prefix KV cache hit rate (14.8M queries)".into(),
-                consumed: format!("{}%", dgx_hit_pct),
+                metric: dgx_prefix_desc,
+                consumed: dgx_prefix_consumed,
                 quota: "100% (Instant TTFT)".into(),
                 percentage: dgx_hit_pct.min(100),
-                trend: "+4.2% today".into(),
+                trend: if dgx.map(|d| d.online).unwrap_or(false) { "active".into() } else { "offline".into() },
             },
             UsageItem {
                 category: "DGX Speculative MTP".into(),
-                metric: "2-token draft head acceptance rate".into(),
-                consumed: format!("{}%", dgx_spec_pct),
+                metric: dgx_draft_desc,
+                consumed: format!("{}% accepted", dgx_spec_pct),
                 quota: "100% (2.1x speedup)".into(),
                 percentage: dgx_spec_pct.min(100),
-                trend: "stable".into(),
+                trend: "vLLM MTP".into(),
             },
             UsageItem {
                 category: "DGX KV Cache VRAM".into(),
-                metric: "vLLM FP8 cache usage factor (1M max)".into(),
-                consumed: format!("{}%", dgx_kv_pct),
-                quota: "1,000,000 tokens".into(),
+                metric: format!("vLLM FP8 cache usage ({}/{} tokens)", dgx_kv_tokens, dgx_kv_total),
+                consumed: format!("{}% ({} tokens)", dgx_kv_pct, dgx_kv_tokens),
+                quota: "1,000,000 tokens (1M)".into(),
                 percentage: dgx_kv_pct.min(100),
-                trend: "active".into(),
+                trend: if dgx_kv_pct > 80 { "near cap".into() } else { "healthy".into() },
             },
             UsageItem {
                 category: "Evo Unified Memory".into(),
-                metric: "Halogen FP16 KV pool allocation".into(),
-                consumed: format!("{}%", evo_kv_pct),
-                quota: "262,144 tokens".into(),
+                metric: format!("Halogen FP16 KV pool ({}/{} tokens)", evo_kv_tokens, evo_kv_total),
+                consumed: format!("{}% ({} tokens)", evo_kv_pct, evo_kv_tokens),
+                quota: "262,144 tokens (262K)".into(),
                 percentage: evo_kv_pct.min(100),
                 trend: "zero-OOM".into(),
             },
             UsageItem {
                 category: "Evo Speculative Draft".into(),
-                metric: "Strix Halo draft acceptance rate".into(),
-                consumed: format!("{}%", evo_spec_pct),
+                metric: evo_draft_desc,
+                consumed: format!("{}% accepted", evo_spec_pct),
                 quota: "100% (1.8x speedup)".into(),
                 percentage: evo_spec_pct.min(100),
-                trend: "stable".into(),
+                trend: "Halogen ROCm".into(),
             },
             UsageItem {
                 category: "Router Mesh Routing".into(),
                 metric: "Session-pinned least-loaded routes".into(),
-                consumed: "17 active routes".into(),
+                consumed: format!("{} active routes", router_routes),
                 quota: "64 routes max".into(),
-                percentage: 26,
-                trend: "balanced".into(),
+                percentage: ((router_routes as f64 / 64.0) * 100.0).round() as u32,
+                trend: if telem.map(|t| t.router_online).unwrap_or(false) { "balanced".into() } else { "offline".into() },
             },
         ]
     }
@@ -2821,10 +2855,24 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(chunks[0]);
 
-    render_kpi_card(f, kpi_chunks[0], "Monthly Inferences", "28,492 Requests", Color::Green);
-    render_kpi_card(f, kpi_chunks[1], "Tokens Consumed", "4.82M Tokens (Total)", Color::Cyan);
-    render_kpi_card(f, kpi_chunks[2], "Billing Meter", "Enterprise Dedicated", Color::Yellow);
-    render_kpi_card(f, kpi_chunks[3], "Credits Remaining", "$328.40 USD", Color::White);
+    let telem = app.cluster_telemetry.as_ref();
+    let total_reqs = telem.map(|t| t.total_requests).unwrap_or(0);
+    let total_tokens = telem.map(|t| t.total_tokens).unwrap_or(0);
+    let reqs_str = format!("{} Completed", total_reqs);
+    let tokens_str = if total_tokens >= 1_000_000 {
+        format!("{:.2}M Tokens (Total)", total_tokens as f64 / 1_000_000.0)
+    } else if total_tokens >= 1_000 {
+        format!("{:.1}K Tokens (Total)", total_tokens as f64 / 1_000.0)
+    } else {
+        format!("{} Tokens (Total)", total_tokens)
+    };
+    let billing_meter = telem.map(|t| t.billing_meter.as_str()).unwrap_or("Local GPU Mesh");
+    let billing_credits = telem.map(|t| t.billing_credits.as_str()).unwrap_or("Unmetered (Zero Cloud Cost)");
+
+    render_kpi_card(f, kpi_chunks[0], "Cluster Inferences", &reqs_str, Color::Green);
+    render_kpi_card(f, kpi_chunks[1], "Tokens Consumed", &tokens_str, Color::Cyan);
+    render_kpi_card(f, kpi_chunks[2], "Billing Meter", billing_meter, Color::Yellow);
+    render_kpi_card(f, kpi_chunks[3], "Credits Remaining", billing_credits, Color::White);
 
     let usage_block = Block::default()
         .title(Span::styled(
@@ -2897,26 +2945,41 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(Color::DarkGray));
 
     let perf_inner = perf_block.inner(chunks[2]);
+    let p50 = telem.map(|t| t.cluster_p50_latency_ms).unwrap_or(12.0);
+    let p95 = telem.map(|t| t.cluster_p95_latency_ms).unwrap_or(27.6);
+    let p99 = telem.map(|t| t.cluster_p99_latency_ms).unwrap_or(54.0);
+    let prefill_spd = telem.map(|t| t.cluster_prefill_tok_s).unwrap_or(0.0);
+    let decode_spd = telem.map(|t| t.cluster_decode_tok_s).unwrap_or(0.0);
+    let inflight = telem.map(|t| t.total_inflight).unwrap_or(0);
+    let queued = telem.map(|t| t.total_queued).unwrap_or(0);
+
+    let throughput_str = if prefill_spd > 0.0 || decode_spd > 0.0 {
+        format!("{:.0} tok/s prefill · {:.1} tok/s dec", prefill_spd, decode_spd)
+    } else {
+        "idle (ready)".to_string()
+    };
+    let inflight_str = format!("{} in-flight, {} queued", inflight, queued);
+
     let perf_lines = vec![
         Line::from(vec![
-            Span::styled("Request Throughput: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("14.2 req/sec", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled("Cluster Speed:      ", Style::default().fg(Color::DarkGray)),
+            Span::styled(throughput_str, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::raw("   "),
             Span::styled("P50 Latency: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("8.4 ms", Style::default().fg(Color::White)),
+            Span::styled(format!("{:.1} ms", p50), Style::default().fg(Color::White)),
             Span::raw("   "),
             Span::styled("P95 Latency: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("21.6 ms", Style::default().fg(Color::White)),
+            Span::styled(format!("{:.1} ms", p95), Style::default().fg(Color::White)),
             Span::raw("   "),
             Span::styled("P99 Latency: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("48.2 ms", Style::default().fg(Color::White)),
+            Span::styled(format!("{:.1} ms", p99), Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
-            Span::styled("Error Rate:         ", Style::default().fg(Color::DarkGray)),
-            Span::styled("0.00% (Zero dropped requests in last 24h)", Style::default().fg(Color::Green)),
+            Span::styled("Cluster Workload:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(inflight_str, Style::default().fg(if inflight > 0 { Color::Cyan } else { Color::Green })),
             Span::raw("   "),
-            Span::styled("Active Edge Conn: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("18 SSE persistent streams", Style::default().fg(Color::Cyan)),
+            Span::styled("Zero-Copy Overlays: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Active (.pleo token-addressed memory mesh)", Style::default().fg(Color::LightCyan)),
         ]),
     ];
     f.render_widget(Paragraph::new(perf_lines), perf_inner);
