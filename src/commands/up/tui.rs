@@ -114,9 +114,15 @@ pub struct Sandbox {
     pub name: String,
     pub agent: String,
     pub path: String,
+    #[serde(default = "default_sandbox_runtime")]
+    pub runtime: String,
     pub status: SandboxStatus,
     pub telemetry: SandboxTelemetry,
     pub network_logs: Vec<NetworkLogEntry>,
+}
+
+fn default_sandbox_runtime() -> String {
+    "runc (native GPU)".to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -574,6 +580,7 @@ impl App {
                 name: sbx_name,
                 agent: agent_name,
                 path: raw_cwd,
+                runtime: "runc (native GPU)".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: cpu.round() as u32,
@@ -601,6 +608,7 @@ impl App {
                 name: "claude-docs".into(),
                 agent: "Claude Code".into(),
                 path: format!("{home}/work/hanzo/docs"),
+                runtime: "microvm".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: 4,
@@ -653,6 +661,7 @@ impl App {
                 name: "claude-model-runner".into(),
                 agent: "Claude Code".into(),
                 path: format!("{home}/work/hanzo/model-runner"),
+                runtime: "runc (native GPU)".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: 6,
@@ -687,6 +696,7 @@ impl App {
                 name: "claude-compose".into(),
                 agent: "Claude Code".into(),
                 path: format!("{home}/work/hanzo/compose"),
+                runtime: "microvm".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: 3,
@@ -715,6 +725,7 @@ impl App {
                 name: "hanzo-dev-agent".into(),
                 agent: "Hanzo Dev".into(),
                 path: format!("{home}/work/hanzo/cli"),
+                runtime: "runc (native GPU)".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: 8,
@@ -749,6 +760,7 @@ impl App {
                 name: "codex-agent".into(),
                 agent: "Codex".into(),
                 path: format!("{home}/work/codex-sandbox"),
+                runtime: "microvm".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: 5,
@@ -777,6 +789,7 @@ impl App {
                 name: "zen-coder-agent".into(),
                 agent: "Zen Coder".into(),
                 path: format!("{home}/work/zen-workspace"),
+                runtime: "runc (native GPU)".into(),
                 status: SandboxStatus::Running,
                 telemetry: SandboxTelemetry {
                     cpu_percent: 12,
@@ -1585,6 +1598,7 @@ impl App {
             name: name.clone(),
             agent: if self.sandboxes.len() % 2 == 0 { "Hanzo Dev".into() } else { "Claude Code".into() },
             path: format!("{home}/work/sandbox-{}", self.sandboxes.len() + 1),
+            runtime: "microvm".into(),
             status: SandboxStatus::Running,
             telemetry: SandboxTelemetry {
                 cpu_percent: 3,
@@ -2096,12 +2110,18 @@ fn render_sandbox_card(
         (Color::Rgb(60, 60, 75), BorderType::Rounded)
     };
 
+    let (badge_text, bg_col, fg_col) = if sbx.runtime.contains("runc") {
+        (" runc (native GPU) ", Color::Rgb(30, 65, 50), Color::Rgb(120, 240, 180))
+    } else {
+        (" microvm ", Color::Rgb(65, 45, 110), Color::Rgb(215, 190, 255))
+    };
+
     let title_line = Line::from(vec![
         Span::styled(
-            " Sandbox ",
+            badge_text,
             Style::default()
-                .bg(Color::Rgb(65, 45, 110))
-                .fg(Color::Rgb(215, 190, 255))
+                .bg(bg_col)
+                .fg(fg_col)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),

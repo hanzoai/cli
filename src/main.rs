@@ -139,10 +139,18 @@ struct CodeArgs {
     #[arg(long, visible_alias = "safe", conflicts_with = "no_sandbox")]
     ask: bool,
 
-    /// Escalate PAST auto-approve to a full bypass that also drops the sandbox. A
-    /// deliberate, per-invocation act — never a persisted default.
-    #[arg(long)]
+    /// Escalate PAST auto-approve to run unconfined on bare metal (runc / native host)
+    /// with direct GPU pass-through, dropping the sandbox.
+    #[arg(long, visible_alias = "runc", visible_alias = "bare")]
     no_sandbox: bool,
+
+    /// Container / sandbox isolation runtime: `runc` (bare-metal native GPU), `microvm`, `container`, or `host`
+    #[arg(long, value_name = "RUNTIME")]
+    runtime: Option<String>,
+
+    /// GPU allocation for high-performance agentic execution: `all` (default for runc), `cuda` (GB10), `rocm` (gfx1151), or `none`
+    #[arg(long, value_name = "GPUS")]
+    gpus: Option<String>,
 
     /// Resume a prior linked session by its cloud session id.
     #[arg(long, value_name = "SESSION_ID")]
@@ -196,9 +204,35 @@ impl CodeArgs {
 
     /// Map the parsed args to the code runner's [`Options`]. The `no_*` flags become
     /// their positive sense here, and the backend is resolved here — both in exactly
-    /// ONE place, shared by `hanzo code …`, a bare `hanzo …`, `hanzo dev` and
+    /// ONE place, shared by `hanzo code …`, a bare `hanzo …`, `hanzo run …`, `hanzo dev` and
     /// `hanzo desktop`.
     fn into_options(self) -> Result<commands::code::Options> {
+        let is_runc = self.no_sandbox
+            || matches!(
+                self.runtime.as_deref().map(str::to_lowercase).as_deref(),
+                Some("runc" | "native" | "host" | "none" | "bare")
+            );
+        if let Some(gpu) = self.gpus.as_deref().map(str::to_lowercase) {
+            match gpu.as_str() {
+                "none" | "0" | "off" => {
+                    std::env::set_var("CUDA_VISIBLE_DEVICES", "");
+                    std::env::set_var("ROCR_VISIBLE_DEVICES", "");
+                    std::env::set_var("HIP_VISIBLE_DEVICES", "");
+                }
+                "cuda" | "nvidia" => {
+                    if std::env::var("CUDA_VISIBLE_DEVICES").unwrap_or_default().is_empty() {
+                        std::env::set_var("CUDA_VISIBLE_DEVICES", "all");
+                    }
+                }
+                "rocm" | "amd" => {
+                    if std::env::var("ROCR_VISIBLE_DEVICES").unwrap_or_default().is_empty() {
+                        std::env::set_var("ROCR_VISIBLE_DEVICES", "0");
+                        std::env::set_var("HIP_VISIBLE_DEVICES", "0");
+                    }
+                }
+                _ => {}
+            }
+        }
         let named = self.named_backend();
         // The reader's configured agent, if any. Loaded best-effort — the coding
         // agent must start even when `$HOME` is odd — so an unreadable settings
@@ -218,7 +252,7 @@ impl CodeArgs {
             mcp: !self.no_mcp,
             project_mcp: self.project_mcp,
             ask: self.ask,
-            no_sandbox: self.no_sandbox,
+            no_sandbox: is_runc,
             resume: self.resume,
             brand: self.brand,
             theme: self.theme,
@@ -241,14 +275,15 @@ enum Commands {
     /// Runs our own `dev` agent by default. Name another positionally or as a
     /// flag — the two spellings are the same thing:
     ///
-    ///   hanzo code dev         hanzo code --dev        (the default)
-    ///   hanzo code claude      hanzo code --claude
-    ///   hanzo code codex       hanzo code --codex
-    ///   hanzo dev              shorthand for `hanzo code dev`
+    ///   hanzo run dev          hanzo run --dev        (the default)
+    ///   hanzo run claude       hanzo run --claude
+    ///   hanzo run --runc dev   (bare metal host with GPU pass-through)
+    ///   hanzo code dev         hanzo code --dev
+    ///   hanzo dev              shorthand for `hanzo run dev`
     ///
-    /// A trailing task runs headless (`hanzo code "fix the failing test"`);
+    /// A trailing task runs headless (`hanzo run "fix the failing test"`);
     /// omit it for an interactive session.
-    #[command(verbatim_doc_comment)]
+    #[command(visible_alias = "run", verbatim_doc_comment)]
     Code(CodeArgs),
 
     /// Start a coding session on the `dev` backend — shorthand for
@@ -418,8 +453,8 @@ enum Commands {
         command: Option<SandboxCommands>,
     },
 
-    /// List active sandboxes & agent workspaces (matches `sbx ls`)
-    #[command(hide = true, alias = "list")]
+    /// List active sandboxes, runc containers, & agent workspaces
+    #[command(visible_alias = "ps", alias = "list")]
     Ls,
 
     /// Pull and load models across the distributed cluster fleet (DGX Spark & Strix Halo)
@@ -1075,18 +1110,19 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
 fn list_sandboxes() {
     let app = commands::up::tui::App::new();
     if app.sandboxes.is_empty() {
-        println!("No active sandboxes.");
+        println!("No active sandboxes or agent runtimes.");
     } else {
-        println!("{:<22} {:<14} {:<10} {:<8} {:<10} {}", "NAME", "AGENT", "STATUS", "CPU", "MEMORY", "WORKSPACE");
+        println!("{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} {}", "NAME", "AGENT", "RUNTIME", "STATUS", "CPU", "MEMORY", "WORKSPACE");
         for sbx in &app.sandboxes {
             let status_str = match sbx.status {
                 commands::up::tui::SandboxStatus::Running => "Running",
                 commands::up::tui::SandboxStatus::Stopped => "Stopped",
             };
             println!(
-                "{:<22} {:<14} {:<10} {:<8} {:<10} {}",
+                "{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} {}",
                 sbx.name,
                 sbx.agent,
+                sbx.runtime,
                 status_str,
                 format!("{}%", sbx.telemetry.cpu_percent),
                 &sbx.telemetry.memory,
@@ -1103,8 +1139,10 @@ fn explore_sandboxes() {
     println!("  {:<18} {:<18} {:<30} {}", "claude-env", "node-lts/git", "Claude Code (Anthropic)", "MicroVM / VirtioFS");
     println!("  {:<18} {:<18} {:<30} {}", "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)", "MicroVM / Workspace");
     println!("  {:<18} {:<18} {:<30} {}", "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)", "Metal GPU MicroVM");
+    println!("  {:<18} {:<18} {:<30} {}", "runc-native", "bare-metal/gpu", "High-Perf Agentic LLMs", "Bare-Metal / ROCm / CUDA");
     println!("\nLaunch with: `hanzo sandbox launch <TEMPLATE> [--node <NODE>]`");
-    println!("Or run agent directly: `hanzo run claude` / `hanzo run dev`\n");
+    println!("Or run agent directly: `hanzo run claude` / `hanzo run dev`");
+    println!("High-perf bare-metal/runc: `hanzo run --runc dev` (GPU pass-through)\n");
     explore_models();
 }
 
@@ -1513,6 +1551,24 @@ mod tests {
         assert_eq!(node, "spark.local");
         let cli = Cli::try_parse_from(["hanzo", "ls"]).expect("top-level ls parses");
         assert!(matches!(cli.command, Some(Commands::Ls)));
+        let cli = Cli::try_parse_from(["hanzo", "ps"]).expect("top-level ps parses");
+        assert!(matches!(cli.command, Some(Commands::Ls)));
+        let cli = Cli::try_parse_from(["hanzo", "list"]).expect("top-level list parses");
+        assert!(matches!(cli.command, Some(Commands::Ls)));
+
+        // Top-level run command with bare-metal runc & GPU pass-through options
+        let cli = Cli::try_parse_from(["hanzo", "run", "claude"]).expect("top-level run claude parses");
+        let Some(Commands::Code(code_args)) = cli.command else { panic!("expected run code") };
+        assert_eq!(code_args.positional.as_deref(), Some("claude"));
+
+        let cli = Cli::try_parse_from(["hanzo", "run", "--runc", "dev"]).expect("top-level run --runc dev parses");
+        let Some(Commands::Code(code_args)) = cli.command else { panic!("expected run code with runc") };
+        assert!(code_args.no_sandbox);
+
+        let cli = Cli::try_parse_from(["hanzo", "run", "--runtime", "runc", "--gpus", "all", "dev"]).expect("run --runtime runc --gpus all parses");
+        let Some(Commands::Code(code_args)) = cli.command else { panic!("expected run code with runtime runc") };
+        assert_eq!(code_args.runtime.as_deref(), Some("runc"));
+        assert_eq!(code_args.gpus.as_deref(), Some("all"));
 
         // Sandbox models and pull commands parse
         let cli = Cli::try_parse_from(["hanzo", "sandbox", "models"]).expect("sandbox models parses");
