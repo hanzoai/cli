@@ -744,14 +744,20 @@ enum NetworkCommands {
 enum NetCommands {
     /// Show the network as cloud sees it (identities, services)
     Ls,
-    /// Mint an identity and file its enrollment JWT under ~/.hanzo/net/
+    /// Ensure your identity on the network (idempotent; files nothing)
     Join {
-        /// Identity name (defaults to this machine's hostname)
+        /// Identity name, a DNS label (defaults to your IAM subject)
         #[arg(long)]
         name: Option<String>,
         /// Role attributes, comma-separated (e.g. k8s-dev-host)
         #[arg(long, value_delimiter = ',')]
         roles: Vec<String>,
+    },
+    /// Run the network tunnel in the foreground, logged in by your IAM token
+    Up {
+        /// Tunnel mode: proxy, host, or tproxy (Linux, as root)
+        #[arg(default_value = "proxy")]
+        mode: String,
     },
     /// Name a local service on the network's DNS
     Publish {
@@ -1082,6 +1088,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             NetCommands::Join { name, roles } => {
                 commands::net::join(&mut config, name, roles).await?;
             }
+            NetCommands::Up { mode } => commands::net::up(mode)?,
             NetCommands::Publish { name, target } => {
                 commands::net::publish(&mut config, name, target).await?;
             }
@@ -1638,6 +1645,11 @@ mod tests {
         assert!(Cli::try_parse_from(["hanzo", "net", "publish", "k8s-dev", "127.0.0.1:6443"])
             .is_ok());
         assert!(Cli::try_parse_from(["hanzo", "net", "rm", "idn_1"]).is_ok());
+        let cli = Cli::try_parse_from(["hanzo", "net", "up"]).expect("up parses");
+        let Some(Commands::Net { command: NetCommands::Up { mode } }) = cli.command else {
+            panic!("expected net up")
+        };
+        assert_eq!(mode, "proxy");
     }
 
     /// The merged tree (derive + generated products) builds without a clap panic.

@@ -1,18 +1,20 @@
 //! `hanzo net` — the org's zero-trust network (`/v1/network`).
 //!
-//! Cloud owns the controller (OpenZiti behind the gateway); this is the thin
-//! client. `ls` reads the network view, `join` mints an identity and files its
-//! enrollment JWT under `~/.hanzo/net/`, `publish` names a local service on the
-//! network's DNS, `rm` deletes an identity. Auth is the seam every other cloud
-//! command uses — the active hanzo.id bearer against the active network's api
-//! origin, over [`hanzo_client::Http`] — and the org is the gateway's to derive from
-//! the JWT.
+//! Cloud owns the ZT controller; this is the thin client. `ls` reads the network
+//! view, `join` ensures the caller's identity, `up` runs the tunnel, `publish`
+//! names a local service on the network's DNS, `rm` deletes an identity. Auth is
+//! the seam every other cloud command uses — the active hanzo.id bearer against
+//! the active network's api origin, over [`hanzo_client::Http`] — and the org is
+//! the gateway's to derive from the JWT. Nothing is filed on disk: the tunnel
+//! logs in with the same IAM token, and the controller knows the identity by its
+//! externalId, the token's subject.
 //!
-//! The wire contract (`k3s-link` cloud branch): `POST /v1/network/identities`
-//! takes `{name, roles?}` and answers `{id, name, enrollment: {jwt, expiresAt}}`;
-//! `POST /v1/network/services` takes `{name, host, port}` and answers `{dns}`.
+//! The wire contract: `POST /v1/network/identities` takes `{name?, roles?}`,
+//! ensures the identity whose externalId is the caller's subject (idempotent),
+//! and answers `{id, name, externalId, roles}`; `POST /v1/network/services`
+//! takes `{name, host, port}` and answers `{dns}`.
 
-use crate::commands::network;
+use crate::commands::{launch, network};
 use crate::config::Config;
 use crate::iam::{paths, store};
 use anyhow::{anyhow, bail, Context, Result};
@@ -20,21 +22,20 @@ use colored::*;
 use hanzo_client::{Http, Method, Request, Transport};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 
-/// What `join` mints: an identity and the one-time enrollment it carries.
+/// The controller the tunnel logs in to. It sits behind Cloudflare; the tunnel
+/// reaches the edge router directly.
+const CONTROLLER: &str = "https://zt-api.hanzo.ai";
+
+/// The caller's network identity, known to the controller by its externalId.
 #[derive(Debug, Deserialize)]
 pub struct Identity {
     pub id: String,
     pub name: String,
-    pub enrollment: Enrollment,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Enrollment {
-    pub jwt: String,
-    #[serde(rename = "expiresAt")]
-    pub expires_at: String,
+    #[serde(rename = "externalId")]
+    pub external_id: String,
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 /// The active api origin and a live bearer — the same two facts every cloud
@@ -63,15 +64,19 @@ async fn read_view(http: &Http, api: &str, token: &str) -> Result<Value> {
     send(http, Method::GET, &format!("{api}/v1/network"), token, None).await
 }
 
-async fn create_identity(
+async fn ensure_identity(
     http: &Http,
     api: &str,
     token: &str,
-    name: &str,
+    name: Option<&str>,
     roles: &[String],
 ) -> Result<Identity> {
-    let mut body = json!({ "name": name });
-    // `roles` is optional on the wire; an empty list is not a statement.
+    let mut body = json!({});
+    // Both are optional on the wire; an absent name is the caller's subject, and
+    // an empty list is not a statement.
+    if let Some(name) = name {
+        body["name"] = json!(name);
+    }
     if !roles.is_empty() {
         body["roles"] = json!(roles);
     }
@@ -103,10 +108,9 @@ async fn delete_identity(http: &Http, api: &str, token: &str, id: &str) -> Resul
     Ok(())
 }
 
-// ---- names, targets and the credential on disk -------------------------------
+// ---- names and targets --------------------------------------------------------
 
-/// A name is a filename and a network identity at once, so it is bounded to the
-/// runes both accept BEFORE either sees it.
+/// A service name, bounded before cloud sees it.
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -131,27 +135,6 @@ fn host_port(s: &str) -> Result<(String, u16)> {
     Ok((host.to_string(), port))
 }
 
-/// Where an identity's enrollment JWT is filed: `~/.hanzo/net/<name>.jwt`.
-fn jwt_path(name: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("no home directory"))?;
-    Ok(home.join(".hanzo").join("net").join(format!("{name}.jwt")))
-}
-
-/// Write the JWT owner-only (0600): it is a credential, not a note.
-fn write_jwt(path: &Path, jwt: &str) -> Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    }
-    std::fs::write(path, jwt).with_context(|| format!("writing {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("chmod 600 {}", path.display()))?;
-    }
-    Ok(())
-}
-
 // ---- `hanzo net <verb>` ------------------------------------------------------
 
 /// `hanzo net ls` — the network view, as cloud renders it.
@@ -162,30 +145,41 @@ pub async fn ls(cfg: &mut Config) -> Result<()> {
     Ok(())
 }
 
-/// `hanzo net join [--name N] [--roles r1,r2]` — mint an identity, file its
-/// enrollment JWT, and say how to spend it. Returns the JWT's path so
-/// `hanzo up --link` can reuse the whole act.
-pub async fn join(cfg: &mut Config, name: Option<String>, roles: Vec<String>) -> Result<PathBuf> {
-    let name = name.unwrap_or_else(crate::commands::code::context::hostname);
-    if !valid_name(&name) {
-        bail!("identity name {name:?} — use letters, digits, `-`, `_`, `.` (max 64)");
-    }
+/// `hanzo net join [--name N] [--roles r1,r2]` — ensure the caller's identity
+/// and print it. Idempotent, and it files nothing: `hanzo net up` logs in with
+/// the IAM token itself.
+pub async fn join(cfg: &mut Config, name: Option<String>, roles: Vec<String>) -> Result<()> {
     let (api, tok) = signin(cfg).await?;
-    let id = create_identity(&Http::default(), &api, &tok, &name, &roles).await?;
-    let path = jwt_path(&id.name)?;
-    write_jwt(&path, &id.enrollment.jwt)?;
+    let id = ensure_identity(&Http::default(), &api, &tok, name.as_deref(), &roles).await?;
     println!("{} identity {} ({})", "✓".green(), id.name.cyan().bold(), id.id);
-    println!("  jwt {} (expires {})", path.display(), id.enrollment.expires_at.dimmed());
-    println!(
-        "  enroll: {}",
-        format!("zt edge enroll --jwt {}", path.display()).cyan()
-    );
-    Ok(path)
+    println!("  externalId {}", id.external_id);
+    if !id.roles.is_empty() {
+        println!("  roles {}", id.roles.join(", "));
+    }
+    println!("  run: {}", "hanzo net up".cyan());
+    Ok(())
+}
+
+/// `hanzo net up [MODE]` — the ZT tunnel in the foreground, logged in by the
+/// IAM token `hanzo auth token` prints, fetched again before it expires.
+pub fn up(mode: String) -> Result<()> {
+    let bin = launch::resolve("HANZO_ZT_BIN", &["zt"]).ok_or_else(|| {
+        anyhow!(
+            "zt not found. Set HANZO_ZT_BIN=/path/to/zt or put `zt` on PATH \
+             (the hanzo.sh installer does not ship it yet)."
+        )
+    })?;
+    launch::exec(&bin, &tunnel_args(&mode))
+}
+
+fn tunnel_args(mode: &str) -> Vec<String> {
+    ["tunnel", mode, "--controller", CONTROLLER, "--token-command", "hanzo auth token"]
+        .map(String::from)
+        .to_vec()
 }
 
 /// `hanzo net publish <name> <host:port>` — name a service on the network's DNS.
-/// Returns the dns name so `hanzo up --link` can report it.
-pub async fn publish(cfg: &mut Config, name: String, target: String) -> Result<String> {
+pub async fn publish(cfg: &mut Config, name: String, target: String) -> Result<()> {
     if !valid_name(&name) {
         bail!("service name {name:?} — use letters, digits, `-`, `_`, `.` (max 64)");
     }
@@ -193,7 +187,7 @@ pub async fn publish(cfg: &mut Config, name: String, target: String) -> Result<S
     let (api, tok) = signin(cfg).await?;
     let dns = create_service(&Http::default(), &api, &tok, &name, &host, port).await?;
     println!("{} {} → {}", "✓".green(), dns.cyan().bold(), target);
-    Ok(dns)
+    Ok(())
 }
 
 /// `hanzo net rm <id>` — delete an identity.
@@ -287,27 +281,28 @@ mod tests {
     }
 
     /// `join`'s wire shape: POST /v1/network/identities with `{name, roles}` and
-    /// the bearer, decoded to `{id, name, enrollment: {jwt, expiresAt}}`.
+    /// the bearer, answered 201 with `{id, name, externalId, roles}`.
     #[tokio::test]
-    async fn join_sends_name_and_roles_and_decodes_the_enrollment() {
+    async fn join_sends_name_and_roles_and_decodes_the_identity() {
         let fake = Fake::serve(
-            200,
-            r#"{"id":"idn_1","name":"box","enrollment":{"jwt":"J.W.T","expiresAt":"2026-09-02T00:00:00Z"}}"#,
+            201,
+            r#"{"id":"idn_1","name":"box","externalId":"sub_1","roles":["k8s-host"]}"#,
         )
         .await;
-        let id = create_identity(
+        let id = ensure_identity(
             &Http::default(),
             &fake.base,
             "TOK",
-            "box",
+            Some("box"),
             &["k8s-host".to_string()],
         )
         .await
         .unwrap();
 
         assert_eq!(id.id, "idn_1");
-        assert_eq!(id.enrollment.jwt, "J.W.T");
-        assert_eq!(id.enrollment.expires_at, "2026-09-02T00:00:00Z");
+        assert_eq!(id.name, "box");
+        assert_eq!(id.external_id, "sub_1");
+        assert_eq!(id.roles, ["k8s-host"]);
         let (method, path, auth, body) = fake.one();
         assert_eq!(method, "POST");
         assert_eq!(path, "/v1/network/identities");
@@ -317,19 +312,33 @@ mod tests {
         assert_eq!(v["roles"], json!(["k8s-host"]));
     }
 
-    /// `roles` is optional on the wire: an empty list sends NO key rather than an
-    /// empty statement the controller has to interpret.
+    /// Name and roles are optional on the wire: without them the body is `{}`,
+    /// and cloud names the identity after the caller's subject.
     #[tokio::test]
-    async fn join_omits_empty_roles() {
-        let fake = Fake::serve(
-            200,
-            r#"{"id":"idn_2","name":"box","enrollment":{"jwt":"J","expiresAt":"e"}}"#,
-        )
-        .await;
-        create_identity(&Http::default(), &fake.base, "TOK", "box", &[]).await.unwrap();
+    async fn join_omits_what_it_was_not_given() {
+        let fake = Fake::serve(201, r#"{"id":"idn_2","name":"sub_1","externalId":"sub_1"}"#).await;
+        let id = ensure_identity(&Http::default(), &fake.base, "TOK", None, &[]).await.unwrap();
+        assert_eq!(id.name, "sub_1");
+        assert!(id.roles.is_empty());
         let (_, _, _, body) = fake.one();
-        let v: Value = serde_json::from_str(&body).unwrap();
-        assert!(v.get("roles").is_none(), "empty roles must be omitted: {v}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), json!({}));
+    }
+
+    /// `up` runs the tunnel against the production controller, logged in by the
+    /// CLI's own IAM token.
+    #[test]
+    fn up_logs_the_tunnel_in_by_iam_token() {
+        assert_eq!(
+            tunnel_args("proxy"),
+            [
+                "tunnel",
+                "proxy",
+                "--controller",
+                "https://zt-api.hanzo.ai",
+                "--token-command",
+                "hanzo auth token"
+            ]
+        );
     }
 
     /// `publish`'s wire shape: POST /v1/network/services with `{name, host,
@@ -367,21 +376,6 @@ mod tests {
         assert!(err.to_string().contains("403"), "got: {err}");
     }
 
-    /// The enrollment JWT is a credential: filed owner-only.
-    #[test]
-    fn the_jwt_is_filed_owner_only() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("net").join("box.jwt");
-        write_jwt(&path, "J.W.T").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "J.W.T");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600, "mode {mode:o}");
-        }
-    }
-
     #[test]
     fn targets_parse_as_host_port() {
         assert_eq!(host_port("127.0.0.1:6443").unwrap(), ("127.0.0.1".into(), 6443));
@@ -392,7 +386,7 @@ mod tests {
         assert!(host_port("x:notaport").is_err());
     }
 
-    /// A name is a filename and an identity at once; both alphabets bound it.
+    /// A service name is bounded to the alphabet cloud accepts.
     #[test]
     fn names_are_bounded_to_the_shared_alphabet() {
         assert!(valid_name("k8s-dev-host"));

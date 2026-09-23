@@ -744,25 +744,14 @@ fn wait_ready_state(dir: &Path) -> Result<()> {
     }
 }
 
-/// `--link <cluster>`: mint the cluster's place on the org network — an
-/// identity for this host and a service for the API. The guest half (enrolling
-/// INSIDE the vm) needs a `zt` binary today's guest image does not carry, so
-/// the minting is real and the enrollment is handed over, out loud.
+/// `--link <cluster>`: give the cluster's API a place on the org network — the
+/// caller's identity takes the service's host role, and the service is named.
+/// `hanzo net up` on this machine carries it.
 async fn finish_link(cfg: &mut Config, link: Option<String>) -> Result<()> {
     let Some(cluster) = link else { return Ok(()) };
-    let host_name = format!("k8s-{cluster}-host");
-    let jwt = net::join(cfg, Some(host_name.clone()), vec![host_name.clone()]).await?;
-    let dns = net::publish(cfg, format!("k8s-{cluster}"), format!("127.0.0.1:{K3S_PORT}")).await?;
-    println!();
-    println!("{}", "identity and service are minted; enrollment is manual for now:".bold());
-    println!("  enroll this machine   zt edge enroll --jwt {}", jwt.display());
-    println!(
-        "  host the API          bind {dns} → 127.0.0.1:{K3S_PORT} as {host_name} (zt tunnel host)"
-    );
-    bail!(
-        "not implemented: guest enrollment — the identity and service above exist; \
-         finish with the steps printed"
-    )
+    net::join(cfg, None, vec![format!("k8s-{cluster}-host")]).await?;
+    net::publish(cfg, format!("k8s-{cluster}"), format!("127.0.0.1:{K3S_PORT}")).await?;
+    Ok(())
 }
 
 /// `hanzo up status` — the supervisor and the node, honestly separated: the
