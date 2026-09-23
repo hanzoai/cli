@@ -99,64 +99,64 @@ trap 'rm -rf "$tmp"' EXIT
 # GitHub's /latest follows release chronology, which can select an older
 # maintenance release over a higher version. Parse release objects (including
 # compact JSON and escaped body text), then compare stable semantic versions.
-# Only releases containing this native product participate: MCP also publishes
-# independent JavaScript versions in the same repository.
+#
+# Only releases carrying THIS machine's archive and its checksum participate. A
+# release is not one object per product: MCP also publishes independent
+# JavaScript versions in the same repository, and a release whose build for one
+# target failed still went out with the others (hanzoai/cli v8.5.158 has no
+# linux-amd64, hanzoai/mcp rust-v1.1.23 no darwin). Choosing it would end the
+# install on a 404 when the release before it has this machine's build.
+#
+# grep splits the page into one token per line — a string with its escapes, a
+# structural character, or a bare scalar — and awk walks that stream. Walking
+# the page as one awk string, a character at a time, cost 24 to 44 CPU-seconds
+# on a 960 KB page of hanzoai/cli releases; the stream costs 0.15.
 release_tags() {
-  awk -v bin="$BIN" '
+  grep -oE '"([^"\\]|\\.)*"|[][{}:,]|[a-z0-9.+-]+' "$1" | awk -v asset="${BIN}-${target}.tar.gz" '
     function scalar(value) {
       if (depth == 2) {
         if (key[depth] == "tag_name") tag = value
         if (key[depth] == "draft") draft = value
         if (key[depth] == "prerelease") prerelease = value
       }
-      if (depth == 4 && context[3] == "assets" && key[depth] == "name" &&
-          index(value, bin "-") == 1 && value ~ /\.tar\.gz$/) native = 1
+      if (depth == 4 && context[3] == "assets" && key[depth] == "name") {
+        if (value == asset) archive = 1
+        if (value == asset ".sha256") sum = 1
+      }
     }
-    { document = document $0 "\n" }
-    END {
-      for (i = 1; i <= length(document); i++) {
-        c = substr(document, i, 1)
-        if (c == "\"") {
-          value = ""; closed = 0
-          while (++i <= length(document)) {
-            c = substr(document, i, 1)
-            if (c == "\\") { value = value c substr(document, ++i, 1); continue }
-            if (c == "\"") { closed = 1; break }
-            value = value c
-          }
-          if (!closed) exit 3
-          nextchar = i + 1
-          while (substr(document, nextchar, 1) ~ /[ \t\r\n]/) nextchar++
-          if (substr(document, nextchar, 1) == ":") key[depth] = value
-          else scalar(value)
-        } else if (c == "{" || c == "[") {
-          context[depth + 1] = key[depth]; depth++
-          if (depth == 2 && c == "{") {
-            tag = ""; draft = ""; prerelease = ""; native = 0
-          }
-        } else if (c == "}" || c == "]") {
-          if (depth == 2 && c == "}") {
-            count++
-            version = tag; sub(/^(rust-)?v/, "", version)
-            if (native && draft == "false" && prerelease == "false" &&
-                version ~ /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z.-]+)?$/) {
-              sub(/\+.*/, "", version)
-              print version "\t" tag
-            }
-          }
-          delete key[depth]; delete context[depth]; depth--
-          if (depth < 0) exit 3
-        } else if (c ~ /[a-z0-9-]/) {
-          value = c
-          while (substr(document, i + 1, 1) ~ /[a-z0-9.+-]/)
-            value = value substr(document, ++i, 1)
-          scalar(value)
+    # A string is a key when the next token is ":", and a value otherwise, so it
+    # is held until the next token says which.
+    function flush() { if (held) { held = 0; scalar(string) } }
+    /^"/ { flush(); string = substr($0, 2, length($0) - 2); held = 1; next }
+    $0 == ":" { if (held) { key[depth] = string; held = 0 }; next }
+    { flush() }
+    $0 == "{" || $0 == "[" {
+      context[depth + 1] = key[depth]; depth++
+      if (depth == 2 && $0 == "{") {
+        tag = ""; draft = ""; prerelease = ""; archive = 0; sum = 0
+      }
+      next
+    }
+    $0 == "}" || $0 == "]" {
+      if (depth == 2 && $0 == "}") {
+        count++
+        version = tag; sub(/^(rust-)?v/, "", version)
+        if (archive && sum && draft == "false" && prerelease == "false" &&
+            version ~ /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z.-]+)?$/) {
+          sub(/\+.*/, "", version)
+          print version "\t" tag
         }
       }
-      if (depth != 0) exit 3
+      delete key[depth]; delete context[depth]; depth--
+      if (depth < 0) { bad = 1; exit 3 }
+      next
+    }
+    $0 != "," { scalar($0) }
+    END {
+      if (bad || depth != 0) exit 3
       print "COUNT\t" count + 0
     }
-  ' "$1"
+  '
 }
 
 if [ -z "$TAG" ]; then
@@ -173,7 +173,7 @@ if [ -z "$TAG" ]; then
     page=$((page + 1))
   done
   TAG="$(sort -t . -k1,1n -k2,2n -k3,3n "$tmp/tags" | tail -1 | awk '{print $2}')"
-  [ -n "$TAG" ] || die "could not resolve a stable native release of $REPO.
+  [ -n "$TAG" ] || die "could not resolve a stable native release of $REPO for $target.
   If $REPO is private, set GH_TOKEN (or run \`gh auth login\`); or pin HANZO_VERSION=vX.Y.Z."
 fi
 

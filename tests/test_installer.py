@@ -12,11 +12,15 @@ import unittest
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
 
 
+def assets(*targets):
+    return [{"name": f"hanzo-mcp-{t}.tar.gz{s}"} for t in targets for s in ("", ".sha256")]
+
+
 def release(tag, **fields):
     return {
         "tag_name": tag, "draft": False, "prerelease": False,
         "body": 'Release notes with {braces}, "tag_name": "v99.0.0" and a newline\n',
-        "assets": [{"name": "hanzo-mcp-linux-amd64.tar.gz"}], **fields,
+        "assets": assets("linux-amd64"), **fields,
     }
 
 
@@ -84,6 +88,17 @@ else: sys.stdout.buffer.write(data)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("rust-v1.10.2 linux-amd64", result.stdout)
         self.assertEqual(subprocess.check_output([self.prefix / "mcp"], text=True), "native-mcp\n")
+
+    def test_newest_release_without_this_platform_is_skipped(self):
+        # hanzoai/cli v8.5.158 shipped darwin and linux-arm64 only, and hanzoai/mcp
+        # rust-v1.1.23 linux only: the newest release is not the newest one a given
+        # machine can install, and a half-uploaded release has a tarball and no sum.
+        self.page(1, [release("v3.0.0", assets=assets("darwin-arm64", "linux-arm64")),
+                      release("v2.0.0", assets=[{"name": "hanzo-mcp-linux-amd64.tar.gz"}]),
+                      release("v1.0.0")])
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("v1.0.0 linux-amd64", result.stdout)
 
     def test_searches_all_pages(self):
         self.page(1, [release(f"v1.0.{n}") for n in range(100)])
