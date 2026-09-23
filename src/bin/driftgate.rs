@@ -214,7 +214,10 @@ const EXCUSED: usize = 0;
 /// This is the one census the gate still REFUSES on rather than merely recording,
 /// and the line is user-visible breakage: an untyped write still works through
 /// `--data`, while a command addressing a dead mount cannot work at all.
-const CONTRADICTED: usize = 5;
+///
+/// 5 -> 0 on re-pinning @39bc7972da -> @7e2b0e5944: the five o11y routes answer,
+/// and the ceiling is back on the floor.
+const CONTRADICTED: usize = 0;
 
 /// Coordinates the PINNED document declares, the live table does not name, and
 /// the host denies. That is the document running AHEAD of the deploy: cloud's
@@ -239,6 +242,10 @@ const CONTRADICTED: usize = 5;
 /// on the count and not on slack, since a ceiling left high is room a later
 /// drift hides in.
 ///
+/// 8 -> 0 on re-pinning @39bc7972da -> @7e2b0e5944: nothing the pin declares is
+/// ahead of the deploy, `POST /v1/billing/usage` included, which the first
+/// capture against this pin still found denied.
+///
 /// IT USED TO BE CALLED A PHANTOM, and that was false by construction. A phantom
 /// is a command addressing a route NO DOCUMENT claims; every generated coordinate
 /// is claimed by the document it was generated from, and the chain digests refuse
@@ -246,7 +253,7 @@ const CONTRADICTED: usize = 5;
 /// "the deploy has not landed" as "this repo invented a route" points a hard
 /// failure at the wrong owner and buries the real phantom class — the
 /// hand-written literals, which keep the name and keep failing hard.
-const AHEAD: usize = 8;
+const AHEAD: usize = 0;
 
 /// Coordinates whose evidence cannot decide anything, because the prefix that
 /// answers for them answers the same way for a route nobody wrote — a relay door
@@ -282,7 +289,10 @@ const AHEAD: usize = 8;
 /// which is the whole cost: the one coordinate the previous capture could still
 /// call CONTRADICTED is now undecidable, so a blind spot has swallowed evidence
 /// the gate used to hold. It falls when the plugin is mounted again.
-const UNFALSIFIABLE: usize = 115;
+///
+/// 115 -> 63 on @7e2b0e5944: the plugin is mounted again. Every `/v1/commerce`
+/// control answers 404, so the host decides what sits beneath it once more.
+const UNFALSIFIABLE: usize = 63;
 
 // ---- the live route table ----------------------------------------------------
 

@@ -122,6 +122,28 @@ hanzo host serve [service]      # the Hanzo Cloud API from this machine (was `ha
 `engine serve` needs the Hanzo engine binary on PATH (or `HANZO_ENGINE_BIN`); it is not
 part of this install and the command says so when it is missing.
 
+### Graph
+
+Your org's statements with their sources and two times: `--as-of` is when a thing was
+so, `--as-known` is how much the graph had heard. A fixed pair gives the same answer
+again next year. The model is at [docs.hanzo.ai/docs/services/graph](https://docs.hanzo.ai/docs/services/graph).
+
+```bash
+hanzo graph create --assertions '{"entity":"acme/svc/api","relation":"owner","value":"acme/team/core","names":true,"at":"2026-09-01T00:00:00Z","source":"wiki/api"}'
+hanzo graph get --entity acme/svc/api --as-known 2026-09-15T00:00:00Z    # every version, oldest first
+hanzo graph search --q 'billing owner'
+hanzo graph resolve --entity acme/svc/api --relation owner --as-of 2026-09-01T00:00:00Z --as-known 2026-09-15T00:00:00Z
+hanzo graph neighbors --seeds acme/svc/api --relation depends --depth 2 --as-of 2026-09-01T00:00:00Z
+hanzo graph path --from acme/svc/api --to acme/team/core --direction both
+hanzo graph diff --entity acme/svc/api --from 2026-08-01T00:00:00Z --to 2026-09-01T00:00:00Z
+hanzo graph communities --as-of 2026-09-01T00:00:00Z
+hanzo graph answer --question 'Which teams own the billing services?'
+hanzo graph vocabulary                                                    # relations, schema, the rule
+hanzo graph extract --source wiki/api --text "$(cat page.md)"             # what it states, recording nothing
+hanzo graph ingest --source wiki/api --at 2026-09-01T00:00:00Z --text "$(cat page.md)"
+hanzo graph erase --entity acme/person/42 --reason 'DSR-1187'            # org admin only
+```
+
 ### Network & wallet
 
 ```bash

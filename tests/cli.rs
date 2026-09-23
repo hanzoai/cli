@@ -111,6 +111,33 @@ fn help_lists_the_resource_nouns() {
     }
 }
 
+/// Every graph operation is a command, and each one that asks the graph a
+/// question at a point takes both of its times: `--as-of` (when it was so) and
+/// `--as-known` (how much the graph had heard).
+#[test]
+fn graph_asks_at_both_times() {
+    let help = |args: &[&str]| {
+        let out = hanzo().args(args).arg("--help").assert().success();
+        String::from_utf8_lossy(&out.get_output().stdout).to_string()
+    };
+    let top = help(&["graph"]);
+    let listed = |verb: &str| top.lines().any(|l| l.trim_start().split_whitespace().next() == Some(verb));
+    for verb in [
+        "create", "get", "search", "resolve", "neighbors", "path", "diff", "communities", "answer",
+        "vocabulary", "extract", "ingest", "erase",
+    ] {
+        assert!(listed(verb), "`hanzo graph` does not list `{verb}`:\n{top}");
+    }
+    for verb in ["get", "search", "resolve", "neighbors", "path", "communities", "answer"] {
+        let h = help(&["graph", verb]);
+        assert!(h.contains("--as-of") && h.contains("--as-known"), "`hanzo graph {verb}` lacks a time:\n{h}");
+    }
+    let h = help(&["graph", "diff"]);
+    for flag in ["--from", "--to", "--from-known", "--to-known"] {
+        assert!(h.contains(flag), "`hanzo graph diff` lacks {flag}:\n{h}");
+    }
+}
+
 /// `hanzo vm` is a pure passthrough: a resolvable, current-enough `hanzo-vm`
 /// runs verbatim — no reinstall, its stdout and exit are ours. (The bootstrap
 /// that installs an absent or stale binary is unit-tested in commands/vm.rs;

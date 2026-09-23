@@ -254,16 +254,16 @@ fn matches_of(argv: &[&str]) -> clap::ArgMatches {
 
 #[test]
 fn a_simple_leaf_resolves_and_fills() {
-    let m = matches_of(&["hanzo", "agents", "sessions", "get", "sess_1"]);
+    let m = matches_of(&["hanzo", "agent", "sessions", "get", "sess_1"]);
     let Some(Resolved::Leaf { op, values, .. }) = resolve(&hand(), &m) else {
         panic!("expected a leaf");
     };
-    assert_eq!(op.path, "/v1/agents/sessions/{id}");
+    assert_eq!(op.path, "/v1/agent/sessions/{id}");
     assert_eq!(op.method, "GET");
     assert_eq!(values, vec!["sess_1"]);
     assert_eq!(
         fill_path(op.path, op.rest, Some("acme"), &values).unwrap(),
-        "/v1/agents/sessions/sess_1"
+        "/v1/agent/sessions/sess_1"
     );
 }
 
@@ -573,6 +573,39 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
     );
 }
 
+/// A graph question asked at a point carries both times to the wire: `--as-of`
+/// and `--as-known` land in a POST's body and a GET's query under the document's
+/// own names. The ops are the document's — every graph op that takes `as_known`.
+#[test]
+fn a_graph_question_carries_both_times_to_the_wire() {
+    let (of, known) = ("2026-09-01T00:00:00Z", "2026-09-15T00:00:00Z");
+    let timed: Vec<&Op> =
+        OPS.iter().filter(|o| o.product == "graph" && o.fields.iter().any(|f| f.key == "as_known")).collect();
+    assert!(timed.len() >= 7, "the document carries {} graph ops with as_known", timed.len());
+    for op in timed {
+        let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+        argv.extend(op.nodes.iter().map(|n| n.to_string()));
+        argv.push(op.verb.to_string());
+        for f in op.fields.iter().filter(|f| f.required) {
+            argv.push(format!("--{}", f.flag));
+            argv.push(if matches!(f.ty, Ty::Int) { "1".into() } else { format!("v-{}", f.key) });
+        }
+        argv.extend(["--as-of", of, "--as-known", known].map(String::from));
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let Some(Resolved::Leaf { op: got, body, query, .. }) = resolve(&hand(), &matches_of(&argv)) else {
+            panic!("expected a leaf for {argv:?}");
+        };
+        assert_eq!(got.path, op.path);
+        match body {
+            LeafBody::Typed(v) => assert_eq!((&v["as_of"], &v["as_known"]), (&Value::from(of), &Value::from(known)), "{argv:?}"),
+            _ => assert!(
+                query.contains(&format!("as_of={of}")) && query.contains(&format!("as_known={known}")),
+                "{argv:?} sent {query:?}"
+            ),
+        }
+    }
+}
+
 /// EVERY CAPABILITY THE DOCUMENT CARRIES IS A COMMAND. Read straight off
 /// `spec/cloud.json` — the projection `genproduct` derives the tree from — so this
 /// is the contract asking the parser, not one list of names asking another.
@@ -873,7 +906,7 @@ fn the_man_page_names_exactly_what_the_parser_mounts() {
 fn the_credential_of_a_connect_has_no_flag_to_carry_it() {
     let op = OPS
         .iter()
-        .find(|o| o.path == "/v1/integrations/{provider}/connect" && o.method == "POST")
+        .find(|o| o.path == "/v1/provider/{provider}/connect" && o.method == "POST")
         .expect("cloud serves the connector plane");
     let token = op.fields.iter().find(|f| f.key == "token").expect("the document types the body");
     assert!(token.secret, "a provider credential must never be a flag");

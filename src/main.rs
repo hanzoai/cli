@@ -1673,7 +1673,7 @@ mod tests {
     fn a_generated_product_resolves_and_a_local_command_does_not() {
         let hand = Cli::command();
         let merged = commands::product::augment(hand.clone());
-        let m = merged.clone().try_get_matches_from(["hanzo", "agents", "list"]).unwrap();
+        let m = merged.clone().try_get_matches_from(["hanzo", "agent", "list"]).unwrap();
         assert!(commands::product::resolve(&hand, &m).is_some(), "a cloud product resolves");
 
         let m = merged.try_get_matches_from(["hanzo", "version"]).unwrap();
