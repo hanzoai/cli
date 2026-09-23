@@ -22,7 +22,7 @@ verifies its sha256, and puts `hanzo` in `~/.local/bin` — along with `hanzo-mc
 MCP server) and `dev` (the coding agent `hanzo code` runs). Re-run to upgrade.
 
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
-"fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh/cli | sh`.
+"fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh | sh -s -- hanzo`.
 
 That is the only install method. Contributors hacking on the CLI itself build from
 source (Rust toolchain):

@@ -219,7 +219,7 @@ jobs:
       # GH_PAT is an org secret at git.hanzo.ai/hanzoai (repo-level secrets are
       # empty; org secrets inherit) — the same one cloud publishes with. BUILD
       # happens on Hanzo Git; DISTRIBUTION stays on GitHub Releases because
-      # hanzo.sh lists api.github.com/repos/hanzoai/cli/releases.
+      # hanzo.sh downloads from github.com/hanzoai/cli releases.
       # Crossing that boundary is the one thing this step needs a credential for.
       - name: Publish
         env:
