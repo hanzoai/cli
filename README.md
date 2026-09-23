@@ -53,8 +53,9 @@ hanzo billing balance
 
 A group name on its own is not a command — `hanzo usage` and `hanzo auth` print their
 subcommands and stop. A first word the CLI does not recognise is read as the task.
-`hanzo login` is the one top-level exception: it is `hanzo auth login`, under the
-name people type first.
+`hanzo login` is the one top-level exception, from 8.5.157: it is `hanzo auth login`
+under the name people type first. Builds before it (npm 8.5.156, brew 1.9.57) read
+`hanzo login` as a task, so `hanzo auth login` is the form every channel answers.
 
 ## Coding — bare `hanzo`
 
