@@ -766,7 +766,7 @@ enum NetCommands {
         /// What it fronts, as host:port (e.g. 127.0.0.1:6443)
         target: String,
     },
-    /// Delete an identity by id
+    /// Take an identity off this org's network, by id
     Rm { id: String },
 }
 

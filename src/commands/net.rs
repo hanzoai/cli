@@ -190,14 +190,15 @@ pub async fn publish(cfg: &mut Config, name: String, target: String) -> Result<(
     Ok(())
 }
 
-/// `hanzo net rm <id>` — delete an identity.
+/// `hanzo net rm <id>` — take an identity off this org's network. It leaves the
+/// network entirely only when no other org still holds it, or when it is yours.
 pub async fn rm(cfg: &mut Config, id: String) -> Result<()> {
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')) {
         bail!("identity id {id:?} is not an id this command will put in a url");
     }
     let (api, tok) = signin(cfg).await?;
     delete_identity(&Http::default(), &api, &tok, &id).await?;
-    println!("{} removed identity {}", "✓".green(), id);
+    println!("{} {} is off this org's network", "✓".green(), id);
     Ok(())
 }
 
