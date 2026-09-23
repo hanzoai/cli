@@ -129,7 +129,8 @@ async fn healthy(_addr: &str) -> bool {
 async fn healthy(addr: &str) -> bool {
     use hanzo_client::{Http, Request, Transport};
     let url = format!("http://{addr}/healthz");
-    let probe = Http::default().send(Request::new(Method::GET, url));
+    let http = Http::default();
+    let probe = http.send(Request::new(Method::GET, url));
     matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status))
 }
 

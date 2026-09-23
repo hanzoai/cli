@@ -57,32 +57,21 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
         return Ok(());
     }
 
-    let seam = Seam::open(cfg).await;
-    let (clusters, apps, nodes) = match &seam {
-        Ok(s) => tokio::join!(
-            read(s, "/v1/k8s/clusters", "clusters"),
-            read(s, "/v1/deploy/applications", "items"),
-            read(s, "/v1/fleet/workers", "workers"),
-        ),
-        Err(e) => (
-            Err(format!("{e:#}")),
-            Err(format!("{e:#}")),
-            Err(format!("{e:#}")),
-        ),
-    };
+    // Signed out, this refuses and names the way in: an empty cloud is never
+    // rendered as though it were the truth. The local GPU machines are
+    // `--infer`, and never stand in for a cloud that did not answer.
+    let seam = Seam::open(cfg).await?;
+    // Concurrent: three independent reads, so the page costs one round trip.
+    let (clusters, apps, nodes) = tokio::join!(
+        read(&seam, "/v1/k8s/clusters", "clusters"),
+        read(&seam, "/v1/deploy/applications", "items"),
+        read(&seam, "/v1/fleet/workers", "workers"),
+    );
 
-    let cloud_answered = clusters.is_ok() || apps.is_ok() || nodes.is_ok();
-    if cloud_answered {
-        render(&clusters, &apps, &nodes);
-        println!();
-    }
+    render(&clusters, &apps, &nodes);
 
-    // Always report local GPU inference cluster state
-    let telem = crate::commands::monitor::collect_telemetry().await;
-    crate::commands::monitor::render_dashboard(&telem);
-
-    if !cloud_answered && !telem.router_online && telem.nodes.iter().all(|n| !n.online) {
-        bail!("no surface answered — neither cloud nor local GPU inference cluster responded");
+    if clusters.is_err() && apps.is_err() && nodes.is_err() {
+        bail!("no surface answered — nothing above was read from the cloud");
     }
     Ok(())
 }

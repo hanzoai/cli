@@ -96,88 +96,62 @@ TAG="${HANZO_VERSION:-}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# GitHub's /latest follows release chronology, which can select an older
-# maintenance release over a higher version. Parse release objects (including
-# compact JSON and escaped body text), then compare stable semantic versions.
-# Only releases containing this native product participate: MCP also publishes
-# independent JavaScript versions in the same repository.
-release_tags() {
-  awk -v bin="$BIN" '
-    function scalar(value) {
-      if (depth == 2) {
-        if (key[depth] == "tag_name") tag = value
-        if (key[depth] == "draft") draft = value
-        if (key[depth] == "prerelease") prerelease = value
-      }
-      if (depth == 4 && context[3] == "assets" && key[depth] == "name" &&
-          index(value, bin "-") == 1 && value ~ /\.tar\.gz$/) native = 1
-    }
-    { document = document $0 "\n" }
-    END {
-      for (i = 1; i <= length(document); i++) {
-        c = substr(document, i, 1)
-        if (c == "\"") {
-          value = ""; closed = 0
-          while (++i <= length(document)) {
-            c = substr(document, i, 1)
-            if (c == "\\") { value = value c substr(document, ++i, 1); continue }
-            if (c == "\"") { closed = 1; break }
-            value = value c
-          }
-          if (!closed) exit 3
-          nextchar = i + 1
-          while (substr(document, nextchar, 1) ~ /[ \t\r\n]/) nextchar++
-          if (substr(document, nextchar, 1) == ":") key[depth] = value
-          else scalar(value)
-        } else if (c == "{" || c == "[") {
-          context[depth + 1] = key[depth]; depth++
-          if (depth == 2 && c == "{") {
-            tag = ""; draft = ""; prerelease = ""; native = 0
-          }
-        } else if (c == "}" || c == "]") {
-          if (depth == 2 && c == "}") {
-            count++
-            version = tag; sub(/^(rust-)?v/, "", version)
-            if (native && draft == "false" && prerelease == "false" &&
-                version ~ /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z.-]+)?$/) {
-              sub(/\+.*/, "", version)
-              print version "\t" tag
-            }
-          }
-          delete key[depth]; delete context[depth]; depth--
-          if (depth < 0) exit 3
-        } else if (c ~ /[a-z0-9-]/) {
-          value = c
-          while (substr(document, i + 1, 1) ~ /[a-z0-9.+-]/)
-            value = value substr(document, ++i, 1)
-          scalar(value)
-        }
-      }
-      if (depth != 0) exit 3
-      print "COUNT\t" count + 0
-    }
-  ' "$1"
+asset="${BIN}-${target}.tar.gz"
+
+# The tags come from git's ref advertisement, not the REST API. github.com serves
+# it without the API's limit of 60 anonymous calls an hour per address, and
+# listing releases through the API cost one call per 100 releases per tool: 8 of
+# the 60 for one `curl hanzo.sh | sh`. Behind a shared NAT or on a CI runner the
+# limit was spent before the installer ran, and nothing installed.
+#
+# /latest is not used either: it follows release chronology, which can select an
+# older maintenance release over a higher version.
+tags() {
+  url="https://github.com/$REPO.git/info/refs?service=git-upload-pack"
+  if [ -n "$TOKEN" ]; then
+    curl -fsS -H "Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')" "$url"
+  else
+    curl -fsS "$url"
+  fi
+}
+
+# has <tag>: does the release at <tag> carry THIS machine's archive and its
+# checksum? A release is not one object per product: MCP also publishes
+# independent JavaScript versions in the same repository, and a release whose
+# build for one target failed still went out with the others (hanzoai/cli
+# v8.5.158 has no linux-amd64, hanzoai/mcp rust-v1.1.23 no darwin). Choosing it
+# would end the install on a 404 when the release before it has this machine's
+# build. A draft's assets answer 404 until it is published, so a draft is never
+# chosen either.
+has() {
+  if [ -z "$TOKEN" ]; then
+    curl -fs -I -o /dev/null "https://github.com/$REPO/releases/download/$1/$asset.sha256" &&
+      curl -fs -I -o /dev/null "https://github.com/$REPO/releases/download/$1/$asset"
+    return
+  fi
+  # A private release's download URL answers 404 even with a token; the API
+  # names its assets.
+  get_stdout "https://api.github.com/repos/$REPO/releases/tags/$1" > "$tmp/release.json" 2>/dev/null &&
+    grep -qF "\"$asset\"" "$tmp/release.json" &&
+    grep -qF "\"$asset.sha256\"" "$tmp/release.json"
 }
 
 if [ -z "$TAG" ]; then
-  page=1
-  : > "$tmp/tags"
-  while :; do
-    get "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page" "$tmp/releases.json" \
-      || die "could not list releases of $REPO"
-    release_tags "$tmp/releases.json" > "$tmp/page-tags" \
-      || die "invalid release metadata from $REPO"
-    sed '/^COUNT/d' "$tmp/page-tags" >> "$tmp/tags"
-    count="$(awk '$1 == "COUNT" { print $2 }' "$tmp/page-tags")"
-    [ "$count" -ge 100 ] || break
-    page=$((page + 1))
-  done
-  TAG="$(sort -t . -k1,1n -k2,2n -k3,3n "$tmp/tags" | tail -1 | awk '{print $2}')"
-  [ -n "$TAG" ] || die "could not resolve a stable native release of $REPO.
+  tags > "$tmp/refs" || die "could not list the tags of $REPO"
+  # One ref per pkt-line, "<len><sha> refs/tags/<tag>", with NULs around the
+  # capability list; a peeled "<tag>^{}" line fails the pattern.
+  tr '\000' '\n' < "$tmp/refs" | awk '
+    $2 ~ /^refs\/tags\/(rust-)?v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ {
+      tag = substr($2, 11); version = tag; sub(/^(rust-)?v/, "", version)
+      print version "\t" tag
+    }' | sort -t . -k1,1nr -k2,2nr -k3,3nr | awk '{ print $2 }' > "$tmp/tags"
+  while read -r candidate; do
+    if has "$candidate"; then TAG="$candidate"; break; fi
+  done < "$tmp/tags"
+  [ -n "$TAG" ] || die "no stable release of $REPO has a build for $target.
   If $REPO is private, set GH_TOKEN (or run \`gh auth login\`); or pin HANZO_VERSION=vX.Y.Z."
 fi
 
-asset="${BIN}-${target}.tar.gz"
 base="https://github.com/$REPO/releases/download/$TAG"
 
 # A private release's browser download URL is not fetchable with a token; assets
@@ -257,8 +231,8 @@ case ":$PATH:" in
   *":$PREFIX:"*) ;;
   *) printf '%s: %s is not on PATH — add it:\n  export PATH="%s:$PATH"\n' "$BIN" "$PREFIX" "$PREFIX" ;;
 esac
-# `hanzo login` is not a command. An unrecognised first word is read as a task
-# for the coding agent, so telling someone to run it starts a session about the
-# word "login" instead of signing them in — and this was the LAST line the
-# installer printed.
+# `hanzo auth login`, not `hanzo login`: the top-level alias arrived in 8.5.157,
+# and a build before it reads an unrecognised first word as a task for the coding
+# agent, so it would start a session about the word "login" instead of signing
+# anyone in. HANZO_VERSION can pin such a build.
 if [ "$BIN" = hanzo ]; then printf 'hanzo: next → hanzo auth login\n'; fi

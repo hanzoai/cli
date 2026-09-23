@@ -22,7 +22,7 @@ verifies its sha256, and puts `hanzo` in `~/.local/bin` — along with `hanzo-mc
 MCP server) and `dev` (the coding agent `hanzo code` runs). Re-run to upgrade.
 
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
-"fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh/cli | sh`.
+"fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh | sh -s -- hanzo`.
 
 That is the only install method. Contributors hacking on the CLI itself build from
 source (Rust toolchain):
@@ -52,9 +52,10 @@ hanzo billing balance
 ```
 
 A group name on its own is not a command — `hanzo usage` and `hanzo auth` print their
-subcommands and stop. A first word the CLI does not recognise is read as the task, so
-`hanzo login` starts a coding session about the word "login"; the command is
-`hanzo auth login`.
+subcommands and stop. A first word the CLI does not recognise is read as the task.
+`hanzo login` is the one top-level exception, from 8.5.157: it is `hanzo auth login`
+under the name people type first. Builds before it (npm 8.5.156, brew 1.9.57) read
+`hanzo login` as a task, so `hanzo auth login` is the form every channel answers.
 
 ## Coding — bare `hanzo`
 
