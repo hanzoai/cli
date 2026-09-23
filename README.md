@@ -52,9 +52,9 @@ hanzo billing balance
 ```
 
 A group name on its own is not a command — `hanzo usage` and `hanzo auth` print their
-subcommands and stop. A first word the CLI does not recognise is read as the task, so
-`hanzo login` starts a coding session about the word "login"; the command is
-`hanzo auth login`.
+subcommands and stop. A first word the CLI does not recognise is read as the task.
+`hanzo login` is the one top-level exception: it is `hanzo auth login`, under the
+name people type first.
 
 ## Coding — bare `hanzo`
 
