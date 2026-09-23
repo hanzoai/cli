@@ -125,8 +125,8 @@ part of this install and the command says so when it is missing.
 ### Graph
 
 Your org's statements with their sources and two times: `--as-of` is when a thing was
-so, `--as-known` is how much the graph had heard. A fixed pair gives the same answer
-again next year. The model is at [docs.hanzo.ai/docs/services/graph](https://docs.hanzo.ai/docs/services/graph).
+so, `--as-known` is how much the graph had heard. The model is at
+[docs.hanzo.ai/docs/services/graph](https://docs.hanzo.ai/docs/services/graph).
 
 ```bash
 hanzo graph create --assertions '{"entity":"acme/svc/api","relation":"owner","value":"acme/team/core","names":true,"at":"2026-09-01T00:00:00Z","source":"wiki/api"}'
