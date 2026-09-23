@@ -219,7 +219,7 @@ jobs:
       # GH_PAT is an org secret at git.hanzo.ai/hanzoai (repo-level secrets are
       # empty; org secrets inherit) — the same one cloud publishes with. BUILD
       # happens on Hanzo Git; DISTRIBUTION stays on GitHub Releases because
-      # hanzo.sh resolves api.github.com/repos/hanzoai/cli/releases/latest.
+      # hanzo.sh lists api.github.com/repos/hanzoai/cli/releases.
       # Crossing that boundary is the one thing this step needs a credential for.
       - name: Publish
         env:
@@ -232,18 +232,25 @@ jobs:
           uploads="https://uploads.github.com/repos/$REPO"
           auth=(-H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json")
 
-          # Find-or-create: parallel matrix jobs share ONE release, and a re-run
-          # must upload, not fail on an existing release.
-          id="$(curl -s "${auth[@]}" "$api/releases/tags/$TAG" | jq -r '.id // empty')"
+          # Find-or-create the release as a DRAFT: the matrix legs share ONE
+          # release, and a re-run must upload, not fail on an existing release.
+          # A draft is invisible to every installer, so a leg that fails leaves
+          # no half-built release where a machine looks for the newest one:
+          # v8.5.158 went out with no linux-amd64 and v8.5.160 with darwin only.
+          # `release` below publishes the draft once every leg has uploaded.
+          # /releases/tags/<tag> does not answer for a draft, so read the list.
+          release_id() {
+            curl -s "${auth[@]}" "$api/releases?per_page=100" \
+              | jq -r --arg t "$TAG" 'first(.[] | select(.tag_name == $t) | .id) // empty'
+          }
+          id="$(release_id)"
           if [ -z "$id" ]; then
             id="$(curl -s -X POST "${auth[@]}" \
-              -d "$(jq -nc --arg t "$TAG" '{tag_name:$t,name:$t,generate_release_notes:true}')" \
+              -d "$(jq -nc --arg t "$TAG" '{tag_name:$t,name:$t,draft:true,generate_release_notes:true}')" \
               "$api/releases" | jq -r '.id // empty')"
           fi
           # A concurrent job may have created it between our GET and POST; re-read.
-          if [ -z "$id" ]; then
-            id="$(curl -s "${auth[@]}" "$api/releases/tags/$TAG" | jq -r '.id // empty')"
-          fi
+          [ -n "$id" ] || id="$(release_id)"
           [ -n "$id" ] || { echo "could not create or find release $TAG"; exit 1; }
 
           for f in "hanzo-${{ matrix.target.id }}.tar.gz" "hanzo-${{ matrix.target.id }}.tar.gz.sha256"; do
@@ -258,9 +265,34 @@ jobs:
             echo "uploaded $f"
           done
 
-  # PUBLISH TO NPM, and only after every target uploaded.
+  # PUBLISH THE RELEASE, once every target is on it. The legs upload into a
+  # draft and `needs: build` holds this until all five succeeded, so a release is
+  # whole or absent: a failed leg leaves the draft unpublished, and the release
+  # before it stays the newest one anybody installs.
+  release:
+    name: release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: [linux-amd64]
+    steps:
+      - name: Publish the draft
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$REPO"
+          auth=(-H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json")
+          id="$(curl -s "${auth[@]}" "$api/releases?per_page=100" \
+            | jq -r --arg t "$TAG" 'first(.[] | select(.tag_name == $t) | .id) // empty')"
+          [ -n "$id" ] || { echo "::error::no release for $TAG; the build legs create it"; exit 1; }
+          curl -fsS -X PATCH "${auth[@]}" -d '{"draft":false}' "$api/releases/$id" \
+            | jq -r '"published \(.tag_name): \(.html_url)"'
+
+  # PUBLISH TO NPM, and only after the release is out.
   #
-  # `needs: build` is the whole safety property: the npm package's postinstall
+  # `needs: release` is the whole safety property: the npm package's postinstall
   # downloads `hanzo-<platform>.tar.gz` from the release for its own version, so
   # publishing before the assets exist ships a package whose install 404s. v1.9.41
   # is the cautionary case — four targets uploaded, linux-amd64 did not, and the
@@ -273,7 +305,7 @@ jobs:
   # copies drift.
   npm:
     name: npm
-    needs: build
+    needs: release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: [linux-amd64]
     steps:
@@ -338,8 +370,8 @@ jobs:
   # green forever on a stale but self-consistent pair. Freshness is not a fact
   # about that repo, it is a fact about THIS release, so the bump belongs here.
   #
-  # `needs: build` for the same reason npm has it: the formula names assets, and a
-  # formula pointing at a release whose upload failed is a broken install.
+  # `needs: release` for the same reason npm has it: the formula names assets, and
+  # a draft's assets download for nobody.
   #
   # FOUR targets, not five — Homebrew has no windows.
   #
@@ -353,7 +385,7 @@ jobs:
   # reads the sidecars over https from github Releases, where distribution lives.
   tap:
     name: homebrew tap
-    needs: build
+    needs: release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: [linux-amd64]
     steps:
