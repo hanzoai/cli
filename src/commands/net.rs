@@ -2,7 +2,8 @@
 //!
 //! Cloud owns the ZT controller; this is the thin client. `ls` reads the network
 //! view, `join` ensures the caller's identity, `up` runs the tunnel, `publish`
-//! names a local service on the network's DNS, `rm` deletes an identity. Auth is
+//! names a local service on the network's DNS, `unpublish` takes one off, `rm`
+//! deletes an identity. Auth is
 //! the seam every other cloud command uses — the active hanzo.id bearer against
 //! the active network's api origin, over [`hanzo_client::Http`] — and the org is
 //! the gateway's to derive from the JWT. Nothing is filed on disk: the tunnel
@@ -12,7 +13,8 @@
 //! The wire contract: `POST /v1/network/identities` takes `{name?, roles?}`,
 //! ensures the identity whose externalId is the caller's subject (idempotent),
 //! and answers `{id, name, externalId, roles}`; `POST /v1/network/services`
-//! takes `{name, host, port}` and answers `{dns}`.
+//! takes `{name, host, port}` and answers `{dns}`; `DELETE` on either, by id,
+//! removes it.
 
 use crate::commands::{launch, network};
 use crate::config::Config;
@@ -102,8 +104,8 @@ async fn create_service(
         .ok_or_else(|| anyhow!("cloud answered without a dns name: {v}"))
 }
 
-async fn delete_identity(http: &Http, api: &str, token: &str, id: &str) -> Result<()> {
-    let url = format!("{api}/v1/network/identities/{id}");
+async fn delete(http: &Http, api: &str, token: &str, kind: &str, id: &str) -> Result<()> {
+    let url = format!("{api}/v1/network/{kind}/{id}");
     send(http, Method::DELETE, &url, token, None).await?;
     Ok(())
 }
@@ -193,13 +195,30 @@ pub async fn publish(cfg: &mut Config, name: String, target: String) -> Result<(
 /// `hanzo net rm <id>` — take an identity off this org's network. It leaves the
 /// network entirely only when no other org still holds it, or when it is yours.
 pub async fn rm(cfg: &mut Config, id: String) -> Result<()> {
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')) {
-        bail!("identity id {id:?} is not an id this command will put in a url");
+    remove(cfg, "identities", &id).await
+}
+
+/// `hanzo net unpublish <id>` — take a published service off this org's network,
+/// with its policies and the host role that served it.
+pub async fn unpublish(cfg: &mut Config, id: String) -> Result<()> {
+    remove(cfg, "services", &id).await
+}
+
+async fn remove(cfg: &mut Config, kind: &str, id: &str) -> Result<()> {
+    if !url_id(id) {
+        bail!("{id:?} is not an id this command will put in a url");
     }
     let (api, tok) = signin(cfg).await?;
-    delete_identity(&Http::default(), &api, &tok, &id).await?;
+    delete(&Http::default(), &api, &tok, kind, id).await?;
     println!("{} {} is off this org's network", "✓".green(), id);
     Ok(())
+}
+
+/// An id the controller mints — letters, digits, `-`, `_`, `.` — and never one
+/// of dots alone, which a url would read as a path step.
+fn url_id(id: &str) -> bool {
+    !id.bytes().all(|b| b == b'.')
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 #[cfg(test)]
@@ -361,20 +380,33 @@ mod tests {
         assert_eq!(v["port"], 6443);
     }
 
-    /// `rm` deletes by id, and a refusal is an error, never a silent success.
+    /// `rm` and `unpublish` delete by id, and a refusal is an error, never a
+    /// silent success.
     #[tokio::test]
-    async fn rm_deletes_the_identity_and_a_refusal_is_an_error() {
-        let fake = Fake::serve(200, "{}").await;
-        delete_identity(&Http::default(), &fake.base, "TOK", "idn_1").await.unwrap();
-        let (method, path, _, _) = fake.one();
-        assert_eq!(method, "DELETE");
-        assert_eq!(path, "/v1/network/identities/idn_1");
+    async fn deletes_by_id_and_a_refusal_is_an_error() {
+        for (kind, id) in [("identities", "LHp.jcv5k"), ("services", "7OLM0dO4Y5VMsPoIuf2kST")] {
+            let fake = Fake::serve(200, "{}").await;
+            delete(&Http::default(), &fake.base, "TOK", kind, id).await.unwrap();
+            let (method, path, _, _) = fake.one();
+            assert_eq!(method, "DELETE");
+            assert_eq!(path, format!("/v1/network/{kind}/{id}"));
+        }
 
         let refusing = Fake::serve(403, r#"{"error":"not yours"}"#).await;
-        let err = delete_identity(&Http::default(), &refusing.base, "TOK", "idn_1")
+        let err = delete(&Http::default(), &refusing.base, "TOK", "services", "svc_1")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("403"), "got: {err}");
+    }
+
+    #[test]
+    fn ids_stay_one_url_segment() {
+        for ok in ["LHp.jcv5k", "7OLM0dO4Y5VMsPoIuf2kST", "idn_1", "a-b"] {
+            assert!(url_id(ok), "{ok}");
+        }
+        for bad in ["", ".", "..", "a/b", "a?b", "a b", "%2e"] {
+            assert!(!url_id(bad), "{bad}");
+        }
     }
 
     #[test]

@@ -767,6 +767,8 @@ enum NetCommands {
         /// What it fronts, as host:port (e.g. 127.0.0.1:6443)
         target: String,
     },
+    /// Take a published service off this org's network, by id
+    Unpublish { id: String },
     /// Take an identity off this org's network, by id
     Rm { id: String },
 }
@@ -1093,6 +1095,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             NetCommands::Publish { name, target } => {
                 commands::net::publish(&mut config, name, target).await?;
             }
+            NetCommands::Unpublish { id } => commands::net::unpublish(&mut config, id).await?,
             NetCommands::Rm { id } => commands::net::rm(&mut config, id).await?,
         },
         Commands::Wallet { command } => match command {
