@@ -428,9 +428,10 @@ enum Commands {
     /// Stop the local k3s microVM started by `hanzo up`
     Down,
 
-    /// Show cloud status (broken first, clusters, applications) and local GPU inference cluster
+    /// Show the whole cloud: what is unhealthy first, then clusters,
+    /// applications and the machines on the fleet
     Status {
-        /// Show only local GPU inference cluster telemetry
+        /// Show the local GPU inference cluster instead of the cloud
         #[arg(long, visible_alias = "nodes", visible_alias = "gpu", visible_alias = "telemetry")]
         infer: bool,
     },
