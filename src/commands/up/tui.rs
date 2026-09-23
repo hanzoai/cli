@@ -1,6 +1,6 @@
 //! Terminal UI operations dashboard for Hanzo:
-//! - [1] Sandboxes & Agent Workspaces (Isolated microVMs & containers)
-//! - [2] Grid & Fleet Nodes (spark.local, runners, compute topology)
+//! - [1] Compute — this machine and its siblings, live (home; `compute.rs`)
+//! - [2] Sandboxes & Agent Workspaces (Isolated microVMs & containers)
 //! - [3] Local Models & Zen Engine (Qwen 3+ series, VRAM, context, inference)
 //! - [4] Cloud App Services (IAM, KMS, Gateway, Storage, PubSub, Router, MicroVM)
 //! - [5] Usage & Quota (Tokens, Request Meters, Throughput, Latencies)
@@ -30,8 +30,8 @@ use std::time::{Duration, Instant};
 /// Top-level view modes in the dashboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardView {
+    Compute,
     Sandboxes,
-    GridNodes,
     LocalModels,
     CloudServices,
     Usage,
@@ -40,8 +40,8 @@ pub enum DashboardView {
 impl DashboardView {
     pub fn all() -> [DashboardView; 5] {
         [
+            DashboardView::Compute,
             DashboardView::Sandboxes,
-            DashboardView::GridNodes,
             DashboardView::LocalModels,
             DashboardView::CloudServices,
             DashboardView::Usage,
@@ -50,8 +50,8 @@ impl DashboardView {
 
     pub fn title(&self) -> &'static str {
         match self {
-            DashboardView::Sandboxes => "1: Sandboxes",
-            DashboardView::GridNodes => "2: Grid & Nodes",
+            DashboardView::Compute => "1: Compute",
+            DashboardView::Sandboxes => "2: Sandboxes",
             DashboardView::LocalModels => "3: Local Models",
             DashboardView::CloudServices => "4: Cloud Services",
             DashboardView::Usage => "5: Usage & Quota",
@@ -61,7 +61,7 @@ impl DashboardView {
     pub fn subtitle(&self) -> &'static str {
         match self {
             DashboardView::Sandboxes => "Run coding agents in isolated environments safely",
-            DashboardView::GridNodes => "Hanzo Grid distributed compute topology & runner fleet",
+            DashboardView::Compute => "This machine and its siblings: GPU, memory, disk, network, serving",
             DashboardView::LocalModels => "Local LLMs, Zen engines & accelerated model runtimes",
             DashboardView::CloudServices => "Unified cloud subsystems, microVMs & zero-trust transport",
             DashboardView::Usage => "Resource consumption, inference tokens & quota limits",
@@ -137,31 +137,6 @@ pub enum FocusedPane {
     Detail,
 }
 
-// ── Grid & Nodes Data Models ────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GridNode {
-    pub name: String,
-    pub role: String,
-    pub address: String,
-    pub cpu: String,
-    pub memory: String,
-    pub disk: String,
-    pub status: String,
-    pub uptime: String,
-    pub is_online: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunnerInfo {
-    pub name: String,
-    pub host: String,
-    pub runner_type: String,
-    pub allocation: String,
-    pub status: String,
-    pub detail: String,
-}
-
 // ── Local Models Data Models ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,10 +193,8 @@ pub struct App {
     pub focused_pane: FocusedPane,
     pub global_rules: Vec<GlobalRule>,
 
-    // [2] Grid & Nodes
-    pub grid_nodes: Vec<GridNode>,
-    pub selected_node_row: usize,
-    pub runners: Vec<RunnerInfo>,
+    // [1] Compute
+    pub compute: super::compute::Board,
 
     // [3] Local Models
     pub local_models: Vec<LocalModel>,
@@ -272,7 +245,7 @@ impl App {
         }
 
         let mut app = Self {
-            current_view: DashboardView::Sandboxes,
+            current_view: DashboardView::Compute,
 
             sandboxes: Vec::new(),
             selected_sandbox: 0,
@@ -282,9 +255,7 @@ impl App {
             focused_pane: FocusedPane::Sandboxes,
             global_rules: Self::default_global_rules(),
 
-            grid_nodes: Self::seed_grid_nodes(spark_live, evo_live),
-            selected_node_row: 0,
-            runners: Self::seed_runners(spark_live, evo_live, router_live),
+            compute: super::compute::Board::start(),
 
             local_models: Self::seed_local_models(spark_live, evo_live, router_live),
             selected_model_row: 0,
@@ -368,7 +339,6 @@ impl App {
         self.evo_online = evo_live;
         self.router_online = router_live;
 
-        self.grid_nodes = Self::build_grid_nodes(Some(&telem), spark_live, evo_live);
         self.local_models = Self::build_local_models(Some(&telem), spark_live, evo_live, router_live);
         self.usage_items = Self::build_usage_items(Some(&telem));
         self.cloud_services = Self::seed_cloud_services(router_live);
@@ -816,167 +786,6 @@ impl App {
         ]
     }
 
-    pub fn build_grid_nodes(
-        telem: Option<&crate::commands::monitor::ClusterTelemetry>,
-        spark_live: bool,
-        evo_live: bool,
-    ) -> Vec<GridNode> {
-        let dgx_stats = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "dgx"));
-        let evo_stats = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "evo"));
-
-        let dgx_status = if let Some(s) = dgx_stats {
-            if s.online {
-                format!("● Online ({} in-flight, {:.1}% KV)", s.in_flight, s.kv_usage_pct)
-            } else {
-                "○ Offline".into()
-            }
-        } else if spark_live {
-            "● Online (Ready)".into()
-        } else {
-            "○ Standby".into()
-        };
-
-        let evo_status = if let Some(s) = evo_stats {
-            if s.online {
-                format!("● Online ({} in-flight, {:.1}% KV)", s.in_flight, s.kv_usage_pct)
-            } else {
-                "○ Offline".into()
-            }
-        } else if evo_live {
-            "● Online (Ready)".into()
-        } else {
-            "○ Standby".into()
-        };
-
-        let ra_online = Self::probe_addr("10.0.0.198:22");
-        let k3s_online = Self::probe_addr("127.0.0.1:6443");
-
-        vec![
-            GridNode {
-                name: "spark.local (dgx)".into(),
-                role: "NVIDIA GB10 Blackwell / vLLM NVFP4 (:18300)".into(),
-                address: "10.0.0.19 / 192.168.77.2".into(),
-                cpu: "72c ARM64 Neoverse-V2".into(),
-                memory: "128 GB Unified LPDDR5X (121GB VRAM)".into(),
-                disk: "821 GB free (NVMe)".into(),
-                status: dgx_status,
-                uptime: "4d 18h".into(),
-                is_online: spark_live,
-            },
-            GridNode {
-                name: "evo.local".into(),
-                role: "AMD Strix Halo / Halogen Flash Server (:8731)".into(),
-                address: "10.0.0.21 / 192.168.77.1".into(),
-                cpu: "16c/32t Zen 5 (x86_64)".into(),
-                memory: "128 GB Unified LPDDR5X (GFX1151)".into(),
-                disk: "430 GB free (NVMe)".into(),
-                status: evo_status,
-                uptime: "2d 04h".into(),
-                is_online: evo_live,
-            },
-            GridNode {
-                name: "ra.local".into(),
-                role: "macOS Developer Host & Console (:22)".into(),
-                address: "10.0.0.198".into(),
-                cpu: "12c Apple Silicon (arm64)".into(),
-                memory: "64 GB Unified RAM".into(),
-                disk: "1.2 TB free".into(),
-                status: if ra_online { "● Active (Remote SSH)".into() } else { "○ Standby".into() },
-                uptime: "18d 5h".into(),
-                is_online: ra_online,
-            },
-            GridNode {
-                name: "dbc.local".into(),
-                role: "Apple M4 Max (Metal) [Standby]".into(),
-                address: "10.0.0.132".into(),
-                cpu: "16c M4 Max (arm64)".into(),
-                memory: "128 GB Unified RAM".into(),
-                disk: "1.8 TB free".into(),
-                status: "○ Standby (Decommissioned)".into(),
-                uptime: "12d 1h".into(),
-                is_online: false,
-            },
-            GridNode {
-                name: "k3s-microvm".into(),
-                role: "Cloud Workload Container Node".into(),
-                address: "127.0.0.1:6443".into(),
-                cpu: "4c vCPU (3%)".into(),
-                memory: "4.0 GB / 16 GB".into(),
-                disk: "16 GB assigned".into(),
-                status: if k3s_online { "● Ready (k8s)".into() } else { "○ Stopped".into() },
-                uptime: "6h 40m".into(),
-                is_online: k3s_online,
-            },
-        ]
-    }
-
-    pub fn seed_grid_nodes(spark_live: bool, evo_live: bool) -> Vec<GridNode> {
-        Self::build_grid_nodes(None, spark_live, evo_live)
-    }
-
-    pub fn seed_runners(spark_live: bool, evo_live: bool, router_live: bool) -> Vec<RunnerInfo> {
-        let spark_status = if spark_live { "● Listening (Idle)" } else { "○ Standby" };
-        let evo_status = if evo_live { "● Listening (Idle)" } else { "○ Standby" };
-        vec![
-            RunnerInfo {
-                name: "hanzoai.spark-blackwell".into(),
-                host: "spark.local (10.0.0.19)".into(),
-                runner_type: "GitHub Actions Runner".into(),
-                allocation: "Linux aarch64 / NVIDIA GB10".into(),
-                status: spark_status.into(),
-                detail: "v2.321.0 · Blackwell NVFP4 Fleet".into(),
-            },
-            RunnerInfo {
-                name: "hanzoai.evo-halo".into(),
-                host: "evo.local (10.0.0.21)".into(),
-                runner_type: "GitHub Actions Runner".into(),
-                allocation: "Linux x86_64 / Radeon 8060S".into(),
-                status: evo_status.into(),
-                detail: "v2.321.0 · Strix Halo Fleet".into(),
-            },
-            RunnerInfo {
-                name: "luxfi.spark-arm64".into(),
-                host: "spark.local (10.0.0.19)".into(),
-                runner_type: "GitHub Actions Runner".into(),
-                allocation: "Linux aarch64 (Lux Network)".into(),
-                status: spark_status.into(),
-                detail: "v2.321.0 · Lux Network Fleet".into(),
-            },
-            RunnerInfo {
-                name: "coderouter.service".into(),
-                host: "local-dev-host (127.0.0.1)".into(),
-                runner_type: "Subagent Router Gateway".into(),
-                allocation: "Port 8088 -> Spark / Halo".into(),
-                status: "● Active (Proxying)".into(),
-                detail: "local-spark.* & local-halo.* routes".into(),
-            },
-            RunnerInfo {
-                name: "hanzo-router.service".into(),
-                host: "spark.local (10.0.0.19)".into(),
-                runner_type: "Cluster Pool Load Balancer".into(),
-                allocation: "Port 1235 -> Spark + Evo".into(),
-                status: if router_live { "● Active (Serving)".into() } else { "○ Standby".into() },
-                detail: "session-pinned, role-aware, EWMA TTFT".into(),
-            },
-            RunnerInfo {
-                name: "spark-sglang.service".into(),
-                host: "spark.local (10.0.0.19)".into(),
-                runner_type: "SGLang Blackwell Host".into(),
-                allocation: "Port 30000 -> NVFP4 BF16-LMHead".into(),
-                status: if spark_live { "● Active (Serving)".into() } else { "○ Standby".into() },
-                detail: "radix-cache & continuous batching".into(),
-            },
-            RunnerInfo {
-                name: "halo-llama.service".into(),
-                host: "evo.local (10.0.0.21)".into(),
-                runner_type: "Llama.cpp Multislot Host".into(),
-                allocation: "Port 8080 -> Qwen3.8 Q6_K GGUF".into(),
-                status: if evo_live { "● Active (Serving)".into() } else { "○ Standby".into() },
-                detail: "np=2 multislot Vulkan RADV".into(),
-            },
-        ]
-    }
-
     pub fn build_local_models(
         telem: Option<&crate::commands::monitor::ClusterTelemetry>,
         spark_live: bool,
@@ -1348,15 +1157,7 @@ impl App {
                 FocusedPane::Sandboxes => self.previous_sandbox(),
                 FocusedPane::Detail => self.previous_detail_row(),
             },
-            DashboardView::GridNodes => {
-                if !self.grid_nodes.is_empty() {
-                    if self.selected_node_row == 0 {
-                        self.selected_node_row = self.grid_nodes.len() - 1;
-                    } else {
-                        self.selected_node_row -= 1;
-                    }
-                }
-            }
+            DashboardView::Compute => self.compute.previous(),
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
                     if self.selected_model_row == 0 {
@@ -1393,11 +1194,7 @@ impl App {
                 FocusedPane::Sandboxes => self.next_sandbox(),
                 FocusedPane::Detail => self.next_detail_row(),
             },
-            DashboardView::GridNodes => {
-                if !self.grid_nodes.is_empty() {
-                    self.selected_node_row = (self.selected_node_row + 1) % self.grid_nodes.len();
-                }
-            }
+            DashboardView::Compute => self.compute.next(),
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
                     self.selected_model_row = (self.selected_model_row + 1) % self.local_models.len();
@@ -1707,8 +1504,6 @@ impl App {
         self.evo_online = evo_live;
         self.router_online = router_live;
         self.coderouter_online = coderouter_live;
-        self.grid_nodes = Self::build_grid_nodes(self.cluster_telemetry.as_ref(), spark_live, evo_live);
-        self.runners = Self::seed_runners(spark_live, evo_live, router_live);
         self.local_models = Self::build_local_models(self.cluster_telemetry.as_ref(), spark_live, evo_live, router_live);
         self.cloud_services = Self::seed_cloud_services(router_live);
         self.usage_items = Self::build_usage_items(self.cluster_telemetry.as_ref());
@@ -1741,6 +1536,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
 
     loop {
         app.poll_telemetry();
+        app.compute.poll();
         terminal.draw(|f| ui(f, app))?;
 
         let timeout = tick_rate
@@ -1757,8 +1553,8 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                             app.should_quit = true;
                         }
                         // View shortcuts (1-5)
-                        (_, KeyCode::Char('1')) => app.set_view(DashboardView::Sandboxes),
-                        (_, KeyCode::Char('2')) => app.set_view(DashboardView::GridNodes),
+                        (_, KeyCode::Char('1')) => app.set_view(DashboardView::Compute),
+                        (_, KeyCode::Char('2')) => app.set_view(DashboardView::Sandboxes),
                         (_, KeyCode::Char('3')) => app.set_view(DashboardView::LocalModels),
                         (_, KeyCode::Char('4')) => app.set_view(DashboardView::CloudServices),
                         (_, KeyCode::Char('5')) => app.set_view(DashboardView::Usage),
@@ -1797,7 +1593,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                         }
                         (_, KeyCode::Char('n')) => match app.current_view {
                             DashboardView::Sandboxes => app.toggle_active_tab(),
-                            DashboardView::LocalModels | DashboardView::GridNodes => {
+                            DashboardView::LocalModels => {
                                 app.toggle_target_node();
                             }
                             _ => {}
@@ -1808,7 +1604,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                             }
                         }
                         (_, KeyCode::Char('d')) => match app.current_view {
-                            DashboardView::LocalModels | DashboardView::GridNodes => {
+                            DashboardView::LocalModels => {
                                 app.download_selected_model();
                             }
                             _ => {}
@@ -1845,11 +1641,6 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                         }
                         (_, KeyCode::Char('p')) => {
                             match app.current_view {
-                                DashboardView::GridNodes => {
-                                    if let Some(node) = app.grid_nodes.get(app.selected_node_row) {
-                                        app.set_status(format!("→ Pinging node {}: online ({})", node.name, node.address));
-                                    }
-                                }
                                 DashboardView::LocalModels => {
                                     if let Some(model) = app.local_models.get(app.selected_model_row) {
                                         app.set_status(format!("→ Pinging model {}: endpoint ready ({})", model.id, model.endpoint));
@@ -1873,11 +1664,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                                 DashboardView::LocalModels => {
                                     app.launch_selected_model();
                                 }
-                                DashboardView::GridNodes => {
-                                    if let Some(node) = app.grid_nodes.get(app.selected_node_row) {
-                                        app.set_status(format!("→ Inspecting node: {} ({})", node.name, node.role));
-                                    }
-                                }
+                                DashboardView::Compute => {}
                                 DashboardView::CloudServices => {
                                     if let Some(svc) = app.cloud_services.get(app.selected_service_row) {
                                         app.set_status(format!("→ Service details: {} ({})", svc.name, svc.subsystem));
@@ -1928,7 +1715,7 @@ pub fn ui(f: &mut Frame, app: &App) {
 
     match app.current_view {
         DashboardView::Sandboxes => render_sandboxes_view(f, chunks[2], app),
-        DashboardView::GridNodes => render_grid_nodes_view(f, chunks[2], app),
+        DashboardView::Compute => super::compute::render(f, chunks[2], &app.compute),
         DashboardView::LocalModels => render_local_models_view(f, chunks[2], app),
         DashboardView::CloudServices => render_cloud_services_view(f, chunks[2], app),
         DashboardView::Usage => render_usage_view(f, chunks[2], app),
@@ -1948,6 +1735,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         .split(header_block.inner(area));
 
     let (title_str, subtitle_str) = match app.current_view {
+        DashboardView::Compute => ("Hanzo Compute", app.current_view.subtitle()),
         DashboardView::Sandboxes => (
             "Hanzo Sandboxes",
             "Run coding agents in isolated microVMs & workspaces safely",
@@ -1964,6 +1752,23 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(subtitle_str, Style::default().fg(Color::Rgb(140, 145, 155))),
     ]);
     f.render_widget(Paragraph::new(title_line), header_chunks[0]);
+
+    if app.current_view == DashboardView::Compute {
+        let c = &app.compute;
+        let api = c.api.trim_start_matches("https://").trim_start_matches("http://");
+        let right_line = Line::from(vec![
+            Span::styled(
+                c.account.clone().unwrap_or_else(|| "not signed in".into()),
+                Style::default().fg(if c.account.is_some() { Color::Cyan } else { Color::DarkGray }),
+            ),
+            Span::styled(format!("  {api}"), Style::default().fg(Color::DarkGray)),
+            Span::raw("   "),
+            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
+        ]);
+        f.render_widget(Paragraph::new(right_line).alignment(Alignment::Right), header_chunks[1]);
+        f.render_widget(header_block, area);
+        return;
+    }
 
     let (spark_status, spark_color) = if app.spark_online {
         ("● dgx:18300", Color::Green)
@@ -1996,7 +1801,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("   "),
         Span::styled(iam_status, Style::default().fg(iam_color)),
         Span::raw("   "),
-        Span::styled("v8.5.158", Style::default().fg(Color::DarkGray)),
+        Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
     ]);
 
     f.render_widget(
@@ -2463,164 +2268,6 @@ fn render_global_rules_tab(
 
 // ── [2] Grid & Nodes View ───────────────────────────────────────────────────
 
-fn render_grid_nodes_view(f: &mut Frame, area: Rect, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Top KPI metrics
-            Constraint::Length(7), // Grid nodes table
-            Constraint::Min(6),    // Runners & system units
-        ])
-        .split(area);
-
-    // KPI Cards
-    let kpi_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ])
-        .split(chunks[0]);
-
-    let online_nodes = app.grid_nodes.iter().filter(|n| n.is_online).count();
-    let total_nodes = app.grid_nodes.len();
-    let nodes_summary = format!("{} Online / {} Discovered", online_nodes, total_nodes);
-
-    let (total_inflight, total_queued, total_prefill, total_decode) = if let Some(t) = &app.cluster_telemetry {
-        let inf: usize = t.nodes.iter().map(|n| n.in_flight).sum();
-        let q: usize = t.nodes.iter().map(|n| n.queued).sum();
-        let p: f64 = t.nodes.iter().map(|n| n.prefill_tok_s).sum();
-        let d: f64 = t.nodes.iter().map(|n| n.decode_tok_s).sum();
-        (inf, q, p, d)
-    } else {
-        (5, 5, 3906.0, 19.6)
-    };
-
-    let workload_str = format!("{} In-Flight ({} Queued)", total_inflight, total_queued);
-    let throughput_str = format!("{:.0} prefill · {:.1} dec", total_prefill, total_decode);
-
-    render_kpi_card(f, kpi_chunks[0], "Grid Nodes", &nodes_summary, Color::Green);
-    render_kpi_card(f, kpi_chunks[1], "Compute Fleet", "88 Cores · 249GB VRAM", Color::Cyan);
-    render_kpi_card(f, kpi_chunks[2], "Active Workloads", &workload_str, Color::Yellow);
-    render_kpi_card(f, kpi_chunks[3], "Cluster Throughput", &throughput_str, Color::White);
-
-    // Grid Nodes Table
-    let node_block = Block::default()
-        .title(Span::styled(
-            " Grid Nodes & Compute Topology ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray));
-
-    let header = Row::new(vec![
-        Span::styled("Node Name", Style::default().fg(Color::DarkGray)),
-        Span::styled("Role", Style::default().fg(Color::DarkGray)),
-        Span::styled("Address", Style::default().fg(Color::DarkGray)),
-        Span::styled("CPU Cores / Load", Style::default().fg(Color::DarkGray)),
-        Span::styled("Memory Usage", Style::default().fg(Color::DarkGray)),
-        Span::styled("Disk Free", Style::default().fg(Color::DarkGray)),
-        Span::styled("Status", Style::default().fg(Color::DarkGray)),
-        Span::styled("Uptime", Style::default().fg(Color::DarkGray)),
-    ])
-    .bottom_margin(1);
-
-    let rows: Vec<Row> = app
-        .grid_nodes
-        .iter()
-        .enumerate()
-        .map(|(idx, node)| {
-            let is_sel = idx == app.selected_node_row;
-            let row_style = if is_sel {
-                Style::default().bg(Color::Rgb(30, 40, 50)).fg(Color::White)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            Row::new(vec![
-                Span::styled(&node.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled(&node.role, Style::default().fg(Color::Cyan)),
-                Span::styled(&node.address, Style::default().fg(Color::DarkGray)),
-                Span::styled(&node.cpu, Style::default().fg(Color::Gray)),
-                Span::styled(&node.memory, Style::default().fg(Color::Gray)),
-                Span::styled(&node.disk, Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    &node.status,
-                    Style::default().fg(if node.is_online { Color::Green } else { Color::DarkGray }),
-                ),
-                Span::styled(&node.uptime, Style::default().fg(Color::DarkGray)),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let widths = [
-        Constraint::Length(16),
-        Constraint::Min(22),
-        Constraint::Length(14),
-        Constraint::Length(18),
-        Constraint::Length(18),
-        Constraint::Length(12),
-        Constraint::Length(16),
-        Constraint::Length(8),
-    ];
-
-    let table = Table::new(rows, widths).header(header).column_spacing(2);
-    f.render_widget(table, node_block.inner(chunks[1]));
-    f.render_widget(node_block, chunks[1]);
-
-    // Runners & Background Services Table
-    let runner_block = Block::default()
-        .title(Span::styled(
-            " Fleet Runners & Background Units ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray));
-
-    let r_header = Row::new(vec![
-        Span::styled("Unit / Runner", Style::default().fg(Color::DarkGray)),
-        Span::styled("Host", Style::default().fg(Color::DarkGray)),
-        Span::styled("Type", Style::default().fg(Color::DarkGray)),
-        Span::styled("Allocation / Guard", Style::default().fg(Color::DarkGray)),
-        Span::styled("Status", Style::default().fg(Color::DarkGray)),
-        Span::styled("Details", Style::default().fg(Color::DarkGray)),
-    ])
-    .bottom_margin(1);
-
-    let r_rows: Vec<Row> = app
-        .runners
-        .iter()
-        .map(|r| {
-            Row::new(vec![
-                Span::styled(&r.name, Style::default().fg(Color::White)),
-                Span::styled(&r.host, Style::default().fg(Color::DarkGray)),
-                Span::styled(&r.runner_type, Style::default().fg(Color::Cyan)),
-                Span::styled(&r.allocation, Style::default().fg(Color::Gray)),
-                Span::styled(&r.status, Style::default().fg(Color::Green)),
-                Span::styled(&r.detail, Style::default().fg(Color::DarkGray)),
-            ])
-        })
-        .collect();
-
-    let r_widths = [
-        Constraint::Length(22),
-        Constraint::Length(22),
-        Constraint::Length(22),
-        Constraint::Min(24),
-        Constraint::Length(18),
-        Constraint::Length(26),
-    ];
-
-    let r_table = Table::new(r_rows, r_widths).header(r_header).column_spacing(2);
-    f.render_widget(r_table, runner_block.inner(chunks[2]));
-    f.render_widget(runner_block, chunks[2]);
-}
-
 // ── [3] Local Models View ───────────────────────────────────────────────────
 
 fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
@@ -3080,23 +2727,15 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("r", Style::default().fg(Color::Cyan)),
             Span::styled(" refresh", Style::default().fg(Color::DarkGray)),
         ],
-        DashboardView::GridNodes => vec![
+        DashboardView::Compute => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
             Span::styled("1-5", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("[/]", Style::default().fg(Color::Cyan)),
-            Span::styled(" tab  ", Style::default().fg(Color::DarkGray)),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
-            Span::styled(" select  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("n", Style::default().fg(Color::Cyan)),
-            Span::styled(" target node  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("d", Style::default().fg(Color::Cyan)),
-            Span::styled(" pull model  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("p", Style::default().fg(Color::Cyan)),
-            Span::styled(" ping  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("r", Style::default().fg(Color::Cyan)),
-            Span::styled(" refresh", Style::default().fg(Color::DarkGray)),
+            Span::styled(" machine  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("hanzo link", Style::default().fg(Color::Cyan)),
+            Span::styled(" adds one", Style::default().fg(Color::DarkGray)),
         ],
         _ => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
@@ -3123,7 +2762,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         .alignment(Alignment::Right)
     } else {
         Paragraph::new(Line::from(vec![
-            Span::styled("v8.5.158", Style::default().fg(Color::DarkGray)),
+            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
         ]))
         .alignment(Alignment::Right)
     };
@@ -3141,11 +2780,10 @@ mod tests {
     fn test_app_initialization() {
         let app = App::new();
         assert!(!app.sandboxes.is_empty(), "seed sandboxes should be present");
-        assert!(!app.grid_nodes.is_empty(), "grid nodes should be present");
         assert!(!app.local_models.is_empty(), "local models should be present");
         assert!(!app.cloud_services.is_empty(), "cloud services should be present");
         assert!(!app.usage_items.is_empty(), "usage items should be present");
-        assert_eq!(app.current_view, DashboardView::Sandboxes);
+        assert_eq!(app.current_view, DashboardView::Compute, "compute is the home page");
         assert_eq!(app.selected_sandbox, 0);
         assert_eq!(app.active_tab, DetailTab::NetworkLog);
         assert_eq!(app.focused_pane, FocusedPane::Sandboxes);
@@ -3154,10 +2792,10 @@ mod tests {
     #[test]
     fn test_dashboard_view_switching() {
         let mut app = App::new();
-        assert_eq!(app.current_view, DashboardView::Sandboxes);
+        assert_eq!(app.current_view, DashboardView::Compute);
 
-        app.set_view(DashboardView::GridNodes);
-        assert_eq!(app.current_view, DashboardView::GridNodes);
+        app.set_view(DashboardView::Sandboxes);
+        assert_eq!(app.current_view, DashboardView::Sandboxes);
 
         app.set_view(DashboardView::LocalModels);
         assert_eq!(app.current_view, DashboardView::LocalModels);
@@ -3169,7 +2807,7 @@ mod tests {
         assert_eq!(app.current_view, DashboardView::Usage);
 
         app.next_view();
-        assert_eq!(app.current_view, DashboardView::Sandboxes);
+        assert_eq!(app.current_view, DashboardView::Compute);
 
         app.previous_view();
         assert_eq!(app.current_view, DashboardView::Usage);
@@ -3178,14 +2816,6 @@ mod tests {
     #[test]
     fn test_navigation_across_views() {
         let mut app = App::new();
-
-        // GridNodes navigation
-        app.set_view(DashboardView::GridNodes);
-        assert_eq!(app.selected_node_row, 0);
-        app.move_down();
-        assert_eq!(app.selected_node_row, 1);
-        app.move_up();
-        assert_eq!(app.selected_node_row, 0);
 
         // LocalModels navigation
         app.set_view(DashboardView::LocalModels);
@@ -3293,7 +2923,6 @@ mod tests {
     fn test_refresh_all() {
         let mut app = App::new();
         app.refresh_all();
-        assert!(!app.grid_nodes.is_empty());
         assert!(!app.local_models.is_empty());
         assert!(!app.cloud_services.is_empty());
     }
@@ -3341,6 +2970,7 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new();
+        app.set_view(DashboardView::Sandboxes);
         app.focused_pane = FocusedPane::Detail;
         app.selected_network_row = 2; // api.github.com
         terminal.draw(|f| ui(f, &app)).unwrap();

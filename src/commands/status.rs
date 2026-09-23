@@ -45,7 +45,7 @@ use crate::commands::product::{envelope_error, Seam};
 use crate::config::Config;
 
 /// One surface's answer: the rows it reported, or WHY it could not be read.
-type Reading = std::result::Result<Vec<Value>, String>;
+pub(crate) type Reading = std::result::Result<Vec<Value>, String>;
 
 /// One thing that needs attention: `(what it is, its name, the verdict)`.
 type Problem = (&'static str, String, String);
@@ -92,7 +92,7 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
 /// A transport fault, a non-2xx, cloud's own 200-with-an-error envelope and an
 /// answer with no list in it all become the SAME honest value — a reason string
 /// — so an empty page is only ever printed when the server actually said empty.
-async fn read(seam: &Seam, path: &str, key: &str) -> Reading {
+pub(crate) async fn read(seam: &Seam, path: &str, key: &str) -> Reading {
     let Reply { status, body } = seam
         .send(Method::GET, path, &[], None)
         .await
