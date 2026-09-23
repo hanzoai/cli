@@ -255,7 +255,7 @@ impl App {
             focused_pane: FocusedPane::Sandboxes,
             global_rules: Self::default_global_rules(),
 
-            compute: super::compute::Board::start(),
+            compute: super::compute::Board::default(),
 
             local_models: Self::seed_local_models(spark_live, evo_live, router_live),
             selected_model_row: 0,
@@ -1521,6 +1521,9 @@ pub fn run_dashboard() -> Result<()> {
     let mut terminal = Terminal::new(backend).context("failed to create ratatui terminal")?;
 
     let mut app = App::new();
+    // Only the interactive console reads the machine and beats; `sbx ls` and
+    // friends build an App to print from and must not.
+    app.compute = super::compute::Board::start();
     let res = run_app_loop(&mut terminal, &mut app);
 
     disable_raw_mode().ok();
