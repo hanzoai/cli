@@ -222,6 +222,29 @@ supervise`. Three things are worth knowing:
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 - the whole cloud, one screen: `hanzo status` (see below)
 
+**`hanzo console` opens on Compute** (`commands/up/compute.rs`), sparkDash's DGX
+Spark board in a terminal. ONE data model on both surfaces: a machine's `spec` +
+`metrics` (`code/context.rs`, cloud's `agent.Metrics`) — this machine read locally
+every 2s by `code/sample.rs` `Sampler`, siblings from `GET /v1/agent/targets` (the
+same heartbeat platform.hanzo.ai `/platform/computers` draws, history from
+`GET /v1/compute/fleet/samples?unit=`), networks from `GET /v1/network`, accounts
+from the local identity store. The heartbeat (`target::beat`) holds ONE `Sampler`,
+so every beat after the first carries rates over its 30s window. The console beats
+while open, so the machine it runs on is on the platform too. Model serving is found,
+not configured: the listeners of whatever holds the GPU (nvidia compute-app pids and
+their parents) plus :8000/:30000, read as vLLM or SGLang Prometheus. Cloud reads run
+on their own task with a 10s ceiling: a slow API never stalls the local board.
+
+**Fleet presence outlives the session** (`hanzo beat`, `commands/code/target.rs::present`).
+A target is live only while something beats, and the beat was held ONLY inside
+`hanzo code` and `hanzo link` — so a lab box at an idle prompt, or one whose last
+session ended an hour ago, read OFFLINE to the console and to whatever places the
+next session, while being the least loaded machine in the room. `hanzo beat` is
+that guard standalone: same refreshed-credential loop, same `Sampler`, foreground,
+no shell. Residency is the service manager's job — `units/hanzo-beat.service`
+(systemd user, `loginctl enable-linger`) and `units/com.ai.hanzo.beat.plist`
+(launchd), one per machine.
+
 **`hanzo status` is the fleet view, and it is COMPOSED, never a new API**
 (`commands/status.rs`). It reads three routes cloud already serves, concurrently,
 through the ONE authenticated seam (`product::Seam` — origin from `network`,

@@ -63,6 +63,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Monitor(..) => "monitor",
         Commands::Version => "version",
         Commands::Console => "console",
+        Commands::Beat => "beat",
         Commands::Sandbox { .. } | Commands::Ls => "sandbox",
         Commands::Load { .. } => "load",
         Commands::Chain { .. } => "chain",

@@ -1,0 +1,26 @@
+# Keep this machine present in the fleet between sessions.
+#
+#   systemctl --user enable --now units/hanzo-beat.service
+#   loginctl enable-linger $USER     # beat at boot, before anyone logs in
+#
+# It runs the ONE beat that `hanzo code` and `hanzo link` already hold while they
+# run — so a box at an idle prompt is not read offline by the console and by
+# whatever is choosing where the next session lands. Nothing else: no shell, no
+# session, one best-effort request every 30 seconds.
+[Unit]
+Description=Hanzo fleet presence
+Documentation=man:hanzo-beat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/hanzo beat
+Restart=always
+RestartSec=30
+# A beat that cannot reach the API changes nothing about this box, so never
+# spin on it — the scheduler already reads the machine as offline.
+RestartMode=restart
+Nice=19
+
+[Install]
+WantedBy=default.target

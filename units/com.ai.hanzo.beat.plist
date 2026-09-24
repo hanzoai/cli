@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Keep this Mac present in the fleet between sessions:
+       cp units/com.ai.hanzo.beat.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.ai.hanzo.beat.plist
+     The same beat `hanzo code` and `hanzo link` hold, with nothing else. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ai.hanzo.beat</string>
+  <key>ProgramArguments</key>
+  <array><string>/Users/a/.local/bin/hanzo</string><string>beat</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/tmp/hanzo-beat.log</string>
+  <key>StandardErrorPath</key><string>/tmp/hanzo-beat.log</string>
+</dict>
+</plist>

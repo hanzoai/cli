@@ -346,6 +346,11 @@ enum Commands {
         title: Option<String>,
     },
 
+    /// Keep this machine present in the fleet: one beat every 30s, no shell, no
+    /// session. Run it under a service manager so the console and the scheduler
+    /// see the box between sessions instead of an hour after the last one.
+    Beat,
+
     /// Manage local CLI settings
     Config {
         #[command(subcommand)]
@@ -1025,6 +1030,8 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             title,
         } => commands::link::run(&mut config, shell, read_only, title).await?,
 
+        Commands::Beat => commands::code::target::present(&config).await?,
+
         Commands::Config { command } => match command {
             ConfigCommands::List => commands::config::list(&config)?,
             ConfigCommands::Get { key } => commands::config::get(&config, &key)?,
@@ -1593,6 +1600,10 @@ mod tests {
         let cli = Cli::try_parse_from(["hanzo", "up", "--no-ui"]).expect("--no-ui parses");
         let Some(Commands::Up { ui: false, no_ui: true, .. }) = cli.command else { panic!("expected --no-ui") };
         assert!(Cli::try_parse_from(["hanzo", "up", "--ui", "--no-ui"]).is_err());
+
+        // `hanzo beat` is the standalone fleet presence, with no arguments
+        let cli = Cli::try_parse_from(["hanzo", "beat"]).expect("beat parses");
+        assert!(matches!(cli.command, Some(Commands::Beat)));
 
         // Console subcommand and alias parse
         let cli = Cli::try_parse_from(["hanzo", "up", "console"]).expect("console parses");
