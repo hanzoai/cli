@@ -1050,39 +1050,37 @@ mod tests {
         }
     }
 
-    /// Start a process that is NOT our child, and answer with its pid and the
-    /// pid of a child of ITS own. That is the shape `stop` meets in production:
-    /// `down` signals a supervisor and a vm it did not spawn and cannot reap,
-    /// and the vm has a hypervisor under it on x86-64. Modelling them as our
-    /// own children would test something else — a killed child is a zombie
-    /// until its parent collects it, and `kill(pid, 0)` calls a zombie alive.
+    /// Start a process-group leader, and answer with its pid and the pid of a
+    /// child of ITS own. That is the shape `stop` meets in production: `down`
+    /// signals a vm that `Rpc::start` put in a group of its own, with a
+    /// hypervisor under it on x86-64.
+    ///
+    /// The group comes from `process_group(0)`, the call `Rpc::start` makes, and
+    /// not from a shell's `set -m`: without a terminal a shell turns job
+    /// control off, and the "leader" silently shares its parent's group.
+    ///
+    /// The leader is reaped by a thread the moment it dies, as init reaps a vm
+    /// `down` did not start. Left unreaped it would be a zombie, and
+    /// `kill(pid, 0)` calls a zombie alive.
     #[cfg(unix)]
-    fn orphan(dir: &Path) -> (i32, i32) {
-        let leader = dir.join("leader");
+    fn group(dir: &Path) -> (i32, i32) {
+        use std::os::unix::process::CommandExt;
         let child = dir.join("child");
-        // `set -m` is job control, which puts a background job in a process
-        // group of its OWN — the shape `Rpc::start` gives the vm. The shell we
-        // spawn exits as soon as it has backgrounded that job, so the leader is
-        // reparented to init and is never ours to reap.
-        let script = format!(
-            "set -m; sh -c 'sleep 60 & echo $! > {c}; echo $$ > {l}; wait' &",
-            c = child.display(),
-            l = leader.display()
-        );
-        Command::new("sh")
-            .args(["-c", &script])
-            .status()
+        let mut leader = Command::new("sh")
+            .args(["-c", &format!("sleep 60 & echo $! > {}; wait", child.display())])
+            .process_group(0)
+            .spawn()
             .expect("sh runs");
+        let pid = leader.id() as i32;
+        std::thread::spawn(move || leader.wait());
 
-        let read = |p: &Path| -> Option<i32> {
-            std::fs::read_to_string(p).ok()?.trim().parse().ok().filter(|p| alive(*p))
-        };
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if let (Some(l), Some(c)) = (read(&leader), read(&child)) {
-                return (l, c);
+            let read = std::fs::read_to_string(&child).ok();
+            if let Some(c) = read.and_then(|s| s.trim().parse().ok()).filter(|c| alive(*c)) {
+                return (pid, c);
             }
-            assert!(Instant::now() < deadline, "the orphan never started");
+            assert!(Instant::now() < deadline, "the group never started");
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -1093,7 +1091,7 @@ mod tests {
     #[test]
     fn the_pidfile_follows_a_real_process() {
         let dir = tempfile::tempdir().unwrap();
-        let (pid, _) = orphan(dir.path());
+        let (pid, _) = group(dir.path());
         write_pid(dir.path(), SUPERVISOR, pid as u32).unwrap();
 
         assert_eq!(read_pid(dir.path(), SUPERVISOR), Some(pid));
@@ -1115,7 +1113,7 @@ mod tests {
     #[test]
     fn stopping_a_group_leader_takes_its_children() {
         let dir = tempfile::tempdir().unwrap();
-        let (leader, child) = orphan(dir.path());
+        let (leader, child) = group(dir.path());
         assert!(alive(child));
 
         assert!(stop(leader, Duration::from_secs(5)));
