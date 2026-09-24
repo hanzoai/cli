@@ -56,7 +56,9 @@ pub fn server_url(brand: &str) -> Result<&'static str> {
 }
 
 /// Run the full interactive login flow for `brand` and return the tokens.
-pub async fn login(brand: &str) -> Result<TokenSet> {
+/// `choose` asks IAM to let the person pick among the accounts signed in on
+/// this browser, or sign in to another, rather than reusing the latest one.
+pub async fn login(brand: &str, choose: bool) -> Result<TokenSet> {
     let origin = server_url(brand)?;
     let pkce = pkce::generate_pkce();
     let state = pkce::generate_state();
@@ -68,7 +70,7 @@ pub async fn login(brand: &str) -> Result<TokenSet> {
     let port = listener.local_addr()?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
-    let authorize_url = build_authorize_url(origin, &redirect_uri, &pkce.challenge, &state)?;
+    let authorize_url = build_authorize_url(origin, &redirect_uri, &pkce.challenge, &state, choose)?;
 
     // Say what happened, not what was attempted. On a machine with no browser
     // the open FAILS, and "Opening your browser..." above a prompt that never
@@ -124,20 +126,21 @@ fn build_authorize_url(
     redirect_uri: &str,
     challenge: &str,
     state: &str,
+    choose: bool,
 ) -> Result<Url> {
-    Url::parse_with_params(
-        &paths::iam_url(origin, AUTHORIZE),
-        &[
-            ("response_type", "code"),
-            ("client_id", CLIENT_ID),
-            ("redirect_uri", redirect_uri),
-            ("scope", SCOPE),
-            ("state", state),
-            ("code_challenge", challenge),
-            ("code_challenge_method", "S256"),
-        ],
-    )
-    .context("building authorize URL")
+    let mut q = vec![
+        ("response_type", "code"),
+        ("client_id", CLIENT_ID),
+        ("redirect_uri", redirect_uri),
+        ("scope", SCOPE),
+        ("state", state),
+        ("code_challenge", challenge),
+        ("code_challenge_method", "S256"),
+    ];
+    if choose {
+        q.push(("prompt", "select_account"));
+    }
+    Url::parse_with_params(&paths::iam_url(origin, AUTHORIZE), &q).context("building authorize URL")
 }
 
 /// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5).
@@ -391,6 +394,7 @@ mod tests {
             "http://127.0.0.1:54321/callback",
             "CHALLENGE",
             "STATE",
+            false,
         )
         .unwrap();
         // Exact HIP-0111 path — never /api/, never legacy /oauth/authorize.
@@ -403,6 +407,11 @@ mod tests {
         assert_eq!(q["state"], "STATE");
         assert_eq!(q["scope"], SCOPE);
         assert_eq!(q["redirect_uri"], "http://127.0.0.1:54321/callback");
+        assert!(!q.contains_key("prompt"), "a plain login reuses the browser's session");
+
+        let chosen = build_authorize_url("https://hanzo.id", "http://127.0.0.1:1/callback", "C", "S", true).unwrap();
+        let q: HashMap<_, _> = chosen.query_pairs().into_owned().collect();
+        assert_eq!(q["prompt"], "select_account");
     }
 
     #[test]

@@ -238,6 +238,20 @@ pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
     list(cfg, brand).contains(&id).then_some(id)
 }
 
+/// The identity a command speaks as: the one held in the org `--as` names, when
+/// exactly one is held there, else the active identity. So `--as admin` runs one
+/// command as `admin/z` beside a default of `hanzo/z`, with no switch to undo.
+/// It is the person's own flag choosing among their own credentials; the server
+/// still decides what that identity may do.
+fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
+    if let Some(org) = cfg.org.as_deref() {
+        if let [one] = list(cfg, brand).into_iter().filter(|i| i.owner == org).collect::<Vec<_>>().as_slice() {
+            return Some(one.clone());
+        }
+    }
+    active(cfg, brand)
+}
+
 /// The reserved org whose membership IS the SuperAdmin predicate, server-side.
 /// Named here ONLY to explain a refusal — never to decide one.
 const ADMIN_ORG: &str = "admin";
@@ -270,13 +284,13 @@ pub fn refusal_hint(active: &Identity, held: &[Identity]) -> Option<String> {
     let remedy = match admins.as_slice() {
         // Name only an identity we KNOW we hold — never a guessed `admin/<name>`
         // that `switch` would then reject.
-        [one] => format!("You also hold {one} — switch to it and retry:\n\n      hanzo auth use {one}"),
+        [one] => format!("You also hold {one} — retry as it:\n\n      hanzo --as {ADMIN_ORG} …"),
         // `switch` resolves a bare owner itself, and lists when it is ambiguous.
         // Never re-implement that here.
         [_, ..] => format!(
             "You hold several `{ADMIN_ORG}` identities — switch to one and retry:\n\n      hanzo auth use {ADMIN_ORG}"
         ),
-        [] => format!("You hold no `{ADMIN_ORG}` identity — sign in as one:\n\n      hanzo auth login"),
+        [] => format!("You hold no `{ADMIN_ORG}` identity — sign in as one:\n\n      hanzo --as {ADMIN_ORG} auth login"),
     };
     Some(format!(
         "\n  You are {active}; this needs the reserved `{ADMIN_ORG}` org (SuperAdmin).\n  {remedy}\n"
@@ -395,7 +409,7 @@ pub(crate) fn active_token_in(
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     migrate_in(v, cfg, brand)?;
 
-    let Some(id) = active(cfg, brand) else {
+    let Some(id) = acting(cfg, brand) else {
         return Ok(None);
     };
     // NO FALLBACK, NO CASCADE. A missing credential for the active identity
@@ -726,6 +740,24 @@ mod tests {
         }
     }
 
+    /// `--as <org>` speaks as the identity held there for that one command and
+    /// moves nothing: the active identity is untouched, and an org with no held
+    /// identity leaves the active one speaking.
+    #[test]
+    fn as_an_org_speaks_as_its_identity_without_switching() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        c.org = Some("admin".into());
+        let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), ADMIN);
+        assert_eq!(tok.access_token, jwt("admin", "z"));
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
+
+        c.org = Some("lux".into());
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), ORG);
+    }
+
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---
 
     /// `token_for` resolves a HELD identity's OWN token — the NON-active one
@@ -804,7 +836,8 @@ mod tests {
         let hint = refusal_hint(&ident(ORG), &[ident(ORG), ident(ADMIN)]).unwrap();
         assert!(hint.contains("You are hanzo/z"), "{hint}");
         assert!(hint.contains("admin"), "must name the reserved org: {hint}");
-        assert!(hint.contains("hanzo auth use admin/z"), "must be actionable: {hint}");
+        assert!(hint.contains("You also hold admin/z"), "{hint}");
+        assert!(hint.contains("hanzo --as admin"), "must be actionable: {hint}");
     }
 
     /// A SuperAdmin refused is NOT an identity problem: suggesting a switch to
@@ -820,7 +853,7 @@ mod tests {
     fn a_refusal_without_any_admin_identity_says_sign_in_not_switch() {
         let hint = refusal_hint(&ident(ORG), &[ident(ORG)]).unwrap();
         assert!(hint.contains("hold no `admin` identity"), "{hint}");
-        assert!(hint.contains("hanzo auth login"), "{hint}");
+        assert!(hint.contains("hanzo --as admin auth login"), "{hint}");
         assert!(!hint.contains("hanzo auth use"), "must not suggest an impossible switch: {hint}");
     }
 

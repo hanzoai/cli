@@ -53,6 +53,10 @@ struct Cli {
     /// no-op, not an escalation. Without it someone who belongs to several orgs
     /// can only ever reach their home one.
     ///
+    /// When you hold an identity IN that org — `hanzo --as admin auth login`
+    /// signs one in beside your default — the command speaks as that identity
+    /// too, so `hanzo --as admin …` runs as `admin/z` with nothing to switch back.
+    ///
     /// `--as`, not `--org`: forty-three generated operations already take an
     /// `org` of their own as a path or query value, and a global of that name
     /// collides with every one of them. `--as` is the same word kubectl uses for

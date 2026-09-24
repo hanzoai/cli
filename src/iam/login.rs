@@ -35,12 +35,30 @@ use super::{device, oauth, store};
 /// exists to avoid.
 pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
     oauth::server_url(brand)?; // reject unknown brands before opening a browser
+    // `--as <org>` signs in to hold another identity — `admin/z` beside
+    // `hanzo/z` — so the browser is asked which account, and the identity in
+    // use stays the default: the new one speaks only when `--as` names it.
+    let choose = cfg.org.is_some();
     let tokens = if browser_here() {
-        oauth::login(brand).await?
+        oauth::login(brand, choose).await?
     } else {
         device::login(brand).await?
     };
-    add(cfg, brand, &tokens).await
+    let before = store::active(cfg, brand);
+    add(cfg, brand, &tokens).await?;
+    if let (true, Some(prev)) = (choose, before) {
+        let held = store::active(cfg, brand);
+        if held.as_ref() != Some(&prev) {
+            store::switch(cfg, brand, Some(Selector::Exact(prev.clone())))?;
+            if let Some(held) = held {
+                println!(
+                    "{}",
+                    format!("  {prev} stays the default; `hanzo --as {} …` speaks as {held}", held.owner).dimmed()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Whether a browser can open ON THIS MACHINE. macOS and Windows always have a
