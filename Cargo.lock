@@ -2894,9 +2894,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vm-measure"
-version = "2.0.1"
+version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb42ea64a2f5c37d942120b956e40af714c45f8721c7b053fd40f58274d3c3c6"
+checksum = "79470437778e98a57e79babad6521fc8246d811a2c07ac24de2f64900f0f211d"
 dependencies = [
  "anyhow",
  "libc",
