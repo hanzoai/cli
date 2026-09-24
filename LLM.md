@@ -230,7 +230,16 @@ same heartbeat platform.hanzo.ai `/platform/computers` draws, history from
 `GET /v1/compute/fleet/samples?unit=`), networks from `GET /v1/network`, accounts
 from the local identity store. The heartbeat (`target::beat`) holds ONE `Sampler`,
 so every beat after the first carries rates over its 30s window. The console beats
-while open, so the machine it runs on is on the platform too. Model serving is found,
+while open, so the machine it runs on is on the platform too. **A beat that found
+no server counters is a gap in the reading, never a measurement of zero tok/s**, and
+it must not advance the window: discovery rides on `nvidia-smi compute-apps`, which
+takes 1.0-1.3s on a saturated GPU and hits its 2s timeout there, returning no pids
+(`gpu_apps` `unwrap_or_default`). Committing that tick as `prev` left the next good
+reading with nothing to diff against, so rates went to zero on ALTERNATING ticks and
+the board read as idle while 6 streams served 155 tok/s. `Sampler` therefore
+remembers the last ports it found (extending, never replacing — a server that moved
+is still seen) and `commit` advances the window only on a reading that carried
+counters. `—` renders an absent rate, never `0.0`. Model serving is found,
 not configured: the listeners of whatever holds the GPU (nvidia compute-app pids and
 their parents) plus :8000/:30000, read as vLLM or SGLang Prometheus. Cloud reads run
 on their own task with a 10s ceiling: a slow API never stalls the local board.

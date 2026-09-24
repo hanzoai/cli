@@ -698,18 +698,17 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
     let serve_area = Rect { y: inner.y + 5, height: inner.height.saturating_sub(5), ..inner };
     let serve = match &m.model {
         Some(model) => {
-            let d = m.decode.unwrap_or(0.0);
-            let p = m.prefill.unwrap_or(0.0);
+            let rate = |v: Option<f64>| v.map(|v| format!("{} tok/s", tokens(v))).unwrap_or_else(|| "—".into());
             vec![
                 Line::from(vec![
                     label("SERVE"),
                     val(model.clone(), ACCENT),
                     dim("   decode "),
                     Span::styled(spark(&h.decode, w, None), Style::default().fg(ACCENT)),
-                    val(format!(" {} tok/s", tokens(d)), Color::White),
+                    val(rate(m.decode), Color::White),
                     dim("   prefill "),
                     Span::styled(spark(&h.prefill, 10, None), Style::default().fg(DIM)),
-                    val(format!(" {} tok/s", tokens(p)), Color::White),
+                    val(rate(m.prefill), Color::White),
                 ]),
                 Line::from(vec![
                     label(""),
