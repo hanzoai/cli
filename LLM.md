@@ -218,7 +218,7 @@ supervise`. Three things are worth knowing:
   hanzoai/vm) owns the fold — the CLI does not have a second copy of it.
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage`
 - cloud: `hanzo up` (+ `--attest`); network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
-- fabric/fleet: `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
+- fabric/fleet: `hanzo link` (below), `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 - the whole cloud, one screen: `hanzo status` (see below)
 
@@ -234,6 +234,89 @@ while open, so the machine it runs on is on the platform too. Model serving is f
 not configured: the listeners of whatever holds the GPU (nvidia compute-app pids and
 their parents) plus :8000/:30000, read as vLLM or SGLang Prometheus. Cloud reads run
 on their own task with a 10s ceiling: a slow API never stalls the local board.
+
+**`hanzo link` is the one way to link a computer** (`commands/link.rs`, `link/`).
+Hanzo ZT is the network: hanzozt/zt, an OpenZiti fork — not ZeroTier, not WireGuard.
+Controller `https://zt-api.hanzo.ai`, router `edge.zt.hanzo.ai:3022`. `hanzo net` is
+deleted; its verbs are these.
+
+```
+hanzo link                                   identity on the org's network + run-target + shell
+hanzo link host [NAME HOST:PORT] [--install [--system]]   host what the identity binds; NAME publishes first
+hanzo link dial SERVICE PORT [--install [--system]]       local PORT → SERVICE (bare = <name>.<org>)
+hanzo link status                            identity, org services, zt processes, installed units
+hanzo link rm NAME                           unpublish
+--token-command CMD                          any of the network verbs as a machine's own IAM client
+```
+
+- **A caller is on the fabric AS ITS IAM SUBJECT.** Cloud (`/v1/network`) ensures the
+  identity whose externalId is the token's `sub`; the tunnel signs in with the same
+  token via `zt tunnel … --token-command CMD`. zt runs CMD WITHOUT a shell and splits
+  it on whitespace, so `network::run_token_command` does exactly that. Default CMD is
+  this binary's `auth token` (`--as ORG` carried). A person's identity is one per
+  subject, shared by all their machines; only a machine client is per machine.
+- **Publish, then role.** `POST /v1/network/services {name,host,port}` → `<name>.<org>`,
+  `<name>.<org>.zt`; then `POST /v1/network/identities {roles:["<name>-host"]}` with
+  the HOST's token. Cloud refuses a `-host` role for a service the org lacks, so the
+  order is fixed (`hanzo up --link` had it backwards through `net`). Publishing,
+  unpublishing and roles are a STEWARD's (org admin, platform, or the org's machine
+  client — cloud 29df3216cb); a 403 says so and points at `--token-command`.
+- **The platform's objects are invisible here, by design.** `engine.hanzo` and
+  `k8s.hanzo` and their identities (`grid.hanzo`, `link.hanzo`, `dgx.hanzo`) carry
+  role `platform`, are pinned by universe `infra/aws/k8s/link-fabric.sh`, and never
+  appear in `/v1/network` lists. A link reads its identity off the controller's
+  client API (`/edge/client/v1/current-identity`, signed in by ext-jwt) and never
+  gives one carrying `platform` an org role: an `org-*` role would put it in reach
+  of a tenant steward's `DELETE`, which removes an identity left with no org role.
+  So bare `link` and `link dial` skip the ensure for it, `link host NAME` refuses
+  it, and `link host` with no NAME touches no API (dgx's engine host). `link dial`
+  ensures an identity only for a service its org lists.
+- **HOSTING AND DIALING ARE TWO IDENTITIES — the rule, enforced.** zt has no
+  dial-only mode: `zt tunnel proxy` also HOSTS every service its identity may bind.
+  A dialer that may bind is one more terminator for those services, forwarding to
+  its own machine's `host:port`; dialing its own service, every other circuit lands
+  on itself and hangs (measured: strict 200/timeout alternation). So `link dial`
+  signs in to the controller's client API as the dial identity
+  (`/edge/client/v1/authenticate?method=ext-jwt`, then `/services`) and REFUSES an
+  identity granted `Bind` on anything — that reading sees platform bind policies
+  too, which `/v1/network` never shows. On a machine that hosts, the dial runs as a
+  separate identity via `--token-command`. A unit does not re-check after install:
+  giving an installed dialer a host role later breaks it.
+- **`hanzo link host|dial` SUPERVISES zt; it never trusts zt to recover.** After a
+  controller restart zt 1.7.4's service refresh can 502 mid-restart and never be
+  retried: the host keeps running with NO terminator (dgx's engine went dark until a
+  manual restart). A proxy closes its listener for good when its service leaves
+  view. So the link runs zt as a child and a guard asks the fabric directly: a host
+  wants every service its identity may bind to have ≥1 terminator (client API
+  `/services/{id}/terminators`, one held session; the client API cannot say whose a
+  terminator is, so this catches "nobody hosts it", not a lost replica); a proxy
+  wants its port in `/proc/net/tcp{,6}` as LISTEN (Linux only). 45s grace, 20s
+  polls, two misses in a row, then kill zt and start it again with backoff 1s→60s,
+  reset after 5 min steady. Proven by freezing a throwaway host's zt and severing
+  its router sockets (`ss -K`): 0 terminators, rebind, 200s again in ~43s. A frozen
+  zt with live sockets keeps a stale terminator, and that is not detected.
+- **Units** (`link/unit.rs`): one id, `hanzo-link-host` / `hanzo-link-dial-<svc>` for
+  systemd (`~/.config/systemd/user` or `/etc/systemd/system` with `--system`),
+  `com.ai.hanzo.link.<id>` for launchd. ExecStart is the supervisor itself —
+  `hanzo link host|dial … --token-command CMD` at the absolute path that installed
+  it — with `Restart=always`, `RestartSec=2`. A system unit runs that binary as
+  root, so `--system` warns when anyone but root can write it. Rewritten +
+  restarted on every `--install`. `zt` comes from PATH, else `~/.local/bin/zt`,
+  else the pinned release installed there, checked against sha256 digests compiled
+  into `link/zt.rs` (bump `VERSION` and `DIGESTS` together).
+- **cloud's Go control binary has a `hanzo link` of its own** ("link this machine
+  into the Hanzo cloud as a node": hanzod + compute worker, `--daemon`), and it does
+  not delegate the verb. Where it comes first on PATH — root's `sudo hanzo` on dgx
+  resolves `/usr/local/bin/hanzo`, a stale Go build — `hanzo link …` is that
+  program, so run this one by path (`sudo ~/.local/bin/hanzo link …`). Two
+  `link`s is a one-way violation to settle in hanzo-inc/cloud.
+- `DELETE /v1/network/services/{id}` is served (cloud f4a951db74) but not in the
+  pinned document yet, so `unpublish` builds its url off the origin; the next spec
+  re-pin makes `hanzo network services rm` too.
+- **Globals move behind the whole command path** (`main::hoist`), and `absorb` sets
+  `args_conflicts_with_subcommands` only on a local command with arguments of its
+  own: clap counts a global as an argument, so `hanzo --as X network routers` and
+  `hanzo --as X engine status` were refused before this.
 
 **Fleet presence outlives the session** (`hanzo beat`, `commands/code/target.rs::present`).
 A target is live only while something beats, and the beat was held ONLY inside
@@ -310,9 +393,14 @@ a capture taken from it could never be re-derived and never be checked.
   `/v1/<product>/` is a DOOR (counted, below) rather than a parameter.
 - What still needs a HAND decision: `METHOD_PRIORITY`, `VERBS` and the path→verb
   fold in `genproduct.rs`. `src/curation.rs` — ONE table naming every product the
-  tree does not surface at its own bare name — is **EMPTY**, and that is the
-  strongest form of the law it exists to state: every capability the document
-  carries is a command at its own name. Each of the seven entries it used to hold
+  tree does not surface at its own bare name — holds **ONE** entry: `link` →
+  `Under("auth")`. `/v1/link` is the AI login manager's registry of provider
+  accounts per machine — credentials — so it is `hanzo auth link …`, and the bare
+  word `link` belongs to the command that links a machine to Hanzo ZT. An `Under`
+  entry keeps every route and moves only the coordinate, so the capability test
+  asks whether a capability's routes reach a command, not whether it is top-level.
+  Every other capability the document carries is a command at its own name. Each of
+  the seven entries it used to hold
   named a product the document had stopped carrying (`csrf`, `agent`, `machines`,
   `gpus`) or a name the parser had stopped spending (`help`, `completions`,
   `openapi.json`); the curation law refuses the first kind outright, and the second
