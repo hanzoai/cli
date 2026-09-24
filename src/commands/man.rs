@@ -123,6 +123,7 @@ pub fn page(cmd: &clap::Command) -> String {
     o.push_str(&format!("{}\n", b("GLOBAL FLAGS")));
     for (f, d) in [
         ("--config=FILE", "Use a custom CLI config file for this invocation."),
+        ("--as=ORG", "Act as this org, as your identity in it when you hold one."),
         ("--verbose, -v", "Increase logging verbosity (repeat for more)."),
         ("--help", "Display this page, or a subcommand's detailed help."),
     ] {
@@ -153,6 +154,24 @@ pub fn page(cmd: &clap::Command) -> String {
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
+
+    /// Every global flag the parser takes is on the page. The flag table is
+    /// the one list here not read off the parser, and `--as` shipped absent
+    /// from it.
+    #[test]
+    fn the_page_names_every_global_flag() {
+        let cmd = crate::Cli::command();
+        let page = super::page(&cmd);
+        let flags = page
+            .split("GLOBAL FLAGS")
+            .nth(1)
+            .and_then(|rest| rest.split("GROUPS").next())
+            .expect("the page has a GLOBAL FLAGS section");
+        for arg in cmd.get_arguments().filter(|a| a.is_global_set()) {
+            let long = format!("--{}", arg.get_long().expect("a global flag has a long name"));
+            assert!(flags.contains(&long), "`{long}` is global and the page never names it");
+        }
+    }
 
     /// EVERY command this page names must be one the parser ACCEPTS, and every
     /// command the parser accepts must be NAMED here. Both halves had failed at
