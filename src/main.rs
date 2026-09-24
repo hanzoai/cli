@@ -823,7 +823,9 @@ async fn main() -> Result<()> {
     // only thing that knows which names under an absorbed command are local, and
     // `resolve` must ask exactly what `augment` asked.
     let hand = Cli::command();
-    let matches = commands::product::augment(hand.clone()).get_matches();
+    let merged = commands::product::augment(hand.clone());
+    let argv = hoist(&merged, std::env::args().collect());
+    let matches = merged.get_matches_from(argv);
 
     // `hanzo --version` and `hanzo -V` ARE `hanzo version` — one function, three
     // spellings. Answered before logging, config and every dispatch, so the
@@ -924,7 +926,7 @@ enum Target {
 fn first_word(mut args: impl Iterator<Item = String>) -> Option<String> {
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--config" | "-c" | "--as" => {
+            a if VALUED.contains(&a) => {
                 args.next();
             }
             _ if a.starts_with('-') => {}
@@ -932,6 +934,38 @@ fn first_word(mut args: impl Iterator<Item = String>) -> Option<String> {
         }
     }
     None
+}
+
+/// The global flags that take their value as the next word.
+const VALUED: [&str; 3] = ["--config", "-c", "--as"];
+
+/// Put a command ahead of the global flags that lead the line. A global is
+/// valid at every level, but the root's `args_conflicts_with_subcommands`
+/// counts it as an argument, and an argument at the root makes the next word
+/// a coding TASK: `hanzo --as admin auth login` started a session about
+/// "auth login". Behind the command the globals mean the same thing. A word
+/// that names no command stays where it is, so `hanzo -v claude status` is
+/// still a session.
+fn hoist(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
+    let mut i = 1;
+    while let Some(a) = argv.get(i).map(String::as_str) {
+        if VALUED.contains(&a) {
+            i += 2;
+        } else if a == "--verbose"
+            || a.starts_with("--config=")
+            || a.starts_with("--as=")
+            || (a.len() > 1 && a.starts_with('-') && a[1..].bytes().all(|b| b == b'v'))
+        {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if i > 1 && argv.get(i).is_some_and(|w| cmd.find_subcommand(w).is_some()) {
+        let word = argv.remove(i);
+        argv.insert(1, word);
+    }
+    argv
 }
 
 /// Run one resolved top-level command.
@@ -1483,6 +1517,41 @@ mod tests {
         assert_eq!(w(&["--config", "/tmp/x", "-v", "chain", "up"]).as_deref(), Some("chain"));
         assert_eq!(w(&["--as", "fabric", "chain", "up"]).as_deref(), Some("chain"));
         assert_eq!(w(&["-v"]), None);
+    }
+
+    /// A global before a command leaves it a command, on the tree `main`
+    /// parses: `hanzo --as admin auth login` signs in rather than starting a
+    /// session about "auth login". A word that names no command is still the
+    /// session's own.
+    #[test]
+    fn a_leading_global_leaves_the_command_a_command() {
+        let merged = commands::product::augment(Cli::command());
+        let parse = |line: &str| {
+            let argv = std::iter::once("hanzo").chain(line.split(' ')).map(String::from).collect();
+            merged.clone().try_get_matches_from(hoist(&merged, argv)).unwrap()
+        };
+        let path = |m: &clap::ArgMatches| {
+            let mut out = Vec::new();
+            let mut at = m;
+            while let Some((name, sub)) = at.subcommand() {
+                out.push(name.to_string());
+                at = sub;
+            }
+            out
+        };
+
+        let m = parse("--as admin auth login");
+        assert_eq!(path(&m), ["auth", "login"]);
+        assert_eq!(m.get_one::<String>("org").map(String::as_str), Some("admin"));
+        assert_eq!(path(&parse("--config /tmp/x -vv chain up")), ["chain", "up"]);
+        assert_eq!(path(&parse("--as=admin agent list")), ["agent", "list"]);
+
+        let m = parse("--as admin claude status");
+        assert!(path(&m).is_empty(), "a backend and a task are a session, not `status`");
+        assert_eq!(m.get_one::<String>("positional").map(String::as_str), Some("claude"));
+        assert_eq!(m.get_one::<String>("tail").map(String::as_str), Some("status"));
+        let m = parse("--model enso auth list");
+        assert!(path(&m).is_empty(), "a session flag still makes the line a session");
     }
 
     /// `hanzo vm …` passes argv through verbatim — flags included, because the
