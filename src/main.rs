@@ -228,11 +228,9 @@ impl CodeArgs {
                         std::env::set_var("CUDA_VISIBLE_DEVICES", "all");
                     }
                 }
-                "rocm" | "amd" => {
-                    if std::env::var("ROCR_VISIBLE_DEVICES").unwrap_or_default().is_empty() {
-                        std::env::set_var("ROCR_VISIBLE_DEVICES", "0");
-                        std::env::set_var("HIP_VISIBLE_DEVICES", "0");
-                    }
+                "rocm" | "amd" if std::env::var("ROCR_VISIBLE_DEVICES").unwrap_or_default().is_empty() => {
+                    std::env::set_var("ROCR_VISIBLE_DEVICES", "0");
+                    std::env::set_var("HIP_VISIBLE_DEVICES", "0");
                 }
                 _ => {}
             }
@@ -681,7 +679,7 @@ enum UpCommands {
 #[derive(Subcommand)]
 enum SandboxCommands {
     /// Run a coding agent in an isolated sandbox (matches `sbx run <agent>`)
-    Run(CodeArgs),
+    Run(Box<CodeArgs>),
     /// List active sandboxes & agent workspaces
     #[command(alias = "ls", alias = "ps")]
     List,
@@ -1034,7 +1032,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Version => commands::version::run(),
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
-            Some(SandboxCommands::Run(args)) => code_session(&mut config, args, Target::Repo).await?,
+            Some(SandboxCommands::Run(args)) => code_session(&mut config, *args, Target::Repo).await?,
             Some(SandboxCommands::List) => list_sandboxes(),
             Some(SandboxCommands::Explore) => explore_sandboxes(),
             Some(SandboxCommands::Launch { template, node }) => {
@@ -1127,7 +1125,7 @@ fn list_sandboxes() {
     if app.sandboxes.is_empty() {
         println!("No active sandboxes or agent runtimes.");
     } else {
-        println!("{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} {}", "NAME", "AGENT", "RUNTIME", "STATUS", "CPU", "MEMORY", "WORKSPACE");
+        println!("{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} WORKSPACE", "NAME", "AGENT", "RUNTIME", "STATUS", "CPU", "MEMORY");
         for sbx in &app.sandboxes {
             let status_str = match sbx.status {
                 commands::up::tui::SandboxStatus::Running => "Running",
@@ -1140,7 +1138,7 @@ fn list_sandboxes() {
                 sbx.runtime,
                 status_str,
                 format!("{}%", sbx.telemetry.cpu_percent),
-                &sbx.telemetry.memory,
+                sbx.telemetry.memory,
                 sbx.path,
             );
         }
@@ -1149,12 +1147,12 @@ fn list_sandboxes() {
 
 fn explore_sandboxes() {
     println!("Available Hanzo Container & MicroVM Environments:\n");
-    println!("  {:<18} {:<18} {:<30} {}", "TEMPLATE", "BASE RUNTIME", "RECOMMENDED AGENT", "ISOLATION");
-    println!("  {:<18} {:<18} {:<30} {}", "hanzo-dev", "alpine/rust/node", "Hanzo Dev (Autonomous)", "MicroVM / Workspace");
-    println!("  {:<18} {:<18} {:<30} {}", "claude-env", "node-lts/git", "Claude Code (Anthropic)", "MicroVM / VirtioFS");
-    println!("  {:<18} {:<18} {:<30} {}", "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)", "MicroVM / Workspace");
-    println!("  {:<18} {:<18} {:<30} {}", "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)", "Metal GPU MicroVM");
-    println!("  {:<18} {:<18} {:<30} {}", "runc-native", "bare-metal/gpu", "High-Perf Agentic LLMs", "Bare-Metal / ROCm / CUDA");
+    println!("  {:<18} {:<18} {:<30} ISOLATION", "TEMPLATE", "BASE RUNTIME", "RECOMMENDED AGENT");
+    println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "hanzo-dev", "alpine/rust/node", "Hanzo Dev (Autonomous)");
+    println!("  {:<18} {:<18} {:<30} MicroVM / VirtioFS", "claude-env", "node-lts/git", "Claude Code (Anthropic)");
+    println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)");
+    println!("  {:<18} {:<18} {:<30} Metal GPU MicroVM", "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)");
+    println!("  {:<18} {:<18} {:<30} Bare-Metal / ROCm / CUDA", "runc-native", "bare-metal/gpu", "High-Perf Agentic LLMs");
     println!("\nLaunch with: `hanzo sandbox launch <TEMPLATE> [--node <NODE>]`");
     println!("Or run agent directly: `hanzo run claude` / `hanzo run dev`");
     println!("High-perf bare-metal/runc: `hanzo run --runc dev` (GPU pass-through)\n");
@@ -1163,7 +1161,7 @@ fn explore_sandboxes() {
 
 fn list_models() {
     let app = commands::up::tui::App::new();
-    println!("{:<36} {:<16} {:<24} {:<10} {:<18} {}", "MODEL ID", "BACKEND", "TARGET NODE", "PARAMS", "STATUS", "ENDPOINT");
+    println!("{:<36} {:<16} {:<24} {:<10} {:<18} ENDPOINT", "MODEL ID", "BACKEND", "TARGET NODE", "PARAMS", "STATUS");
     for m in &app.local_models {
         println!(
             "{:<36} {:<16} {:<24} {:<10} {:<18} {}",
@@ -1179,12 +1177,12 @@ fn list_models() {
 
 fn explore_models() {
     println!("Hanzo Open AI Model Catalog (Qwen 3+ series & Zen Endpoints):\n");
-    println!("  {:<36} {:<10} {:<14} {:<12} {}", "MODEL ID", "PARAMS", "CONTEXT", "VRAM REQ", "HUGGING FACE REPO");
-    println!("  {:<36} {:<10} {:<14} {:<12} {}", "qwen/qwen3.8-27b", "27B", "262k RoPE", "17.8 GB", "Qwen/Qwen3-27B-Instruct");
-    println!("  {:<36} {:<10} {:<14} {:<12} {}", "qwen/qwen3.8-72b", "72B", "262k RoPE", "44.2 GB", "Qwen/Qwen3-72B-Instruct");
-    println!("  {:<36} {:<10} {:<14} {:<12} {}", "zen5-coder-32b", "32B", "128k RoPE", "21.4 GB", "hanzoai/zen5-coder-32b");
-    println!("  {:<36} {:<10} {:<14} {:<12} {}", "DeepSeek-R1-Distill-Qwen-32B", "32B", "128k RoPE", "20.1 GB", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B");
-    println!("  {:<36} {:<10} {:<14} {:<12} {}", "nomic-embed-text-v1.5", "137M", "8,192", "0.6 GB", "nomic-ai/nomic-embed-text-v1.5");
+    println!("  {:<36} {:<10} {:<14} {:<12} HUGGING FACE REPO", "MODEL ID", "PARAMS", "CONTEXT", "VRAM REQ");
+    println!("  {:<36} {:<10} {:<14} {:<12} Qwen/Qwen3-27B-Instruct", "qwen/qwen3.8-27b", "27B", "262k RoPE", "17.8 GB");
+    println!("  {:<36} {:<10} {:<14} {:<12} Qwen/Qwen3-72B-Instruct", "qwen/qwen3.8-72b", "72B", "262k RoPE", "44.2 GB");
+    println!("  {:<36} {:<10} {:<14} {:<12} hanzoai/zen5-coder-32b", "zen5-coder-32b", "32B", "128k RoPE", "21.4 GB");
+    println!("  {:<36} {:<10} {:<14} {:<12} deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "DeepSeek-R1-Distill-Qwen-32B", "32B", "128k RoPE", "20.1 GB");
+    println!("  {:<36} {:<10} {:<14} {:<12} nomic-ai/nomic-embed-text-v1.5", "nomic-embed-text-v1.5", "137M", "8,192", "0.6 GB");
     println!("\nPull to any node with: `hanzo sandbox pull <MODEL> [--node <NODE>]`");
     println!("(Uses `hf` Hugging Face CLI for parallel accelerated download)");
 }

@@ -468,7 +468,8 @@ impl App {
         }
 
         let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "~".to_string());
-        let mut seen_cwds: HashMap<(String, String), (String, u64, f32, String, String, String, Vec<String>)> = HashMap::new();
+        type Seen = (String, u64, f32, String, String, String, Vec<String>);
+        let mut seen_cwds: HashMap<(String, String), Seen> = HashMap::new();
 
         for pid in &candidate_pids {
             if let Some((cpu, rss_kb, etime, _cmd, agent_name)) = meta_map.get(pid) {
@@ -1393,7 +1394,7 @@ impl App {
         let new_sbx = Sandbox {
             id: format!("sbx-{}", self.sandboxes.len() + 1),
             name: name.clone(),
-            agent: if self.sandboxes.len() % 2 == 0 { "Hanzo Dev".into() } else { "Claude Code".into() },
+            agent: if self.sandboxes.len().is_multiple_of(2) { "Hanzo Dev".into() } else { "Claude Code".into() },
             path: format!("{home}/work/sandbox-{}", self.sandboxes.len() + 1),
             runtime: "microvm".into(),
             status: SandboxStatus::Running,
@@ -1606,12 +1607,11 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                                 app.toggle_active_tab();
                             }
                         }
-                        (_, KeyCode::Char('d')) => match app.current_view {
-                            DashboardView::LocalModels => {
+                        (_, KeyCode::Char('d')) => {
+                            if app.current_view == DashboardView::LocalModels {
                                 app.download_selected_model();
                             }
-                            _ => {}
-                        },
+                        }
                         (_, KeyCode::Char('l')) => match app.current_view {
                             DashboardView::Sandboxes => app.launch_container_sandbox(),
                             DashboardView::LocalModels => app.launch_selected_model(),

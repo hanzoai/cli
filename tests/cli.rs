@@ -121,7 +121,7 @@ fn graph_asks_at_both_times() {
         String::from_utf8_lossy(&out.get_output().stdout).to_string()
     };
     let top = help(&["graph"]);
-    let listed = |verb: &str| top.lines().any(|l| l.trim_start().split_whitespace().next() == Some(verb));
+    let listed = |verb: &str| top.lines().any(|l| l.split_whitespace().next() == Some(verb));
     for verb in [
         "create", "get", "search", "resolve", "neighbors", "path", "diff", "communities", "answer",
         "vocabulary", "extract", "ingest", "erase",
