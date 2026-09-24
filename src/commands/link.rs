@@ -233,8 +233,16 @@ pub async fn run(
     // org's services and be made the host of one. Best-effort, like the registry
     // row below — a network that cannot take the identity does not take the
     // shell with it.
-    match caller.ensure(&[]).await {
-        Ok(id) => println!("{} on {}'s network as {}", "→".green(), caller.org.cyan(), id.name),
+    let joined = async {
+        let session = zt::Session::open(&caller.token).await?;
+        let name = join(&caller, session.as_ref()).await;
+        if let Some(s) = session {
+            s.close().await;
+        }
+        name
+    };
+    match joined.await {
+        Ok(name) => println!("{} on {}'s network as {name}", "→".green(), caller.org.cyan()),
         Err(e) => crate::warn(&format!("could not put this machine on {}'s network ({e})", caller.org)),
     }
 
@@ -621,11 +629,38 @@ pub async fn host(
         .await
 }
 
+/// Make sure the caller is on its org's network, unless the platform holds its
+/// identity: those roles are universe's `link-fabric.sh` to set, and an org role
+/// would put the identity in reach of a tenant steward's DELETE. `session` is the
+/// caller's own, `None` when it has no identity on the fabric yet. Returns the
+/// identity's name.
+async fn join(caller: &Caller, session: Option<&zt::Session>) -> Result<String> {
+    if let Some(s) = session {
+        let me = s.me().await?;
+        if me.platform() {
+            return Ok(format!("{} (the platform's)", me.name));
+        }
+    }
+    Ok(caller.ensure(&[]).await?.name)
+}
+
 /// Put `name` on the caller's org network, forwarding to `target`, and make the
 /// caller its host. Idempotent. Returns the name the fabric answers at.
 pub async fn publish(caller: &Caller, name: &str, target: &str) -> Result<String> {
     let name = network::label(name)?;
     let (host, port) = network::host_port(target)?;
+    if let Some(s) = zt::Session::open(&caller.token).await? {
+        let me = s.me().await;
+        s.close().await;
+        let me = me?;
+        if me.platform() {
+            bail!(
+                "{} is the platform's identity, and its roles are universe's link-fabric.sh to set: \
+                 host what it is bound to with `hanzo link host` alone, or publish as an org's identity",
+                me.name
+            );
+        }
+    }
     let fqn = format!("{name}.{}", caller.org);
     let dns = if caller.services().await?.iter().any(|s| s.service == fqn) {
         println!(
@@ -649,14 +684,27 @@ pub async fn dial(cfg: &mut Config, service: String, port: u16, signer: Signer, 
     // The org's own service admits the org's identities, so make sure this one is
     // among them. A service the org does not list is the platform's or another
     // org's: its own policy decides who dials it, and the identity is left alone.
-    match caller.services().await {
-        Ok(list) if list.iter().any(|s| s.service == fqn) => {
-            caller.ensure(&[]).await?;
+    let listed = match caller.services().await {
+        Ok(list) => list.iter().any(|s| s.service == fqn),
+        Err(e) => {
+            crate::warn(&format!("could not read {}'s services ({e}); dialing {fqn} anyway", caller.org));
+            false
         }
-        Ok(_) => {}
-        Err(e) => crate::warn(&format!("could not read {}'s services ({e}); dialing {fqn} anyway", caller.org)),
+    };
+    let who = format!("{}/{}", caller.who.owner, caller.who.name);
+    let mut session = zt::Session::open(&caller.token).await?;
+    if listed {
+        join(&caller, session.as_ref()).await?;
+        if session.is_none() {
+            session = zt::Session::open(&caller.token).await?;
+        }
     }
-    zt::dial_only(&caller.token, &format!("{}/{}", caller.who.owner, caller.who.name)).await?;
+    let session = session.ok_or_else(|| {
+        anyhow!("{who} has no identity on Hanzo ZT, and {fqn} is not {}'s to put it there", caller.org)
+    })?;
+    let checked = session.dial_only(&who).await;
+    session.close().await;
+    checked?;
     let what = format!("dial {fqn} on :{port}");
     tunnel(cfg, &signer, &install, &format!("dial-{fqn}"), what, zt::Mode::Proxy { service: fqn, port }).await
 }

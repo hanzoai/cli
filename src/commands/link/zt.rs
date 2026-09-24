@@ -50,55 +50,131 @@ pub fn args(mode: &Mode, token_command: &str) -> Vec<String> {
     a
 }
 
-/// The services `token`'s identity may HOST, asked of the controller as that
-/// identity — the one reading that sees the platform's bind policies as well as
-/// an org's roles.
-///
-/// A dial needs this because zt has no dial-only mode: `tunnel proxy` also hosts
-/// every service its identity may bind. A dialer that may bind becomes one more
-/// terminator for those services, forwarding to its OWN machine's `host:port`, and
-/// the fabric spreads connections across terminators — so the service breaks for
-/// every caller, and a dialer reaching its own service hangs every other circuit.
-pub async fn bindable(token: &str) -> Result<Vec<String>> {
-    let http = reqwest::Client::new();
-    let api = format!("{CONTROLLER}/edge/client/v1");
-    let login: Value = http
-        .post(format!("{api}/authenticate?method=ext-jwt"))
-        .bearer_auth(token)
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .context("signing in to the Hanzo ZT controller")?
-        .error_for_status()
-        .context("the Hanzo ZT controller refused this identity")?
-        .json()
-        .await
-        .context("decoding the controller's session")?;
-    let session = login["data"]["token"].as_str().context("the controller issued no session")?.to_string();
-    let mut names = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: Value = http
-            .get(format!("{api}/services?limit=500&offset={offset}"))
-            .header("zt-session", &session)
+/// The role the platform's own fabric identities carry (universe
+/// `infra/aws/k8s/link-fabric.sh`). Cloud's tenant surface never writes it — its
+/// roles are `org-<org>` or `<label>.<org>` — so it marks an identity whose roles
+/// are the platform's to set, never a link's.
+const PLATFORM: &str = "platform";
+
+/// A session on the controller's client API, signed in AS the identity a token
+/// names — the reading that sees the identity whole, including roles and bind
+/// policies the tenant surface never lists.
+pub struct Session {
+    http: reqwest::Client,
+    api: String,
+    token: String,
+}
+
+/// This identity as the controller holds it.
+pub struct Me {
+    pub name: String,
+    roles: Vec<String>,
+}
+
+impl Me {
+    /// Whether the platform holds this identity, so a link must leave its roles alone.
+    pub fn platform(&self) -> bool {
+        self.roles.iter().any(|r| r == PLATFORM)
+    }
+}
+
+impl Session {
+    /// Sign in with an IAM access token (ext-jwt). `None` when the controller
+    /// answers 401: no identity on the fabric has the token's subject yet.
+    pub async fn open(iam_token: &str) -> Result<Option<Session>> {
+        let http = reqwest::Client::new();
+        let api = format!("{CONTROLLER}/edge/client/v1");
+        let answer = http
+            .post(format!("{api}/authenticate?method=ext-jwt"))
+            .bearer_auth(iam_token)
+            .json(&serde_json::json!({}))
             .send()
             .await
-            .context("listing this identity's services")?
-            .error_for_status()?
+            .context("signing in to the Hanzo ZT controller")?;
+        if answer.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(None);
+        }
+        let login: Value = answer
+            .error_for_status()
+            .context("the Hanzo ZT controller refused the sign-in")?
             .json()
             .await
-            .context("decoding this identity's services")?;
-        let data = page["data"].as_array().map(Vec::as_slice).unwrap_or_default();
-        names.extend(bound(data));
-        offset += data.len();
-        let total = page["meta"]["pagination"]["totalCount"].as_u64().unwrap_or(0) as usize;
-        if data.is_empty() || offset >= total {
-            break;
+            .context("decoding the controller's session")?;
+        let token = login["data"]["token"].as_str().context("the controller issued no session")?.to_string();
+        Ok(Some(Session { http, api, token }))
+    }
+
+    async fn get(&self, path: &str) -> Result<Value> {
+        Ok(self
+            .http
+            .get(format!("{}{path}", self.api))
+            .header("zt-session", &self.token)
+            .send()
+            .await
+            .with_context(|| format!("reading {path} from the Hanzo ZT controller"))?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
+    pub async fn me(&self) -> Result<Me> {
+        let v = self.get("/current-identity").await?;
+        let d = &v["data"];
+        Ok(Me {
+            name: d["name"].as_str().unwrap_or_default().to_string(),
+            roles: d["roleAttributes"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+        })
+    }
+
+    /// The services this identity may HOST.
+    ///
+    /// A dial needs this because zt has no dial-only mode: `tunnel proxy` also
+    /// hosts every service its identity may bind. A dialer that may bind becomes
+    /// one more terminator for those services, forwarding to its OWN machine's
+    /// `host:port`, and the fabric spreads connections across terminators — so the
+    /// service breaks for every caller, and a dialer reaching its own service
+    /// hangs every other circuit.
+    pub async fn bindable(&self) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = self.get(&format!("/services?limit=500&offset={offset}")).await?;
+            let data = page["data"].as_array().map(Vec::as_slice).unwrap_or_default();
+            names.extend(bound(data));
+            offset += data.len();
+            let total = page["meta"]["pagination"]["totalCount"].as_u64().unwrap_or(0) as usize;
+            if data.is_empty() || offset >= total {
+                return Ok(names);
+            }
         }
     }
-    // The session is this call's alone; leaving it to expire costs nothing but a row.
-    let _ = http.delete(format!("{api}/current-api-session")).header("zt-session", &session).send().await;
-    Ok(names)
+
+    /// Refuse a dial whose identity may host anything — see [`Session::bindable`].
+    pub async fn dial_only(&self, who: &str) -> Result<()> {
+        let hosts = self.bindable().await?;
+        if !hosts.is_empty() {
+            bail!(
+                "{who} may host {} on Hanzo ZT, and zt's proxy mode hosts whatever its identity may: \
+                 this dial would become a second host for them. Dial as an identity that hosts nothing \
+                 (--token-command for a separate dial identity)",
+                hosts.join(", ")
+            );
+        }
+        Ok(())
+    }
+
+    /// End the session. It would expire on its own; ending it costs one request.
+    pub async fn close(self) {
+        let _ = self
+            .http
+            .delete(format!("{}/current-api-session", self.api))
+            .header("zt-session", &self.token)
+            .send()
+            .await;
+    }
 }
 
 /// The names of the services a page grants `Bind` on.
@@ -108,20 +184,6 @@ fn bound(services: &[Value]) -> Vec<String> {
         .filter(|s| s["permissions"].as_array().is_some_and(|p| p.iter().any(|p| p == "Bind")))
         .filter_map(|s| s["name"].as_str().map(str::to_string))
         .collect()
-}
-
-/// Refuse a dial whose identity may host anything — see [`bindable`].
-pub async fn dial_only(token: &str, who: &str) -> Result<()> {
-    let hosts = bindable(token).await?;
-    if !hosts.is_empty() {
-        bail!(
-            "{who} may host {} on Hanzo ZT, and zt's proxy mode hosts whatever its identity may: \
-             this dial would become a second host for them. Dial as an identity that hosts nothing \
-             (--token-command for a separate dial identity)",
-            hosts.join(", ")
-        );
-    }
-    Ok(())
 }
 
 /// `zt` on this machine: `HANZO_ZT_BIN`, then PATH, then `~/.local/bin/zt` —
@@ -214,6 +276,14 @@ mod tests {
             {"name": "odd.acme"}
         ]);
         assert_eq!(bound(page.as_array().unwrap()), ["web.acme", "engine.hanzo"]);
+    }
+
+    #[test]
+    fn the_platform_role_marks_an_identity_a_link_leaves_alone() {
+        let me = |roles: &[&str]| Me { name: "x".into(), roles: roles.iter().map(|r| r.to_string()).collect() };
+        assert!(me(&["platform"]).platform());
+        assert!(!me(&["org-hanzo", "web-host.hanzo"]).platform());
+        assert!(!me(&["platform.hanzo"]).platform(), "a scoped tenant role is not the platform's");
     }
 
     #[test]
