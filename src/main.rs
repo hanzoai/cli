@@ -329,8 +329,17 @@ enum Commands {
         token: Option<String>,
     },
 
-    /// Put this shell on the fabric so it can be driven from the console
+    /// Link this machine to Hanzo cloud: on the org's network over Hanzo ZT, on
+    /// the fleet, and with a shell the console can drive
+    ///
+    /// Bare, it puts this machine's identity on the org's network, registers it
+    /// as a run-target and publishes a shell. `host`, `dial`, `status` and `rm`
+    /// are the network: what this machine serves, what it reaches, what is up.
+    #[command(args_conflicts_with_subcommands = true)]
     Link {
+        #[command(subcommand)]
+        command: Option<LinkCommands>,
+
         /// What to run: your $SHELL by default, or name one — `bash`, `zsh`, or
         /// `tmux` for a shell that survives a disconnect and can be attached
         /// locally at the same time.
@@ -420,8 +429,8 @@ enum Commands {
         /// runs, and what its platform will sign for the pair
         #[arg(long)]
         attest: bool,
-        /// After the node is Ready, put the cluster on the org network
-        /// (`hanzo net`) under this name
+        /// After the node is Ready, publish the cluster's API on the org's
+        /// network as `k8s-<CLUSTER>` (`hanzo link host` carries it)
         #[arg(long, value_name = "CLUSTER")]
         link: Option<String>,
         /// Launch the interactive Sandboxes TUI dashboard immediately
@@ -489,12 +498,6 @@ enum Commands {
     Network {
         #[command(subcommand)]
         command: NetworkCommands,
-    },
-
-    /// The org's zero-trust network — identities, services, private DNS
-    Net {
-        #[command(subcommand)]
-        command: NetCommands,
     },
 
     /// The local cloud host — every cloud command, served from a checkout
@@ -745,39 +748,48 @@ enum NetworkCommands {
     },
 }
 
-/// The zero-trust org network (`/v1/network`) — distinct from `hanzo network`,
-/// which selects the CHAIN network. `net` is machines and services; `network`
-/// is ledgers.
+/// The org's Hanzo ZT network, from this machine.
 #[derive(Subcommand)]
-enum NetCommands {
-    /// Show the network as cloud sees it (identities, services)
-    Ls,
-    /// Ensure your identity on the network (idempotent; files nothing)
-    Join {
-        /// Identity name, a DNS label (defaults to your IAM subject)
-        #[arg(long)]
+enum LinkCommands {
+    /// Host this identity's services; with NAME and HOST:PORT, publish that
+    /// service first (as NAME.<org>, at NAME.<org>.zt) and take its host role
+    Host {
+        /// The service's name, a DNS label
+        #[arg(requires = "target")]
         name: Option<String>,
-        /// Role attributes, comma-separated (e.g. k8s-dev-host)
-        #[arg(long, value_delimiter = ',')]
-        roles: Vec<String>,
+        /// Where this machine forwards it, as host:port (e.g. 127.0.0.1:1235)
+        #[arg(requires = "name")]
+        target: Option<String>,
+        #[command(flatten)]
+        signer: commands::link::Signer,
+        #[command(flatten)]
+        install: commands::link::Install,
     },
-    /// Run the network tunnel in the foreground, logged in by your IAM token
-    Up {
-        /// Tunnel mode: proxy, host, or tproxy (Linux, as root)
-        #[arg(default_value = "proxy")]
-        mode: String,
+    /// Carry a local port to a service, as an identity that hosts nothing; it
+    /// listens on every interface
+    Dial {
+        /// The service: NAME for your org's, or its fabric name (k8s.hanzo)
+        service: String,
+        /// The local port
+        #[arg(value_parser = clap::value_parser!(u16).range(1..))]
+        port: u16,
+        #[command(flatten)]
+        signer: commands::link::Signer,
+        #[command(flatten)]
+        install: commands::link::Install,
     },
-    /// Name a local service on the network's DNS
-    Publish {
-        /// Service name
+    /// This identity on the network, the org's services, and the tunnels here
+    Status {
+        #[command(flatten)]
+        signer: commands::link::Signer,
+    },
+    /// Take a published service off the org's network
+    Rm {
+        /// The service: NAME for your org's, or its fabric name
         name: String,
-        /// What it fronts, as host:port (e.g. 127.0.0.1:6443)
-        target: String,
+        #[command(flatten)]
+        signer: commands::link::Signer,
     },
-    /// Take a published service off this org's network, by id
-    Unpublish { id: String },
-    /// Take an identity off this org's network, by id
-    Rm { id: String },
 }
 
 #[derive(Subcommand)]
@@ -945,12 +957,14 @@ fn first_word(mut args: impl Iterator<Item = String>) -> Option<String> {
 const VALUED: [&str; 3] = ["--config", "-c", "--as"];
 
 /// Put a command ahead of the global flags that lead the line. A global is
-/// valid at every level, but the root's `args_conflicts_with_subcommands`
-/// counts it as an argument, and an argument at the root makes the next word
-/// a coding TASK: `hanzo --as admin auth login` started a session about
-/// "auth login". Behind the command the globals mean the same thing. A word
-/// that names no command stays where it is, so `hanzo -v claude status` is
-/// still a session.
+/// valid at every level, but `args_conflicts_with_subcommands` counts it as an
+/// argument wherever it lands: at the root it made the next word a coding TASK
+/// (`hanzo --as admin auth login` started a session about "auth login"), and on
+/// a command with arguments of its own it refuses the subcommand after it
+/// (`hanzo --as admin link status`). So the globals move behind the WHOLE
+/// command path, to the command that runs, where they mean the same thing. A
+/// word that names no command stays where it is, so `hanzo -v claude status`
+/// is still a session.
 fn hoist(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     let mut i = 1;
     while let Some(a) = argv.get(i).map(String::as_str) {
@@ -966,9 +980,12 @@ fn hoist(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
             break;
         }
     }
-    if i > 1 && argv.get(i).is_some_and(|w| cmd.find_subcommand(w).is_some()) {
-        let word = argv.remove(i);
-        argv.insert(1, word);
+    let (mut at, mut end) = (cmd, i);
+    while let Some(sub) = argv.get(end).and_then(|w| at.find_subcommand(w)) {
+        (at, end) = (sub, end + 1);
+    }
+    if i > 1 && end > i {
+        argv[1..end].rotate_left(i - 1);
     }
     argv
 }
@@ -1024,11 +1041,17 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Scan { path } => commands::scan::scan(path).await?,
         Commands::Build(args) => commands::build::run(args).await?,
         Commands::Vm { args } => commands::vm::run(args).await?,
-        Commands::Link {
-            shell,
-            read_only,
-            title,
-        } => commands::link::run(&mut config, shell, read_only, title).await?,
+        Commands::Link { command, shell, read_only, title } => match command {
+            None => commands::link::run(&mut config, shell, read_only, title).await?,
+            Some(LinkCommands::Host { name, target, signer, install }) => {
+                commands::link::host(&mut config, name.zip(target), signer, install).await?
+            }
+            Some(LinkCommands::Dial { service, port, signer, install }) => {
+                commands::link::dial(&mut config, service, port, signer, install).await?
+            }
+            Some(LinkCommands::Status { signer }) => commands::link::status(&mut config, signer).await?,
+            Some(LinkCommands::Rm { name, signer }) => commands::link::rm(&mut config, name, signer).await?,
+        },
 
         Commands::Beat => commands::code::target::present(&config).await?,
 
@@ -1128,18 +1151,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             } => commands::network::add(
                 &mut config, name, network_id, chain_id, rpc, api, explorer, label, activate,
             )?,
-        },
-        Commands::Net { command } => match command {
-            NetCommands::Ls => commands::net::ls(&mut config).await?,
-            NetCommands::Join { name, roles } => {
-                commands::net::join(&mut config, name, roles).await?;
-            }
-            NetCommands::Up { mode } => commands::net::up(mode)?,
-            NetCommands::Publish { name, target } => {
-                commands::net::publish(&mut config, name, target).await?;
-            }
-            NetCommands::Unpublish { id } => commands::net::unpublish(&mut config, id).await?,
-            NetCommands::Rm { id } => commands::net::rm(&mut config, id).await?,
         },
         Commands::Wallet { command } => match command {
             WalletCommands::Show => commands::wallet::show(&config)?,
@@ -1552,6 +1563,11 @@ mod tests {
         assert_eq!(m.get_one::<String>("org").map(String::as_str), Some("admin"));
         assert_eq!(path(&parse("--config /tmp/x -vv chain up")), ["chain", "up"]);
         assert_eq!(path(&parse("--as=admin agent list")), ["agent", "list"]);
+        // Behind the whole path, a global never meets a command's own arguments.
+        assert_eq!(path(&parse("--as admin link status")), ["link", "status"]);
+        assert_eq!(path(&parse("--as hanzo network routers")), ["network", "routers"]);
+        assert_eq!(path(&parse("--as hanzo engine status")), ["engine", "status"]);
+        assert_eq!(path(&parse("-v auth link list")), ["auth", "link", "list"]);
 
         let m = parse("--as admin claude status");
         assert!(path(&m).is_empty(), "a backend and a task are a session, not `status`");
@@ -1715,27 +1731,85 @@ mod tests {
         );
     }
 
-    /// The zero-trust org network: read it, join it, publish on it, prune it.
-    /// `net` (machines and services) is not `network` (chain selection).
+    /// `link` is the machine; its network verbs hang off it, and the tunnel
+    /// flags belong to the verbs, never to the bare shell link.
     #[test]
-    fn net_speaks_the_network_plane() {
-        assert!(Cli::try_parse_from(["hanzo", "net", "ls"]).is_ok());
-        let cli = Cli::try_parse_from(["hanzo", "net", "join", "--name", "box", "--roles", "a,b"])
-            .expect("join parses");
-        let Some(Commands::Net { command: NetCommands::Join { name, roles } }) = cli.command
+    fn link_speaks_the_network_from_this_machine() {
+        let parse = |argv: &[&str]| Cli::try_parse_from(argv).map(|c| c.command);
+
+        let Ok(Some(Commands::Link { command: None, shell, read_only, .. })) =
+            parse(&["hanzo", "link", "--shell", "bash", "--read-only"])
         else {
-            panic!("expected net join")
+            panic!("bare link")
         };
-        assert_eq!(name.as_deref(), Some("box"));
-        assert_eq!(roles, ["a", "b"]);
-        assert!(Cli::try_parse_from(["hanzo", "net", "publish", "k8s-dev", "127.0.0.1:6443"])
-            .is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "net", "rm", "idn_1"]).is_ok());
-        let cli = Cli::try_parse_from(["hanzo", "net", "up"]).expect("up parses");
-        let Some(Commands::Net { command: NetCommands::Up { mode } }) = cli.command else {
-            panic!("expected net up")
+        assert_eq!((shell.as_deref(), read_only), (Some("bash"), true));
+
+        let Ok(Some(Commands::Link { command: Some(LinkCommands::Host { name, target, signer, install }), .. })) =
+            parse(&["hanzo", "link", "host", "engine", "127.0.0.1:1235", "--token-command", "/etc/hanzo/link/token"])
+        else {
+            panic!("link host NAME TARGET")
         };
-        assert_eq!(mode, "proxy");
+        assert_eq!((name.as_deref(), target.as_deref()), (Some("engine"), Some("127.0.0.1:1235")));
+        assert_eq!(signer.token_command.as_deref(), Some("/etc/hanzo/link/token"));
+        assert!(!install.install);
+
+        // Hosting what the identity is already bound to publishes nothing.
+        let Ok(Some(Commands::Link { command: Some(LinkCommands::Host { name: None, target: None, install, .. }), .. })) =
+            parse(&["hanzo", "link", "host", "--install", "--system"])
+        else {
+            panic!("link host --install --system")
+        };
+        assert!(install.install && install.system);
+
+        let Ok(Some(Commands::Link { command: Some(LinkCommands::Dial { service, port, install, .. }), .. })) =
+            parse(&["hanzo", "link", "dial", "k8s.hanzo", "26443", "--install"])
+        else {
+            panic!("link dial")
+        };
+        assert_eq!((service.as_str(), port, install.install, install.system), ("k8s.hanzo", 26443, true, false));
+
+        assert!(matches!(
+            parse(&["hanzo", "link", "status"]),
+            Ok(Some(Commands::Link { command: Some(LinkCommands::Status { .. }), .. }))
+        ));
+        assert!(matches!(
+            parse(&["hanzo", "link", "rm", "engine"]),
+            Ok(Some(Commands::Link { command: Some(LinkCommands::Rm { .. }), .. }))
+        ));
+
+        // A name without a target, a system unit that is not installed, port 0,
+        // and a shell flag on a network verb are all refused at parse time.
+        for bad in [
+            &["hanzo", "link", "host", "engine"][..],
+            &["hanzo", "link", "host", "--system"],
+            &["hanzo", "link", "dial", "k8s.hanzo", "0"],
+            &["hanzo", "link", "dial", "k8s.hanzo"],
+            &["hanzo", "link", "--shell", "bash", "status"],
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?} parsed");
+        }
+    }
+
+    /// There is one way to link, and `net` is not it.
+    #[test]
+    fn net_is_gone() {
+        let cmd = Cli::command();
+        assert!(cmd.find_subcommand("net").is_none());
+    }
+
+    /// The AI login manager's accounts are credentials: they live under `auth`,
+    /// and `link` no longer answers for them.
+    #[test]
+    fn linked_ai_accounts_live_under_auth() {
+        let merged = commands::product::augment(Cli::command());
+        let auth = merged.find_subcommand("auth").expect("auth");
+        let accounts = auth.find_subcommand("link").expect("auth link");
+        for verb in ["list", "get", "rm", "route", "create", "devices", "usage"] {
+            assert!(accounts.find_subcommand(verb).is_some(), "auth link {verb}");
+        }
+        let link = merged.find_subcommand("link").expect("link");
+        assert!(link.find_subcommand("list").is_none(), "`link list` is not the machine link");
+        assert!(link.find_subcommand("route").is_none());
     }
 
     /// The merged tree (derive + generated products) builds without a clap panic.

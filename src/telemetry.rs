@@ -68,7 +68,6 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Load { .. } => "load",
         Commands::Chain { .. } => "chain",
         Commands::Network { .. } => "network",
-        Commands::Net { .. } => "net",
         Commands::Host { .. } => "host",
         Commands::Wallet { .. } => "wallet",
         Commands::Share { .. } => "share",

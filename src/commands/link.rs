@@ -1,11 +1,23 @@
-//! `hanzo link` — put a shell on the fabric and register it, so it can be driven
-//! from the console.
+//! `hanzo link` — the one way to link a computer to Hanzo cloud.
 //!
-//! Four things, none of them new: this machine registers as a run-target so the
-//! fleet can see its CPU and GPUs and send it work, ttyd serves a shell over a
-//! loopback port, `share::start` publishes that port (the same tunnel `hanzo
-//! share` uses), and the session registry gets a row carrying the URL. The
-//! console lists the machine, the shell under it, and frames the terminal.
+//! A linked machine is three things, and this module is all of them:
+//!
+//! - ON THE ORG'S NETWORK. Hanzo ZT (hanzozt/zt) is the zero-trust fabric, and a
+//!   machine is on it as its IAM subject: cloud makes sure that identity exists
+//!   (`network::Caller::ensure`) and the `zt` tunnel signs in with the same token.
+//!   `link host` publishes a service and hosts it, `link dial` carries a local port
+//!   to one, `link status` says what is up, `link rm` takes a service down, and
+//!   `--install` leaves either tunnel running under the service manager.
+//!
+//!   HOSTING AND DIALING ARE TWO IDENTITIES. zt has no dial-only mode: `tunnel
+//!   proxy` also hosts everything its identity may bind, so a dialer that may
+//!   bind turns into a second host. `link dial` asks the controller what its
+//!   identity may bind and refuses one that may bind anything; on a machine
+//!   that hosts, the dial signs in as a separate identity (`--token-command`).
+//! - A RUN-TARGET, so the fleet sees its CPU and GPUs and can send it work.
+//! - A SHELL the console can drive: ttyd serves one over a loopback port,
+//!   `share::start` publishes that port (the same tunnel `hanzo share` uses), and
+//!   the session registry gets a row carrying the URL.
 //!
 //! COMPUTE AND SHELL ARE ONE ACT. Linking a machine that the fleet can schedule
 //! onto but nobody can look at, or a shell on a machine the fleet does not know
@@ -27,12 +39,17 @@
 //! zsh), or name any command: `bash`, or `tmux` for a session that survives a
 //! disconnect and can be attached locally at the same time.
 
+mod network;
+mod unit;
+mod zt;
+
+pub use network::Caller;
+
 use crate::commands::code::event::Status;
 use crate::commands::code::session::SessionClient;
 use crate::commands::code::{context, target};
-use crate::commands::{network, share};
+use crate::commands::share;
 use crate::config::Config;
-use crate::iam::{paths, store};
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
 use std::process::Stdio;
@@ -207,12 +224,19 @@ pub async fn run(
 ) -> Result<()> {
     let sh_kind = Shell::from_flag(shell.as_deref());
 
-    let api = network::active(cfg).api.trim_end_matches('/').to_string();
     // Refreshing accessor, not the raw one: a link holds a shell for hours, and
     // the access token lives one.
-    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)
-        .await?
-        .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
+    let caller = Caller::sign_in(cfg, None).await?;
+    let api = caller.api.clone();
+
+    // On the org's network as its IAM subject: what lets this machine dial the
+    // org's services and be made the host of one. Best-effort, like the registry
+    // row below — a network that cannot take the identity does not take the
+    // shell with it.
+    match caller.ensure(&[]).await {
+        Ok(id) => println!("{} on {}'s network as {}", "→".green(), caller.org.cyan(), id.name),
+        Err(e) => crate::warn(&format!("could not put this machine on {}'s network ({e})", caller.org)),
+    }
 
     // Hold this machine open as a run-target, so the fleet knows its CPU and GPUs
     // and the console has a machine to group the shell under. A BEAT, not a single
@@ -233,7 +257,7 @@ pub async fn run(
     // already in hand, and the frontend checks it against what hanzo.id says
     // about whoever turns up, so this is a claim about the publisher rather than
     // a decision made here.
-    let email = crate::iam::identity::email(&tok.access_token).ok_or_else(|| {
+    let email = crate::iam::identity::email(&caller.token).ok_or_else(|| {
         anyhow!(
             "this identity carries no email address, and a published shell has to say whose it is.\n\
              Add one to your Hanzo identity and run `hanzo auth login` again."
@@ -252,7 +276,7 @@ pub async fn run(
     // yet answering. The host is the SAME value the run-target above registered
     // under, which is what lets the console file this shell under that machine
     // instead of under nothing.
-    let client = SessionClient::new(&api, &tok.access_token)?;
+    let client = SessionClient::new(&api, &caller.token)?;
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
@@ -538,6 +562,255 @@ async fn stopped() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+// ---- the network: host, dial, status, rm ------------------------------------
+
+/// Who a tunnel, and the calls before it, sign in as.
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct Signer {
+    /// Sign in with what this command prints instead of your hanzo.id session: a
+    /// machine's own IAM client (e.g. /etc/hanzo/link/token). Run without a shell
+    /// and split on spaces, as zt runs it
+    #[arg(long, value_name = "CMD")]
+    pub token_command: Option<String>,
+}
+
+impl Signer {
+    /// The command the tunnel signs in with: the one given, else this binary's
+    /// own `auth token` — the identity every other command here speaks as.
+    fn tunnel_command(&self, cfg: &Config) -> Result<String> {
+        if let Some(cmd) = &self.token_command {
+            return Ok(cmd.clone());
+        }
+        let exe = std::env::current_exe().context("resolving our own binary")?;
+        let exe = exe.to_str().context("this binary's path is not UTF-8")?;
+        if exe.contains(char::is_whitespace) {
+            bail!("{exe} has a space in it, and zt splits its token command on spaces: pass --token-command");
+        }
+        Ok(match &cfg.org {
+            Some(org) => format!("{exe} --as {org} auth token"),
+            None => format!("{exe} auth token"),
+        })
+    }
+}
+
+/// Whether a tunnel runs here and now or under the service manager.
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct Install {
+    /// Keep it running: write and start a systemd unit (a launchd job on macOS)
+    #[arg(long)]
+    pub install: bool,
+    /// With --install: a system unit that starts at boot (run it with sudo)
+    #[arg(long, requires = "install")]
+    pub system: bool,
+}
+
+/// `hanzo link host [NAME HOST:PORT]` — host this identity's services on the
+/// network. With a name, publish it first and take its host role.
+pub async fn host(
+    cfg: &mut Config,
+    publish: Option<(String, String)>,
+    signer: Signer,
+    install: Install,
+) -> Result<()> {
+    if let Some((name, target)) = publish {
+        let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
+        let dns = self::publish(&caller, &name, &target).await?;
+        println!("{} {} → {target}", "✓".green(), dns.cyan().bold());
+    }
+    tunnel(cfg, &signer, &install, "host", "host this identity's services on Hanzo ZT".into(), zt::Mode::Host)
+        .await
+}
+
+/// Put `name` on the caller's org network, forwarding to `target`, and make the
+/// caller its host. Idempotent. Returns the name the fabric answers at.
+pub async fn publish(caller: &Caller, name: &str, target: &str) -> Result<String> {
+    let name = network::label(name)?;
+    let (host, port) = network::host_port(target)?;
+    let fqn = format!("{name}.{}", caller.org);
+    let dns = if caller.services().await?.iter().any(|s| s.service == fqn) {
+        println!(
+            "{} {fqn} is already published (`hanzo link rm {name}` first to point it elsewhere)",
+            "·".dimmed()
+        );
+        format!("{fqn}.zt")
+    } else {
+        caller.publish(&name, &host, port).await?.dns
+    };
+    // The role names the service, and cloud refuses one for a service the org
+    // does not have — so it is taken after the publish, never before.
+    caller.ensure(&[format!("{name}-host")]).await?;
+    Ok(dns)
+}
+
+/// `hanzo link dial SERVICE PORT` — carry local `PORT` to a service.
+pub async fn dial(cfg: &mut Config, service: String, port: u16, signer: Signer, install: Install) -> Result<()> {
+    let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
+    let fqn = caller.scope(&service)?;
+    // The org's own service admits the org's identities, so make sure this one is
+    // among them. A service the org does not list is the platform's or another
+    // org's: its own policy decides who dials it, and the identity is left alone.
+    match caller.services().await {
+        Ok(list) if list.iter().any(|s| s.service == fqn) => {
+            caller.ensure(&[]).await?;
+        }
+        Ok(_) => {}
+        Err(e) => crate::warn(&format!("could not read {}'s services ({e}); dialing {fqn} anyway", caller.org)),
+    }
+    zt::dial_only(&caller.token, &format!("{}/{}", caller.who.owner, caller.who.name)).await?;
+    let what = format!("dial {fqn} on :{port}");
+    tunnel(cfg, &signer, &install, &format!("dial-{fqn}"), what, zt::Mode::Proxy { service: fqn, port }).await
+}
+
+/// Run a tunnel in the foreground, or install it as a unit.
+async fn tunnel(
+    cfg: &Config,
+    signer: &Signer,
+    install: &Install,
+    id: &str,
+    description: String,
+    mode: zt::Mode,
+) -> Result<()> {
+    let bin = zt::resolve_or_install().await?;
+    let command = signer.tunnel_command(cfg)?;
+    let args = zt::args(&mode, &command);
+    if !install.install {
+        if let zt::Mode::Proxy { port, .. } = &mode {
+            println!("{} listening on every interface at :{port} (zt's proxy mode)", "→".green());
+        }
+        return run_tunnel(&bin, &args);
+    }
+    // A unit that can never sign in is not worth installing.
+    network::run_token_command(&command).await.context("checking the tunnel's token command")?;
+    let scope = if install.system { unit::Scope::System } else { unit::Scope::User };
+    let u = unit::Unit {
+        id: id.to_string(),
+        description,
+        argv: std::iter::once(bin.display().to_string()).chain(args).collect(),
+        source: invocation(),
+    };
+    let file = unit::install(&u, scope)?;
+    let name = if cfg!(target_os = "macos") { u.launchd_label() } else { u.systemd_name() };
+    println!("{} {} → {}", "✓".green(), name.cyan().bold(), file.display());
+    if unit::lingers(scope) == Some(false) {
+        println!("  it starts at login; `loginctl enable-linger` starts it at boot");
+    }
+    Ok(())
+}
+
+/// Become the tunnel. A signal meant for the link — a supervisor's SIGTERM —
+/// then reaches zt itself, rather than ending a parent and orphaning the tunnel.
+#[cfg(unix)]
+fn run_tunnel(bin: &std::path::Path, args: &[String]) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(bin).args(args).exec();
+    Err(anyhow!(err).context(format!("running {}", bin.display())))
+}
+
+#[cfg(not(unix))]
+fn run_tunnel(bin: &std::path::Path, args: &[String]) -> Result<()> {
+    crate::commands::launch::exec(bin, args)
+}
+
+/// The command line that ran, as a person would type it again.
+fn invocation() -> String {
+    std::iter::once("hanzo".to_string())
+        .chain(std::env::args().skip(1).map(|a| {
+            if a.is_empty() || a.contains(char::is_whitespace) {
+                format!("'{a}'")
+            } else {
+                a
+            }
+        }))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `hanzo link status` — this identity on the network, what the org publishes,
+/// and which tunnels run here.
+pub async fn status(cfg: &mut Config, signer: Signer) -> Result<()> {
+    let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
+    println!("{} {}/{} in {}", "identity".bold(), caller.who.owner, caller.who.name, caller.org.cyan());
+    match caller.identities().await {
+        Ok(ids) => match ids.iter().find(|i| i.external_id == caller.sub) {
+            Some(i) => println!("  on {}'s network as {} [{}]", caller.org, i.name.cyan(), i.roles.join(", ")),
+            None => println!(
+                "  not in {}'s list: `hanzo link` joins it (an identity the platform holds is never listed)",
+                caller.org
+            ),
+        },
+        Err(e) => println!("  {} {e}", "unreadable:".red()),
+    }
+    println!("{}", "services".bold());
+    match caller.services().await {
+        Ok(s) if s.is_empty() => println!("  none published by {}", caller.org),
+        Ok(s) => s.iter().for_each(|svc| println!("  {}  {}.zt", svc.service.cyan(), svc.service)),
+        Err(e) => println!("  {} {e}", "unreadable:".red()),
+    }
+    println!("{}", "tunnels".bold());
+    let ps = std::process::Command::new("ps").args(["-eo", "pid=,args="]).output();
+    let running = ps.map(|o| tunnels(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default();
+    if running.is_empty() {
+        println!("  no zt tunnel is running here");
+    }
+    for t in &running {
+        let listening = t.port.map(|p| {
+            let up = std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], p).into(), Duration::from_millis(500)).is_ok();
+            if up { format!(" :{p} listening").green() } else { format!(" :{p} not listening").red() }
+        });
+        println!("  pid {}  {}{}", t.pid, t.what, listening.map(|l| l.to_string()).unwrap_or_default());
+    }
+    for (name, scope) in unit::installed() {
+        let state = unit::state(&name, scope);
+        let painted = if state == "active" || state == "loaded" { state.green() } else { state.yellow() };
+        println!("  {name} ({}) {painted}", if scope == unit::Scope::System { "system" } else { "user" });
+    }
+    Ok(())
+}
+
+/// A running `zt tunnel`, read off the process table.
+#[derive(Debug, PartialEq, Eq)]
+struct Tunnel {
+    pid: u32,
+    /// `host`, or `proxy k8s.hanzo:26443`.
+    what: String,
+    /// The local port a proxy listens on.
+    port: Option<u16>,
+}
+
+/// Every `zt tunnel …` in `ps -eo pid=,args=` output.
+fn tunnels(ps: &str) -> Vec<Tunnel> {
+    ps.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let pid = words.next()?.parse().ok()?;
+            let bin = words.next()?;
+            if std::path::Path::new(bin).file_name()? != "zt" || words.next()? != "tunnel" {
+                return None;
+            }
+            let mode = words.next()?;
+            let pairs: Vec<&str> = words.take_while(|w| !w.starts_with('-')).collect();
+            let port = pairs.first().and_then(|p| p.rsplit(':').next()?.parse().ok());
+            let what = std::iter::once(mode).chain(pairs).collect::<Vec<_>>().join(" ");
+            Some(Tunnel { pid, what, port })
+        })
+        .collect()
+}
+
+/// `hanzo link rm NAME` — take a published service off the org's network.
+pub async fn rm(cfg: &mut Config, name: String, signer: Signer) -> Result<()> {
+    let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
+    let fqn = caller.scope(&name)?;
+    let svc = caller
+        .services()
+        .await?
+        .into_iter()
+        .find(|s| s.service == fqn)
+        .ok_or_else(|| anyhow!("{fqn} is not published on {}'s network", caller.org))?;
+    caller.unpublish(&svc.id).await?;
+    println!("{} {fqn} is off {}'s network", "✓".green(), caller.org);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,6 +900,24 @@ mod tests {
             assert_eq!(sh.argv(), vec![cmd.to_string()]);
             assert!(!sh.url_arg(), "`--shell {cmd}` must not read the query");
         }
+    }
+
+    /// A tunnel is found by what it runs, whichever unit or shell started it.
+    #[test]
+    fn tunnels_are_read_off_the_process_table() {
+        let ps = "\
+            1 /sbin/init\n\
+            4021838 /usr/local/bin/zt tunnel host --controller https://zt-api.hanzo.ai --token-command /etc/hanzo/link/token\n\
+            3804505 /usr/local/bin/zt tunnel proxy k8s.hanzo:26443 --controller https://zt-api.hanzo.ai --token-command /home/z/.local/bin/hanzo auth token\n\
+            77 /usr/bin/vim zt tunnel\n\
+            78 zt version\n";
+        assert_eq!(
+            tunnels(ps),
+            [
+                Tunnel { pid: 4021838, what: "host".into(), port: None },
+                Tunnel { pid: 3804505, what: "proxy k8s.hanzo:26443".into(), port: Some(26443) },
+            ]
+        );
     }
 
     // The name reaching tmux is bounded BEFORE tmux sees it: `;` is tmux's own

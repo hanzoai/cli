@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 use vm_measure::{Log, Measurement};
 
 use crate::commands::vm::{self, alive, Rpc};
-use crate::commands::{host, net};
+use crate::commands::{host, link};
 use crate::config::Config;
 use crate::image;
 
@@ -744,13 +744,15 @@ fn wait_ready_state(dir: &Path) -> Result<()> {
     }
 }
 
-/// `--link <cluster>`: give the cluster's API a place on the org network — the
-/// caller's identity takes the service's host role, and the service is named.
-/// `hanzo net up` on this machine carries it.
-async fn finish_link(cfg: &mut Config, link: Option<String>) -> Result<()> {
-    let Some(cluster) = link else { return Ok(()) };
-    net::join(cfg, None, vec![format!("k8s-{cluster}-host")]).await?;
-    net::publish(cfg, format!("k8s-{cluster}"), format!("127.0.0.1:{K3S_PORT}")).await?;
+/// `--link <cluster>`: give the cluster's API a place on the org's network — the
+/// service is published and the caller's identity takes its host role.
+/// `hanzo link host` on this machine carries it.
+async fn finish_link(cfg: &mut Config, cluster: Option<String>) -> Result<()> {
+    let Some(cluster) = cluster else { return Ok(()) };
+    let caller = link::Caller::sign_in(cfg, None).await?;
+    let target = format!("127.0.0.1:{K3S_PORT}");
+    let dns = link::publish(&caller, &format!("k8s-{cluster}"), &target).await?;
+    println!("{} {} → {target} — `hanzo link host --install` carries it", "✓".green(), dns.cyan().bold());
     Ok(())
 }
 

@@ -127,13 +127,20 @@ fn absorb(local: Command, product: &'static str) -> Command {
     // descends. Without that, `hanzo share` kept demanding its `<TARGET>` while
     // advertising `enable` and `get` in its own help — two served operations
     // listed as reachable that no argv could reach.
-    trie(product)
+    //
+    // A local command with no arguments of its own is a plain group and gains
+    // nothing from that rule — and clap counts a GLOBAL as an argument, so the
+    // rule on a group refused `hanzo auth --as admin login`.
+    let runnable = local.get_arguments().next().is_some();
+    let merged = trie(product)
         .children
         .iter()
         .filter(|(name, _)| !owned.contains(**name))
-        .fold(local, |c, (name, node)| c.subcommand(to_command(name, node)))
-        .args_conflicts_with_subcommands(true)
-        .subcommand_negates_reqs(true)
+        .fold(local, |c, (name, node)| c.subcommand(to_command(name, node)));
+    match runnable {
+        true => merged.args_conflicts_with_subcommands(true).subcommand_negates_reqs(true),
+        false => merged,
+    }
 }
 
 /// Distinct product names in `OPS`, stable order.

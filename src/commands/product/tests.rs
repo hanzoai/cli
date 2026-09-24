@@ -620,7 +620,7 @@ fn a_graph_question_carries_both_times_to_the_wire() {
 /// half of which it had started. A fixture that names routes is a second authority
 /// over what exists, which is the defect this whole pipeline was built to end.
 #[test]
-fn every_capability_the_document_carries_is_a_top_level_command() {
+fn every_capability_the_document_carries_is_a_command() {
     let spec = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/spec/cloud.json"))
         .expect("spec/cloud.json is the projection this tree is derived from");
     let doc: serde_json::Value = serde_json::from_str(&spec).expect("valid json");
@@ -634,7 +634,13 @@ fn every_capability_the_document_carries_is_a_top_level_command() {
         .collect();
     assert!(caps.len() > 100, "the document carries {} capabilities", caps.len());
 
-    let missing: Vec<&str> = caps.iter().copied().filter(|c| !is_product(c)).collect();
+    // A capability `src/curation.rs` places under another command keeps its
+    // routes and moves coordinate, so what is asked is whether its routes reach a
+    // command — at its own name, or under the one the arrangement names.
+    let reached = |c: &str| {
+        is_product(c) || OPS.iter().any(|o| o.path.strip_prefix("/v1/").and_then(|r| r.split('/').next()) == Some(c))
+    };
+    let missing: Vec<&str> = caps.iter().copied().filter(|c| !reached(c)).collect();
     assert!(
         missing.is_empty(),
         "{} capability(ies) the document serves reach no command: {missing:?}\n\n\

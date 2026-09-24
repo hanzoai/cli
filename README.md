@@ -98,6 +98,7 @@ hanzo auth show                 # the active identity
 hanzo auth list                 # every identity, active one marked
 hanzo auth use [owner/name]     # switch active identity
 hanzo auth token                # the active short-lived access token
+hanzo auth link list            # AI provider accounts signed in on your machines
 hanzo auth logout [identity] [--all]
 hanzo usage summary             # your own footprint over a window
 hanzo usage samples             # per-provider: one linked account's own plan
@@ -157,7 +158,10 @@ hanzo wallet show|address|create [--local]|import|use|list   # PQ cloud custody 
 ```bash
 hanzo chain …                   # run/join the L1 chain node (hanzod); `fabric` is a deprecated alias
 hanzo runner …                  # provide this machine as a CI runner
-hanzo link                      # put this shell on the fabric so the console can drive it
+hanzo link                      # link this machine: org network, fleet, a shell the console drives
+hanzo link host [name host:port] [--install]   # host services on Hanzo ZT; a name publishes it first
+hanzo link dial <service> <port> [--install]   # a local port onto a service on Hanzo ZT
+hanzo link status | rm <name>   # what is up here; unpublish
 ```
 
 `hanzo-node` is not a second program: the installer writes it as a symlink to this same

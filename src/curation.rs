@@ -71,7 +71,13 @@ pub struct Curated {
     pub why: &'static str,
 }
 
-pub const CURATED: &[Curated] = &[];
+pub const CURATED: &[Curated] = &[Curated {
+    product: "link",
+    instead: Instead::Under("auth"),
+    why: "/v1/link is the AI login manager's registry of the provider accounts signed in on each machine, \
+          which are credentials, so they sit beside the others under `hanzo auth`; `hanzo link` is the \
+          command that links the machine itself to Hanzo ZT.",
+}];
 
 /// The entry deciding this product, if it is curated at all.
 pub fn curated(product: &str) -> Option<&'static Curated> {

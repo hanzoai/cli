@@ -835,7 +835,7 @@ fn render_side(f: &mut Frame, area: Rect, board: &Board) {
     match &board.net {
         Reading::Pending => nets.push(Line::from(dim(" reading…"))),
         Reading::Failed(e) => nets.push(Line::from(dim(format!(" {e}")))),
-        Reading::Ok if board.networks.is_empty() => nets.push(Line::from(dim(" none — `hanzo net join`"))),
+        Reading::Ok if board.networks.is_empty() => nets.push(Line::from(dim(" none — `hanzo link`"))),
         Reading::Ok => {
             for n in &board.networks {
                 let up = matches!(n.status.as_str(), "active" | "online" | "up" | "ready");

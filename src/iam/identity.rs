@@ -43,6 +43,18 @@ pub fn email(access_token: &str) -> Option<String> {
     (!claims.email.trim().is_empty()).then_some(claims.email)
 }
 
+/// The subject (`sub`) a token claims, or `None` — what the zero-trust fabric
+/// knows the caller's identity by. A label for matching, never a decision.
+pub fn subject(access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Sub {
+        #[serde(default)]
+        sub: String,
+    }
+    let claims: Sub = serde_json::from_slice(&payload(access_token)?).ok()?;
+    (!claims.sub.trim().is_empty()).then_some(claims.sub)
+}
+
 /// A JWT's claims segment, decoded. `None` for anything that is not one.
 ///
 /// JWT payloads are base64url WITHOUT padding (RFC 7515 §2); a padded encoder is
