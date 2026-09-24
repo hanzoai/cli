@@ -9,7 +9,6 @@
 # session, one best-effort request every 30 seconds.
 [Unit]
 Description=Hanzo fleet presence
-Documentation=man:hanzo-beat
 After=network-online.target
 Wants=network-online.target
 
@@ -19,7 +18,6 @@ Restart=always
 RestartSec=30
 # A beat that cannot reach the API changes nothing about this box, so never
 # spin on it — the scheduler already reads the machine as offline.
-RestartMode=restart
 Nice=19
 
 [Install]
