@@ -58,7 +58,7 @@ impl Unit {
              [Service]\n\
              ExecStart={exec}\n\
              Restart=always\n\
-             RestartSec=5\n\
+             RestartSec=2\n\
              \n\
              [Install]\n\
              WantedBy={wanted}\n",
@@ -152,6 +152,18 @@ pub fn install(unit: &Unit, scope: Scope) -> Result<PathBuf> {
         run(&mut ctl(&["restart", &unit.systemd_name()]))?;
     }
     Ok(file)
+}
+
+/// Whether only root can change the file at `path` — what a system unit may run.
+#[cfg(unix)]
+pub fn root_only(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
+}
+
+#[cfg(not(unix))]
+pub fn root_only(_path: &Path) -> bool {
+    true
 }
 
 /// Whether a user unit will run with nobody logged in. `None` where the answer
@@ -250,12 +262,11 @@ mod tests {
             id: "dial-k8s.hanzo".into(),
             description: "dial k8s.hanzo on :26443".into(),
             argv: vec![
-                "/usr/local/bin/zt".into(),
-                "tunnel".into(),
-                "proxy".into(),
-                "k8s.hanzo:26443".into(),
-                "--controller".into(),
-                "https://zt-api.hanzo.ai".into(),
+                "/home/z/.local/bin/hanzo".into(),
+                "link".into(),
+                "dial".into(),
+                "k8s.hanzo".into(),
+                "26443".into(),
                 "--token-command".into(),
                 "/home/z/.local/bin/hanzo auth token".into(),
             ],
@@ -276,7 +287,7 @@ mod tests {
         assert!(text.starts_with("# Written by `hanzo link dial k8s.hanzo 26443 --install`."), "{text}");
         assert!(text.contains("Description=Hanzo link: dial k8s.hanzo on :26443\n"));
         assert!(text.contains("After=network-online.target\nWants=network-online.target\n"));
-        assert!(text.contains("Restart=always\nRestartSec=5\n"));
+        assert!(text.contains("Restart=always\nRestartSec=2\n"));
         assert!(text.ends_with("[Install]\nWantedBy=default.target\n"), "{text}");
     }
 
@@ -293,8 +304,8 @@ mod tests {
         let exec = text.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
         assert_eq!(
             exec,
-            "ExecStart=/usr/local/bin/zt tunnel proxy k8s.hanzo:26443 --controller \
-             https://zt-api.hanzo.ai --token-command \"/home/z/.local/bin/hanzo auth token\""
+            "ExecStart=/home/z/.local/bin/hanzo link dial k8s.hanzo 26443 --token-command \
+             \"/home/z/.local/bin/hanzo auth token\""
         );
     }
 

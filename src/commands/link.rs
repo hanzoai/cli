@@ -625,8 +625,8 @@ pub async fn host(
         let dns = self::publish(&caller, &name, &target).await?;
         println!("{} {} → {target}", "✓".green(), dns.cyan().bold());
     }
-    tunnel(cfg, &signer, &install, "host", "host this identity's services on Hanzo ZT".into(), zt::Mode::Host)
-        .await
+    let what = "host this identity's services on Hanzo ZT".to_string();
+    tunnel(cfg, &signer, &install, "host", what, zt::Mode::Host, vec!["host".into()]).await
 }
 
 /// Make sure the caller is on its org's network, unless the platform holds its
@@ -705,11 +705,18 @@ pub async fn dial(cfg: &mut Config, service: String, port: u16, signer: Signer, 
     let checked = session.dial_only(&who).await;
     session.close().await;
     checked?;
-    let what = format!("dial {fqn} on :{port}");
-    tunnel(cfg, &signer, &install, &format!("dial-{fqn}"), what, zt::Mode::Proxy { service: fqn, port }).await
+    let (id, what) = (format!("dial-{fqn}"), format!("dial {fqn} on :{port}"));
+    let verb = vec!["dial".into(), fqn.clone(), port.to_string()];
+    tunnel(cfg, &signer, &install, &id, what, zt::Mode::Proxy { service: fqn, port }, verb).await
 }
 
-/// Run a tunnel in the foreground, or install it as a unit.
+/// Run a tunnel here, supervised, or install a unit that runs this same command.
+///
+/// `verb` is the command that runs the tunnel with nothing left to publish
+/// (`host`, or `dial SERVICE PORT`): a unit runs `hanzo link <verb>
+/// --token-command CMD`, so it keeps the supervisor — zt alone does not rebind
+/// after the controller restarts under it.
+#[allow(clippy::too_many_arguments)]
 async fn tunnel(
     cfg: &Config,
     signer: &Signer,
@@ -717,25 +724,36 @@ async fn tunnel(
     id: &str,
     description: String,
     mode: zt::Mode,
+    verb: Vec<String>,
 ) -> Result<()> {
     let bin = zt::resolve_or_install().await?;
     let command = signer.tunnel_command(cfg)?;
-    let args = zt::args(&mode, &command);
     if !install.install {
         if let zt::Mode::Proxy { port, .. } = &mode {
             println!("{} listening on every interface at :{port} (zt's proxy mode)", "→".green());
         }
-        return run_tunnel(&bin, &args);
+        let guard = match &mode {
+            zt::Mode::Host => Guard::Host(zt::Watch::new(&command)),
+            zt::Mode::Proxy { port, .. } => Guard::Proxy(*port),
+        };
+        return supervise(&bin, &zt::args(&mode, &command), guard).await;
     }
     // A unit that can never sign in is not worth installing.
     network::run_token_command(&command).await.context("checking the tunnel's token command")?;
+    let exe = std::env::current_exe().context("resolving our own binary")?;
     let scope = if install.system { unit::Scope::System } else { unit::Scope::User };
-    let u = unit::Unit {
-        id: id.to_string(),
-        description,
-        argv: std::iter::once(bin.display().to_string()).chain(args).collect(),
-        source: invocation(),
-    };
+    if scope == unit::Scope::System && !unit::root_only(&exe) {
+        crate::warn(&format!(
+            "a system unit runs {} as root, and a user other than root can write it",
+            exe.display()
+        ));
+    }
+    let argv = [exe.display().to_string(), "link".into()]
+        .into_iter()
+        .chain(verb)
+        .chain(["--token-command".to_string(), command])
+        .collect();
+    let u = unit::Unit { id: id.to_string(), description, argv, source: invocation() };
     let file = unit::install(&u, scope)?;
     let name = if cfg!(target_os = "macos") { u.launchd_label() } else { u.systemd_name() };
     println!("{} {} → {}", "✓".green(), name.cyan().bold(), file.display());
@@ -745,18 +763,121 @@ async fn tunnel(
     Ok(())
 }
 
-/// Become the tunnel. A signal meant for the link — a supervisor's SIGTERM —
-/// then reaches zt itself, rather than ending a parent and orphaning the tunnel.
-#[cfg(unix)]
-fn run_tunnel(bin: &std::path::Path, args: &[String]) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(bin).args(args).exec();
-    Err(anyhow!(err).context(format!("running {}", bin.display())))
+/// How long zt is given to come up before its guard starts asking.
+const GRACE: Duration = Duration::from_secs(45);
+/// How often a guard asks.
+const POLL: Duration = Duration::from_secs(20);
+/// The first wait before zt starts again, doubled per failure up to the last.
+const BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(60));
+/// A run this long was healthy, so the next failure starts the backoff over.
+const STEADY: Duration = Duration::from_secs(300);
+
+/// What a supervised tunnel watches beside zt's own exit.
+///
+/// zt does not always recover on its own: after a controller restart a host's
+/// service refresh can fail mid-restart and never be retried, leaving it running
+/// with no terminator, and a proxy closes its listener for good when its service
+/// leaves view. Both look alive from outside, so each is asked about directly.
+enum Guard {
+    /// Every service this identity may host has a terminator on the fabric.
+    Host(zt::Watch),
+    /// The local port still listens.
+    Proxy(u16),
 }
 
-#[cfg(not(unix))]
-fn run_tunnel(bin: &std::path::Path, args: &[String]) -> Result<()> {
-    crate::commands::launch::exec(bin, args)
+impl Guard {
+    /// Resolve with the reason to start zt again: after [`GRACE`], two failed
+    /// checks in a row, [`POLL`] apart. A check that could not be made decides
+    /// nothing.
+    async fn lost(&mut self) -> String {
+        tokio::time::sleep(GRACE).await;
+        let mut misses = 0;
+        loop {
+            let finding = match self {
+                Guard::Host(watch) => match watch.unhosted().await {
+                    Ok(none) if none.is_empty() => Some(None),
+                    Ok(bare) => Some(Some(format!("{} has no host on Hanzo ZT", bare.join(", ")))),
+                    Err(e) => {
+                        tracing::debug!("reading this identity's services: {e:#}");
+                        None
+                    }
+                },
+                Guard::Proxy(port) => listening(*port).map(|up| (!up).then(|| format!(":{port} stopped listening"))),
+            };
+            match finding {
+                Some(Some(why)) => {
+                    misses += 1;
+                    if misses >= 2 {
+                        return why;
+                    }
+                }
+                Some(None) => misses = 0,
+                None => {}
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+}
+
+/// Run zt until the link is asked to stop, and start it again — with backoff —
+/// whenever it exits or its guard finds it lost.
+async fn supervise(bin: &std::path::Path, args: &[String], mut guard: Guard) -> Result<()> {
+    let stop = stopped();
+    tokio::pin!(stop);
+    let mut backoff = BACKOFF.0;
+    loop {
+        let started = std::time::Instant::now();
+        let mut child = tokio::process::Command::new(bin)
+            .args(args)
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("starting {}", bin.display()))?;
+        let why = tokio::select! {
+            biased;
+            _ = &mut stop => {
+                let _ = child.kill().await;
+                return Ok(());
+            }
+            status = child.wait() => match status {
+                Ok(s) => format!("zt exited ({s})"),
+                Err(e) => format!("zt could not be waited on ({e})"),
+            },
+            why = guard.lost() => why,
+        };
+        let _ = child.kill().await;
+        if started.elapsed() >= STEADY {
+            backoff = BACKOFF.0;
+        }
+        crate::warn(&format!("{why}: starting zt again in {}s", backoff.as_secs()));
+        tokio::select! {
+            biased;
+            _ = &mut stop => return Ok(()),
+            _ = tokio::time::sleep(backoff) => {}
+        }
+        backoff = (backoff * 2).min(BACKOFF.1);
+    }
+}
+
+/// Whether something listens on `port`, from the kernel's own socket tables.
+/// `None` where those cannot be read, which is every system but Linux.
+fn listening(port: u16) -> Option<bool> {
+    let tables: Vec<String> =
+        ["/proc/net/tcp", "/proc/net/tcp6"].iter().filter_map(|t| std::fs::read_to_string(t).ok()).collect();
+    if tables.is_empty() {
+        return None;
+    }
+    Some(tables.iter().any(|t| listens_in(t, port)))
+}
+
+/// Whether a `/proc/net/tcp` table holds a LISTEN socket (state `0A`) on `port`.
+fn listens_in(table: &str, port: u16) -> bool {
+    let want = format!("{port:04X}");
+    table.lines().skip(1).any(|l| {
+        let mut f = l.split_whitespace();
+        let local = f.nth(1).unwrap_or_default();
+        let state = f.nth(1).unwrap_or_default();
+        state == "0A" && local.rsplit(':').next() == Some(want.as_str())
+    })
 }
 
 /// The command line that ran, as a person would type it again.
@@ -948,6 +1069,18 @@ mod tests {
             assert_eq!(sh.argv(), vec![cmd.to_string()]);
             assert!(!sh.url_arg(), "`--shell {cmd}` must not read the query");
         }
+    }
+
+    /// The kernel's own table decides whether a proxy still listens: LISTEN is
+    /// state 0A, and the port is the hex after the local address's colon.
+    #[test]
+    fn a_listener_is_read_off_the_kernels_socket_table() {
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:66DB 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 1 0 100 0 0 10 0
+   1: 0100007F:1F90 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1000        0 2 1 0 20 4 30 10 -1";
+        assert!(listens_in(table, 26331), "0x66DB listens");
+        assert!(!listens_in(table, 8080), "0x1F90 is an established connection, not a listener");
+        assert!(!listens_in(table, 26443));
     }
 
     /// A tunnel is found by what it runs, whichever unit or shell started it.

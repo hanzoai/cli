@@ -129,7 +129,7 @@ impl Session {
         })
     }
 
-    /// The services this identity may HOST.
+    /// The services this identity may HOST, by id and name.
     ///
     /// A dial needs this because zt has no dial-only mode: `tunnel proxy` also
     /// hosts every service its identity may bind. A dialer that may bind becomes
@@ -137,24 +137,30 @@ impl Session {
     /// `host:port`, and the fabric spreads connections across terminators — so the
     /// service breaks for every caller, and a dialer reaching its own service
     /// hangs every other circuit.
-    pub async fn bindable(&self) -> Result<Vec<String>> {
-        let mut names = Vec::new();
+    pub async fn bindable(&self) -> Result<Vec<(String, String)>> {
+        let mut out = Vec::new();
         let mut offset = 0;
         loop {
             let page = self.get(&format!("/services?limit=500&offset={offset}")).await?;
             let data = page["data"].as_array().map(Vec::as_slice).unwrap_or_default();
-            names.extend(bound(data));
+            out.extend(bound(data));
             offset += data.len();
             let total = page["meta"]["pagination"]["totalCount"].as_u64().unwrap_or(0) as usize;
             if data.is_empty() || offset >= total {
-                return Ok(names);
+                return Ok(out);
             }
         }
     }
 
+    /// How many terminators — live hosts — a service has on the fabric.
+    async fn terminators(&self, service_id: &str) -> Result<usize> {
+        let v = self.get(&format!("/services/{service_id}/terminators?limit=500")).await?;
+        Ok(v["data"].as_array().map(Vec::len).unwrap_or(0))
+    }
+
     /// Refuse a dial whose identity may host anything — see [`Session::bindable`].
     pub async fn dial_only(&self, who: &str) -> Result<()> {
-        let hosts = self.bindable().await?;
+        let hosts: Vec<String> = self.bindable().await?.into_iter().map(|(_, name)| name).collect();
         if !hosts.is_empty() {
             bail!(
                 "{who} may host {} on Hanzo ZT, and zt's proxy mode hosts whatever its identity may: \
@@ -177,13 +183,59 @@ impl Session {
     }
 }
 
-/// The names of the services a page grants `Bind` on.
-fn bound(services: &[Value]) -> Vec<String> {
+/// The services a page grants `Bind` on, by id and name.
+fn bound(services: &[Value]) -> Vec<(String, String)> {
     services
         .iter()
         .filter(|s| s["permissions"].as_array().is_some_and(|p| p.iter().any(|p| p == "Bind")))
-        .filter_map(|s| s["name"].as_str().map(str::to_string))
+        .filter_map(|s| Some((s["id"].as_str()?.to_string(), s["name"].as_str()?.to_string())))
         .collect()
+}
+
+/// A host's view of its own services on the fabric, held across polls: one
+/// controller session, signed in again only when the controller drops it.
+pub struct Watch {
+    token_command: String,
+    session: Option<Session>,
+}
+
+impl Watch {
+    pub fn new(token_command: &str) -> Watch {
+        Watch { token_command: token_command.to_string(), session: None }
+    }
+
+    /// The services this identity may host that have NO terminator right now.
+    ///
+    /// Whether a terminator is this process's own is not something the client
+    /// API says, so the question is whether the service has a host at all: a
+    /// service another host still carries is up, and one nobody carries is the
+    /// outage a rebind ends. An `Err` is a controller that could not be read,
+    /// which decides nothing.
+    pub async fn unhosted(&mut self) -> Result<Vec<String>> {
+        if self.session.is_none() {
+            let token = super::network::run_token_command(&self.token_command).await?;
+            self.session = Some(Session::open(&token).await?.context("this identity is not on Hanzo ZT")?);
+        }
+        let session = self.session.as_ref().expect("opened above");
+        let read = async {
+            let mut out = Vec::new();
+            for (id, name) in session.bindable().await? {
+                if session.terminators(&id).await? == 0 {
+                    out.push(name);
+                }
+            }
+            anyhow::Ok(out)
+        };
+        let answer = read.await;
+        if answer.is_err() {
+            // An expired or dropped session is the likeliest cause; the next poll
+            // signs in again rather than asking with it forever.
+            if let Some(s) = self.session.take() {
+                s.close().await;
+            }
+        }
+        answer
+    }
 }
 
 /// `zt` on this machine: `HANZO_ZT_BIN`, then PATH, then `~/.local/bin/zt` —
@@ -270,12 +322,13 @@ mod tests {
     #[test]
     fn a_service_is_hostable_only_where_the_page_grants_bind() {
         let page = serde_json::json!([
-            {"name": "k8s.hanzo", "permissions": ["Dial"]},
-            {"name": "web.acme", "permissions": ["Dial", "Bind"]},
-            {"name": "engine.hanzo", "permissions": ["Bind"]},
-            {"name": "odd.acme"}
+            {"id": "1", "name": "k8s.hanzo", "permissions": ["Dial"]},
+            {"id": "2", "name": "web.acme", "permissions": ["Dial", "Bind"]},
+            {"id": "3", "name": "engine.hanzo", "permissions": ["Bind"]},
+            {"id": "4", "name": "odd.acme"}
         ]);
-        assert_eq!(bound(page.as_array().unwrap()), ["web.acme", "engine.hanzo"]);
+        let names: Vec<String> = bound(page.as_array().unwrap()).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(names, ["web.acme", "engine.hanzo"]);
     }
 
     #[test]
