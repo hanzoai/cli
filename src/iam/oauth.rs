@@ -25,7 +25,7 @@ use reqwest::Url;
 use serde::Deserialize;
 use std::io::IsTerminal;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 use super::paths::{self, AUTHORIZE, REVOKE, TOKEN, USERINFO};
 use super::pkce;
@@ -88,15 +88,22 @@ pub async fn login(brand: &str, choose: bool) -> Result<TokenSet> {
     // Whichever leg answers first. The socket wins on a desktop, where it
     // returns before a person could paste anything; the keyboard wins where the
     // browser was somewhere else, which is the case that used to hang.
-    let cb = tokio::select! {
-        r = capture_callback(&listener, &state) => r?,
-        r = paste_callback(&state) => r?,
+    let (cb, browser) = tokio::select! {
+        r = capture_callback(&listener, &state, origin) => { let (cb, tab) = r?; (cb, Some(tab)) }
+        r = paste_callback(&state) => (r?, None),
     };
     let code = cb
         .code
         .ok_or_else(|| anyhow!("no authorization code in callback"))?;
 
-    exchange_code(origin, &code, &redirect_uri, &pkce.verifier).await
+    // The tab that brought the code back is answered only once the exchange has
+    // settled, so it is told how the login actually ended, not that it began.
+    let tokens = exchange_code(origin, &code, &redirect_uri, &pkce.verifier).await;
+    if let Some(mut tab) = browser {
+        let failure = tokens.as_ref().err().map(|e| format!("{e:#}"));
+        reply(&mut tab, &conclusion(origin, failure.as_deref())).await;
+    }
+    tokens
 }
 
 /// Fetch the userinfo profile for an access token.
@@ -321,10 +328,16 @@ fn parse_pasted(input: &str) -> Callback {
     cb
 }
 
-/// Accept exactly one loopback request, reply with a friendly page, and return
-/// the parsed callback. Errors if the provider reported `error=...`, or if the
-/// redirect does not carry back the `state` this login sent.
-async fn capture_callback(listener: &TcpListener, state: &str) -> Result<Callback> {
+/// Accept exactly one loopback request and return the parsed callback with the
+/// browser's connection, still unanswered: [`login`] answers it once the code is
+/// exchanged. A callback that cannot become a login is answered here. Errors if
+/// the provider reported `error=...`, if there is no code, or if the redirect
+/// does not carry back the `state` this login sent.
+async fn capture_callback(
+    listener: &TcpListener,
+    state: &str,
+    origin: &str,
+) -> Result<(Callback, TcpStream)> {
     let (mut stream, _) = listener
         .accept()
         .await
@@ -343,35 +356,82 @@ async fn capture_callback(listener: &TcpListener, state: &str) -> Result<Callbac
 
     let cb = parse_callback(target)?;
 
-    let (status_line, message) = if let Some(err) = &cb.error {
-        ("400 Bad Request", format!("Sign-in failed: {err}."))
-    } else if cb.code.is_some() {
-        ("200 OK", "Signed in to Hanzo.".to_string())
-    } else {
-        ("400 Bad Request", "Missing authorization code.".to_string())
-    };
-    let html = format!(
-        "<!doctype html><meta charset=utf-8><title>Hanzo</title>\
-         <body style=\"font-family:system-ui;text-align:center;padding-top:3rem\">\
-         <h2>{message}</h2><p>You can close this tab.</p></body>"
-    );
-    let response = format!(
-        "HTTP/1.1 {status_line}\r\nContent-Type: text/html; charset=utf-8\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{html}",
-        html.len()
-    );
-    let _ = stream.write_all(response.as_bytes()).await;
-    let _ = stream.flush().await;
-
-    if let Some(err) = cb.error {
-        bail!("authorization denied: {err}");
-    }
     // A browser always sends back what we put in the authorize URL, so here —
     // unlike a hand-typed code — an absent state is as wrong as a wrong one.
-    if cb.state.as_deref() != Some(state) {
-        bail!("state mismatch — possible CSRF; aborting login");
+    let refusal = if let Some(err) = &cb.error {
+        Some(format!("authorization denied: {err}"))
+    } else if cb.code.is_none() {
+        Some("no authorization code in callback".to_string())
+    } else if cb.state.as_deref() != Some(state) {
+        Some("state mismatch — possible CSRF; aborting login".to_string())
+    } else {
+        None
+    };
+    if let Some(why) = refusal {
+        reply(&mut stream, &conclusion(origin, Some(&why))).await;
+        bail!(why);
     }
-    Ok(cb)
+    Ok((cb, stream))
+}
+
+/// Write one HTTP response and close. A browser that has gone away is not an
+/// error the login needs to hear about.
+async fn reply(stream: &mut TcpStream, response: &str) {
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.flush().await;
+}
+
+/// How the browser tab ends a login. Success sends it to the account page on
+/// the brand's own IAM origin — the session that just signed in is there, so the
+/// person lands on their account rather than a page on this machine. Failure
+/// stays on the loopback and says why, in the brand's colours. Pure — no I/O.
+fn conclusion(origin: &str, failure: Option<&str>) -> String {
+    let origin = origin.trim_end_matches('/');
+    let host = origin.split("://").nth(1).unwrap_or(origin);
+    match failure {
+        None => {
+            let to = format!("{origin}/account");
+            let body = format!(
+                "<!doctype html><meta charset=utf-8><title>{host}</title>\
+                 <meta http-equiv=refresh content=\"0;url={to}\">\
+                 <body style=\"background:#000;color:#fff\"><a href=\"{to}\" style=\"color:#fff\">Continue to {host}</a></body>"
+            );
+            format!(
+                "HTTP/1.1 303 See Other\r\nLocation: {to}\r\nContent-Type: text/html; charset=utf-8\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        }
+        Some(why) => {
+            let why = escape(why);
+            let body = format!(
+                "<!doctype html><meta charset=utf-8><meta name=color-scheme content=dark>\
+                 <title>Sign-in failed — {host}</title>\
+                 <body style=\"margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#fff;\
+                 font-family:Inter,ui-sans-serif,system-ui,sans-serif\">\
+                 <main style=\"max-width:28rem;padding:2rem;text-align:center\">\
+                 <p style=\"font-size:.875rem;letter-spacing:.08em;text-transform:uppercase;color:#a1a1aa\">{host}</p>\
+                 <h1 style=\"font-size:1.5rem;font-weight:600;margin:.5rem 0 1rem\">Sign-in failed</h1>\
+                 <p style=\"color:#d4d4d8;line-height:1.5\">{why}</p>\
+                 <p style=\"color:#a1a1aa\">Run <code style=\"color:#fff\">hanzo login</code> again.</p></main></body>"
+            );
+            format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        }
+    }
+}
+
+/// Text into HTML. The provider's `error` rides in on the query string, so it
+/// is never markup.
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 #[cfg(test)]
@@ -430,14 +490,16 @@ mod tests {
     }
 
     // Drive the real loopback server over a TCP socket: it must extract the
-    // code/state from the redirect and reply with a 200 the browser can show.
+    // code/state and leave the tab unanswered until the exchange settles, and a
+    // good login then sends the browser to the account page on the IAM origin.
     #[tokio::test]
-    async fn loopback_captures_code_and_replies_ok() {
+    async fn loopback_captures_code_then_sends_the_tab_to_the_account() {
         use tokio::net::TcpStream;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { capture_callback(&listener, "xyz").await });
+        let server =
+            tokio::spawn(async move { capture_callback(&listener, "xyz", "https://hanzo.id").await });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         client
@@ -445,18 +507,21 @@ mod tests {
             .await
             .unwrap();
 
+        let (cb, mut tab) = server.await.unwrap().unwrap();
+        assert_eq!(cb.code.as_deref(), Some("abc"));
+        assert_eq!(cb.state.as_deref(), Some("xyz"));
+
+        reply(&mut tab, &conclusion("https://hanzo.id", None)).await;
+        drop(tab);
         let mut response = Vec::new();
         client.read_to_end(&mut response).await.unwrap();
         let response = String::from_utf8_lossy(&response);
-        assert!(response.starts_with("HTTP/1.1 200 OK"), "got: {response}");
-
-        let cb = server.await.unwrap().unwrap();
-        assert_eq!(cb.code.as_deref(), Some("abc"));
-        assert_eq!(cb.state.as_deref(), Some("xyz"));
+        assert!(response.starts_with("HTTP/1.1 303 See Other"), "got: {response}");
+        assert!(response.contains("\r\nLocation: https://hanzo.id/account\r\n"), "got: {response}");
     }
 
     // A browser sends back what we sent it, so on THIS leg an absent state is
-    // as wrong as a wrong one.
+    // as wrong as a wrong one — and the tab is told so on the spot.
     #[tokio::test]
     async fn loopback_refuses_a_state_that_is_not_ours() {
         use tokio::net::TcpStream;
@@ -464,18 +529,36 @@ mod tests {
         for target in ["/callback?code=abc&state=SOMEONE_ELSE", "/callback?code=abc"] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
-            let server = tokio::spawn(async move { capture_callback(&listener, "xyz").await });
+            let server = tokio::spawn(async move {
+                capture_callback(&listener, "xyz", "https://hanzo.id").await
+            });
 
             let mut client = TcpStream::connect(addr).await.unwrap();
             client
                 .write_all(format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
                 .await
                 .unwrap();
-            let mut sink = Vec::new();
-            let _ = client.read_to_end(&mut sink).await;
+            let mut response = Vec::new();
+            let _ = client.read_to_end(&mut response).await;
+            let response = String::from_utf8_lossy(&response);
 
             assert!(server.await.unwrap().is_err(), "{target} was accepted");
+            assert!(response.starts_with("HTTP/1.1 400 Bad Request"), "{target}: {response}");
+            assert!(response.contains("background:#000"), "{target}: {response}");
         }
+    }
+
+    // The provider's `error` comes off the query string: it is shown, never run.
+    #[test]
+    fn a_failure_page_shows_the_reason_as_text() {
+        let page = conclusion("https://lux.id/", Some("<script>alert(1)</script> & \"x\""));
+        assert!(page.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(page.contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;x&quot;"));
+        assert!(!page.contains("<script>"));
+        assert!(page.contains("lux.id"));
+
+        let ok = conclusion("https://lux.id/", None);
+        assert!(ok.contains("\r\nLocation: https://lux.id/account\r\n"));
     }
 
     // The four shapes a person can actually paste. The first is the one that
