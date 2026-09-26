@@ -24,7 +24,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Url;
 use serde::Deserialize;
 use std::io::IsTerminal;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::paths::{self, AUTHORIZE, REVOKE, TOKEN, USERINFO};
@@ -269,8 +271,18 @@ async fn paste_callback(state: &str) -> Result<Callback> {
         return std::future::pending().await;
     }
 
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    while let Some(line) = lines.next_line().await? {
+    // THE READ ENDS WITH THE LOGIN. On a desktop the socket wins and this side
+    // is dropped mid-read; `tokio::io::stdin()` left that read parked on the
+    // runtime's blocking pool, and the runtime waits for its blocking threads
+    // before the process can exit — so `hanzo login` printed "Signed in" and
+    // then sat there until someone pressed Enter, and that Enter was swallowed.
+    // `typed` reads only a line that is already waiting, on its own thread, and
+    // `_stop` ends it the moment this future is dropped.
+    let (tx, mut lines) = tokio::sync::mpsc::unbounded_channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let _stop = Stop(Arc::clone(&stop));
+    std::thread::spawn(move || typed(&stop, &tx));
+    while let Some(line) = lines.recv().await {
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -294,6 +306,53 @@ async fn paste_callback(state: &str) -> Result<Callback> {
     }
     // stdin closed under us; leave the socket to it.
     std::future::pending().await
+}
+
+/// Sets its flag when dropped: the paste leg is over, whoever won.
+struct Stop(Arc<AtomicBool>);
+
+impl Drop for Stop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Lines typed at the terminal, until `stop` is set or stdin ends.
+///
+/// A line is read only once the terminal says one is waiting. A canonical-mode
+/// tty is readable when a whole line is, so the read returns at once, and no read
+/// is ever left pending for the next thing that asks the terminal for a line.
+fn typed(stop: &AtomicBool, tx: &tokio::sync::mpsc::UnboundedSender<String>) {
+    let stdin = std::io::stdin();
+    while !stop.load(Ordering::Relaxed) {
+        if !waiting(std::time::Duration::from_millis(100)) {
+            continue;
+        }
+        let mut line = String::new();
+        match stdin.read_line(&mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                if tx.send(line).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Whether stdin has a line to read within `wait`.
+#[cfg(unix)]
+fn waiting(wait: std::time::Duration) -> bool {
+    let mut fd = libc::pollfd { fd: libc::STDIN_FILENO, events: libc::POLLIN, revents: 0 };
+    // SAFETY: one pollfd on the stack, for the length we pass.
+    unsafe { libc::poll(&mut fd, 1, wait.as_millis() as libc::c_int) > 0 }
+}
+
+/// Without poll the read blocks, on this thread alone; the stop flag is seen
+/// after the next line, and the runtime never waits on it.
+#[cfg(not(unix))]
+fn waiting(_: std::time::Duration) -> bool {
+    true
 }
 
 /// Pull `code`/`state`/`error` out of whatever a person pasted: a full URL, the
