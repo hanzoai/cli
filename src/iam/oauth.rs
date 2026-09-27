@@ -1030,6 +1030,8 @@ fn detach_menu(listener: TcpListener, origin: &str, brand: &str) {
                 .spawn();
         }
     }
+    #[cfg(not(unix))]
+    let _ = (origin, brand);
     drop(listener);
 }
 
@@ -1044,7 +1046,7 @@ pub async fn serve_detached_menu() -> Result<()> {
         .context("HANZO_LOGIN_FD")?;
     let origin = std::env::var("HANZO_LOGIN_ORIGIN").context("HANZO_LOGIN_ORIGIN")?;
     let brand = std::env::var("HANZO_LOGIN_BRAND").context("HANZO_LOGIN_BRAND")?;
-    let std_listener = unsafe { <std::net::TcpListener as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+    let std_listener = inherited_listener(fd)?;
     std_listener
         .set_nonblocking(true)
         .context("loopback nonblocking")?;
@@ -1131,6 +1133,20 @@ pub async fn serve_detached_menu() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The loopback the parent kept open. On Unix the child is given the listening
+/// socket; this OS is the one `detach_menu` actually hands off.
+fn inherited_listener(fd: i32) -> Result<std::net::TcpListener> {
+    #[cfg(unix)]
+    {
+        Ok(unsafe { <std::net::TcpListener as std::os::fd::FromRawFd>::from_raw_fd(fd) })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = fd;
+        bail!("the signed-in account menu is handed off through a file descriptor")
+    }
 }
 
 struct PendingAdd {
