@@ -146,11 +146,10 @@ text elsewhere is under the same rule and was wrong the same way: `--config`'s
 GLOBAL line cited `hanzo cluster list` on every subcommand screen, and the
 product is `clusters`.
 
-**The coding session, and its ONE resolver** — `hanzo code` starts it on one of three
-DISTINCT backends: our own `dev` agent (hanzoai/dev, the DEFAULT), `claude`, and
-`codex`. None is an alias of another — naming one runs THAT agent, or fails saying it
-is not installed; silently substituting a different agent than the one someone named
-would be worse than refusing.
+**The coding session, and its ONE resolver** — `hanzo code` starts it on one of five
+DISTINCT backends: our own `dev` agent (hanzoai/dev, the DEFAULT), `claude`,
+`codex`, Antigravity (`agy`) and Cursor (`agent` / `cursor`). None is an alias of
+another — naming one runs THAT agent, or fails saying it is not installed.
 
 Four entry spellings, ONE implementation:
 
@@ -159,9 +158,21 @@ hanzo code                 the default backend (dev)
 hanzo code dev             hanzo code --dev        hanzo code --backend dev
 hanzo code claude          hanzo code --claude
 hanzo code codex           hanzo code --codex
+hanzo code agy             hanzo code --agy
+hanzo code cursor          hanzo code --cursor     hanzo code --agent
 hanzo dev                  shorthand for `hanzo code dev`
 hanzo "fix the test"       bare session, default backend
 ```
+
+**Connected accounts for the harness.** A native sign-in (`claude`, `codex`,
+`agy`, `cursor`, including `chatgpt` and `agent`) is added to
+`~/.hanzo/accounts.json` and does not replace the others. Hanzo identities
+(`hanzo:{owner}/{name}`) are the shared gateway logins, read from config.
+`harness` in `~/.hanzo/settings.json`, or `HANZO_HARNESS_ACCOUNT` for one run,
+names which of those a bare session uses; `hanzo` means the gateway. Each
+session appends the account it actually used to `~/.hanzo/usage.jsonl`.
+`commands/code/harness.rs` is that table; its end-to-end test selects every
+connected account against a temporary directory.
 
 `hanzo desktop` is the SAME session pointed somewhere else — at a browser and
 desktop instead of the repo — and pins the Hanzo toolset on, because those tools

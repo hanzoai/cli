@@ -28,6 +28,10 @@ struct Claims {
     name: String,
     #[serde(default)]
     email: String,
+    /// The human-facing name, when the token carries one. Profile data, never
+    /// the principal: `name` stays the username.
+    #[serde(default, rename = "displayName")]
+    display: String,
 }
 
 /// The address a token claims, or `None`.
@@ -41,6 +45,13 @@ struct Claims {
 pub fn email(access_token: &str) -> Option<String> {
     let claims: Claims = serde_json::from_slice(&payload(access_token)?).ok()?;
     (!claims.email.trim().is_empty()).then_some(claims.email)
+}
+
+/// The display name a token claims, or `None`. Same unverified decode as
+/// [`email`]: a label for the signed-in page, never an authorization decision.
+pub fn display(access_token: &str) -> Option<String> {
+    let claims: Claims = serde_json::from_slice(&payload(access_token)?).ok()?;
+    (!claims.display.trim().is_empty()).then_some(claims.display)
 }
 
 /// The subject (`sub`) a token claims, or `None` — what the zero-trust fabric
@@ -215,6 +226,14 @@ mod tests {
             email(&claims_jwt(r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai"}"#)).as_deref(),
             Some("a@hanzo.ai")
         );
+        assert_eq!(
+            display(&claims_jwt(
+                r#"{"owner":"hanzo","name":"z","displayName":"Zach Kelling"}"#
+            ))
+            .as_deref(),
+            Some("Zach Kelling")
+        );
+        assert_eq!(display(&jwt("hanzo", "z")), None);
         for without in [
             r#"{"owner":"hanzo","name":"a"}"#,
             r#"{"owner":"hanzo","name":"a","email":""}"#,

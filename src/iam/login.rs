@@ -39,8 +39,17 @@ pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
     // `hanzo/z` — so the browser is asked which account, and the identity in
     // use stays the default: the new one speaks only when `--as` names it.
     let choose = cfg.org.is_some();
+    let accounts = oauth::known_accounts(cfg, brand);
     let tokens = if browser_here() {
-        oauth::login(brand, choose).await?
+        match oauth::login(brand, choose, &accounts).await? {
+            oauth::Done::Pasted(tokens) => tokens,
+            oauth::Done::Browser(tokens, held) => {
+                // Save before the menu can switch, and keep answering the
+                // browser while the keychain write is in flight.
+                oauth::cover_then_detach(held, async { store::add(cfg, brand, &tokens) }).await?;
+                tokens
+            }
+        }
     } else {
         device::login(brand).await?
     };
@@ -99,9 +108,14 @@ async fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<()> {
     // Best-effort: the server's view of this token confirms the credential
     // actually works. The IDENTITY on display is the token's own claim —
     // userinfo carries no `owner`, and `owner` is the whole point.
-    let label = match oauth::userinfo(brand, &tokens.access_token).await {
-        Ok(who) => who.email.or(who.preferred_username).unwrap_or(who.sub),
-        Err(_) => id.name.clone(),
+    let label = match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        oauth::userinfo(brand, &tokens.access_token),
+    )
+    .await
+    {
+        Ok(Ok(who)) => who.email.or(who.preferred_username).unwrap_or(who.sub),
+        _ => id.name.clone(),
     };
 
     println!(

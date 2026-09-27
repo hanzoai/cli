@@ -93,7 +93,7 @@ struct Cli {
 /// `hanzo …` (flattened onto [`Cli`]), so both accept exactly the same flags.
 #[derive(clap::Args, Clone)]
 struct CodeArgs {
-    /// Coding backend: dev | claude | codex (default: dev, our own agent)
+    /// Coding backend: dev | claude | codex | agy | cursor (default: dev, our own agent)
     ///
     /// Equivalent to naming it positionally (`hanzo code claude`) or as its own
     /// flag (`hanzo code --claude`). Every spelling resolves in ONE place —
@@ -112,6 +112,14 @@ struct CodeArgs {
     /// Use the `codex` backend (same as `--backend codex`).
     #[arg(long, group = "backend_name")]
     codex: bool,
+
+    /// Use Antigravity (same as `--backend agy`).
+    #[arg(long, group = "backend_name")]
+    agy: bool,
+
+    /// Use Cursor's agent (same as `--backend cursor`). `--agent` is the same flag.
+    #[arg(long, visible_alias = "agent", group = "backend_name")]
+    cursor: bool,
 
     /// Force streaming this session to Hanzo cloud (mission-control) on. Already
     /// the default for a signed-in run; `--link` only overrides a persisted
@@ -175,7 +183,7 @@ struct CodeArgs {
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
 
-    /// A backend name (`dev`, `claude`, `codex`) OR the task to run headless.
+    /// A backend name (`dev`, `claude`, `codex`, `agy`, `cursor`) OR the task to run headless.
     /// Exactly a backend name selects the backend; anything else is the task.
     /// Omit both for an interactive session on the default backend.
     #[arg(value_name = "BACKEND|TASK")]
@@ -201,6 +209,10 @@ impl CodeArgs {
             Some("claude".into())
         } else if self.codex {
             Some("codex".into())
+        } else if self.agy {
+            Some("agy".into())
+        } else if self.cursor {
+            Some("cursor".into())
         } else {
             self.backend.clone()
         }
@@ -821,6 +833,11 @@ enum WalletCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The signed-in page stays up after `hanzo login` returns, so a click in
+    // the top-right account menu can switch identity. Started by login itself.
+    if std::env::var_os("HANZO_LOGIN_FD").is_some() {
+        return iam::oauth::serve_detached_menu().await;
+    }
     // A truly bare `hanzo`, `hanzo --help` or `hanzo help` prints the root man
     // page — NAME/SYNOPSIS/GROUPS/COMMANDS, one line per product, like a proper
     // cloud CLI. Everything else (including `hanzo <group> --help` and the
@@ -1396,6 +1413,22 @@ mod tests {
         {
             assert_eq!(resolved(argv), BackendKind::Codex, "{argv:?}");
         }
+        for argv in [
+            ["hanzo", "code", "agy"].as_slice(),
+            ["hanzo", "code", "--agy"].as_slice(),
+            ["hanzo", "agy"].as_slice(),
+            ["hanzo", "antigravity"].as_slice(),
+        ] {
+            assert_eq!(resolved(argv), BackendKind::Agy, "{argv:?}");
+        }
+        for argv in [
+            ["hanzo", "code", "cursor"].as_slice(),
+            ["hanzo", "code", "--cursor"].as_slice(),
+            ["hanzo", "code", "--agent"].as_slice(),
+            ["hanzo", "agent"].as_slice(),
+        ] {
+            assert_eq!(resolved(argv), BackendKind::Cursor, "{argv:?}");
+        }
     }
 
     /// Two spellings in one invocation is refused — clap rejects two flags, and
@@ -1404,6 +1437,7 @@ mod tests {
     fn contradictory_backend_spellings_are_refused() {
         // clap's arg group catches flag-vs-flag before we ever resolve.
         assert!(Cli::try_parse_from(["hanzo", "code", "--claude", "--codex"]).is_err());
+        assert!(Cli::try_parse_from(["hanzo", "code", "--claude", "--agy"]).is_err());
         assert!(Cli::try_parse_from(["hanzo", "code", "--dev", "--backend", "claude"]).is_err());
 
         // Positional-vs-flag is the resolver's own refusal.

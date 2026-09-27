@@ -5,7 +5,7 @@
 //!      only on an interactive terminal (never piped/CI), theme-aware
 //!      (`NO_COLOR`, dumb terminals) — then the login picker.
 //!   2. The login DISPATCH — interactive (arrow-key picker) or non-interactive
-//!      (`hanzo auth login --provider hanzo|openai|anthropic [--token -]`). A secret
+//!      (`hanzo auth login --provider hanzo|claude|chatgpt|agy|cursor|openai|anthropic [--token -]`). A secret
 //!      only ever arrives on stdin or an interactive hidden prompt, NEVER argv.
 //!
 //! WHERE credentials land is not reinvented: a Hanzo sign-in is the existing
@@ -13,12 +13,13 @@
 //! `provider` seam over the SAME portable Vault. Only the NON-SECRET "which
 //! provider is active" is written to the config index.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
 use std::io::IsTerminal;
 
 use crate::config::Config;
 
+use super::native::{self, NativeAgent};
 use super::provider::{self, Provider};
 use super::secret::{read_trimmed, secret_source, SecretSource};
 use super::{login, oauth};
@@ -58,12 +59,13 @@ fn animate_on() -> bool {
 
 // ---- first-run detection ---------------------------------------------------
 
-/// A machine with NO credentials of any kind: no signed-in identity and no
-/// active model provider. Read purely off the non-secret config index, so it
-/// needs no Vault round-trip. This is the ONLY thing that gates the animated
-/// greeting — a returning user never sees it again.
+/// A machine with NO credentials of any kind: no signed-in identity, no active
+/// model provider, and no coding agent signed in through its own login. Read
+/// purely off the non-secret config index, so it needs no Vault round-trip.
+/// This is the ONLY thing that gates the animated greeting — a returning user
+/// never sees it again.
 pub fn is_fresh(cfg: &Config) -> bool {
-    cfg.auth.identities.is_empty() && cfg.auth.provider.is_none()
+    cfg.auth.identities.is_empty() && cfg.auth.provider.is_none() && !cfg.code.own_account
 }
 
 // ---- the wordmark ----------------------------------------------------------
@@ -115,8 +117,7 @@ pub fn show_banner() {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Choice {
     Hanzo,
-    OpenAI,
-    Anthropic,
+    Native(&'static NativeAgent),
     Paste,
 }
 
@@ -129,12 +130,7 @@ fn pick_provider() -> Result<Option<Choice>> {
         Select,
     };
 
-    let items = [
-        "Hanzo       unified billing, every model through the gateway  (recommended)",
-        "OpenAI      use an OpenAI API key you already hold",
-        "Anthropic   use an Anthropic API key you already hold",
-        "Paste key   auto-detect the provider from the key prefix",
-    ];
+    let items = native::menu_lines();
 
     // Colorful when the terminal supports it, plain (still arrow-key navigable)
     // under NO_COLOR / a dumb terminal.
@@ -148,11 +144,14 @@ fn pick_provider() -> Result<Option<Choice>> {
         .default(0)
         .interact_opt()?;
 
-    Ok(selection.map(|i| match i {
-        0 => Choice::Hanzo,
-        1 => Choice::OpenAI,
-        2 => Choice::Anthropic,
-        _ => Choice::Paste,
+    Ok(selection.map(|i| {
+        if i == 0 {
+            Choice::Hanzo
+        } else if i + 1 == items.len() {
+            Choice::Paste
+        } else {
+            Choice::Native(&native::AGENTS[i - 1])
+        }
     }))
 }
 
@@ -192,10 +191,29 @@ fn read_identity_token(token: String) -> Result<String> {
 
 // ---- login dispatch --------------------------------------------------------
 
-/// Persist which provider is now active (non-secret config index).
+/// Persist which provider is now active (non-secret config index). A provider
+/// key or a Hanzo login means model calls are ours to route, so a previous
+/// "use the agent's own account" choice is cleared.
 fn mark_provider(cfg: &mut Config, provider: Provider) -> Result<()> {
     cfg.update(|c| {
         c.auth.provider = Some(provider.slug().to_string());
+        c.code.own_account = false;
+        Ok(())
+    })
+}
+
+/// The agent was signed in through its own CLI. Remember it, and stop routing
+/// that session through the gateway — the session it just created is the
+/// account the next `hanzo` should use.
+fn mark_native(cfg: &mut Config, backend: &str) -> Result<()> {
+    crate::commands::code::settings::Settings::remember_agent(backend)?;
+    crate::commands::code::settings::Settings::pin_account(backend)?;
+    // Joins the set of connected accounts. A later sign-in adds; it does not
+    // replace, so the harness can still use any of them.
+    crate::commands::code::harness::connect_home(backend)?;
+    cfg.update(|c| {
+        c.auth.provider = None;
+        c.code.own_account = true;
         Ok(())
     })
 }
@@ -224,14 +242,21 @@ async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Re
         }
         None => login::login(cfg, brand).await?,
     }
-    mark_provider(cfg, Provider::Hanzo)
+    mark_provider(cfg, Provider::Hanzo)?;
+    // The harness's shared login. A native pin from an earlier sign-in must
+    // not keep launching that agent once the gateway is the account in use.
+    crate::commands::code::settings::Settings::pin_account("hanzo")
 }
 
 /// Sign in with a provider's OWN key (OpenAI / Anthropic): read it off stdin or a
 /// hidden prompt, file it in the Vault, and mark the provider active. A key whose
 /// own prefix names a DIFFERENT vendor is REFUSED before anything is stored — see
 /// [`refuse_provider_mismatch`].
-async fn provider_key_login(cfg: &mut Config, provider: Provider, token: Option<String>) -> Result<()> {
+async fn provider_key_login(
+    cfg: &mut Config,
+    provider: Provider,
+    token: Option<String>,
+) -> Result<()> {
     let key = read_key(token, &format!("Paste your {} API key", provider.label()))?;
     refuse_provider_mismatch(provider, &key)?; // fail CLOSED before any store
     provider::set_key(provider, &key)?;
@@ -288,10 +313,84 @@ async fn paste_key_login(cfg: &mut Config, token: Option<String>) -> Result<()> 
 async fn dispatch_choice(cfg: &mut Config, brand: &str, choice: Choice) -> Result<()> {
     match choice {
         Choice::Hanzo => hanzo_login(cfg, brand, None).await,
-        Choice::OpenAI => provider_key_login(cfg, Provider::OpenAI, None).await,
-        Choice::Anthropic => provider_key_login(cfg, Provider::Anthropic, None).await,
+        Choice::Native(agent) => native_login(cfg, agent).await,
         Choice::Paste => paste_key_login(cfg, None).await,
     }
+}
+
+/// Sign in with a coding agent's own browser login, then remember that agent
+/// so the next `hanzo` launches it and leaves its account alone.
+async fn native_login(cfg: &mut Config, agent: &NativeAgent) -> Result<()> {
+    let (program, args) = login_invocation(agent)?;
+    println!(
+        "Opening {} sign-in (`{}{}`)…",
+        agent.title.bold(),
+        program,
+        args.iter()
+            .fold(String::new(), |acc, a| format!("{acc} {a}"))
+    );
+    if matches!(agent.login, native::Login::Antigravity) && args.is_empty() {
+        println!("{}", native::AGY_LAUNCH_NOTE.dimmed());
+    }
+    let status = std::process::Command::new(&program)
+        .args(&args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .with_context(|| format!("launching `{program}`"))?;
+    if !status.success() {
+        bail!("{program} sign-in did not finish (status {status})");
+    }
+    mark_native(cfg, agent.backend)?;
+    println!(
+        "{} Signed in with {}. A coding session will use {} and its own account.",
+        "✓".green(),
+        agent.title.bold(),
+        program,
+    );
+    println!(
+        "{}",
+        "  (`hanzo auth login` → Hanzo to route every model through the gateway with unified billing)".dimmed()
+    );
+    Ok(())
+}
+
+/// The official binary and the argv that starts its browser login.
+fn login_invocation(agent: &NativeAgent) -> Result<(String, Vec<String>)> {
+    let program = agent
+        .programs
+        .iter()
+        .find(|bin| which::which(bin).is_ok())
+        .copied()
+        .ok_or_else(|| {
+            anyhow!(
+                "`{}` is not installed — install {} and run `hanzo auth login` again",
+                agent.programs.join("` or `"),
+                agent.title
+            )
+        })?;
+    let args = match agent.login {
+        native::Login::Args(argv) => argv.iter().map(|s| (*s).to_string()).collect(),
+        native::Login::Antigravity => {
+            let help = std::process::Command::new(&program).arg("help").output();
+            let text = help
+                .ok()
+                .map(|out| {
+                    format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&out.stdout),
+                        String::from_utf8_lossy(&out.stderr)
+                    )
+                })
+                .unwrap_or_default();
+            native::agy_login_args(&text)
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        }
+    };
+    Ok((program.to_string(), args))
 }
 
 /// `hanzo auth login` — the command entrypoint. `--provider` drives the
@@ -305,10 +404,15 @@ pub async fn run_login(
     token: Option<String>,
 ) -> Result<()> {
     if let Some(p) = provider {
+        if let Some(agent) = native::find(&p) {
+            return native_login(cfg, agent).await;
+        }
         let provider = Provider::parse(&p)?;
         return match provider {
             Provider::Hanzo => hanzo_login(cfg, brand, token).await,
-            Provider::OpenAI | Provider::Anthropic => provider_key_login(cfg, provider, token).await,
+            Provider::OpenAI | Provider::Anthropic => {
+                provider_key_login(cfg, provider, token).await
+            }
         };
     }
 
@@ -347,14 +451,18 @@ pub async fn first_run(cfg: &mut Config, brand: &str) {
     match pick_provider() {
         Ok(Some(choice)) => {
             if let Err(e) = dispatch_choice(cfg, brand, choice).await {
-                crate::warn(&format!("sign-in did not complete ({e}) — continuing locally."));
+                crate::warn(&format!(
+                    "sign-in did not complete ({e}) — continuing locally."
+                ));
             }
         }
         Ok(None) => println!(
             "{}",
             "Skipped — continuing locally. Run `hanzo auth login` any time to connect.".dimmed()
         ),
-        Err(e) => crate::warn(&format!("could not show the sign-in picker ({e}) — continuing locally.")),
+        Err(e) => crate::warn(&format!(
+            "could not show the sign-in picker ({e}) — continuing locally."
+        )),
     }
 }
 
@@ -385,6 +493,13 @@ mod tests {
         assert!(!is_fresh(&cfg));
     }
 
+    #[test]
+    fn a_native_agent_login_is_not_fresh() {
+        let mut cfg = Config::default();
+        cfg.code.own_account = true;
+        assert!(!is_fresh(&cfg));
+    }
+
     // The argv-refusal law (`secret_source`) and the key reader (`read_trimmed`)
     // are pinned by `iam::secret`'s own tests — the ONE home for that law.
 
@@ -393,8 +508,13 @@ mod tests {
     /// history). The `-` (stdin) path is pinned by `secret_source` above.
     #[test]
     fn read_identity_token_refuses_an_argv_literal() {
-        let err = read_identity_token("header.payload.sig".into()).unwrap_err().to_string();
-        assert!(err.contains("must never be passed on the command line"), "{err}");
+        let err = read_identity_token("header.payload.sig".into())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("must never be passed on the command line"),
+            "{err}"
+        );
         assert!(read_identity_token("  eyJhbGci.body.sig  ".into()).is_err());
         // A `--token` value may only ever be `-` (stdin); that decision is the
         // shared `secret_source` law, already pinned above.
@@ -413,8 +533,14 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("OpenAI"), "names the detected vendor: {err}");
-        assert!(err.contains("anthropic"), "names the requested provider: {err}");
-        assert!(err.contains("hanzo auth login") || err.contains("--provider"), "actionable remedy: {err}");
+        assert!(
+            err.contains("anthropic"),
+            "names the requested provider: {err}"
+        );
+        assert!(
+            err.contains("hanzo auth login") || err.contains("--provider"),
+            "actionable remedy: {err}"
+        );
 
         // Sequenced as the caller does (`guard?; set_key`), the store never runs,
         // so the vault stays empty and `auth.provider` is never marked.
@@ -422,10 +548,20 @@ mod tests {
         let cfg = Config::default();
         let filed = refuse_provider_mismatch(Provider::Anthropic, "sk-proj-OPENAI-KEY")
             .and_then(|_| provider::set_key_in(&v, Provider::Anthropic, "sk-proj-OPENAI-KEY"));
-        assert!(filed.is_err(), "the mismatch must short-circuit before the store");
-        assert!(v.keys().is_empty(), "a refused key must never reach the vault: {:?}", v.keys());
+        assert!(
+            filed.is_err(),
+            "the mismatch must short-circuit before the store"
+        );
+        assert!(
+            v.keys().is_empty(),
+            "a refused key must never reach the vault: {:?}",
+            v.keys()
+        );
         assert!(provider::key_in(&v, Provider::Anthropic).unwrap().is_none());
-        assert_eq!(cfg.auth.provider, None, "auth.provider must be unchanged on refusal");
+        assert_eq!(
+            cfg.auth.provider, None,
+            "auth.provider must be unchanged on refusal"
+        );
     }
 
     /// A matching key (or an unrecognized prefix) passes the guard; every KNOWN

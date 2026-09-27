@@ -6,9 +6,9 @@
 //! (IAM tokens, local wallet keys) live in the OS keychain via `keyring`, never
 //! here. See `iam::token` and `commands::wallet`.
 
+use crate::private;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use crate::private;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -46,8 +46,9 @@ impl Lock {
         // "No such file or directory". Ensure the directory before we lock, so a
         // clean `curl | sh` → `hanzo auth login` just works.
         if let Some(dir) = lock.parent() {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("creating credential store directory {}", dir.display()))?;
+            std::fs::create_dir_all(dir).with_context(|| {
+                format!("creating credential store directory {}", dir.display())
+            })?;
         }
         let f = std::fs::OpenOptions::new()
             .create(true)
@@ -196,11 +197,19 @@ pub struct CodeState {
     /// Overridden per-invocation with `--theme`. The user's own theme is restored
     /// when the session ends.
     pub theme: String,
+    /// The user signed in with a coding agent's own account (Claude, ChatGPT,
+    /// Antigravity, Cursor). A session on that agent keeps the agent's login
+    /// instead of sending model calls through the Hanzo gateway.
+    pub own_account: bool,
 }
 
 impl Default for CodeState {
     fn default() -> Self {
-        Self { link: true, theme: "auto".to_string() }
+        Self {
+            link: true,
+            theme: "auto".to_string(),
+            own_account: false,
+        }
     }
 }
 
@@ -433,7 +442,8 @@ mod tests {
     /// not just auth — every field must stay serde-defaulted.
     #[test]
     fn a_config_with_no_auth_table_loads_signed_out() {
-        let cfg: Config = toml::from_str("[code]\nlink = true\n").expect("config predating [auth] loads");
+        let cfg: Config =
+            toml::from_str("[code]\nlink = true\n").expect("config predating [auth] loads");
         assert!(cfg.auth.identities.is_empty());
         assert!(cfg.auth.active.is_empty());
     }
@@ -453,7 +463,10 @@ mod tests {
             "#,
         )
         .expect("[auth] with only `active` parses");
-        assert_eq!(cfg.auth.active.get("hanzo").map(String::as_str), Some("admin/z"));
+        assert_eq!(
+            cfg.auth.active.get("hanzo").map(String::as_str),
+            Some("admin/z")
+        );
         assert!(cfg.auth.identities.is_empty());
     }
 
@@ -472,9 +485,12 @@ mod tests {
             owner: "admin".to_string(),
             name: "z".to_string(),
         });
-        cfg.auth.active.insert("hanzo".to_string(), "admin/z".to_string());
+        cfg.auth
+            .active
+            .insert("hanzo".to_string(), "admin/z".to_string());
 
-        let back: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).expect("roundtrips");
+        let back: Config =
+            toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).expect("roundtrips");
         assert_eq!(back.auth.identities, cfg.auth.identities);
         assert_eq!(back.auth.active, cfg.auth.active);
     }
@@ -502,7 +518,9 @@ mod tests {
         let path = cfg.effective_path();
 
         cfg.update(|c| {
-            c.auth.active.insert("hanzo".to_string(), "hanzo/z".to_string());
+            c.auth
+                .active
+                .insert("hanzo".to_string(), "hanzo/z".to_string());
             Ok(())
         })
         .unwrap();
@@ -519,8 +537,14 @@ mod tests {
         // own lifecycle — reused, never orphaned — belongs to `private`, which
         // owns it; asserting it here would only re-test someone else's unit.)
         let back = Config::load(Some(path.clone())).expect("config still parses");
-        assert_eq!(back.auth.active.get("hanzo").map(String::as_str), Some("hanzo/z"));
-        assert_eq!(back.auth.active.get("lux").map(String::as_str), Some("lux/z"));
+        assert_eq!(
+            back.auth.active.get("hanzo").map(String::as_str),
+            Some("hanzo/z")
+        );
+        assert_eq!(
+            back.auth.active.get("lux").map(String::as_str),
+            Some("lux/z")
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -531,13 +555,17 @@ mod tests {
         let mut cfg = tmp_cfg("failed");
         let path = cfg.effective_path();
         cfg.update(|c| {
-            c.auth.active.insert("hanzo".to_string(), "hanzo/z".to_string());
+            c.auth
+                .active
+                .insert("hanzo".to_string(), "hanzo/z".to_string());
             Ok(())
         })
         .unwrap();
 
         let err = cfg.update(|c| -> Result<()> {
-            c.auth.active.insert("hanzo".to_string(), "admin/z".to_string());
+            c.auth
+                .active
+                .insert("hanzo".to_string(), "admin/z".to_string());
             anyhow::bail!("mutation refused")
         });
         assert!(err.is_err());
@@ -559,7 +587,9 @@ mod tests {
         let mut a = tmp_cfg("stale");
         let path = a.effective_path();
         a.update(|c| {
-            c.auth.active.insert("hanzo".to_string(), "hanzo/z".to_string());
+            c.auth
+                .active
+                .insert("hanzo".to_string(), "hanzo/z".to_string());
             Ok(())
         })
         .unwrap();
@@ -587,7 +617,11 @@ mod tests {
 
         let back = Config::load(Some(path.clone())).unwrap();
         assert_eq!(back.network.active.as_deref(), Some("local"));
-        assert_eq!(back.auth.identities.len(), 1, "the other writer's row survived");
+        assert_eq!(
+            back.auth.identities.len(),
+            1,
+            "the other writer's row survived"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -632,7 +666,11 @@ mod tests {
             back.auth.identities
         );
         for i in 0..WRITERS {
-            assert!(back.auth.identities.iter().any(|x| x.owner == format!("org{i}")));
+            assert!(back
+                .auth
+                .identities
+                .iter()
+                .any(|x| x.owner == format!("org{i}")));
         }
         let _ = std::fs::remove_file(&path);
     }
