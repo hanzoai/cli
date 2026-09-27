@@ -99,3 +99,4 @@ sha3 = "0.10"                                             # Keccak-256 for EVM a
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
+libc = "0.2"

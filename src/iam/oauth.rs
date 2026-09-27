@@ -1538,4 +1538,182 @@ mod tests {
         assert_eq!(denied.error.as_deref(), Some("access_denied"));
         assert!(denied.code.is_none());
     }
+
+    /// Nobody on the machine: the page offers one way forward, an add, and
+    /// does not invent a person in the center.
+    #[test]
+    fn wire_a_menu_with_nobody_signed_in_offers_only_add() {
+        let page = signed_in_page("https://hanzo.id", None, &[], None, true);
+        assert!(page.contains("Signed out"), "{page}");
+        assert!(page.contains("Add an account to keep going."), "{page}");
+        assert!(page.contains("href=\"/add\""), "{page}");
+        assert!(!page.contains("<details"), "{page}");
+        assert!(!page.contains("You're signed in"), "{page}");
+    }
+
+    /// The ids the page puts in its links come back as the identities they
+    /// named, spaces included. A broken percent sequence stays text.
+    #[test]
+    fn wire_a_query_keeps_the_identity_the_page_encoded() {
+        assert_eq!(
+            query_id("id=hanzo%2FZach%20Kelling").as_deref(),
+            Some("hanzo/Zach Kelling")
+        );
+        assert_eq!(query_id("yes=1&id=hanzo%2Fz").as_deref(), Some("hanzo/z"));
+        assert_eq!(query_id("yes=1"), None);
+        assert_eq!(query_id("id=a+b").as_deref(), Some("a b"));
+        assert_eq!(query_id("id=%ZZ").as_deref(), Some("%ZZ"));
+        assert_eq!(query_id("id=%2").as_deref(), Some("%2"));
+    }
+
+    /// The paste leg shares the runtime with the loopback. When the keyboard
+    /// is not a terminal it must not take a blocking read, or `hanzo login`
+    /// never returns after the browser already won.
+    #[tokio::test]
+    async fn wire_a_paste_does_not_hold_the_runtime_when_nothing_is_typed() {
+        if std::io::stdin().is_terminal() {
+            return;
+        }
+        let pending = paste_callback("state");
+        tokio::pin!(pending);
+        let waited = tokio::time::timeout(std::time::Duration::from_millis(80), pending).await;
+        assert!(waited.is_err(), "paste completed with nothing to read");
+    }
+
+    /// Exchange, refresh, and revocation talk to whatever origin they are
+    /// given. A local stand-in answers every status the caller branches on.
+    #[tokio::test]
+    async fn wire_exchange_refresh_and_revoke_use_the_token_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let req = read_http(&mut stream).await;
+                let (status, body) = iam_answer(&req);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+
+        let denied = exchange_code(&origin, "nope", "http://127.0.0.1/callback", "ver")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(denied.contains("token exchange failed"), "{denied}");
+        assert!(denied.contains("invalid_grant"), "{denied}");
+
+        let garbled = exchange_code(&origin, "garbled", "http://127.0.0.1/callback", "ver")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(garbled.contains("parsing token response"), "{garbled}");
+
+        let tokens = exchange_code(&origin, "the-code", "http://127.0.0.1/callback", "the-verifier")
+            .await
+            .unwrap();
+        assert!(tokens.access_token.contains('.'), "{}", tokens.access_token);
+        assert_eq!(tokens.refresh_token.as_deref(), Some("rt-next"));
+
+        let spent = refresh(&origin, "nope").await.unwrap_err().to_string();
+        assert!(spent.contains("token refresh failed"), "{spent}");
+
+        let fresh = refresh(&origin, "rt-1").await.unwrap();
+        assert_eq!(fresh.refresh_token.as_deref(), Some("rt-2"));
+        assert!(!fresh.access_token.is_empty());
+
+        let revoked = revoke(&origin, "nope").await.unwrap_err().to_string();
+        assert!(revoked.contains("revocation failed"), "{revoked}");
+        revoke(&origin, "rt-1").await.unwrap();
+    }
+
+    /// Nothing is listening: each call fails as a transport error, before it
+    /// tries to read a token.
+    #[tokio::test]
+    async fn wire_a_closed_token_endpoint_is_a_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+
+        for err in [
+            exchange_code(&origin, "c", "http://127.0.0.1/callback", "v")
+                .await
+                .unwrap_err()
+                .to_string(),
+            refresh(&origin, "rt").await.unwrap_err().to_string(),
+            revoke(&origin, "rt").await.unwrap_err().to_string(),
+        ] {
+            assert!(err.contains("calling IAM"), "{err}");
+        }
+    }
+
+    async fn read_http(stream: &mut TcpStream) -> String {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 2048];
+        loop {
+            let Ok(n) = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                stream.read(&mut tmp),
+            )
+            .await
+            else {
+                break;
+            };
+            let Ok(n) = n else { break };
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&buf[..end]);
+                let len = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn iam_answer(req: &str) -> (&'static str, &'static str) {
+        let path_is_revoke = req.contains("/v1/iam/oauth/revoke");
+        if path_is_revoke {
+            return if req.contains("token=nope") {
+                ("400 Bad Request", r#"{"error":"invalid_token"}"#)
+            } else {
+                ("200 OK", "")
+            };
+        }
+        if req.contains("code=nope") {
+            return ("400 Bad Request", r#"{"error":"invalid_grant"}"#);
+        }
+        if req.contains("code=garbled") {
+            return ("200 OK", "nope");
+        }
+        if req.contains("grant_type=refresh_token") && req.contains("refresh_token=nope") {
+            return ("401 Unauthorized", r#"{"error":"invalid_grant"}"#);
+        }
+        if req.contains("grant_type=refresh_token") {
+            return (
+                "200 OK",
+                r#"{"access_token":"header.payload.sig","token_type":"Bearer","refresh_token":"rt-2"}"#,
+            );
+        }
+        (
+            "200 OK",
+            r#"{"access_token":"header.payload.sig","token_type":"Bearer","refresh_token":"rt-next"}"#,
+        )
+    }
 }
