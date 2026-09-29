@@ -1031,6 +1031,24 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
 token store, HIP-0111 OIDC PKCE), `src/commands/code/` (coding wrapper). Secrets arrive
 on stdin only, never argv; credentials in OS keychain or a `0600` file.
 
+**`--as <org>` signs in through `<org>-cli`** (`iam/oauth.rs::client`, HIP-0111
+`<org>-<app>`; without `--as`, `hanzo-cli`). IAM stamps `owner` with the signing
+application's org, so `hanzo-cli` can only return a `hanzo` identity. Before any
+browser opens, `served` reads IAM's public descriptor (`/v1/iam/auth/application`)
+and refuses when the client is missing or, under `--as`, signs in to another org;
+after the exchange a token whose `owner` is not `<org>` is refused and nothing is
+stored. With no browser here the device grant runs only when the descriptor's
+`grantTypes` lists it; otherwise the person signs in anywhere and pastes the
+callback URL (`admin-cli` has no device grant: a device code approvable by a
+session cookie is one click from a SuperAdmin token). The identity is filed
+beside the default, which stays the default. Refresh and revoke present the
+client the credential was issued to — its `azp`, else its one `aud` — never a
+constant: IAM refuses a refresh token from any other client and revokes only the
+caller's grants. A refresh IAM refuses ends that identity's session with its own
+command (`sign in again: hanzo --as admin auth login`), never another identity.
+`auth show` under `--as <org>` with no identity held there refuses rather than
+name the default.
+
 **`crates/client` — the Rust client for `api.hanzo.ai`, and the CLI is one consumer
 of it, not its owner.** The binary used to carry its own transport in `src/http.rs`;
 that file is gone. What was duplicated now lives in a library crate any Rust caller

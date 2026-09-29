@@ -15,7 +15,7 @@ use colored::*;
 
 use crate::config::Config;
 
-use super::identity::Selector;
+use super::identity::{Identity, Selector};
 use super::paths::{brand_flag, DEFAULT_BRAND};
 use super::provider::{self, Provider};
 use super::token::TokenSet;
@@ -32,16 +32,24 @@ use super::{device, oauth, store};
 /// that way at all, and the device grant (RFC 8628) is the flow built for it: a
 /// short code they read off this screen and approve on any device they already
 /// hold. A `--device` switch would be asking a person to predict the failure it
-/// exists to avoid.
+/// exists to avoid. The device grant runs only for a client IAM's descriptor
+/// grants it to (`admin-cli` is not: a device code approvable by a session
+/// cookie alone is one click from a SuperAdmin token); otherwise the person
+/// signs in anywhere and pastes the callback URL back here.
 pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
-    oauth::server_url(brand)?; // reject unknown brands before opening a browser
+    let origin = oauth::server_url(brand)?; // reject unknown brands before opening a browser
     // `--as <org>` signs in to hold another identity — `admin/z` beside
-    // `hanzo/z` — so the browser is asked which account, and the identity in
-    // use stays the default: the new one speaks only when `--as` names it.
-    let choose = cfg.org.is_some();
+    // `hanzo/z` — through that org's own client, so IAM signs the person in to
+    // that org. A missing client is refused here, before any browser opens.
+    let org = cfg.org.clone();
+    let device = oauth::served(origin, org.as_deref()).await?;
+    let before = store::active(cfg, brand);
     let accounts = oauth::known_accounts(cfg, brand);
-    let tokens = if browser_here() {
-        match oauth::login(brand, choose, &accounts).await? {
+    let browser = browser_here();
+    let tokens = if by_device(browser, device) {
+        device::login(origin, brand, org.as_deref()).await?
+    } else {
+        match oauth::login(brand, org.as_deref(), browser, &accounts).await? {
             oauth::Done::Pasted(tokens) => tokens,
             oauth::Done::Browser(tokens, held) => {
                 // Save before the menu can switch, and keep answering the
@@ -50,24 +58,14 @@ pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
                 tokens
             }
         }
-    } else {
-        device::login(brand).await?
     };
-    let before = store::active(cfg, brand);
-    add(cfg, brand, &tokens).await?;
-    if let (true, Some(prev)) = (choose, before) {
-        let held = store::active(cfg, brand);
-        if held.as_ref() != Some(&prev) {
-            store::switch(cfg, brand, Some(Selector::Exact(prev.clone())))?;
-            if let Some(held) = held {
-                println!(
-                    "{}",
-                    format!("  {prev} stays the default; `hanzo --as {} …` speaks as {held}", held.owner).dimmed()
-                );
-            }
-        }
-    }
-    Ok(())
+    add(cfg, brand, &tokens, before).await
+}
+
+/// The device grant only with no browser here and a client that permits it;
+/// otherwise the browser flow, whose paste leg needs no browser on this machine.
+fn by_device(browser: bool, device: bool) -> bool {
+    !browser && device
 }
 
 /// Whether a browser can open ON THIS MACHINE. macOS and Windows always have a
@@ -86,6 +84,7 @@ fn browser_here() -> bool {
 /// as the browser flow — the principal comes from the token's own claims, never
 /// from the caller.
 pub async fn login_with_token(cfg: &mut Config, brand: &str, access_token: &str) -> Result<()> {
+    let before = store::active(cfg, brand);
     add(
         cfg,
         brand,
@@ -97,12 +96,16 @@ pub async fn login_with_token(cfg: &mut Config, brand: &str, access_token: &str)
             expires_in: None,
             scope: None,
         },
+        before,
     )
     .await
 }
 
-/// File a token set as its own identity and report the result.
-async fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<()> {
+/// File a token set as its own identity and report the result. Under `--as` the
+/// token must be that org's, and `before`, the identity in use when the sign-in
+/// began, stays the default: the new one speaks only when `--as` names it.
+async fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet, before: Option<Identity>) -> Result<()> {
+    oauth::owned(tokens, cfg.org.as_deref())?;
     let id = store::add(cfg, brand, tokens)?;
 
     // Best-effort: the server's view of this token confirms the credential
@@ -133,6 +136,15 @@ async fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<()> {
                 .dimmed()
         );
     }
+    if let (true, Some(prev)) = (cfg.org.is_some(), before) {
+        if prev != id {
+            store::switch(cfg, brand, Some(Selector::Exact(prev.clone())))?;
+            println!(
+                "{}",
+                format!("  {prev} stays the default; `hanzo --as {} …` speaks as {id}", id.owner).dimmed()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -152,6 +164,7 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
         return Ok(());
     }
 
+    store::within(cfg, brand)?;
     let Some((id, tokens)) = store::active_token(cfg, brand).await? else {
         bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
     };
@@ -263,10 +276,10 @@ async fn revoke_all(brand: &str, removed: &[store::Removed]) {
         return;
     };
     for r in removed {
-        let Some(rt) = r.refresh_token.as_deref() else {
+        let Some(held) = &r.held else {
             continue;
         };
-        if let Err(e) = oauth::revoke(origin, rt).await {
+        if let Err(e) = oauth::revoke(origin, held).await {
             crate::warn(&format!(
                 "signed out of {brand} locally, but {} is still live at the server ({e}) — \
                  revoke it from your account's sessions",
@@ -297,4 +310,20 @@ fn clear_providers(cfg: &mut Config, brand: &str) -> Result<Vec<&'static str>> {
         })?;
     }
     Ok(cleared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A client without the device grant (`admin-cli`) signs in by the paste
+    /// leg on a machine with no browser; one with it (`hanzo-cli`) by device
+    /// code; a browser here always takes the loopback.
+    #[test]
+    fn the_device_grant_runs_only_headless_and_only_where_the_client_permits_it() {
+        assert!(!by_device(false, false), "admin-cli, no browser: paste leg");
+        assert!(by_device(false, true), "hanzo-cli, no browser: device code");
+        assert!(!by_device(true, true));
+        assert!(!by_device(true, false));
+    }
 }

@@ -23,6 +23,9 @@ pub const REVOKE: &str = "/v1/iam/oauth/revoke";
 /// and answers it today; this is the same address written where the CLI's other
 /// three live, rather than fetched.
 pub const DEVICE: &str = "/v1/iam/oauth/device";
+/// An application's public descriptor (`?clientId=&responseType=code`): whether
+/// IAM serves that client, and the org it signs a person in to.
+pub const APPLICATION: &str = "/v1/iam/auth/application";
 
 /// Resolve a brand key to its canonical IAM `server_url` origin. White-label is
 /// host-based: one IAM deployment serves every brand and selects the tenant by

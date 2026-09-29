@@ -330,7 +330,8 @@ impl Config {
     /// against the CURRENT on-disk state, never the caller's snapshot, so it must
     /// be a function of its inputs rather than of `self`'s prior contents — any
     /// un-persisted in-memory edit is intentionally discarded. `f` may fail, in
-    /// which case nothing is written. On success `self` IS the persisted state.
+    /// which case nothing is written. On success `self` IS the persisted state,
+    /// plus `org`, which belongs to this invocation and is never written.
     pub fn update<T>(&mut self, f: impl FnOnce(&mut Config) -> Result<T>) -> Result<T> {
         let path = self.effective_path();
         if let Some(dir) = path.parent() {
@@ -340,6 +341,7 @@ impl Config {
 
         let _lock = Lock::acquire(&path)?;
         let mut fresh = Self::load(Some(path.clone()))?;
+        fresh.org = self.org.clone();
         let out = f(&mut fresh)?;
         fresh.write_atomic(&path)?;
         *self = fresh;
@@ -546,6 +548,26 @@ mod tests {
             Some("lux/z")
         );
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `--as` belongs to the invocation: a write keeps it in memory and never
+    /// puts it in the file.
+    #[test]
+    fn an_update_keeps_the_invocations_org_and_never_writes_it() {
+        let mut cfg = tmp_cfg("org");
+        let path = cfg.effective_path();
+        cfg.org = Some("admin".into());
+        cfg.update(|c| {
+            c.auth
+                .active
+                .insert("hanzo".to_string(), "hanzo/z".to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cfg.org.as_deref(), Some("admin"));
+        assert!(Config::load(Some(path.clone())).unwrap().org.is_none());
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("admin"));
         let _ = std::fs::remove_file(&path);
     }
 

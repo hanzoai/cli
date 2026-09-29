@@ -66,6 +66,33 @@ pub fn subject(access_token: &str) -> Option<String> {
     (!claims.sub.trim().is_empty()).then_some(claims.sub)
 }
 
+/// The client a token was issued to: its `azp`, else its one `aud`, or `None`.
+/// Which client to present when refreshing or revoking it; IAM checks it.
+pub fn party(access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Aud {
+        One(String),
+        Many(Vec<String>),
+    }
+    #[derive(Deserialize)]
+    struct Party {
+        #[serde(default)]
+        azp: String,
+        aud: Option<Aud>,
+    }
+    let claims: Party = serde_json::from_slice(&payload(access_token)?).ok()?;
+    let one = match claims.aud {
+        Some(Aud::One(aud)) => Some(aud),
+        Some(Aud::Many(auds)) if auds.len() == 1 => auds.into_iter().next(),
+        _ => None,
+    };
+    Some(claims.azp)
+        .filter(|azp| !azp.trim().is_empty())
+        .or(one)
+        .filter(|client| !client.trim().is_empty())
+}
+
 /// A JWT's claims segment, decoded. `None` for anything that is not one.
 ///
 /// JWT payloads are base64url WITHOUT padding (RFC 7515 §2); a padded encoder is
@@ -244,6 +271,20 @@ mod tests {
         // A gateway key is not a token and claims nothing.
         assert_eq!(email("hk-abc123"), None);
         assert_eq!(email(""), None);
+    }
+
+    #[test]
+    fn the_issuing_client_is_azp_else_the_one_aud() {
+        let party = |claims: &str| party(&claims_jwt(claims));
+        let azp = r#"{"owner":"admin","name":"z","azp":"admin-cli","aud":["hanzo-cli"]}"#;
+        assert_eq!(party(azp).as_deref(), Some("admin-cli"));
+        assert_eq!(party(r#"{"aud":["lux-cli"]}"#).as_deref(), Some("lux-cli"));
+        assert_eq!(party(r#"{"aud":"lux-cli"}"#).as_deref(), Some("lux-cli"));
+        assert_eq!(party(r#"{"azp":"","aud":"lux-cli"}"#).as_deref(), Some("lux-cli"));
+        for none in [r#"{"aud":["a","b"]}"#, r#"{"aud":[]}"#, r#"{"azp":" "}"#, r#"{"owner":"hanzo"}"#] {
+            assert_eq!(party(none), None, "{none}");
+        }
+        assert_eq!(super::party("hk-abc"), None);
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     }
     // Nothing to spend, or a brand with no IAM: hand back what we hold and let the
     // SERVER refuse it. Falling back can only ever match the old behaviour.
-    let (Some(rt), Some(origin)) =
+    let (Some(_), Some(origin)) =
         (tok.refresh_token.as_deref(), paths::server_url_for_brand(brand))
     else {
         return Ok(Some((id, tok)));
@@ -77,19 +77,23 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
             return Ok(Some((id2, tok2)));
         }
     }
-    let fresh = match oauth::refresh(origin, rt).await {
+    let fresh = match oauth::refresh(origin, &tok).await {
         Ok(fresh) => fresh,
+        // IAM refused it: the session is over, for this identity and no other.
+        Err(e) if e.is::<oauth::Spent>() => {
+            bail!("the {id} session has ended ({e}); sign in again: {}", relogin(brand, &id))
+        }
         Err(e) => {
-            // Still fall back — a caller that would have sent a spent token still
-            // sends it, and this can only improve on the previous behaviour. But say
-            // WHY. The server's refusal is the only message that names the actual
-            // cause; swallowing it leaves the command to fail somewhere downstream
-            // complaining about something else, which is the whole reason this bug
-            // took a day to find rather than a minute.
+            // IAM did not answer. Still fall back — a caller that would have sent a
+            // spent token still sends it, and this can only improve on the previous
+            // behaviour. But say WHY. The server's refusal is the only message that
+            // names the actual cause; swallowing it leaves the command to fail
+            // somewhere downstream complaining about something else, which is the
+            // whole reason this bug took a day to find rather than a minute.
             crate::warn(&format!(
-                "could not refresh the {brand} credential ({e}) — sending the expired one; \
-                 run `hanzo auth login{}` if it is refused",
-                brand_flag(brand)
+                "could not refresh the {id} credential ({e}) — sending the expired one; \
+                 `{}` if it is refused",
+                relogin(brand, &id)
             ));
             return Ok(Some((id, tok)));
         }
@@ -101,9 +105,9 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
         // on disk is already dead, and the next run will have to sign in again. Say
         // so now, or that re-login reads as a security incident nobody caused.
         crate::warn(&format!(
-            "could not save the refreshed {brand} credential ({e}) — this run is fine, but you \
-             will have to run `hanzo auth login{}` again",
-            brand_flag(brand)
+            "could not save the refreshed {id} credential ({e}) — this run is fine, but you \
+             will have to run `{}` again",
+            relogin(brand, &id)
         ));
     }
     Ok(Some((id, fresh)))
@@ -123,11 +127,22 @@ fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<TokenSet> {
     if &claimed != id {
         bail!(
             "the refreshed {brand} credential identifies as {claimed}, not {id} — refusing to \
-             file it; run `hanzo auth login{}`",
-            brand_flag(brand)
+             file it; run `{}`",
+            relogin(brand, id)
         );
     }
     Ok(fresh)
+}
+
+/// The command that signs `id` in again: through its own org's client, which is
+/// plain `hanzo auth login` only for the org the default client serves.
+fn relogin(brand: &str, id: &Identity) -> String {
+    let org = if oauth::client(Some(&id.owner)) == oauth::client(None) {
+        String::new()
+    } else {
+        format!(" --as {}", id.owner)
+    };
+    format!("hanzo{org} auth login{}", brand_flag(brand))
 }
 
 /// Whether this access token is spent, or close enough that spending it would
@@ -183,19 +198,20 @@ pub fn switch(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Id
     switch_in(&*token::vault()?, cfg, brand, sel)
 }
 
-/// What a removal DROPPED: the identity, and the refresh token that was filed for
+/// What a removal DROPPED: the identity, and the credential that was filed for
 /// it. The store is local-only — it never talks to IAM — so it hands the
 /// credential back to the caller, who is the last thing able to tell the server
-/// to stop honouring it. A `None` is an identity that held no refresh token.
+/// to stop honouring it, as the client it was issued to. A `None` is an identity
+/// whose credential was already gone.
 #[derive(Debug)]
 pub struct Removed {
     pub id: Identity,
-    pub refresh_token: Option<String>,
+    pub held: Option<TokenSet>,
 }
 
 impl From<(Identity, Option<TokenSet>)> for Removed {
     fn from((id, held): (Identity, Option<TokenSet>)) -> Self {
-        Removed { id, refresh_token: held.and_then(|t| t.refresh_token) }
+        Removed { id, held }
     }
 }
 
@@ -250,6 +266,28 @@ fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
         }
     }
     active(cfg, brand)
+}
+
+/// Refuse when `--as <org>` names an org the acting identity is not in, rather
+/// than answer for the identity that would speak instead. Pure: the index only.
+pub fn within(cfg: &Config, brand: &str) -> Result<()> {
+    let (Some(org), Some(id)) = (cfg.org.as_deref(), acting(cfg, brand)) else {
+        return Ok(());
+    };
+    if id.owner == org {
+        return Ok(());
+    }
+    match list(cfg, brand).iter().filter(|i| i.owner == org).count() {
+        0 => bail!(
+            "you hold no {brand} identity in {org}; `hanzo --as {org} auth login{}` signs one in \
+             (without --as you are {id})",
+            brand_flag(brand)
+        ),
+        n => bail!(
+            "you hold {n} {brand} identities in {org} and none is active; `hanzo auth use <owner/name>` \
+             picks one (without --as you are {id})"
+        ),
+    }
 }
 
 /// The reserved org whose membership IS the SuperAdmin predicate, server-side.
@@ -756,6 +794,43 @@ mod tests {
         c.org = Some("lux".into());
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ORG);
+    }
+
+    /// A session is renewed through the client of the org it belongs to.
+    #[test]
+    fn signing_in_again_names_the_identitys_own_org() {
+        assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login");
+        assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login");
+        assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --brand lux");
+        let err = adopted("hanzo", &ident(ADMIN), tokens(&jwt("hanzo", "z"))).unwrap_err();
+        assert!(err.to_string().contains("run `hanzo --as admin auth login`"), "{err}");
+    }
+
+    /// `--as` naming an org with no identity held there is refused by name,
+    /// never answered for the identity that would speak instead.
+    #[test]
+    fn as_an_org_you_hold_no_identity_in_is_refused_not_substituted() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        c.org = Some("admin".into());
+        let err = within(&c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("no hanzo identity in admin"), "{err}");
+        assert!(err.contains("hanzo --as admin auth login"), "{err}");
+        assert!(err.contains("without --as you are hanzo/z"), "{err}");
+
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "z"))).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        within(&c, "hanzo").unwrap();
+
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "ops"))).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        let err = within(&c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("2 hanzo identities in admin"), "{err}");
+
+        c.org = Some("hanzo".into());
+        within(&c, "hanzo").unwrap();
+        c.org = None;
+        within(&c, "hanzo").unwrap();
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---

@@ -58,11 +58,13 @@ fn hanzo(home: &Home) -> assert_cmd::Command {
     cmd
 }
 
+/// A token as IAM mints it through `<owner>-cli`: `azp` names that client.
 fn jwt(owner: &str, name: &str, email: Option<&str>) -> String {
     let email = email
         .map(|e| format!(r#","email":"{e}""#))
         .unwrap_or_default();
-    let claims = format!(r#"{{"owner":"{owner}","name":"{name}","sub":"u-1"{email}}}"#);
+    let claims =
+        format!(r#"{{"owner":"{owner}","name":"{name}","sub":"u-1","azp":"{owner}-cli"{email}}}"#);
     format!(
         "{}.{}.c2ln",
         b64url(br#"{"alg":"none","typ":"JWT"}"#),
@@ -392,6 +394,47 @@ fn the_signed_in_menu_adds_removes_and_switches_over_http() {
     assert!(!signed_out.status.success());
     let err = String::from_utf8_lossy(&signed_out.stderr);
     assert!(err.contains("not signed in"), "{err}");
+}
+
+/// `--as admin` files the admin identity beside the default, which stays the
+/// default, and `--as admin` then speaks as it. A token from another org is
+/// refused and filed nowhere, and `auth show` under an org with no identity
+/// held says so instead of naming the default.
+#[test]
+fn as_an_org_files_its_identity_beside_the_default_and_speaks_as_it() {
+    let home = Home::new();
+    sign_in(&home, &jwt("hanzo", "z", Some("z@hanzo.ai")));
+    let as_admin = |token: String| {
+        hanzo(&home)
+            .args(["--as", "admin", "auth", "login", "--provider", "hanzo", "--token", "-"])
+            .write_stdin(format!("{token}\n"))
+            .assert()
+    };
+
+    let refused = hanzo(&home).args(["--as", "admin", "auth", "show"]).assert().failure();
+    let err = String::from_utf8_lossy(&refused.get_output().stderr).into_owned();
+    assert!(err.contains("no hanzo identity in admin"), "{err}");
+    assert!(err.contains("without --as you are hanzo/z"), "{err}");
+
+    let wrong = as_admin(jwt("hanzo", "x", None)).failure();
+    let err = String::from_utf8_lossy(&wrong.get_output().stderr).into_owned();
+    assert!(err.contains("IAM returned hanzo/x, which is not in admin"), "{err}");
+    assert!(!listed(&home).contains("hanzo/x"), "a token from another org was filed");
+
+    let added = as_admin(jwt("admin", "z", Some("z@hanzo.ai"))).success();
+    let out = String::from_utf8_lossy(&added.get_output().stdout).into_owned();
+    assert!(out.contains("hanzo/z stays the default; `hanzo --as admin …` speaks as admin/z"), "{out}");
+    let list = listed(&home);
+    assert!(list.contains("* hanzo/z") && list.contains("  admin/z"), "{list}");
+
+    // `auth show` reads userinfo after naming the identity; the stand-in token is
+    // refused there, so only the identity line is asserted.
+    let shown = hanzo(&home).args(["--as", "admin", "auth", "show"]).output().unwrap();
+    let out = String::from_utf8_lossy(&shown.stdout);
+    assert!(out.contains("identity: admin/z"), "{out}");
+    let shown = hanzo(&home).args(["auth", "show"]).output().unwrap();
+    let out = String::from_utf8_lossy(&shown.stdout);
+    assert!(out.contains("identity: hanzo/z"), "{out}");
 }
 
 /// `/add` only redirects when the authorize URL can be built. A bad origin

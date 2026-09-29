@@ -1,6 +1,7 @@
 //! The OIDC Authorization-Code-with-PKCE flow against Hanzo IAM (HIP-0111).
 //!
-//! `hanzo-cli` is a PUBLIC client (no secret): PKCE S256 is the proof. We bind
+//! The client is `<org>-cli` ([`client`]), a PUBLIC client (no secret): PKCE
+//! S256 is the proof. We bind
 //! an ephemeral loopback port, send the browser to the brand's
 //! `/v1/iam/oauth/authorize`, capture the redirect on `127.0.0.1`, then
 //! exchange the code at `/v1/iam/oauth/token`. Only the explicit HIP-0111 paths
@@ -29,15 +30,100 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use super::device::DEVICE_GRANT_TYPE;
 use super::identity::{self, Identity};
-use super::paths::{self, AUTHORIZE, REVOKE, TOKEN, USERINFO};
+use super::paths::{self, APPLICATION, AUTHORIZE, REVOKE, TOKEN, USERINFO};
 use super::pkce;
 use super::token::TokenSet;
 
-/// The CLI's registered IAM client id (`<org>-<app>`). Public client.
-pub const CLIENT_ID: &str = "hanzo-cli";
 /// OIDC scopes — identity only.
 pub const SCOPE: &str = "openid profile email";
+
+/// The IAM client a sign-in runs through: `<org>-cli` (HIP-0111) for the org
+/// `--as` names, else `hanzo-cli`. IAM signs a person in to the client's own
+/// org, so this decides whose identity comes back.
+pub fn client(org: Option<&str>) -> String {
+    format!("{}-cli", org.unwrap_or("hanzo"))
+}
+
+/// Read the sign-in client's public descriptor before any browser opens, and
+/// refuse when IAM has no such client or, under `--as <org>`, when it signs in
+/// to another org. Returns whether the client permits the device grant.
+pub async fn served(origin: &str, org: Option<&str>) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Descriptor {
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        msg: String,
+        data: Option<App>,
+    }
+    #[derive(Deserialize)]
+    struct App {
+        #[serde(default)]
+        organization: String,
+        #[serde(default, rename = "grantTypes")]
+        grants: Vec<String>,
+    }
+    let id = client(org);
+    let resp = reqwest::Client::new()
+        .get(paths::iam_url(origin, APPLICATION))
+        .query(&[("clientId", id.as_str()), ("responseType", "code")])
+        .send()
+        .await
+        .context("calling IAM application descriptor")?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let found: Descriptor = serde_json::from_str(&body)
+        .map_err(|_| anyhow!("IAM's descriptor for `{id}` is unreadable ({status})"))?;
+    let app = match found {
+        Descriptor { status, data: Some(app), .. } if status == "ok" => app,
+        Descriptor { msg, .. } => match org {
+            Some(org) => bail!("IAM has no `{id}` application, so `--as {org}` has no {org} sign-in to open ({msg})"),
+            None => bail!("IAM has no `{id}` application ({msg})"),
+        },
+    };
+    if let Some(org) = org.filter(|org| *org != app.organization) {
+        bail!("IAM's `{id}` application signs in to org `{}`, not `{org}`", app.organization);
+    }
+    Ok(app.grants.iter().any(|grant| grant == DEVICE_GRANT_TYPE))
+}
+
+/// A refresh IAM refused, or one no client can be named for: the session is
+/// over, and only a new sign-in replaces it.
+#[derive(Debug)]
+pub struct Spent(String);
+
+impl std::fmt::Display for Spent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Spent {}
+
+/// Refuse a token outside the org `--as` named. IAM stamps `owner` with the
+/// signing application's org, so another owner means another org's sign-in.
+/// A refusal only: nothing is granted on this unverified read.
+pub fn owned(tokens: &TokenSet, org: Option<&str>) -> Result<()> {
+    let Some(org) = org else { return Ok(()) };
+    let id = Identity::from_access_token(&tokens.access_token)?;
+    if id.owner != org {
+        bail!(
+            "`--as {org}` signed in through `{}` and IAM returned {id}, which is not in {org}; nothing was stored",
+            client(Some(org))
+        );
+    }
+    Ok(())
+}
+
+/// The client `held` was issued to, which is the only one IAM accepts it from:
+/// a refresh token presented by another client is refused, and a revocation
+/// ends only the calling client's grants.
+fn issued(held: &TokenSet) -> Result<String> {
+    identity::party(&held.access_token)
+        .ok_or_else(|| anyhow!("the stored credential names no client (no `azp`, no single `aud`)"))
+}
 
 /// The subset of OIDC UserInfo (§5.3) the CLI displays.
 #[derive(Debug, Deserialize)]
@@ -82,11 +168,20 @@ pub(crate) enum Done {
 }
 
 /// Run the full interactive login flow for `brand` and return the tokens.
-/// `choose` asks IAM to let the person pick among the accounts signed in on
-/// this browser, or sign in to another, rather than reusing the latest one.
+/// `org` (`--as`) signs in through that org's own client and refuses a token
+/// from any other org; it also asks IAM to let the person pick among the
+/// accounts signed in on this browser rather than reusing the latest one.
+/// `open` opens a browser here; without one the code arrives by paste alone.
 /// `others` are identities already on this machine; the signed-in page lists
 /// them so a person can see which account this one is.
-pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> {
+pub async fn login(brand: &str, org: Option<&str>, open: bool, others: &[Shown]) -> Result<Done> {
+    if !open && !std::io::stdin().is_terminal() {
+        bail!(
+            "no browser opens here and `{}` permits no device grant, so the sign-in needs its \
+             callback URL pasted: run this at a terminal",
+            client(org)
+        );
+    }
     let origin = server_url(brand)?;
     let pkce = pkce::generate_pkce();
     let state = pkce::generate_state();
@@ -99,21 +194,27 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
     let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
     let authorize_url =
-        build_authorize_url(origin, &redirect_uri, &pkce.challenge, &state, choose)?;
+        build_authorize_url(origin, org, &redirect_uri, &pkce.challenge, &state, org.is_some())?;
 
     // Print the link BEFORE asking the OS to open it. `open` on this machine
     // can sit there until a browser answers, and that wait used to be the
     // whole of `hanzo login`: no line, no URL, nothing to paste.
-    println!("Opening your browser to sign in to {brand}...");
-    println!("If it does not open, visit:\n  {authorize_url}\n");
+    if open {
+        println!("Opening your browser to sign in to {brand}...");
+        println!("If it does not open, visit:\n  {authorize_url}\n");
+    } else {
+        println!("Sign in to {brand} in a browser on any machine:\n  {authorize_url}\n");
+    }
     if std::io::stdin().is_terminal() {
         println!("Signed in on another machine? Paste the URL it lands on here.");
     }
     let _ = std::io::Write::flush(&mut std::io::stdout());
-    let url_for_open = authorize_url.to_string();
-    std::thread::spawn(move || {
-        let _ = webbrowser::open(&url_for_open);
-    });
+    if open {
+        let url_for_open = authorize_url.to_string();
+        std::thread::spawn(move || {
+            let _ = webbrowser::open(&url_for_open);
+        });
+    }
 
     // Whichever leg answers first. The socket wins on a desktop, where it
     // returns before a person could paste anything; the keyboard wins where the
@@ -131,7 +232,7 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
                 .code
                 .ok_or_else(|| anyhow!("no authorization code in callback"))?;
             return Ok(Done::Pasted(
-                exchange_code(origin, &code, &redirect_uri, &pkce.verifier).await?,
+                exchange_code(origin, org, &code, &redirect_uri, &pkce.verifier).await?,
             ));
         }
         Arrival::Browser((cb, stream)) => {
@@ -148,7 +249,7 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
     // the first one and then closing the port is the "Can't connect to the
     // server" page.
     let mut waiting = vec![stream];
-    let mut exchange = std::pin::pin!(exchange_code(origin, &code, &redirect_uri, &verifier));
+    let mut exchange = std::pin::pin!(exchange_code(origin, org, &code, &redirect_uri, &verifier));
     let tokens = loop {
         tokio::select! {
             result = &mut exchange => {
@@ -355,14 +456,16 @@ pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
 /// Split out from [`login`] so the URL shape is unit-testable without I/O.
 fn build_authorize_url(
     origin: &str,
+    org: Option<&str>,
     redirect_uri: &str,
     challenge: &str,
     state: &str,
     choose: bool,
 ) -> Result<Url> {
+    let client = client(org);
     let mut q = vec![
         ("response_type", "code"),
-        ("client_id", CLIENT_ID),
+        ("client_id", client.as_str()),
         ("redirect_uri", redirect_uri),
         ("scope", SCOPE),
         ("state", state),
@@ -375,9 +478,11 @@ fn build_authorize_url(
     Url::parse_with_params(&paths::iam_url(origin, AUTHORIZE), &q).context("building authorize URL")
 }
 
-/// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5).
+/// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5),
+/// through `org`'s client, refusing tokens from any other org.
 async fn exchange_code(
     origin: &str,
+    org: Option<&str>,
     code: &str,
     redirect_uri: &str,
     verifier: &str,
@@ -388,7 +493,7 @@ async fn exchange_code(
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", redirect_uri),
-            ("client_id", CLIENT_ID),
+            ("client_id", client(org).as_str()),
             ("code_verifier", verifier),
         ])
         .send()
@@ -399,28 +504,39 @@ async fn exchange_code(
     if !status.is_success() {
         bail!("token exchange failed ({status}): {body}");
     }
-    serde_json::from_str::<TokenSet>(&body).context("parsing token response")
+    let tokens = serde_json::from_str::<TokenSet>(&body).context("parsing token response")?;
+    owned(&tokens, org)?;
+    Ok(tokens)
 }
 
-/// Exchange a refresh token for a fresh access token (RFC 6749 §6).
+/// Exchange a refresh token for a fresh access token (RFC 6749 §6), as the
+/// client the credential was issued to.
 ///
 /// The access token IAM mints lives one hour. Without this the CLI holds a
 /// refresh token it never spends, so every command an hour after login fails —
 /// and fails CONFUSINGLY, because a stale token reads downstream as "X-Org-Id
 /// required" or "a validated principal is required" rather than "log in again".
-pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
+pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
+    let refresh_token = held
+        .refresh_token
+        .as_deref()
+        .context("the stored credential holds no refresh token")?;
+    let client = issued(held).map_err(|e| Spent(e.to_string()))?;
     let resp = reqwest::Client::new()
         .post(paths::iam_url(origin, TOKEN))
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
-            ("client_id", CLIENT_ID),
+            ("client_id", client.as_str()),
         ])
         .send()
         .await
         .context("calling IAM token endpoint")?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
+    if status.is_client_error() {
+        return Err(Spent(format!("token refresh refused ({status}): {body}")).into());
+    }
     if !status.is_success() {
         bail!("token refresh failed ({status}): {body}");
     }
@@ -435,14 +551,20 @@ pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
 /// lives 30 days (provision `refreshExpireInHours: 720`), so a logout that only
 /// forgets leaves a month of spendable access behind on a machine you signed out
 /// of. Public client: `client_id` and the token are the whole request, which is
-/// exactly what a client with no secret has to offer (RFC 6749 §3.2.1).
-pub async fn revoke(origin: &str, refresh_token: &str) -> Result<()> {
+/// exactly what a client with no secret has to offer (RFC 6749 §3.2.1). The
+/// client is the one the credential was issued to; a credential with no refresh
+/// token holds no session at IAM, and sends nothing.
+pub async fn revoke(origin: &str, held: &TokenSet) -> Result<()> {
+    let Some(refresh_token) = held.refresh_token.as_deref() else {
+        return Ok(());
+    };
+    let client = issued(held)?;
     let resp = reqwest::Client::new()
         .post(paths::iam_url(origin, REVOKE))
         .form(&[
             ("token", refresh_token),
             ("token_type_hint", "refresh_token"),
-            ("client_id", CLIENT_ID),
+            ("client_id", client.as_str()),
         ])
         .send()
         .await
@@ -1078,7 +1200,7 @@ pub async fn serve_detached_menu() -> Result<()> {
             let state = pkce::generate_state();
             let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
             let redirect = format!("http://127.0.0.1:{port}/callback");
-            if let Ok(url) = build_authorize_url(&origin, &redirect, &pkce.challenge, &state, true) {
+            if let Ok(url) = build_authorize_url(&origin, None, &redirect, &pkce.challenge, &state, true) {
                 pending = Some(PendingAdd { verifier: pkce.verifier, state });
                 deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
                 reply(&mut stream, &see_other(url.as_str())).await;
@@ -1094,7 +1216,7 @@ pub async fn serve_detached_menu() -> Result<()> {
                             pending = None;
                             let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
                             let redirect = format!("http://127.0.0.1:{port}/callback");
-                            if let Ok(tokens) = exchange_code(&origin, &code, &redirect, &verifier).await {
+                            if let Ok(tokens) = exchange_code(&origin, None, &code, &redirect, &verifier).await {
                                 if let Ok(mut cfg) = crate::config::Config::load(None) {
                                     let _ = super::store::add(&mut cfg, &brand, &tokens);
                                 }
@@ -1179,8 +1301,8 @@ async fn drop_account(origin: &str, brand: &str, id: &str) {
     let Ok(removed) = super::store::remove(&mut cfg, brand, Some(sel)) else {
         return;
     };
-    if let Some(rt) = removed.refresh_token.as_deref() {
-        let _ = revoke(origin, rt).await;
+    if let Some(held) = &removed.held {
+        let _ = revoke(origin, held).await;
     }
     if !was_active {
         return;
@@ -1252,7 +1374,264 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::iam::identity::testjwt::{claims_jwt, jwt};
     use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// A credential `client` was issued, holding `refresh_token`.
+    fn issued_to(client: &str, refresh_token: &str) -> TokenSet {
+        TokenSet {
+            access_token: claims_jwt(&format!(r#"{{"owner":"admin","name":"z","azp":"{client}"}}"#)),
+            token_type: "Bearer".into(),
+            refresh_token: Some(refresh_token.into()),
+            id_token: None,
+            expires_in: None,
+            scope: None,
+        }
+    }
+
+    /// A stand-in IAM that records every request and answers from `answer`.
+    async fn stand(
+        answer: fn(&str) -> (&'static str, String),
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let req = read_http(&mut stream).await;
+                record.lock().unwrap().push(req.clone());
+                let (status, body) = answer(&req);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        (origin, seen)
+    }
+
+    /// A descriptor as IAM serves it: the client's org and its grants.
+    fn described(org: &str, device: bool) -> String {
+        let device = if device { r#","urn:ietf:params:oauth:grant-type:device_code""# } else { "" };
+        format!(
+            r#"{{"status":"ok","msg":"","data":{{"organization":"{org}","grantTypes":["authorization_code","refresh_token"{device}]}}}}"#
+        )
+    }
+
+    /// `--as <org>` is refused before any browser opens when IAM has no
+    /// `<org>-cli`, or when that client signs in to another org; otherwise the
+    /// descriptor says whether the client permits the device grant.
+    #[tokio::test]
+    async fn wire_an_org_without_its_own_cli_is_refused_before_sign_in() {
+        let (origin, seen) = stand(|req| {
+            if req.contains("clientId=admin-cli") {
+                ("400 Bad Request", r#"{"status":"error","msg":"the application does not exist","data":null}"#.into())
+            } else if req.contains("clientId=lux-cli") {
+                ("200 OK", described("lux", false))
+            } else if req.contains("clientId=hanzo-cli") || req.contains("clientId=odd-cli") {
+                ("200 OK", described("hanzo", true))
+            } else {
+                ("200 OK", "<!doctype html>".into())
+            }
+        })
+        .await;
+
+        let err = served(&origin, Some("admin")).await.unwrap_err().to_string();
+        assert!(err.contains("IAM has no `admin-cli` application"), "{err}");
+        assert!(err.contains("`--as admin` has no admin sign-in"), "{err}");
+        assert!(!served(&origin, Some("lux")).await.unwrap(), "lux-cli grants no device code");
+        assert!(served(&origin, None).await.unwrap(), "hanzo-cli grants the device code");
+        let err = served(&origin, Some("odd")).await.unwrap_err().to_string();
+        assert!(err.contains("`odd-cli` application signs in to org `hanzo`, not `odd`"), "{err}");
+        let err = served(&origin, Some("html")).await.unwrap_err().to_string();
+        assert!(err.contains("unreadable"), "{err}");
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].starts_with("GET /v1/iam/auth/application?"), "{}", seen[0]);
+        assert!(seen[0].contains("clientId=admin-cli") && seen[0].contains("responseType=code"));
+        assert!(seen[1].contains("clientId=lux-cli"), "admin fell back to another client: {}", seen[1]);
+    }
+
+    /// The code is exchanged through `--as`'s client, and a token for another
+    /// org is refused rather than returned for filing.
+    #[tokio::test]
+    async fn wire_the_exchange_runs_as_the_orgs_client_and_checks_the_owner() {
+        let (origin, seen) = stand(|req| {
+            let owner = if req.contains("code=wrong") { "hanzo" } else { "admin" };
+            let token = jwt(owner, "z");
+            ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-1"}}"#))
+        })
+        .await;
+        let redirect = "http://127.0.0.1:1/callback";
+
+        let tokens = exchange_code(&origin, Some("admin"), "right", redirect, "v").await.unwrap();
+        assert_eq!(Identity::from_access_token(&tokens.access_token).unwrap().to_string(), "admin/z");
+        let err = exchange_code(&origin, Some("admin"), "wrong", redirect, "v")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("IAM returned hanzo/z, which is not in admin"), "{err}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen.iter().all(|req| req.contains("client_id=admin-cli")), "{seen:?}");
+    }
+
+    /// Refresh and revocation present the client the credential was issued to,
+    /// read off its own `azp` (else its one `aud`), never a constant; a
+    /// credential naming no client sends nothing.
+    #[tokio::test]
+    async fn wire_refresh_and_revoke_present_the_credentials_own_client() {
+        let (origin, seen) = stand(|req| {
+            if req.contains("/v1/iam/oauth/revoke") {
+                return ("200 OK", String::new());
+            }
+            let token = jwt("admin", "z");
+            ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-2"}}"#))
+        })
+        .await;
+
+        refresh(&origin, &issued_to("admin-cli", "rt-1")).await.unwrap();
+        revoke(&origin, &issued_to("admin-cli", "rt-1")).await.unwrap();
+        let aud = TokenSet {
+            access_token: claims_jwt(r#"{"owner":"lux","name":"z","aud":["lux-cli"]}"#),
+            ..issued_to("", "rt-lux")
+        };
+        refresh(&origin, &aud).await.unwrap();
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 3);
+            assert!(seen[0].contains("grant_type=refresh_token") && seen[0].contains("client_id=admin-cli"));
+            assert!(seen[1].contains("/v1/iam/oauth/revoke") && seen[1].contains("client_id=admin-cli"));
+            assert!(seen[2].contains("refresh_token=rt-lux") && seen[2].contains("client_id=lux-cli"));
+            assert!(seen.iter().all(|req| !req.contains("hanzo-cli")), "{seen:?}");
+        }
+
+        let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
+        let err = refresh(&origin, &nameless).await.unwrap_err().to_string();
+        assert!(err.contains("names no client"), "{err}");
+        let err = revoke(&origin, &nameless).await.unwrap_err().to_string();
+        assert!(err.contains("names no client"), "{err}");
+        revoke(&origin, &TokenSet { refresh_token: None, ..nameless }).await.unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 3, "a credential naming no client was sent anyway");
+    }
+
+    /// A refresh IAM refuses is `Spent` (sign in again); one it never answered,
+    /// or answered with its own failure, is not.
+    #[tokio::test]
+    async fn wire_a_refused_refresh_is_spent_and_an_unanswered_one_is_not() {
+        let (origin, _) = stand(|req| {
+            if req.contains("refresh_token=rt-down") {
+                ("503 Service Unavailable", String::new())
+            } else {
+                ("400 Bad Request", r#"{"error":"invalid_grant","error_description":"refresh token expired"}"#.into())
+            }
+        })
+        .await;
+        let refused = refresh(&origin, &issued_to("admin-cli", "rt-old")).await.unwrap_err();
+        assert!(refused.is::<Spent>(), "{refused}");
+        assert!(refused.to_string().contains("refresh token expired"), "{refused}");
+        let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
+        assert!(refresh(&origin, &nameless).await.unwrap_err().is::<Spent>());
+        let down = refresh(&origin, &issued_to("admin-cli", "rt-down")).await.unwrap_err();
+        assert!(!down.is::<Spent>(), "{down}");
+        let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gone = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        assert!(!refresh(&gone, &issued_to("admin-cli", "rt")).await.unwrap_err().is::<Spent>());
+    }
+
+    fn admin(req: &str) -> (&'static str, String) {
+        let token = claims_jwt(r#"{"owner":"admin","name":"z","sub":"u-1","azp":"admin-cli","aud":["admin-cli"]}"#);
+        if req.starts_with("GET /v1/iam/auth/application") {
+            return ("200 OK", described("admin", false));
+        }
+        if req.contains("/v1/iam/oauth/revoke") {
+            return ("200 OK", String::new());
+        }
+        ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-admin"}}"#))
+    }
+
+    /// `hanzo --as admin auth login` end to end over the wire, as it runs where
+    /// no browser opens: the descriptor grants `admin-cli` no device code, so
+    /// the sign-in is the browser flow's (authorize URL, pasted code, exchange),
+    /// then the owner check, a refresh and a revocation. Every request names
+    /// `admin-cli`, none `hanzo-cli`, and nothing reaches the device endpoint.
+    /// (Filing it beside the default is the shipped binary's test in
+    /// `tests/menu.rs`; picking the leg is `login::by_device`.)
+    #[tokio::test]
+    async fn wire_as_admin_signs_in_by_paste_and_renews_through_admin_cli() {
+        let (origin, seen) = stand(admin).await;
+        let org = Some("admin");
+
+        assert!(!served(&origin, org).await.unwrap(), "admin-cli must not grant the device code");
+        let url = build_authorize_url(&origin, org, "http://127.0.0.1:1/callback", "C", "S", true).unwrap();
+        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["client_id"], "admin-cli");
+        let tokens = exchange_code(&origin, org, "pasted", "http://127.0.0.1:1/callback", "V").await.unwrap();
+        let fresh = refresh(&origin, &tokens).await.unwrap();
+        revoke(&origin, &fresh).await.unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 4, "{seen:?}");
+        assert!(seen[0].contains("clientId=admin-cli"), "{}", seen[0]);
+        assert!(seen[1].contains("grant_type=authorization_code") && seen[1].contains("code=pasted"));
+        assert!(seen[2].contains("grant_type=refresh_token") && seen[2].contains("refresh_token=rt-admin"));
+        assert!(seen[3].contains("/v1/iam/oauth/revoke"));
+        assert!(seen[1..].iter().all(|req| req.contains("client_id=admin-cli")), "{seen:?}");
+        assert!(seen.iter().all(|req| !req.contains("hanzo-cli") && !req.contains("oauth/device")), "{seen:?}");
+    }
+
+    fn lux(req: &str) -> (&'static str, String) {
+        if req.starts_with("GET /v1/iam/auth/application") {
+            return ("200 OK", described("lux", true));
+        }
+        if req.contains("/v1/iam/oauth/device") {
+            return (
+                "200 OK",
+                r#"{"device_code":"dc-1","user_code":"ABCD-EFGH","verification_uri":"http://127.0.0.1/device","expires_in":60,"interval":1}"#.into(),
+            );
+        }
+        let token = claims_jwt(r#"{"owner":"lux","name":"z","sub":"u-1","azp":"lux-cli"}"#);
+        ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-lux"}}"#))
+    }
+
+    /// A client whose descriptor grants the device code signs in by it where no
+    /// browser opens, and the grant and its poll both name that org's client.
+    #[tokio::test]
+    async fn wire_a_client_granted_the_device_code_signs_in_by_it_as_itself() {
+        let (origin, seen) = stand(lux).await;
+        assert!(served(&origin, Some("lux")).await.unwrap());
+        let tokens = crate::iam::device::login(&origin, "hanzo", Some("lux")).await.unwrap();
+        owned(&tokens, Some("lux")).unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert!(seen[1].contains("/v1/iam/oauth/device") && seen[1].contains("client_id=lux-cli"));
+        assert!(seen[2].contains("device_code=dc-1") && seen[2].contains("client_id=lux-cli"));
+        assert!(seen.iter().all(|req| !req.contains("hanzo-cli")), "{seen:?}");
+    }
+
+    /// Where no browser opens and stdin is not a terminal, nothing can paste
+    /// the callback, so the paste leg refuses at once instead of waiting forever.
+    #[tokio::test]
+    async fn a_paste_leg_with_no_terminal_refuses_at_once() {
+        if std::io::stdin().is_terminal() {
+            return;
+        }
+        let err = match login("hanzo", Some("admin"), false, &[]).await {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("a sign-in with nothing to paste into started"),
+        };
+        assert!(err.contains("`admin-cli` permits no device grant"), "{err}");
+        assert!(err.contains("run this at a terminal"), "{err}");
+    }
 
     #[test]
     fn server_url_known_and_unknown() {
@@ -1266,6 +1645,7 @@ mod tests {
     fn authorize_url_is_hip0111_pkce_s256() {
         let url = build_authorize_url(
             "https://hanzo.id",
+            None,
             "http://127.0.0.1:54321/callback",
             "CHALLENGE",
             "STATE",
@@ -1276,7 +1656,7 @@ mod tests {
         assert_eq!(url.path(), "/v1/iam/oauth/authorize");
         let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["response_type"], "code");
-        assert_eq!(q["client_id"], CLIENT_ID);
+        assert_eq!(q["client_id"], "hanzo-cli");
         assert_eq!(q["code_challenge_method"], "S256");
         assert_eq!(q["code_challenge"], "CHALLENGE");
         assert_eq!(q["state"], "STATE");
@@ -1289,6 +1669,7 @@ mod tests {
 
         let chosen = build_authorize_url(
             "https://hanzo.id",
+            Some("admin"),
             "http://127.0.0.1:1/callback",
             "C",
             "S",
@@ -1297,6 +1678,31 @@ mod tests {
         .unwrap();
         let q: HashMap<_, _> = chosen.query_pairs().into_owned().collect();
         assert_eq!(q["prompt"], "select_account");
+        assert_eq!(q["client_id"], "admin-cli", "--as admin signs in through admin's own client");
+    }
+
+    #[test]
+    fn the_client_is_the_orgs_own_cli() {
+        assert_eq!(client(None), "hanzo-cli");
+        assert_eq!(client(Some("admin")), "admin-cli");
+        assert_eq!(client(Some("lux")), "lux-cli");
+    }
+
+    #[test]
+    fn a_token_outside_the_named_org_is_refused() {
+        let held = |owner: &str| TokenSet {
+            access_token: jwt(owner, "z"),
+            token_type: "Bearer".into(),
+            refresh_token: None,
+            id_token: None,
+            expires_in: None,
+            scope: None,
+        };
+        owned(&held("hanzo"), None).unwrap();
+        owned(&held("admin"), Some("admin")).unwrap();
+        let err = owned(&held("hanzo"), Some("admin")).unwrap_err().to_string();
+        assert!(err.contains("hanzo/z") && err.contains("admin-cli"), "{err}");
+        assert!(err.contains("not in admin") && err.contains("nothing was stored"), "{err}");
     }
 
     #[test]
@@ -1601,35 +2007,35 @@ mod tests {
             }
         });
 
-        let denied = exchange_code(&origin, "nope", "http://127.0.0.1/callback", "ver")
+        let denied = exchange_code(&origin, None, "nope", "http://127.0.0.1/callback", "ver")
             .await
             .unwrap_err()
             .to_string();
         assert!(denied.contains("token exchange failed"), "{denied}");
         assert!(denied.contains("invalid_grant"), "{denied}");
 
-        let garbled = exchange_code(&origin, "garbled", "http://127.0.0.1/callback", "ver")
+        let garbled = exchange_code(&origin, None, "garbled", "http://127.0.0.1/callback", "ver")
             .await
             .unwrap_err()
             .to_string();
         assert!(garbled.contains("parsing token response"), "{garbled}");
 
-        let tokens = exchange_code(&origin, "the-code", "http://127.0.0.1/callback", "the-verifier")
+        let tokens = exchange_code(&origin, None, "the-code", "http://127.0.0.1/callback", "the-verifier")
             .await
             .unwrap();
         assert!(tokens.access_token.contains('.'), "{}", tokens.access_token);
         assert_eq!(tokens.refresh_token.as_deref(), Some("rt-next"));
 
-        let spent = refresh(&origin, "nope").await.unwrap_err().to_string();
-        assert!(spent.contains("token refresh failed"), "{spent}");
+        let spent = refresh(&origin, &issued_to("hanzo-cli", "nope")).await.unwrap_err().to_string();
+        assert!(spent.contains("token refresh refused"), "{spent}");
 
-        let fresh = refresh(&origin, "rt-1").await.unwrap();
+        let fresh = refresh(&origin, &issued_to("hanzo-cli", "rt-1")).await.unwrap();
         assert_eq!(fresh.refresh_token.as_deref(), Some("rt-2"));
         assert!(!fresh.access_token.is_empty());
 
-        let revoked = revoke(&origin, "nope").await.unwrap_err().to_string();
+        let revoked = revoke(&origin, &issued_to("hanzo-cli", "nope")).await.unwrap_err().to_string();
         assert!(revoked.contains("revocation failed"), "{revoked}");
-        revoke(&origin, "rt-1").await.unwrap();
+        revoke(&origin, &issued_to("hanzo-cli", "rt-1")).await.unwrap();
     }
 
     /// Nothing is listening: each call fails as a transport error, before it
@@ -1641,12 +2047,13 @@ mod tests {
         drop(listener);
 
         for err in [
-            exchange_code(&origin, "c", "http://127.0.0.1/callback", "v")
+            exchange_code(&origin, None, "c", "http://127.0.0.1/callback", "v")
                 .await
                 .unwrap_err()
                 .to_string(),
-            refresh(&origin, "rt").await.unwrap_err().to_string(),
-            revoke(&origin, "rt").await.unwrap_err().to_string(),
+            refresh(&origin, &issued_to("hanzo-cli", "rt")).await.unwrap_err().to_string(),
+            revoke(&origin, &issued_to("hanzo-cli", "rt")).await.unwrap_err().to_string(),
+            served(&origin, Some("admin")).await.unwrap_err().to_string(),
         ] {
             assert!(err.contains("calling IAM"), "{err}");
         }
