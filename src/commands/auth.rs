@@ -53,6 +53,7 @@ pub fn use_identity(cfg: &mut Config, brand: &str, identity: Option<String>) -> 
 /// it can seed another tool (`Authorization: Bearer …`). Nothing else is printed,
 /// so it pipes byte-exactly; it is never written to disk or the config.
 pub async fn token(cfg: &mut Config, brand: &str) -> Result<()> {
+    store::within(cfg, brand)?;
     let (_id, tok) = store::active_token(cfg, brand).await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
     println!("{}", tok.access_token);

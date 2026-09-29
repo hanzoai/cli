@@ -268,14 +268,15 @@ fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
     active(cfg, brand)
 }
 
-/// Refuse when `--as <org>` names an org the acting identity is not in, rather
-/// than answer for the identity that would speak instead. Pure: the index only.
-pub fn within(cfg: &Config, brand: &str) -> Result<()> {
+/// The identity `--as <org>` speaks as, or a refusal when the acting identity
+/// is not in that org, rather than answer for the one that would speak instead.
+/// `None` without `--as`, or with nothing signed in. Pure: the index only.
+pub fn within(cfg: &Config, brand: &str) -> Result<Option<Identity>> {
     let (Some(org), Some(id)) = (cfg.org.as_deref(), acting(cfg, brand)) else {
-        return Ok(());
+        return Ok(None);
     };
     if id.owner == org {
-        return Ok(());
+        return Ok(Some(id));
     }
     match list(cfg, brand).iter().filter(|i| i.owner == org).count() {
         0 => bail!(
@@ -820,7 +821,7 @@ mod tests {
 
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "z"))).unwrap();
         switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
-        within(&c, "hanzo").unwrap();
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ADMIN)));
 
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "ops"))).unwrap();
         switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
@@ -828,9 +829,9 @@ mod tests {
         assert!(err.contains("2 hanzo identities in admin"), "{err}");
 
         c.org = Some("hanzo".into());
-        within(&c, "hanzo").unwrap();
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ORG)));
         c.org = None;
-        within(&c, "hanzo").unwrap();
+        assert_eq!(within(&c, "hanzo").unwrap(), None);
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---

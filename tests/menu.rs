@@ -437,6 +437,37 @@ fn as_an_org_files_its_identity_beside_the_default_and_speaks_as_it() {
     assert!(out.contains("identity: hanzo/z"), "{out}");
 }
 
+/// Under `--as <org>`, `auth logout` and `auth token` act on the identity held
+/// in that org, and refuse when there is none rather than act on the default.
+#[test]
+fn as_an_org_signs_out_and_hands_out_only_its_own_identity() {
+    let home = Home::new();
+    sign_in(&home, &jwt("hanzo", "z", Some("z@hanzo.ai")));
+    let run = |args: &[&str]| hanzo(&home).args(args).output().unwrap();
+
+    for refused in [run(&["--as", "admin", "auth", "logout"]), run(&["--as", "admin", "auth", "token"])] {
+        assert!(!refused.status.success());
+        assert!(refused.stdout.is_empty(), "{}", String::from_utf8_lossy(&refused.stdout));
+        let err = String::from_utf8_lossy(&refused.stderr);
+        assert!(err.contains("no hanzo identity in admin"), "{err}");
+    }
+    assert!(listed(&home).contains("* hanzo/z"), "the default was signed out");
+
+    let admin = jwt("admin", "z", None);
+    hanzo(&home)
+        .args(["--as", "admin", "auth", "login", "--provider", "hanzo", "--token", "-"])
+        .write_stdin(format!("{admin}\n"))
+        .assert()
+        .success();
+    let token = run(&["--as", "admin", "auth", "token"]);
+    assert_eq!(String::from_utf8_lossy(&token.stdout).trim(), admin);
+    let out = run(&["--as", "admin", "auth", "logout"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Signed out of hanzo as admin/z"));
+    let list = listed(&home);
+    assert!(list.contains("* hanzo/z") && !list.contains("admin/z"), "{list}");
+}
+
 /// `/add` only redirects when the authorize URL can be built. A bad origin
 /// stays on the loopback as an empty success, and the page is still served.
 #[test]

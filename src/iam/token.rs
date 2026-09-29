@@ -33,7 +33,7 @@ use super::identity::Identity;
 
 /// An OAuth2/OIDC token response (RFC 6749 §5.1). Stored verbatim as the
 /// stored value so the refresh and id tokens survive for the session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenSet {
     pub access_token: String,
     #[serde(default = "default_token_type")]
@@ -50,6 +50,20 @@ pub struct TokenSet {
 
 fn default_token_type() -> String {
     "Bearer".to_string()
+}
+
+/// Debug names which tokens are held, never their values.
+impl std::fmt::Debug for TokenSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenSet")
+            .field("access_token", &"<redacted>")
+            .field("token_type", &self.token_type)
+            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<redacted>"))
+            .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
+            .field("expires_in", &self.expires_in)
+            .field("scope", &self.scope)
+            .finish()
+    }
 }
 
 /// The credential store, as a seam. Get/set/remove a secret by key — nothing
@@ -294,6 +308,21 @@ mod tests {
     // Keychain I/O itself is not exercised in unit tests (it would prompt /
     // require a session keyring); the value type's serde contract and the key
     // composition are what we must pin.
+    #[test]
+    fn debug_never_prints_a_token() {
+        let held = TokenSet {
+            access_token: "at-secret".into(),
+            token_type: "Bearer".into(),
+            refresh_token: Some("rt-secret".into()),
+            id_token: Some("id-secret".into()),
+            expires_in: Some(3600),
+            scope: None,
+        };
+        let shown = format!("{held:?} {:?}", Some(&held));
+        assert!(!shown.contains("secret"), "{shown}");
+        assert!(shown.contains("<redacted>") && shown.contains("3600"), "{shown}");
+    }
+
     #[test]
     fn token_set_roundtrips_and_defaults_token_type() {
         let json = r#"{"access_token":"AT","refresh_token":"RT","expires_in":3600,"scope":"openid profile email"}"#;

@@ -534,7 +534,7 @@ pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
         .context("calling IAM token endpoint")?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    if status.is_client_error() {
+    if matches!(status.as_u16(), 400 | 401 | 403) {
         return Err(Spent(format!("token refresh refused ({status}): {body}")).into());
     }
     if !status.is_success() {
@@ -1529,6 +1529,12 @@ mod tests {
         let (origin, _) = stand(|req| {
             if req.contains("refresh_token=rt-down") {
                 ("503 Service Unavailable", String::new())
+            } else if req.contains("refresh_token=rt-busy") {
+                ("429 Too Many Requests", String::new())
+            } else if req.contains("refresh_token=rt-slow") {
+                ("408 Request Timeout", String::new())
+            } else if req.contains("refresh_token=rt-denied") {
+                ("403 Forbidden", String::new())
             } else {
                 ("400 Bad Request", r#"{"error":"invalid_grant","error_description":"refresh token expired"}"#.into())
             }
@@ -1539,8 +1545,12 @@ mod tests {
         assert!(refused.to_string().contains("refresh token expired"), "{refused}");
         let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
         assert!(refresh(&origin, &nameless).await.unwrap_err().is::<Spent>());
-        let down = refresh(&origin, &issued_to("admin-cli", "rt-down")).await.unwrap_err();
-        assert!(!down.is::<Spent>(), "{down}");
+        let denied = refresh(&origin, &issued_to("admin-cli", "rt-denied")).await.unwrap_err();
+        assert!(denied.is::<Spent>(), "{denied}");
+        for transient in ["rt-down", "rt-busy", "rt-slow"] {
+            let err = refresh(&origin, &issued_to("admin-cli", transient)).await.unwrap_err();
+            assert!(!err.is::<Spent>(), "{transient}: {err}");
+        }
         let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let gone = format!("http://{}", closed.local_addr().unwrap());
         drop(closed);

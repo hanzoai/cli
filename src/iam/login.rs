@@ -243,7 +243,12 @@ pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all
         return Ok(());
     }
 
-    let sel = identity.map(|s| s.parse::<Selector>()).transpose()?;
+    // Unnamed under `--as <org>`, the identity signed out is the one held there,
+    // never the default.
+    let sel = match identity {
+        Some(s) => Some(s.parse::<Selector>()?),
+        None => store::within(cfg, brand)?.map(Selector::Exact),
+    };
     let removed = store::remove(cfg, brand, sel)?;
     revoke_all(brand, std::slice::from_ref(&removed)).await;
     println!("{} Signed out of {} as {}", "✓".green(), brand.cyan(), removed.id.to_string().bold());

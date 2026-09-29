@@ -50,6 +50,8 @@ use crate::commands::code::session::SessionClient;
 use crate::commands::code::{context, target};
 use crate::commands::share;
 use crate::config::Config;
+use crate::iam::paths::DEFAULT_BRAND;
+use crate::iam::store;
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
 use std::process::Stdio;
@@ -594,8 +596,10 @@ impl Signer {
         if exe.contains(char::is_whitespace) {
             bail!("{exe} has a space in it, and zt splits its token command on spaces: pass --token-command");
         }
-        Ok(match &cfg.org {
-            Some(org) => format!("{exe} --as {org} auth token"),
+        // `--as` rides along only when it names an identity held in that org;
+        // otherwise the default signs in and the org stays a selection.
+        Ok(match store::within(cfg, DEFAULT_BRAND).ok().flatten() {
+            Some(id) => format!("{exe} --as {} auth token", id.owner),
             None => format!("{exe} auth token"),
         })
     }
@@ -985,6 +989,27 @@ mod tests {
     use super::*;
     use crate::commands::code::testmock::MockCloud;
     use anyhow::anyhow;
+
+    /// The tunnel signs in with `--as <org>` only for an identity held in that
+    /// org; for any other `--as` the default signs in, as before.
+    #[test]
+    fn the_tunnel_carries_as_only_for_a_held_identity() {
+        let mut cfg = Config::default();
+        for owner in ["hanzo", "admin"] {
+            cfg.auth.identities.push(crate::config::StoredIdentity {
+                brand: "hanzo".into(),
+                owner: owner.into(),
+                name: "z".into(),
+            });
+        }
+        cfg.auth.active.insert("hanzo".into(), "hanzo/z".into());
+        let command = |cfg: &Config| Signer::default().tunnel_command(cfg).unwrap();
+        assert!(command(&cfg).ends_with(" auth token") && !command(&cfg).contains("--as"));
+        cfg.org = Some("admin".into());
+        assert!(command(&cfg).ends_with(" --as admin auth token"), "{}", command(&cfg));
+        cfg.org = Some("lux".into());
+        assert!(!command(&cfg).contains("--as"), "{}", command(&cfg));
+    }
 
     /// A link that ended cleanly is DONE — and saying so is what stops the row
     /// from outliving the shell. The ending is one PATCH carrying both facts, so
