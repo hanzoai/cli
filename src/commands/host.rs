@@ -25,8 +25,11 @@
 //! nothing here dials it — a bound port is never what "running" means to us.
 
 use anyhow::{anyhow, bail, Context, Result};
+use base64::Engine;
 use colored::*;
 use hanzo_client::Method;
+use rand::RngCore;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -190,6 +193,7 @@ fn default_bin() -> PathBuf {
 /// Start the host detached, logging to the state dir.
 fn spawn(bin: &Path, addr: &str) -> Result<Child> {
     let state = state_dir()?;
+    let key = at_rest_key(&state)?;
     let log = std::fs::File::create(state.join("host.log"))
         .with_context(|| format!("creating {}", state.join("host.log").display()))?;
 
@@ -203,6 +207,9 @@ fn spawn(bin: &Path, addr: &str) -> Result<Child> {
     cmd.arg("-zap").arg(zap_socket()?);
     // The host defaults to /var/lib/cloud, which a developer cannot write.
     // Local state belongs beside the rest of the CLI's.
+    if let Some(k) = key {
+        cmd.env(MASTER_ENV, k);
+    }
     cmd.env("CLOUD_DATA_DIR", state.join("data"))
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone().context("duplicating the host log handle")?))
@@ -228,6 +235,108 @@ fn detach(cmd: &mut Command) {
 
 #[cfg(not(unix))]
 fn detach(_cmd: &mut Command) {}
+
+// ---- the at-rest key -----------------------------------------------------------
+
+/// The variable the cloud reads its at-rest master key from: base64 of 32
+/// bytes. Every store the host opens is sealed under it; without it they fail
+/// closed.
+const MASTER_ENV: &str = "CLOUD_KMS_MASTER_KEY_REF";
+
+/// SHA-256 of the fixed development key that pre-release builds of `hanzo up`
+/// wrote to `~/.hanzo/cloud/master.key`. An at-rest key belongs to one install,
+/// so this one is recognised by its digest and never used.
+const SHARED_KEY_SHA256: &str = "cd80b74bd7fc76170d3355339fbe4797ac5ae226aa5f28adff8512b990e48faf";
+
+/// 32 fresh bytes, base64 — the shape the cloud reads its at-rest key in. From
+/// the OS generator, never a derivation: a key a second machine could guess is
+/// not one.
+pub fn key() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn shared(key: &str) -> bool {
+    format!("{:x}", Sha256::digest(key.trim().as_bytes())) == SHARED_KEY_SHA256
+}
+
+/// The key the host starts with. One the caller's environment already names is
+/// theirs and passes through untouched (`None`), because the stores sealed
+/// under it open only under it. Otherwise it is this install's own.
+fn at_rest_key(state: &Path) -> Result<Option<String>> {
+    if let Ok(k) = std::env::var(MASTER_ENV) {
+        if !k.trim().is_empty() {
+            if shared(&k) {
+                bail!("{MASTER_ENV} names the shared development key; unset it and the local host uses a key of its own");
+            }
+            return Ok(None);
+        }
+    }
+    install_key(state).map(Some)
+}
+
+/// This install's key: made once in `<state>/master.key`, owner-only, and read
+/// back on every start after — including by a concurrent start that lost the
+/// race to make it. It is never regenerated, since replacing it strands every
+/// store sealed under it, so a malformed file is an error, not a key to
+/// overwrite.
+fn install_key(state: &Path) -> Result<String> {
+    let path = state.join("master.key");
+    if let Err(e) = crate::private::create(&path, key().as_bytes()) {
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(e).with_context(|| format!("creating {}", path.display()));
+        }
+    }
+    let k = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let k = k.trim();
+    let whole = matches!(base64::engine::general_purpose::STANDARD.decode(k), Ok(b) if b.len() == 32);
+    if !whole || shared(k) {
+        bail!(
+            "{} is not an at-rest key of this install's own (base64 of 32 bytes); the stores in {} are sealed under it",
+            path.display(),
+            state.join("data").display()
+        );
+    }
+    Ok(k.to_string())
+}
+
+/// Retire the local cloud state pre-release builds of `hanzo up` kept in
+/// `~/.hanzo/cloud`: a store sealed under the shared development key, and that
+/// key. Nothing reads the directory any more, and only the cloud that wrote a
+/// store can re-seal it, so both are removed; the local host seals a fresh
+/// store under this install's own key. Runs on every invocation, and once it
+/// has run it costs one failed open.
+pub fn retire_shared() {
+    let Some(home) = dirs::home_dir() else { return };
+    let dir = home.join(".hanzo").join("cloud");
+    match retire(&dir, shared) {
+        Ok(true) => eprintln!(
+            "{} removed the local cloud state in {} and its development key; the local host now keeps a key of its own",
+            "→".cyan(),
+            dir.display()
+        ),
+        Ok(false) => {}
+        Err(e) => eprintln!("{} {e:#}", "warning:".yellow()),
+    }
+}
+
+/// Remove `dir`'s store and key when `is_shared` recognises the key. The store
+/// goes first: the key file is the marker, so a removal that fails part-way is
+/// taken up again by the next invocation.
+fn retire(dir: &Path, is_shared: fn(&str) -> bool) -> Result<bool> {
+    let key = dir.join("master.key");
+    match std::fs::read_to_string(&key) {
+        Ok(k) if is_shared(&k) => {}
+        _ => return Ok(false),
+    }
+    let data = dir.join("data");
+    if data.exists() {
+        std::fs::remove_dir_all(&data).with_context(|| format!("removing {}", data.display()))?;
+    }
+    std::fs::remove_file(&key).with_context(|| format!("removing {}", key.display()))?;
+    Ok(true)
+}
 
 /// `${XDG_DATA_HOME}/hanzo/host` — the local host's pid, log, socket and data.
 fn state_dir() -> Result<PathBuf> {
@@ -399,6 +508,74 @@ mod tests {
     #[test]
     fn a_default_port_is_filled_in() {
         assert_eq!(loopback_addr("http://localhost").as_deref(), Some("127.0.0.1:80"));
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "hanzo-host-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Made once, owner-only, a whole 32-byte key, and the same key every start
+    /// after — never regenerated under stores sealed with it.
+    #[test]
+    fn an_install_key_is_made_once_and_kept() {
+        let state = scratch("key");
+        let k = install_key(&state).unwrap();
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&k).unwrap().len(), 32);
+        assert_eq!(install_key(&state).unwrap(), k);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(state.join("master.key")).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "must be owner-only, got {mode:o}");
+        }
+        let _ = std::fs::remove_dir_all(&state);
+    }
+
+    /// Two installs never share a key.
+    #[test]
+    fn installs_never_share_a_key() {
+        let (a, b) = (scratch("a"), scratch("b"));
+        assert_ne!(install_key(&a).unwrap(), install_key(&b).unwrap());
+        assert!(!shared(&key()));
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    /// A malformed key file is refused and left as it is: overwriting it would
+    /// strand whatever was sealed under the key it used to hold.
+    #[test]
+    fn a_malformed_key_is_refused_not_replaced() {
+        let state = scratch("bad");
+        std::fs::write(state.join("master.key"), "not a key").unwrap();
+        assert!(install_key(&state).is_err());
+        assert_eq!(std::fs::read_to_string(state.join("master.key")).unwrap(), "not a key");
+        let _ = std::fs::remove_dir_all(&state);
+    }
+
+    /// An install holding a key of its own is left alone; one holding the
+    /// shared key loses its store and key, store first, exactly once.
+    #[test]
+    fn only_a_shared_install_is_retired() {
+        let dir = scratch("retire");
+        std::fs::create_dir_all(dir.join("data").join("kms")).unwrap();
+        std::fs::write(dir.join("data").join("kms").join("org.db"), b"sealed").unwrap();
+        std::fs::write(dir.join("master.key"), key()).unwrap();
+
+        assert!(!retire(&dir, shared).unwrap());
+        assert!(dir.join("master.key").exists() && dir.join("data").exists());
+
+        assert!(retire(&dir, |_| true).unwrap());
+        assert!(!dir.join("master.key").exists());
+        assert!(!dir.join("data").exists());
+        assert!(!retire(&dir, |_| true).unwrap(), "nothing left to retire");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

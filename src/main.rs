@@ -877,6 +877,7 @@ async fn main() -> Result<()> {
         _ => "trace",
     };
     tracing_subscriber::fmt().with_env_filter(log_level).init();
+    commands::host::retire_shared();
 
     let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
     // The org selection belongs to this invocation, so it is read from the command

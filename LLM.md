@@ -940,6 +940,13 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
 - Against a local host a MISSING credential is not refused here: the call goes out
   with no bearer and the server decides, the same rule the tree already follows for
   a 403. State (pid, log, socket, `CLOUD_DATA_DIR`) lives in `<data>/hanzo/host/`.
+- The host starts with this install's own at-rest key, `<data>/hanzo/host/master.key`:
+  32 OsRng bytes, base64, 0600, made once through `private::create` (write-once, so
+  concurrent first starts converge on one key) and never regenerated. A
+  `CLOUD_KMS_MASTER_KEY_REF` already in the environment wins and passes through. The
+  development key pre-release `hanzo up` builds wrote to `~/.hanzo/cloud/master.key` is
+  recognised by SHA-256 only; `host::retire_shared` removes that key and the store in
+  `~/.hanzo/cloud/data` on any invocation, and the host refuses it from the environment.
 
 **The session channel** — `hanzo code` is watchable and steerable from the dashboard while it
 runs. One channel, two directions, one transport, one vocabulary.
