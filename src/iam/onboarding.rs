@@ -373,7 +373,7 @@ fn login_invocation(agent: &NativeAgent) -> Result<(String, Vec<String>)> {
     let args = match agent.login {
         native::Login::Args(argv) => argv.iter().map(|s| (*s).to_string()).collect(),
         native::Login::Antigravity => {
-            let help = std::process::Command::new(&program).arg("help").output();
+            let help = std::process::Command::new(program).arg("help").output();
             let text = help
                 .ok()
                 .map(|out| {

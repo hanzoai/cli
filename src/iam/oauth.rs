@@ -1830,7 +1830,7 @@ mod tests {
         assert!(!page.contains("Also on this machine"), "{page}");
         assert!(!page.contains("hanzo auth use"), "{page}");
         assert_eq!(page.matches("href=\"https://hanzo.ai\"").count(), 2, "{page}");
-        let confirming = signed_in_page("https://hanzo.id", Some(&who), &[who.clone()], Some("hanzo/z"), true);
+        let confirming = signed_in_page("https://hanzo.id", Some(&who), std::slice::from_ref(&who), Some("hanzo/z"), true);
         assert!(confirming.contains("Yes, remove"), "{confirming}");
         assert!(confirming.contains("/remove?id=hanzo%2Fz&amp;yes=1"), "{confirming}");
     }

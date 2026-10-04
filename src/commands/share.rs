@@ -372,10 +372,9 @@ fn zrok_bin() -> Result<String> {
             return Ok(b);
         }
     }
-    for name in ["zrok"] {
-        if which(name).is_some() {
-            return Ok(name.to_string());
-        }
+    let name = "zrok";
+    if which(name).is_some() {
+        return Ok(name.to_string());
     }
     bail!(
         "the zrok fabric helper was not found on PATH; install it or set \
