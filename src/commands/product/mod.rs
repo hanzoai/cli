@@ -292,6 +292,7 @@ fn field_arg(f: &'static Field) -> Arg {
         Ty::Bool if !f.repeat => a = a.action(ArgAction::SetTrue),
         Ty::Bool => a = a.value_parser(clap::value_parser!(bool)).value_name("BOOL"),
         Ty::Json => a = a.value_parser(parse_json).value_name("JSON"),
+        Ty::Union => a = a.value_parser(parse_union).value_name("TEXT|JSON"),
         Ty::Str => a = a.value_name("STRING"),
     }
     if !f.choices.is_empty() {
@@ -336,6 +337,7 @@ fn field_help(f: &Field) -> String {
             Ty::Bool if f.repeat => "boolean",
             Ty::Bool => "flag",
             Ty::Json => "JSON value",
+            Ty::Union => "text, or a JSON object or array",
         }
         .to_string()
     } else {
@@ -355,6 +357,16 @@ fn field_help(f: &Field) -> String {
 /// field is a named parse error, not a silent malformed request.
 fn parse_json(s: &str) -> std::result::Result<Value, String> {
     serde_json::from_str(s).map_err(|e| format!("not valid JSON: {e}"))
+}
+
+/// Parse a `Union`-typed flag: a JSON object or array is sent as that value, and
+/// anything else as the text typed — so `--state 'charged twice'` and `--state
+/// '{"message":"charged twice"}'` both say what they look like.
+fn parse_union(s: &str) -> std::result::Result<Value, String> {
+    match serde_json::from_str::<Value>(s) {
+        Ok(v @ (Value::Object(_) | Value::Array(_))) => Ok(v),
+        _ => Ok(Value::String(s.to_string())),
+    }
 }
 
 fn data_arg() -> Arg {
@@ -462,7 +474,7 @@ fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
             Ty::Int => m.get_many::<i64>(f.id)?.map(|v| json!(v)).collect(),
             Ty::Num => m.get_many::<f64>(f.id)?.map(|v| json!(v)).collect(),
             Ty::Bool => m.get_many::<bool>(f.id)?.map(|v| json!(v)).collect(),
-            Ty::Json => m.get_many::<Value>(f.id)?.cloned().collect(),
+            Ty::Json | Ty::Union => m.get_many::<Value>(f.id)?.cloned().collect(),
         };
         return Some(Value::Array(vs));
     }
@@ -473,7 +485,7 @@ fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
         // A scalar bool is a presence flag: absent means "unset", so it is
         // omitted rather than sent as `false` over the server's own default.
         Ty::Bool => m.get_flag(f.id).then_some(json!(true)),
-        Ty::Json => m.get_one::<Value>(f.id).cloned(),
+        Ty::Json | Ty::Union => m.get_one::<Value>(f.id).cloned(),
     }
 }
 

@@ -741,7 +741,7 @@ fn argv_for(op: &'static Op) -> Vec<String> {
             Ty::Bool => a.push("true".into()),
             Ty::Int | Ty::Num => a.push("1".into()),
             Ty::Json => a.push("{}".into()),
-            Ty::Str => a.push("x".into()),
+            Ty::Str | Ty::Union => a.push("x".into()),
         }
     }
     a
@@ -1231,4 +1231,30 @@ fn hand_written_command_names_are_not_verb_nouns() {
     let mut bad = Vec::new();
     walk(&crate::Cli::command(), "hanzo", &mut bad);
     assert!(bad.is_empty(), "verb-noun command names — name the thing, let the position say the verb:\n  {}", bad.join("\n  "));
+}
+
+/// A UNION flag says what it looks like: a JSON object or array reaches the body
+/// as that value, anything else as the text typed. `state` on POST /v1/decisions
+/// is `string | object | array`, and it used to be a plain string flag, so an
+/// object state reached Kai as one quoted string.
+#[test]
+fn a_union_flag_sends_json_as_json_and_text_as_text() {
+    let (op, f) = OPS
+        .iter()
+        .find_map(|o| Some((o, o.fields.iter().find(|f| matches!(f.ty, Ty::Union) && !f.query && !f.required)?)))
+        .expect("the document declares a string|object|array property (POST /v1/decisions state)");
+    let send = |value: &str| {
+        let mut argv = argv_for(op);
+        argv.extend([format!("--{}", f.flag), value.to_string()]);
+        let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
+        let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
+            panic!("typed leaf");
+        };
+        v[f.key].clone()
+    };
+    assert_eq!(send(r#"{"message":"charged twice"}"#), serde_json::json!({"message": "charged twice"}));
+    assert_eq!(send(r#"["a","b"]"#), serde_json::json!(["a", "b"]));
+    assert_eq!(send("charged twice"), serde_json::json!("charged twice"));
+    // A scalar that happens to parse as JSON is still text: the union admits no number.
+    assert_eq!(send("42"), serde_json::json!("42"));
 }

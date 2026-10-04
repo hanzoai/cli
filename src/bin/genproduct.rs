@@ -242,7 +242,7 @@ struct FieldDef {
     /// the path is unambiguous and the runtime rebuilds the object from it.
     key: String,
     flag: String,
-    ty: &'static str, // Str|Int|Num|Bool|Json
+    ty: &'static str, // Str|Int|Num|Bool|Json|Union
     required: bool,
     choices: Vec<String>,
     /// A query-string parameter (goes in the URL), vs a requestBody property.
@@ -371,6 +371,18 @@ fn classify(spec: &Value, pschema: &Value) -> (&'static str, Vec<String>, bool) 
             None => ("Json", vec![], false),
         },
         "object" => ("Json", vec![], false),
+        // A UNION of variants (`anyOf`/`oneOf`). One that admits a string takes
+        // the value as TEXT unless it reads as a JSON object or array, which is
+        // what `state: string | object | array` on /v1/decisions says; one with
+        // no string variant is a JSON value. It used to fall through to `Str`,
+        // so `--state '{"message":"…"}'` reached the server as a quoted string.
+        _ if d.get("anyOf").or_else(|| d.get("oneOf")).is_some() => {
+            let variants = d.get("anyOf").or_else(|| d.get("oneOf")).and_then(Value::as_array);
+            let text = variants.is_some_and(|vs| {
+                vs.iter().any(|v| deref(spec, v).get("type").and_then(Value::as_str) == Some("string"))
+            });
+            (if text { "Union" } else { "Json" }, vec![], false)
+        }
         _ if d.get("properties").is_some() => ("Json", vec![], false),
         // A schema stating nothing at all (`{}`) is a freeform value, not a string.
         _ if d.as_object().is_none_or(serde_json::Map::is_empty) => ("Json", vec![], false),
