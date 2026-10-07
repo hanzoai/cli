@@ -136,7 +136,7 @@ pub async fn start(
     let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)
         .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login` first"))?;
-    let pr = enable(&api, &tok.access_token).await?;
+    let pr = enable(&api, &tok.access_token, cfg.org.as_deref()).await?;
 
     // 2. Locate the zrok fabric helper.
     let zbin = zrok_bin()?;
@@ -226,12 +226,16 @@ pub async fn start(
     Ok(Share { url, child })
 }
 
-/// One authenticated provisioning call. Sends ONLY the bearer — no org.
-async fn enable(api: &str, token: &str) -> Result<EnableResp> {
+/// One authenticated provisioning call: the bearer, and the org selected with
+/// `--org` as `X-Org-Id` (a selection the gateway checks against the token's
+/// membership), so the tunnel is the org's the command acts in.
+async fn enable(api: &str, token: &str, org: Option<&str>) -> Result<EnableResp> {
     let url = format!("{api}/v1/share/enable");
-    let resp = Client::new()
-        .post(&url)
-        .bearer_auth(token)
+    let mut req = Client::new().post(&url).bearer_auth(token);
+    if let Some(org) = org {
+        req = req.header("X-Org-Id", org);
+    }
+    let resp = req
         .json(&serde_json::json!({}))
         .send()
         .await

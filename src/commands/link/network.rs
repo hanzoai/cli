@@ -54,6 +54,13 @@ impl Caller {
         Caller::new(api, token, cfg.org.clone())
     }
 
+    /// The org selected with `--as`, when one was: what every call this link makes
+    /// carries as `X-Org-Id`, so the machine, its shell and its network are filed in
+    /// one org.
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
     fn new(api: String, token: String, selected: Option<String>) -> Result<Caller> {
         let who = Identity::from_access_token(&token)?;
         let sub = identity::subject(&token).context("the access token names no subject")?;

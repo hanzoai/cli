@@ -286,7 +286,7 @@ pub async fn run(
     // yet answering. The host is the SAME value the run-target above registered
     // under, which is what lets the console file this shell under that machine
     // instead of under nothing.
-    let client = SessionClient::new(&api, &caller.token)?;
+    let client = SessionClient::new(&api, &caller.token)?.with_org(caller.selected());
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
