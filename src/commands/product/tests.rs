@@ -322,18 +322,15 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
 /// unset optional flag is OMITTED (the server's default stands), never sent null.
 #[test]
 fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
-    // Pick a typed op with a BODY int field (not a query param), no path params,
-    // and NO required fields — so the only flag we pass is the int, and the body
-    // holds exactly it.
+    // Pick a typed op with a top-level BODY int field (not a query param, not a
+    // nested dotted key), no path params, and NO required fields — so the only
+    // flag we pass is the int, and the body holds exactly it.
+    let top_int = |f: &&Field| matches!(f.ty, Ty::Int) && !f.query && !f.key.contains('.');
     let op = OPS
         .iter()
-        .find(|o| {
-            o.params.is_empty()
-                && o.fields.iter().any(|f| matches!(f.ty, Ty::Int) && !f.query)
-                && o.fields.iter().all(|f| !f.required)
-        })
-        .expect("a typed op with a body int field and no required fields exists");
-    let int = op.fields.iter().find(|f| matches!(f.ty, Ty::Int) && !f.query).unwrap();
+        .find(|o| o.params.is_empty() && o.fields.iter().any(|f| top_int(&f)) && o.fields.iter().all(|f| !f.required))
+        .expect("a typed op with a top-level body int field and no required fields exists");
+    let int = op.fields.iter().find(top_int).unwrap();
 
     let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
     argv.extend(op.nodes.iter().map(|n| n.to_string()));
