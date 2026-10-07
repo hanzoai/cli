@@ -1234,23 +1234,26 @@ fn hand_written_command_names_are_not_verb_nouns() {
 }
 
 /// A UNION flag says what it looks like: a JSON object or array reaches the body
-/// as that value, anything else as the text typed. `state` on POST /v1/decisions
-/// is `string | object | array`, and it used to be a plain string flag, so an
-/// object state reached Kai as one quoted string.
+/// as that value, anything else as the text typed. The field is stated here, read
+/// through the builder every generated command uses: since cloud 8.5.640 the
+/// document types `state` on POST /v1/decisions as an untyped value, so no
+/// operation declares a `string | object | array` property to find.
 #[test]
 fn a_union_flag_sends_json_as_json_and_text_as_text() {
-    let (op, f) = OPS
-        .iter()
-        .find_map(|o| Some((o, o.fields.iter().find(|f| matches!(f.ty, Ty::Union) && !f.query && !f.required)?)))
-        .expect("the document declares a string|object|array property (POST /v1/decisions state)");
+    static STATE: Field = Field {
+        key: "state",
+        id: "field.state",
+        flag: "state",
+        ty: Ty::Union,
+        required: false,
+        choices: &[],
+        query: false,
+        secret: false,
+        repeat: false,
+    };
     let send = |value: &str| {
-        let mut argv = argv_for(op);
-        argv.extend([format!("--{}", f.flag), value.to_string()]);
-        let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
-        let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
-            panic!("typed leaf");
-        };
-        v[f.key].clone()
+        let m = Command::new("t").arg(field_arg(&STATE)).try_get_matches_from(["t", "--state", value]).expect("parses");
+        m.get_one::<Value>(STATE.id).cloned().expect("a value")
     };
     assert_eq!(send(r#"{"message":"charged twice"}"#), serde_json::json!({"message": "charged twice"}));
     assert_eq!(send(r#"["a","b"]"#), serde_json::json!(["a", "b"]));
