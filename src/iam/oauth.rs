@@ -509,6 +509,10 @@ async fn exchange_code(
     Ok(tokens)
 }
 
+/// How long one refresh may take. A connection that stalls fails here, with its
+/// cause, rather than holding every command that needs a credential.
+const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Exchange a refresh token for a fresh access token (RFC 6749 §6), as the
 /// client the credential was issued to.
 ///
@@ -522,7 +526,10 @@ pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
         .as_deref()
         .context("the stored credential holds no refresh token")?;
     let client = issued(held).map_err(|e| Spent(e.to_string()))?;
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .timeout(REFRESH_TIMEOUT)
+        .build()
+        .context("building the IAM client")?
         .post(paths::iam_url(origin, TOKEN))
         .form(&[
             ("grant_type", "refresh_token"),

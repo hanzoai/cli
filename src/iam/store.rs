@@ -77,7 +77,14 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
             return Ok(Some((id2, tok2)));
         }
     }
-    let fresh = match oauth::refresh(origin, &tok).await {
+    // One more try when IAM did not answer at all: a dropped connection is the
+    // commonest reason, and the second attempt costs a second.
+    let mut answer = oauth::refresh(origin, &tok).await;
+    if answer.as_ref().is_err_and(|e| !e.is::<oauth::Spent>()) {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        answer = oauth::refresh(origin, &tok).await;
+    }
+    let fresh = match answer {
         Ok(fresh) => fresh,
         // IAM refused it: the session is over, for this identity and no other.
         Err(e) if e.is::<oauth::Spent>() => {
@@ -91,14 +98,23 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
             // somewhere downstream complaining about something else, which is the
             // whole reason this bug took a day to find rather than a minute.
             crate::warn(&format!(
-                "could not refresh the {id} credential ({e}) — sending the expired one; \
+                "could not refresh the {id} credential ({e:#}) — sending the expired one; \
                  `{}` if it is refused",
                 relogin(brand, &id)
             ));
             return Ok(Some((id, tok)));
         }
     };
-    let fresh = adopted(brand, &id, fresh)?;
+    let (id, fresh) = match adopted(brand, &id, fresh)? {
+        Adopted::Same(fresh) => (id, fresh),
+        Adopted::Moved(to, fresh) => {
+            moved_in(&*token::vault()?, cfg, brand, &id, &to, &fresh)?;
+            crate::warn(&format!(
+                "IAM moved {id} to {to}, the org this account now works in — signed in as {to}"
+            ));
+            return Ok(Some((to, fresh)));
+        }
+    };
     if let Err(e) = token::store(&*token::vault()?, brand, &id, &fresh) {
         // NOT swallowed. IAM rotates on every grant and treats a re-presented
         // refresh token as a replay, revoking the whole family — so the token still
@@ -113,25 +129,86 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     Ok(Some((id, fresh)))
 }
 
+/// What a refreshed credential is to the identity it was spent for.
+#[derive(Debug)]
+enum Adopted {
+    /// The same identity: file it where it was.
+    Same(TokenSet),
+    /// The same person under a new identity: IAM moved them (a founder moves into
+    /// the org they found, re-keyed from `<old>/<name>` to `<org>/<name>`), and the
+    /// credential belongs under the identity it now names.
+    Moved(Identity, TokenSet),
+}
+
 /// Accept a refreshed credential for `id`, or refuse it. PURE.
 ///
 /// A refresh returns a newly minted access token, and nothing obliges the server
 /// to put the same claims in it. `active_token_in` fails CLOSED when a slot's
 /// contents name a different principal, so filing a re-labelled token under the
 /// old key would poison that slot: every later read would bail until the user
-/// worked out that only `hanzo auth login` clears it. Refuse here instead, where
-/// the reason is still known. Re-authenticating after a rename is cheap.
-fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<TokenSet> {
+/// worked out that only `hanzo auth login` clears it.
+///
+/// One relabel is IAM's own and is followed: the same person (`sub`) under a new
+/// `owner`, which is what moving a founder into the org they found does. The
+/// identity is re-keyed, not replaced, so the active pointer follows the person
+/// rather than switching to anyone else. Never into or out of the `admin` org:
+/// SuperAdmin is an identity a person signs in to on purpose, never one a refresh
+/// hands them. Any other relabel is refused, where the reason is still known.
+fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<Adopted> {
     let claimed = Identity::from_access_token(&fresh.access_token)
         .context("identifying the refreshed credential")?;
-    if &claimed != id {
-        bail!(
-            "the refreshed {brand} credential identifies as {claimed}, not {id} — refusing to \
-             file it; run `{}`",
-            relogin(brand, id)
-        );
+    if &claimed == id {
+        return Ok(Adopted::Same(fresh));
     }
-    Ok(fresh)
+    if moved(id, &claimed, &fresh) {
+        return Ok(Adopted::Moved(claimed, fresh));
+    }
+    bail!(
+        "the refreshed {brand} credential identifies as {claimed}, not {id} — refusing to \
+         file it; run `{}`",
+        relogin(brand, id)
+    )
+}
+
+/// Whether `to` is `from` re-keyed by IAM: the same name and person in a different
+/// org, neither of them the SuperAdmin org. PURE. The person is the `sub` the
+/// refreshed credential states, which IAM keeps across the move; a credential that
+/// states none is not followed.
+fn moved(from: &Identity, to: &Identity, fresh: &TokenSet) -> bool {
+    const SUPERADMIN: &str = "admin";
+    from.name == to.name
+        && from.owner != to.owner
+        && from.owner != SUPERADMIN
+        && to.owner != SUPERADMIN
+        && super::identity::subject(&fresh.access_token).is_some()
+}
+
+/// File `tokens` under `to` and retire `from`, the identity IAM moved: the new
+/// credential is stored first, then the index re-keys in one write — `to` takes
+/// `from`'s place, and the active pointer with it when it was there — and only
+/// then is `from`'s secret dropped. An interruption anywhere leaves the person
+/// signed in under one of the two keys, never neither.
+fn moved_in(
+    v: &dyn Vault,
+    cfg: &mut Config,
+    brand: &str,
+    from: &Identity,
+    to: &Identity,
+    tokens: &TokenSet,
+) -> Result<()> {
+    token::store(v, brand, to, tokens)?;
+    cfg.update(|c| {
+        c.auth
+            .identities
+            .retain(|i| !(i.brand == brand && i.owner == from.owner && i.name == from.name));
+        index(c, brand, to);
+        if c.auth.active.get(brand).map(String::as_str) == Some(from.to_string().as_str()) {
+            set_active(c, brand, to);
+        }
+        Ok(())
+    })?;
+    token::take(v, brand, from)?;
+    Ok(())
 }
 
 /// The command that signs `id` in again: through its own org's client, which is
@@ -1598,7 +1675,11 @@ mod tests {
         assert!(expiring(&held.access_token, now_unix()), "the read hands back a spent token");
 
         // What the refresh half does once IAM has answered.
-        let fresh = adopted("hanzo", &id, tokens(&jwt_until("hanzo", "z", 9_999_999_999))).unwrap();
+        let Adopted::Same(fresh) =
+            adopted("hanzo", &id, tokens(&jwt_until("hanzo", "z", 9_999_999_999))).unwrap()
+        else {
+            panic!("the same identity read as a move");
+        };
         token::store(&v, "hanzo", &id, &fresh).unwrap();
 
         // A LATER PROCESS — its own config, the same vault — reads the fresh
@@ -1632,6 +1713,58 @@ mod tests {
         let (still, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(still.to_string(), ORG);
         assert_eq!(tok.access_token, jwt("hanzo", "z"));
+    }
+
+    /// IAM moves a founder into the org they found: the same person, re-keyed from
+    /// `hanzo/<name>` to `<org>/<name>`. The refresh is followed, not refused — the
+    /// credential is filed under the identity it names, the old key is retired, and
+    /// the active pointer moves with the person.
+    #[test]
+    fn a_founder_moved_into_their_org_is_followed() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "alice"))).unwrap();
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+
+        let Adopted::Moved(to, fresh) = adopted("hanzo", &id, tokens(&jwt("acme", "alice"))).unwrap()
+        else {
+            panic!("a founder's move was not followed");
+        };
+        assert_eq!(to.to_string(), "acme/alice");
+        moved_in(&v, &mut c, "hanzo", &id, &to, &fresh).unwrap();
+
+        let (now, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(now.to_string(), "acme/alice");
+        assert_eq!(tok.access_token, fresh.access_token);
+        let held: Vec<String> = list(&c, "hanzo").iter().map(|i| i.to_string()).collect();
+        assert_eq!(held, vec!["acme/alice".to_string()]);
+        assert!(token::take(&v, "hanzo", &id).unwrap().is_none(), "the old key still holds a secret");
+    }
+
+    /// A moved identity that was not the active one stays not active: the pointer
+    /// follows the person it named, and names nobody new.
+    #[test]
+    fn moving_an_inactive_identity_leaves_the_active_one_alone() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "alice"))).unwrap();
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        let alice = ident("hanzo/alice");
+        moved_in(&v, &mut c, "hanzo", &alice, &ident("acme/alice"), &tokens(&jwt("acme", "alice"))).unwrap();
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
+    }
+
+    /// Only the same person is followed, and never into or out of SuperAdmin.
+    #[test]
+    fn only_the_same_person_outside_superadmin_is_followed() {
+        let alice = ident("hanzo/alice");
+        let bob = tokens(&claims_jwt(r#"{"owner":"acme","name":"bob","sub":"u-1"}"#));
+        assert!(adopted("hanzo", &alice, bob).is_err(), "a different name was followed");
+        let nobody = tokens(&claims_jwt(r#"{"owner":"acme","name":"alice"}"#));
+        assert!(adopted("hanzo", &alice, nobody).is_err(), "a credential stating no person was followed");
+        assert!(adopted("hanzo", &alice, tokens(&jwt("admin", "alice"))).is_err(), "a refresh made someone a SuperAdmin");
+        assert!(
+            adopted("hanzo", &ident("admin/alice"), tokens(&jwt("acme", "alice"))).is_err(),
+            "a SuperAdmin was moved out of admin by a refresh"
+        );
     }
 
     /// There is ONE public accessor for the active credential and it is `async`,
