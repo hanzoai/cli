@@ -80,7 +80,9 @@ pub enum Ty {
     Json,
     /// A schema UNION that admits a string beside JSON shapes (`anyOf: [string,
     /// object, array]`): the value is sent as TEXT, unless it parses as a JSON
-    /// object or array, which is sent as that value.
+    /// object or array, which is sent as that value. `genproduct` emits it only
+    /// when the document declares such a field, and today's declares none.
+    #[allow(dead_code)]
     Union,
 }
 

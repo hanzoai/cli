@@ -90,6 +90,27 @@ fn status_signed_out_refuses_and_never_shows_an_empty_fleet() {
         .stdout(predicate::str::contains("all clear").not());
 }
 
+/// A bare `hanzo` is the coding session, like `hanzo code`: it reaches for the
+/// `dev` agent (here missing, so it says how to install it) instead of printing
+/// the help page, which `hanzo --help` still prints.
+#[test]
+fn a_bare_hanzo_starts_the_coding_agent() {
+    let home = tmp();
+    let empty_path = tmp();
+    let out = hanzo()
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .env("PATH", empty_path.path())
+        .write_stdin("")
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    assert!(stderr.contains("the `dev` coding agent is not installed"), "{stderr}");
+    assert!(stderr.contains("hanzo.sh"), "the error names the installer: {stderr}");
+    assert!(!stdout.contains("SYNOPSIS"), "a bare hanzo printed the help page: {stdout}");
+}
+
 /// `--help` names every major resource the CLI ships (the resource-noun tree),
 /// and the old top-level verbs are GONE.
 #[test]
