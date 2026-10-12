@@ -1296,5 +1296,6 @@ answers (5 to 30 s). So:
   request's tool definitions fall from 53 (121 KB) to 12 (44 KB), and the 30 Hanzo tools cost a search when one is
   used. A model off that wire keeps the client's default.
 - **The kit and the cloud session are read together** (`code/mod.rs`), the session for `LINK_WAIT` (2 s) at most: a
-  slow cloud costs a run its link, never its first model call. The kit's wait is 2 s, the end-of-run price list's 1 s
-  and the cloud meter's 1.5 s, since the process does not end until the block is printed.
+  slow cloud costs a run its link, never its first model call. The kit's wait is 2 s. The end-of-run block asks the
+  cloud (the price list, 1 s; the meter, 1.5 s) only when stdout is a terminal: a script's process ends when the agent
+  does (Claude Code, `after the result` 0.9 s median through `hanzo code` against 0.08 s bare).
