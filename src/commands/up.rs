@@ -39,6 +39,7 @@ use crate::config::Config;
 use crate::image;
 
 pub mod compute;
+pub mod savings;
 pub mod tui;
 
 /// The VM's shape and what it runs — one value through every layer, so the

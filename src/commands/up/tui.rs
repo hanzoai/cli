@@ -4,6 +4,7 @@
 //! - [3] Local Models & Zen Engine (Qwen 3+ series, VRAM, context, inference)
 //! - [4] Cloud App Services (IAM, KMS, Gateway, Storage, PubSub, Router, MicroVM)
 //! - [5] Usage & Quota (Tokens, Request Meters, Throughput, Latencies)
+//! - [6] Savings (spend, cache and Kai, measured apart from estimated; `savings.rs`)
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -35,16 +36,18 @@ pub enum DashboardView {
     LocalModels,
     CloudServices,
     Usage,
+    Savings,
 }
 
 impl DashboardView {
-    pub fn all() -> [DashboardView; 5] {
+    pub fn all() -> [DashboardView; 6] {
         [
             DashboardView::Compute,
             DashboardView::Sandboxes,
             DashboardView::LocalModels,
             DashboardView::CloudServices,
             DashboardView::Usage,
+            DashboardView::Savings,
         ]
     }
 
@@ -55,6 +58,7 @@ impl DashboardView {
             DashboardView::LocalModels => "3: Local Models",
             DashboardView::CloudServices => "4: Cloud Services",
             DashboardView::Usage => "5: Usage & Quota",
+            DashboardView::Savings => "6: Savings",
         }
     }
 
@@ -65,6 +69,7 @@ impl DashboardView {
             DashboardView::LocalModels => "Local LLMs, Zen engines & accelerated model runtimes",
             DashboardView::CloudServices => "Unified cloud subsystems, microVMs & zero-trust transport",
             DashboardView::Usage => "Resource consumption, inference tokens & quota limits",
+            DashboardView::Savings => "Usage and savings, measured vs estimated",
         }
     }
 }
@@ -196,6 +201,9 @@ pub struct App {
     // [1] Compute
     pub compute: super::compute::Board,
 
+    // [6] Savings
+    pub savings: super::savings::Board,
+
     // [3] Local Models
     pub local_models: Vec<LocalModel>,
     pub selected_model_row: usize,
@@ -256,6 +264,7 @@ impl App {
             global_rules: Self::default_global_rules(),
 
             compute: super::compute::Board::default(),
+            savings: super::savings::Board::default(),
 
             local_models: Self::seed_local_models(spark_live, evo_live, router_live),
             selected_model_row: 0,
@@ -1159,6 +1168,7 @@ impl App {
                 FocusedPane::Detail => self.previous_detail_row(),
             },
             DashboardView::Compute => self.compute.previous(),
+            DashboardView::Savings => {}
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
                     if self.selected_model_row == 0 {
@@ -1196,6 +1206,7 @@ impl App {
                 FocusedPane::Detail => self.next_detail_row(),
             },
             DashboardView::Compute => self.compute.next(),
+            DashboardView::Savings => {}
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
                     self.selected_model_row = (self.selected_model_row + 1) % self.local_models.len();
@@ -1496,6 +1507,7 @@ impl App {
     }
 
     pub fn refresh_all(&mut self) {
+        self.savings.refresh();
         let live = Self::discover_host_agents();
         if !live.is_empty() {
             self.sandboxes = live;
@@ -1525,6 +1537,7 @@ pub fn run_dashboard() -> Result<()> {
     // Only the interactive console reads the machine and beats; `sbx ls` and
     // friends build an App to print from and must not.
     app.compute = super::compute::Board::start();
+    app.savings = super::savings::Board::start();
     let res = run_app_loop(&mut terminal, &mut app);
 
     disable_raw_mode().ok();
@@ -1541,6 +1554,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
     loop {
         app.poll_telemetry();
         app.compute.poll();
+        app.savings.poll();
         terminal.draw(|f| ui(f, app))?;
 
         let timeout = tick_rate
@@ -1556,12 +1570,13 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                         | (_, KeyCode::Esc) => {
                             app.should_quit = true;
                         }
-                        // View shortcuts (1-5)
+                        // View shortcuts (1-6)
                         (_, KeyCode::Char('1')) => app.set_view(DashboardView::Compute),
                         (_, KeyCode::Char('2')) => app.set_view(DashboardView::Sandboxes),
                         (_, KeyCode::Char('3')) => app.set_view(DashboardView::LocalModels),
                         (_, KeyCode::Char('4')) => app.set_view(DashboardView::CloudServices),
                         (_, KeyCode::Char('5')) => app.set_view(DashboardView::Usage),
+                        (_, KeyCode::Char('6')) => app.set_view(DashboardView::Savings),
 
                         // View cycling
                         (_, KeyCode::Char('[')) | (_, KeyCode::Char('h')) => app.previous_view(),
@@ -1602,11 +1617,11 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                             }
                             _ => {}
                         },
-                        (_, KeyCode::Char('t')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.toggle_active_tab();
-                            }
-                        }
+                        (_, KeyCode::Char('t')) => match app.current_view {
+                            DashboardView::Sandboxes => app.toggle_active_tab(),
+                            DashboardView::Savings => app.savings.cycle(),
+                            _ => {}
+                        },
                         (_, KeyCode::Char('d')) => {
                             if app.current_view == DashboardView::LocalModels {
                                 app.download_selected_model();
@@ -1667,7 +1682,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                                 DashboardView::LocalModels => {
                                     app.launch_selected_model();
                                 }
-                                DashboardView::Compute => {}
+                                DashboardView::Compute | DashboardView::Savings => {}
                                 DashboardView::CloudServices => {
                                     if let Some(svc) = app.cloud_services.get(app.selected_service_row) {
                                         app.set_status(format!("→ Service details: {} ({})", svc.name, svc.subsystem));
@@ -1722,6 +1737,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         DashboardView::LocalModels => render_local_models_view(f, chunks[2], app),
         DashboardView::CloudServices => render_cloud_services_view(f, chunks[2], app),
         DashboardView::Usage => render_usage_view(f, chunks[2], app),
+        DashboardView::Savings => super::savings::render(f, chunks[2], &app.savings),
     }
 
     render_footer(f, chunks[3], app);
@@ -2711,7 +2727,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         DashboardView::LocalModels => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("1-5", Style::default().fg(Color::Cyan)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
             Span::styled("[/]", Style::default().fg(Color::Cyan)),
             Span::styled(" tab  ", Style::default().fg(Color::DarkGray)),
@@ -2733,17 +2749,29 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         DashboardView::Compute => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("1-5", Style::default().fg(Color::Cyan)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
             Span::styled(" machine  ", Style::default().fg(Color::DarkGray)),
             Span::styled("hanzo link", Style::default().fg(Color::Cyan)),
             Span::styled(" adds one", Style::default().fg(Color::DarkGray)),
         ],
+        DashboardView::Savings => vec![
+            Span::styled("^c/q", Style::default().fg(Color::Cyan)),
+            Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
+            Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[/]", Style::default().fg(Color::Cyan)),
+            Span::styled(" prev/next  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("t", Style::default().fg(Color::Cyan)),
+            Span::styled(" range  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("r", Style::default().fg(Color::Cyan)),
+            Span::styled(" refresh", Style::default().fg(Color::DarkGray)),
+        ],
         _ => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("1-5", Style::default().fg(Color::Cyan)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
             Span::styled("[/]", Style::default().fg(Color::Cyan)),
             Span::styled(" prev/next  ", Style::default().fg(Color::DarkGray)),
@@ -2810,10 +2838,34 @@ mod tests {
         assert_eq!(app.current_view, DashboardView::Usage);
 
         app.next_view();
+        assert_eq!(app.current_view, DashboardView::Savings);
+
+        app.next_view();
         assert_eq!(app.current_view, DashboardView::Compute);
 
         app.previous_view();
+        assert_eq!(app.current_view, DashboardView::Savings);
+
+        app.previous_view();
         assert_eq!(app.current_view, DashboardView::Usage);
+    }
+
+    #[test]
+    fn test_savings_page_is_view_six_and_t_steps_its_range() {
+        use ratatui::backend::TestBackend;
+        assert_eq!(DashboardView::all().len(), 6);
+        assert_eq!(DashboardView::Savings.title(), "6: Savings");
+        let mut app = App::new();
+        app.set_view(DashboardView::Savings);
+        let mut terminal = Terminal::new(TestBackend::new(136, 36)).unwrap();
+        terminal.draw(|f| ui(f, &app)).unwrap();
+        let text: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        for want in ["6: Savings", "hanzo cloud · 24h", "local kai-gateway", " range ", " refresh"] {
+            assert!(text.contains(want), "missing {want:?}");
+        }
+        assert_eq!(app.savings.range, 0);
+        app.savings.cycle();
+        assert_eq!(crate::commands::up::savings::RANGES[app.savings.range], "7d");
     }
 
     #[test]

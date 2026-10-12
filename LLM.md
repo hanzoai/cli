@@ -255,6 +255,30 @@ not configured: the listeners of whatever holds the GPU (nvidia compute-app pids
 their parents) plus :8000/:30000, read as vLLM or SGLang Prometheus. Cloud reads run
 on their own task with a 10s ceiling: a slow API never stalls the local board.
 
+**Savings: what a session used, read three ways and never added together**
+(`commands/savings.rs` shared; `code/summary.rs` the end-of-session block;
+`up/savings.rs` console page 6). *Reported* tokens are what a backend's own stream
+disclosed — headless runs only (Claude `result`, dev `turn.completed`); an interactive
+run is the tool's own screen and reports nothing. *Listed price* is those tokens at
+`GET {api}/v1/models` (`pricing.prompt`, `pricing.completion`,
+`pricing.rates.input_cache_read|write`; same candidate-id rules as kai-gateway's
+`prices.ts`): an estimate, `$0.00` for a model the list marks `free` (`enso-auto`,
+the default), no dollars for a model it does not name. Claude counts cache tokens
+apart from input and dev/codex inside it (`Tally`, `Ended.apart`). *Metered* is
+`GET /v1/usage/summary?range=custom&start&end` for the session window, asked only
+for a routed run that reported nothing, and labelled org-wide (it includes other
+sessions) and possibly lagging. A run on the backend's own account (`--no-route`,
+Cursor, Antigravity: `resolve_routing` always `Inherit` for those two, and
+`External::build` attaches no MCP) says "not observed". The cloud summary is read
+tolerantly (`Llm::of`): `cacheReadTokens`, `cacheWriteTokens`, `cachedShare` (a
+fraction), `cacheSavedCents` and a `kai` block are taken from `llm` or the top of
+the document when present and omitted when not, so the console prints "cache: not
+reported by this cloud" rather than a zero. Console page 6 also scans kai-gateway's
+default ports 8787-8793 every 2s for `GET /dashboard/savings?format=json&from=` and
+keeps its MEASURED columns apart from its ESTIMATED counterfactual (own colour).
+`t` steps the range (24h, 7d, 30d), `r` reads again. `hanzo usage summary` stays the
+generated command and prints JSON; the repo has no table formatter for product ops.
+
 **`hanzo link` is the one way to link a computer** (`commands/link.rs`, `link/`).
 Hanzo ZT is the network: hanzozt/zt, an OpenZiti fork — not ZeroTier, not WireGuard.
 Controller `https://zt-api.hanzo.ai`, router `edge.zt.hanzo.ai:3022`. `hanzo net` is
