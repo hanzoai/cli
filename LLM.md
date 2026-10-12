@@ -1289,8 +1289,8 @@ answers (5 to 30 s). So:
 
 - **The toolset is attached through `hanzo __mcp -- hanzo-mcp …`** (`commands/code/mcp.rs`, answered before the command
   tree is built). The proxy answers the handshake and the lists from `~/.hanzo/mcp/<key>.json`, owner-only, and starts
-  the real server on the first call that needs it. A first session, or one after the server changed (its path,
-  modification time and size are in the key) or 30 days, starts it at once as before and keeps what it said. Warm, the
+  the real server on the first call that needs it. A first session, or one after the server changed (its name, size and
+  modification time are in the key, not its path: a link or a bind mount is the same server) or 30 days, starts it at once as before and keeps what it said. Warm, the
   agent's first event came at 0.4 s. It forwards bytes to the one command it was given and widens nothing.
 - **Claude Code defers the toolset's schemas** (`ENABLE_TOOL_SEARCH=true`, `claude.rs`), on the Anthropic wire only: the
   request's tool definitions fall from 53 (121 KB) to 12 (44 KB), and the 30 Hanzo tools cost a search when one is
