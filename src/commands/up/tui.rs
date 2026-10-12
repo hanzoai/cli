@@ -419,7 +419,7 @@ impl App {
             let is_claude = (cmd.contains("claude -c") || cmd.contains("claude --dangerously") || cmd.contains("/claude/versions/"))
                 && !cmd.contains("/opt/homebrew/bin/zsh");
             let is_codex = cmd.contains("codex -c") || cmd.contains("features.code_mode_host");
-            let is_hanzo = (cmd.contains("hanzo code") || cmd.contains("hanzo run") || cmd.contains("hanzo dev"))
+            let is_hanzo = cmd.contains("hanzo dev")
                 && !cmd.contains("hanzo sbx") && !cmd.contains("grep");
 
             if (is_claude || is_codex || is_hanzo) && !cmd.contains("python3") && !cmd.contains("node scripts/serve.mjs") {

@@ -206,7 +206,7 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
 /// `--all` is a COMPLETE sign-out: it also drops any stored provider
 /// model-credentials (OpenAI/Anthropic/`hk-`) and resets the provider selection
 /// to the gateway default. Those keys are not brand-scoped, so only the default
-/// brand clears them — `hanzo code` uses the default brand.
+/// brand clears them — `hanzo dev` uses the default brand.
 ///
 /// Signing out ENDS THE SESSION, which means telling IAM: the refresh token this
 /// client holds lives 30 days, so a logout that only forgot the local copy left a

@@ -110,7 +110,7 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   product's operations, generated from the same contract the API, SDKs and\n\
          \x20   MCP tools serve.\n\n\
          \x20   `hanzo` on its own starts an AI coding session, and `hanzo \"fix the\n\
-         \x20   failing test\"` starts one on that task (`hanzo code` is the same). Sign\n\
+         \x20   failing test\"` starts one on that task (`hanzo dev` is the same). Sign\n\
          \x20   in with `hanzo auth login`; see your money with `hanzo billing balance`\n\
          \x20   and `hanzo usage`.\n\n\
          \x20   `hanzo console` (or `hanzo dashboard`) launches the interactive fleet\n\

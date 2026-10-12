@@ -90,7 +90,7 @@ fn status_signed_out_refuses_and_never_shows_an_empty_fleet() {
         .stdout(predicate::str::contains("all clear").not());
 }
 
-/// A bare `hanzo` is the coding session, like `hanzo code`: it reaches for the
+/// A bare `hanzo` is the coding session, like `hanzo dev`: it reaches for the
 /// `dev` agent (here missing, so it says how to install it) instead of printing
 /// the help page, which `hanzo --help` still prints.
 #[test]
@@ -109,6 +109,26 @@ fn a_bare_hanzo_starts_the_coding_agent() {
     assert!(stderr.contains("the `dev` coding agent is not installed"), "{stderr}");
     assert!(stderr.contains("hanzo.sh"), "the error names the installer: {stderr}");
     assert!(!stdout.contains("SYNOPSIS"), "a bare hanzo printed the help page: {stdout}");
+}
+
+/// `hanzo run` and every `hanzo code` that is not a code-index operation are gone:
+/// each exits 2 with one line naming `hanzo dev`, and starts nothing.
+#[test]
+fn the_retired_launchers_name_hanzo_dev() {
+    for argv in [
+        vec!["run"],
+        vec!["run", "claude"],
+        vec!["run", "--runc", "dev"],
+        vec!["code"],
+        vec!["code", "claude"],
+        vec!["code", "--claude"],
+        vec!["--no-route"],
+    ] {
+        let out = hanzo().args(&argv).assert().failure().code(2);
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        assert!(stderr.contains("hanzo dev") || argv == ["--no-route"], "{argv:?}: {stderr}");
+        assert!(stderr.lines().filter(|l| l.starts_with("error:")).count() == 1, "{argv:?}: {stderr}");
+    }
 }
 
 /// `--help` names every major resource the CLI ships (the resource-noun tree),

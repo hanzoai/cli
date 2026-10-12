@@ -75,7 +75,7 @@ The remaining gaps are elsewhere:
   `Release Matrix` workflow. A version bump that never becomes a release ships
   nothing — main can be current while every install path still serves an old
   build. That is not hypothetical: v1.9.13, v1.9.15, v1.9.16 and v1.9.17 were
-  all tagged while users were still resolving v1.9.12, so `hanzo code` was
+  all tagged while users were still resolving v1.9.12, so `hanzo dev` was
   unreachable for everyone who had not built from source.
 - **Homebrew is a THIRD install path, and for 35 releases nobody moved it.**
   `brew install hanzoai/tap/hanzo` read a formula hand-written at v1.9.18, so
@@ -146,23 +146,35 @@ text elsewhere is under the same rule and was wrong the same way: `--config`'s
 GLOBAL line cited `hanzo cluster list` on every subcommand screen, and the
 product is `clusters`.
 
-**The coding session, and its ONE resolver** — `hanzo code` starts it on one of five
-DISTINCT backends: our own `dev` agent (hanzoai/dev, the DEFAULT), `claude`,
+**The coding session, and its ONE resolver** — `hanzo dev` starts it on one of five
+DISTINCT backends: our own `dev` agent (hanzoai/dev, plain `hanzo dev`), `claude`,
 `codex`, Antigravity (`agy`) and Cursor (`agent` / `cursor`). None is an alias of
-another — naming one runs THAT agent, or fails saying it is not installed.
-
-Four entry spellings, ONE implementation:
+another — naming one runs THAT agent, or fails saying it is not installed. The tool is
+a FLAG of `hanzo dev`, never a word (`dev_args` refuses `hanzo dev claude`).
 
 ```
-hanzo code                 the default backend (dev)
-hanzo code dev             hanzo code --dev        hanzo code --backend dev
-hanzo code claude          hanzo code --claude
-hanzo code codex           hanzo code --codex
-hanzo code agy             hanzo code --agy
-hanzo code cursor          hanzo code --cursor     hanzo code --agent
-hanzo dev                  shorthand for `hanzo code dev`
-hanzo "fix the test"       bare session, default backend
+hanzo dev                  our own agent (the default); a task after it runs headless
+hanzo dev --claude         --codex    --cursor (--agent)    --agy    --backend NAME
+hanzo dev --claude -- -c   args after `--` go to the tool verbatim
+hanzo "fix the test"       bare session, default backend (the reader's configured agent)
 ```
+
+`hanzo code` is NOT a launcher: it is the code index (`search index context file tree
+ask`, the cloud's `/v1/code` product absorbed into a local group with no args of its
+own). `hanzo run` does not exist. `main::retired` refuses each old launching spelling
+(`hanzo run …`; `hanzo code` bare, with a flag, or with a word that is no index verb)
+through clap's own error path (`clap::Error::raw`), one line naming `hanzo dev`; it
+runs after `hoist` and before the parse, because without it `hanzo run claude` would
+fall into the bare grammar as a TASK called "run claude". `hanzo sandbox run` is a
+separate launcher of the same session path, left as it was.
+
+**Routing is direct by default** (`--no-route` is gone, being the default). A third-party
+tool talks straight to the account it is signed in to: `resolve_routing` returns
+`Route::Inherit` and touches no env. `--cloud` (`Options::cloud`) is the opt-in to
+Hanzo's metered models (the credential plan: provider key, bearer, stored Hanzo key).
+`dev` is ours and its account is Hanzo's, so it routes through the gateway when signed in
+without a flag. Antigravity and Cursor have no gateway wire and are always direct. The
+session banner's first line says which: `your account, direct`, or `Hanzo cloud`.
 
 **Connected accounts for the harness.** A native sign-in (`claude`, `codex`,
 `agy`, `cursor`, including `chatgpt` and `agent`) is added to
@@ -180,20 +192,20 @@ ARE how an agent drives a desktop. It is a `Target`, a value passed to the one
 launcher, not a second command with its own flag.
 
 `hanzo agent run` is GONE. Its `--mode code` was a second spelling of `hanzo
-code` — the same options reaching the same `code::run`, differing in nothing —
+dev` — the same options reaching the same `code::run`, differing in nothing —
 and its `--mode desktop` was the only thing it alone could do, which is now
 `hanzo desktop`. Two spellings of one implementation is the duplication this
-tree exists to avoid; `hanzo code` is what a person types.
+tree exists to avoid; `hanzo dev` is what a person types.
 
-They differ in NOTHING but how the backend was written. `backend::select` is the only
-place a backend is resolved, from (positional | flag | `--backend` | default), and
-`main::code_session` is the only launcher; `hanzo dev`'s dispatch arm sets the backend
-and hands straight to it. The one rule for the positional operand: it is the BACKEND if
-it is exactly a backend name, otherwise it is the TASK — so `hanzo code dev` and
-`hanzo code "fix it"` both work with no flag. Naming the backend twice
-(`hanzo code claude --codex`) is REFUSED rather than resolved by a precedence rule
-nobody could remember. If you are adding a spelling, add it to `select`; if you are
-adding a launch path, you are forking the command.
+The spellings differ in NOTHING but how the backend was written. `backend::select` is the
+only place a backend is resolved, from (positional | flag | `--backend` | default), and
+`main::code_session` is the only launcher; `hanzo dev`'s dispatch arm (`dev_args`) names
+our own agent unless a flag names another tool, and hands straight to it. In `select` the
+positional operand is the BACKEND if it is exactly a backend name, otherwise the TASK —
+reachable only on the bare grammar (`hanzo claude "fix it"`), since `hanzo dev` refuses
+the word. Naming the backend twice (`hanzo claude --codex`) is REFUSED rather than
+resolved by a precedence rule nobody could remember. If you are adding a spelling, add it
+to `select`; if you are adding a launch path, you are forking the command.
 
 `dev` and `codex` share one driver (`code/dev.rs` `Agent`) because ours began as a fork
 of the other and they speak the same `-c` overrides and JSONL stream — they differ only
@@ -267,7 +279,7 @@ the default), no dollars for a model it does not name. Claude counts cache token
 apart from input and dev/codex inside it (`Tally`, `Ended.apart`). *Metered* is
 `GET /v1/usage/summary?range=custom&start&end` for the session window, asked only
 for a routed run that reported nothing, and labelled org-wide (it includes other
-sessions) and possibly lagging. A run on the backend's own account (`--no-route`,
+sessions) and possibly lagging. A run on the backend's own account (the default, no `--cloud`;
 Cursor, Antigravity: `resolve_routing` always `Inherit` for those two, and
 `External::build` attaches no MCP) says "not observed". The cloud summary is read
 tolerantly (`Llm::of`): `cacheReadTokens`, `cacheWriteTokens`, `cachedShare` (a
@@ -364,7 +376,7 @@ hanzo link rm NAME                           unpublish
 
 **Fleet presence outlives the session** (`hanzo beat`, `commands/code/target.rs::present`).
 A target is live only while something beats, and the beat was held ONLY inside
-`hanzo code` and `hanzo link` — so a lab box at an idle prompt, or one whose last
+`hanzo dev` and `hanzo link` — so a lab box at an idle prompt, or one whose last
 session ended an hour ago, read OFFLINE to the console and to whatever places the
 next session, while being the least loaded machine in the room. `hanzo beat` is
 that guard standalone: same refreshed-credential loop, same `Sampler`, foreground,
@@ -469,8 +481,8 @@ a capture taken from it could never be re-derived and never be checked.
   `a_reservation_must_name_a_command_that_exists` is the gate.
 - **THE COLLISION LAW: a local command ABSORBS the product of its own name** — one
   law, applied at every level, replacing the three-entry list that used to call the
-  clash a decision (1.9.23). `hanzo code search` is the document's operation,
-  `hanzo code claude` is the hand-written one, and the rule that
+  clash a decision (1.9.23). `hanzo billing invoices` is the document's operation,
+  `hanzo billing balance` is the hand-written one, and the rule that
   settles both is the same: whoever was there first keeps the name. `augment`
   mounts the product's remaining nodes into the local command; `resolve` reads the
   SAME hand-written tree — which is why it takes it as an argument — so a node the
@@ -972,7 +984,7 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
   recognised by SHA-256 only; `host::retire_shared` removes that key and the store in
   `~/.hanzo/cloud/data` on any invocation, and the host refuses it from the environment.
 
-**The session channel** — `hanzo code` is watchable and steerable from the dashboard while it
+**The session channel** — `hanzo dev` is watchable and steerable from the dashboard while it
 runs. One channel, two directions, one transport, one vocabulary.
 
 - **OUT** (`src/commands/code/session.rs`): register on `POST /v1/agents/sessions`, forward each
@@ -984,7 +996,7 @@ runs. One channel, two directions, one transport, one vocabulary.
   constants in `cloud/apps/agents/sessions.go`, already mirrored by `event::Kind::Control`. Naming
   CLI-side synonyms (`interrupt`, `steer`) would be two spellings of one verb, so the wire words
   ARE the type. `hanzo` implements three of the four; `resume` is a no-op against an already-running
-  session (a *paused* session has no process — reopening it is `hanzo code --resume <id>` on the
+  session (a *paused* session has no process — reopening it is `hanzo dev --resume <id>` on the
   machine that holds it).
 
 | Command | Signal | What Claude does | Session after |
@@ -1018,14 +1030,14 @@ runs. One channel, two directions, one transport, one vocabulary.
   HTTPS until the ZAP transport carries its own session crypto.** Both directions ride the one
   `crate::http` seam, so when that lands they move together — there is no second wire to migrate.
 
-**The Claude config home, and the carrier** — `hanzo code claude` and the user's own
+**The Claude config home, and the carrier** — `hanzo dev --claude` and the user's own
 Claude Code are two products sharing one binary. Two modules keep them decomplected;
 both are pure functions of the resolved ROUTE, so every reader agrees without coordinating.
 
 - **`code/home.rs` — whose config home this run uses.** A ROUTED run
   (`Route::Via`) relocates `CLAUDE_CONFIG_DIR` to `~/.hanzo/claude`, because that is
   when a saved `/model` could outrank `ANTHROPIC_MODEL` and when Hanzo's injected
-  tiers could leak back out. `--no-route` (`Route::Inherit`) and `FailClosed` keep
+  tiers could leak back out. A direct run (`Route::Inherit`) and `FailClosed` keep
   `~/.claude` — on Linux the account the flag promises IS a file in that home
   (`.credentials.json`), so relocating would hand the user a login prompt instead of
   the pass-through. `home::relocate` = "must we set the env var"; `home::of` = "which
@@ -1040,7 +1052,7 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
   `--settings modelOverrides` overlay rewrites it back to the zen id before the
   request leaves the process — verified live: Claude displays
   `model claude-sonnet-4-6[1m]` while the gateway receives `zen5`. The overlay rides
-  the RUN, never the seeded home: persisted, it would rewrite a `--no-route` or
+  the RUN, never the seeded home: persisted, it would rewrite a direct or
   direct-Anthropic session's model to a zen id and 404 against api.anthropic.com.
   Requires Claude Code v2.1.200+.
   - The table also fills every `ANTHROPIC_DEFAULT_*_MODEL` slot. This is not
@@ -1279,10 +1291,10 @@ a projection that repairs its source hides the defect at the one place it can be
   name. The CLI must not rename it locally: a projection that improves its source's
   vocabulary is a projection nobody can check against the source.
 
-## `hanzo code` startup, measured (2026-10-12)
+## `hanzo dev` startup, measured (2026-10-12)
 
 What a session waits for before its first model call, from hanzo-inc/kai `benchmarks/coding` (Claude Code, 75 attempts
-an arm, a task each of five kinds, in a jail with a fresh home): through `hanzo code` the agent's first event came at
+an arm, a task each of five kinds, in a jail with a fresh home): through `hanzo dev` the agent's first event came at
 15 s against 0.8 s run bare, and the whole 13 s was the Hanzo toolset. An agent holds its first call until every MCP
 server it was handed has answered, and `hanzo-mcp` is a Python process that imports the cloud client before it
 answers (5 to 30 s). So:
@@ -1298,4 +1310,4 @@ answers (5 to 30 s). So:
 - **The kit and the cloud session are read together** (`code/mod.rs`), the session for `LINK_WAIT` (2 s) at most: a
   slow cloud costs a run its link, never its first model call. The kit's wait is 2 s. The end-of-run block asks the
   cloud (the price list, 1 s; the meter, 1.5 s) only when stdout is a terminal: a script's process ends when the agent
-  does (Claude Code, `after the result` 0.9 s median through `hanzo code` against 0.08 s bare).
+  does (Claude Code, `after the result` 0.9 s median through `hanzo dev` against 0.08 s bare).

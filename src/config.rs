@@ -106,7 +106,7 @@ pub struct Config {
     #[serde(default)]
     pub wallet: WalletState,
 
-    /// `hanzo code` defaults (the cloud-link setting; on by default).
+    /// `hanzo dev` defaults (the cloud-link setting; on by default).
     #[serde(default)]
     pub code: CodeState,
 
@@ -150,7 +150,7 @@ pub struct AuthState {
     /// Every identity signed in on this machine (metadata only — never secrets).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub identities: Vec<StoredIdentity>,
-    /// The active MODEL provider for `hanzo code` routing — "hanzo" (the gateway),
+    /// The active MODEL provider for `hanzo dev` routing — "hanzo" (the gateway),
     /// "openai", or "anthropic". NON-SECRET: it only NAMES which credential to
     /// use; the credential itself is filed in the Vault (`iam::provider`). Set by
     /// the login picker / `hanzo auth login --provider`. `None` ⇒ the gateway default.
@@ -173,11 +173,11 @@ pub struct StoredIdentity {
     pub name: String,
 }
 
-/// Persisted defaults for `hanzo code`. NON-SECRET.
+/// Persisted defaults for `hanzo dev`. NON-SECRET.
 ///
 /// `link` streams a coding session to the user's OWN Hanzo cloud — the org is
 /// derived server-side from the JWT `owner` claim, the CLI never sends one. It
-/// is ON by default: a signed-in `hanzo code` links unless the user opts out.
+/// is ON by default: a signed-in `hanzo dev` links unless the user opts out.
 /// Opt out per-invocation with `--no-link`, or persist the opt-out here with
 /// `link = false`. The default only affects SIGNED-IN users: the privacy gate
 /// in `commands::code::run` is structural and unchanged — an UNAUTHENTICATED run
@@ -191,7 +191,7 @@ pub struct StoredIdentity {
 #[serde(default)]
 pub struct CodeState {
     pub link: bool,
-    /// The Claude theme `hanzo code claude` applies by default. "auto" honors the
+    /// The Claude theme `hanzo dev --claude` applies by default. "auto" honors the
     /// user's light/dark preference — Alucard (light Dracula) for a light theme,
     /// Dracula (dark) otherwise. Or name one ("dracula"/"alucard"); "none" disables.
     /// Overridden per-invocation with `--theme`. The user's own theme is restored
@@ -319,7 +319,7 @@ impl Config {
     /// it — there is deliberately no bare `save`.
     ///
     /// The config file is a shared mutable PLACE: several `hanzo` processes write
-    /// it at once (a `hanzo code` migrating a legacy credential in one terminal
+    /// it at once (a `hanzo dev` migrating a legacy credential in one terminal
     /// while you run `hanzo auth login` in another). A load-mutate-save against a
     /// stale in-memory snapshot silently reverts the other process's write, and
     /// for the auth index that means landing on a principal you did not choose —
@@ -397,7 +397,7 @@ impl Default for SdkPaths {
 mod tests {
     use super::*;
 
-    /// Link-by-default: a fresh config links a signed-in `hanzo code`.
+    /// Link-by-default: a fresh config links a signed-in `hanzo dev`.
     #[test]
     fn code_link_defaults_on() {
         assert!(CodeState::default().link);

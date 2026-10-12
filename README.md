@@ -19,7 +19,7 @@ curl -fsSL https://hanzo.sh | sh
 One install line, and it is the same one every Hanzo surface prints. It resolves the
 release asset for your platform (linux · macOS on amd64 · arm64, Windows on amd64),
 verifies its sha256, and puts `hanzo` in `~/.local/bin` — along with `hanzo-mcp` (the
-MCP server) and `dev` (the coding agent `hanzo code` runs). Re-run to upgrade.
+MCP server) and `dev` (the coding agent `hanzo dev` runs). Re-run to upgrade.
 
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
 "fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh | sh -s -- hanzo`.
@@ -57,24 +57,33 @@ subcommands and stop. A first word the CLI does not recognise is read as the tas
 under the name people type first. Builds before it (npm 8.5.156, brew 1.9.57) read
 `hanzo login` as a task, so `hanzo auth login` is the form every channel answers.
 
-## Coding — bare `hanzo`
+## Coding — `hanzo dev`
 
-`hanzo` wraps a local coding agent as a session-aware, resumable, portable object: the
-Hanzo MCP toolset is attached, model calls route through your metered Hanzo cloud, and a
-signed-in session streams live to mission-control. Auto-approve is on by default; the
-repo's own `.mcp.json` is trust-gated off unless you opt in.
+`hanzo dev` is the one launcher. It wraps a local coding agent as a session-aware,
+resumable, portable object: the Hanzo MCP toolset is attached and a signed-in session
+streams live to mission-control. Auto-approve is on by default; the repo's own
+`.mcp.json` is trust-gated off unless you opt in.
 
-The default backend is `dev`, our own agent — `curl -fsSL https://hanzo.sh | sh` installs
-it. `--backend claude` and `--backend codex` drive other agents you already have.
+Plain `hanzo dev` runs our own Hanzo Dev agent — `curl -fsSL https://hanzo.sh | sh`
+installs it. Another tool is a flag: `--claude`, `--codex`, `--cursor` (`--agent`) or
+`--agy`. A third-party tool talks straight to the account it is already signed in to;
+`--cloud` runs it on Hanzo's metered models instead. Hanzo Dev's account is Hanzo's, so
+it uses the cloud when you are signed in.
 
 ```bash
-hanzo --model enso-ultra "refactor the auth middleware"
-hanzo --backend dev "port this module to async"
-hanzo --resume <session-id>          # continue a prior session
-hanzo --ask "…"                      # confirm each action (alias: --safe)
-hanzo --no-link "…"                  # keep it local, don't stream to cloud
-hanzo --no-route "…"                 # use the backend's own model account
+hanzo dev "port this module to async"       # our own agent, headless on that task
+hanzo dev --claude "fix the failing test"   # Claude Code, on your own Claude account
+hanzo dev --claude -- -c                    # args after `--` go to the tool
+hanzo dev --codex --cloud "…"               # Codex on Hanzo's metered models
+hanzo dev --model enso-ultra "refactor the auth middleware"
+hanzo dev --resume <session-id>             # continue a prior session
+hanzo dev --ask "…"                         # confirm each action (alias: --safe)
+hanzo dev --no-link "…"                     # keep it local, don't stream to cloud
 ```
+
+`hanzo code` is the code index (`search`, `index`, `context`, `file`, `tree`, `ask`),
+not a launcher. `hanzo code …` and `hanzo run …` as launchers are gone: they answer
+with the `hanzo dev` line to use.
 
 Zen models (`enso`, `enso-ultra`, `enso-flash`, `zen5-coder`, …) are Hanzo's own
 family; the gateway is the sole authority on the model catalog.
