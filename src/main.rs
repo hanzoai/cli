@@ -838,6 +838,15 @@ async fn main() -> Result<()> {
     if std::env::var_os("HANZO_LOGIN_FD").is_some() {
         return iam::oauth::serve_detached_menu().await;
     }
+    // The lazy MCP proxy a coding agent is handed in place of hanzo-mcp
+    // (`commands::code::mcp`). It runs before the command tree is built: the agent
+    // waits on it, and the tree is not needed to forward a pipe.
+    {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        if argv.first().map(String::as_str) == Some("__mcp") {
+            return commands::code::mcp::main(&argv[1..]).await;
+        }
+    }
     // `hanzo --help` or `hanzo help` prints the root man page — NAME/SYNOPSIS/
     // GROUPS/COMMANDS, one line per product, like a proper cloud CLI. A truly bare
     // `hanzo` is the coding session, the same as `hanzo code`. Everything else

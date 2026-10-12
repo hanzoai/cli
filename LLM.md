@@ -1278,3 +1278,23 @@ a projection that repairs its source hides the defect at the one place it can be
   fix is upstream in zip's translate, which should give the artifact a conventional
   name. The CLI must not rename it locally: a projection that improves its source's
   vocabulary is a projection nobody can check against the source.
+
+## `hanzo code` startup, measured (2026-10-12)
+
+What a session waits for before its first model call, from hanzo-inc/kai `benchmarks/coding` (Claude Code, 75 attempts
+an arm, a task each of five kinds, in a jail with a fresh home): through `hanzo code` the agent's first event came at
+15 s against 0.8 s run bare, and the whole 13 s was the Hanzo toolset. An agent holds its first call until every MCP
+server it was handed has answered, and `hanzo-mcp` is a Python process that imports the cloud client before it
+answers (5 to 30 s). So:
+
+- **The toolset is attached through `hanzo __mcp -- hanzo-mcp …`** (`commands/code/mcp.rs`, answered before the command
+  tree is built). The proxy answers the handshake and the lists from `~/.hanzo/mcp/<key>.json`, owner-only, and starts
+  the real server on the first call that needs it. A first session, or one after the server changed (its path,
+  modification time and size are in the key) or 30 days, starts it at once as before and keeps what it said. Warm, the
+  agent's first event came at 0.4 s. It forwards bytes to the one command it was given and widens nothing.
+- **Claude Code defers the toolset's schemas** (`ENABLE_TOOL_SEARCH=true`, `claude.rs`), on the Anthropic wire only: the
+  request's tool definitions fall from 53 (121 KB) to 12 (44 KB), and the 30 Hanzo tools cost a search when one is
+  used. A model off that wire keeps the client's default.
+- **The kit and the cloud session are read together** (`code/mod.rs`), the session for `LINK_WAIT` (2 s) at most: a
+  slow cloud costs a run its link, never its first model call. The kit's wait is 2 s, the end-of-run price list's 1 s
+  and the cloud meter's 1.5 s, since the process does not end until the block is printed.
