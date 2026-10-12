@@ -48,6 +48,7 @@ pub use network::Caller;
 use crate::commands::code::event::Status;
 use crate::commands::code::session::SessionClient;
 use crate::commands::code::{context, target};
+use crate::commands::entitlement;
 use crate::commands::share;
 use crate::config::Config;
 use crate::iam::paths::DEFAULT_BRAND;
@@ -341,7 +342,12 @@ async fn serve(client: &SessionClient, id: Option<&str>, sh: &mut share::Share) 
             // is: the tunnel already answers at this URL whether or not cloud
             // records it.
             if let Err(e) = client.publish_terminal(id, &url).await {
-                crate::warn(&format!("could not publish the terminal URL ({e})"));
+                match entitlement::Upgrade::of(&e) {
+                    // The plan keeps no more Tabs open: the shell is still yours and still
+                    // answers at its URL, it is just not shown in the console.
+                    Some(up) => crate::warn(&format!("this shell is not shown as a Tab: {}", up.say())),
+                    None => crate::warn(&format!("could not publish the terminal URL ({e})")),
+                }
             }
             // Follow the shell. Held for exactly this session's lifetime.
             Some(follow(client.clone(), id.to_string()))

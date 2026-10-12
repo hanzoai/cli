@@ -38,6 +38,8 @@ impl Recorded {
 struct Config {
     /// If set, every request gets this status (to prove non-2xx handling).
     force_status: Option<u16>,
+    /// The body of that forced answer, when it is not the generic one.
+    force_body: Option<String>,
     /// Status string returned by GET /v1/agents/sessions/:id.
     get_status: String,
     /// When true, GET/PATCH on a target id returns 404 (target gone / other org),
@@ -76,6 +78,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             force_status: None,
+            force_body: None,
             get_status: "paused".into(),
             targets_missing: false,
             session_get_code: None,
@@ -106,6 +109,11 @@ impl MockCloud {
     /// A mock that answers every request with `code` (error-path tests).
     pub async fn start_status(code: u16) -> MockCloud {
         Self::with(Config { force_status: Some(code), ..Config::default() }).await
+    }
+
+    /// A mock that refuses every request with `code` and this body (a plan's 402).
+    pub async fn start_refusing(code: u16, body: &str) -> MockCloud {
+        Self::with(Config { force_status: Some(code), force_body: Some(body.to_string()), ..Config::default() }).await
     }
 
     /// A mock that 404s a target by id (register still works) — proves the
@@ -257,7 +265,7 @@ async fn serve_conn(
 
 fn respond(cfg: &Config, method: &str, path: &str, bearer: bool) -> (String, String) {
     if let Some(code) = cfg.force_status {
-        return (format!("{code} Error"), r#"{"error":"forced"}"#.to_string());
+        return (format!("{code} Error"), cfg.force_body.clone().unwrap_or_else(|| r#"{"error":"forced"}"#.to_string()));
     }
     // The org's kit, as the caller reads it.
     if method == "GET" && path == "/v1/tool/kit" {

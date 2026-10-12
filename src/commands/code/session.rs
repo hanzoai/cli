@@ -318,6 +318,31 @@ mod tests {
         assert!(r.json().get("status").is_none());
     }
 
+    /// A plan's refusal reaches the caller as a refusal to read, not as a status: the
+    /// register of a wrapped tool on Free, and the publish of a Tab past the plan's.
+    #[tokio::test]
+    async fn a_plans_402_is_an_upgrade_the_caller_can_read() {
+        use crate::commands::entitlement::Upgrade;
+        let accelerate = r#"{"status":402,"code":"upgrade_required","detail":"Accelerating your other coding tools needs a subscription.","feature":"accelerate","plan":"free","upgrade":"dev","url":"https://hanzo.ai/pricing"}"#;
+        let mock = MockCloud::start_refusing(402, accelerate).await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+        let err = client.register("claude", "t", "evo", "/w").await.unwrap_err();
+        let up = Upgrade::of(&err).expect("the register refusal is an upgrade");
+        assert_eq!((up.feature.as_str(), up.plan.as_str(), up.upgrade.as_str()), ("accelerate", "free", "dev"));
+
+        let tabs = r#"{"status":402,"code":"upgrade_required","detail":"Your Pro plan keeps 2 Tabs open and 2 are open.","feature":"tabs","plan":"dev"}"#;
+        let mock = MockCloud::start_refusing(402, tabs).await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+        let err = client.publish_terminal("sess_1", "https://x.share.hanzo.app").await.unwrap_err();
+        assert_eq!(Upgrade::of(&err).unwrap().feature, "tabs");
+
+        // Any other 402 is not an upgrade.
+        let mock = MockCloud::start_refusing(402, r#"{"code":"insufficient_balance","detail":"Add credits"}"#).await;
+        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+        let err = client.register("claude", "t", "evo", "/w").await.unwrap_err();
+        assert!(Upgrade::of(&err).is_none());
+    }
+
     #[tokio::test]
     async fn non_2xx_is_an_error_not_a_silent_success() {
         let mock = MockCloud::start_status(403).await;

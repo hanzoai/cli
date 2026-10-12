@@ -34,6 +34,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Notify;
 
+use crate::commands::entitlement::{self, Standing};
 use crate::commands::savings::{self, int, pct, usd, Llm, Plan};
 use crate::config::Config;
 
@@ -118,6 +119,8 @@ pub struct Estimated {
 /// What the background readers send the page.
 pub enum Update {
     Cloud(Result<Value, String>),
+    /// The caller's rung of the plan table (`GET /v1/entitlement`).
+    Standing(Result<Standing, String>),
     Gateways(Vec<Gateway>),
 }
 
@@ -132,6 +135,8 @@ struct Live {
 pub struct Board {
     pub range: usize,
     pub cloud: Option<Result<Value, String>>,
+    /// What the plan lets the caller do, and how much of it they hold.
+    pub standing: Option<Result<Standing, String>>,
     pub gateways: Vec<Gateway>,
     /// A scan of the gateway ports has finished at least once.
     pub scanned: bool,
@@ -153,6 +158,9 @@ impl Board {
                     let range = RANGES[shared.range.load(Ordering::Relaxed) % RANGES.len()];
                     let query = vec![format!("range={range}")];
                     if tx_cloud.send(Update::Cloud(savings::summary(&mut cfg, &query).await)).is_err() {
+                        break;
+                    }
+                    if tx_cloud.send(Update::Standing(entitlement::read(&mut cfg).await)).is_err() {
                         break;
                     }
                     tokio::select! {
@@ -190,6 +198,7 @@ impl Board {
     pub fn apply(&mut self, update: Update) {
         match update {
             Update::Cloud(r) => self.cloud = Some(r),
+            Update::Standing(r) => self.standing = Some(r),
             Update::Gateways(g) => {
                 self.gateways = g;
                 self.scanned = true;
@@ -300,7 +309,7 @@ fn render_cloud(f: &mut Frame, area: Rect, b: &Board) {
         _ => RANGES[b.range],
     };
     let block = panel(format!(" hanzo cloud · {range} "));
-    let mut lines: Vec<Line> = Vec::new();
+    let mut lines: Vec<Line> = plan_lines(&b.standing);
     match &b.cloud {
         None => lines.push(Line::from(dim("  reading /v1/usage/summary…"))),
         Some(Err(why)) => {
@@ -337,6 +346,39 @@ fn render_cloud(f: &mut Frame, area: Rect, b: &Board) {
         }
     }
     f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+}
+
+/// The caller's plan at the head of the cloud column: the rung, the Tabs held against
+/// the Tabs it keeps, what it lets the caller route, and the way up when something is
+/// full or off. Every figure is the cloud's own; one it did not answer is not shown.
+pub fn plan_lines(standing: &Option<Result<Standing, String>>) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    match standing {
+        // Not read yet, or read from a cloud that states no plan table: say nothing.
+        None | Some(Err(_)) => return lines,
+        Some(Ok(s)) if !s.resolved => {
+            lines.push(Line::from(vec![bold("  plan        ", Color::White), dim("could not be read just now")]));
+            lines.push(Line::from(""));
+            return lines;
+        }
+        Some(Ok(s)) => {
+            let tabs = match s.tabs_limit {
+                -1 => format!("{} Tabs open", s.tabs_used),
+                0 => "no Tabs".to_string(),
+                n => format!("{} of {n} Tabs", s.tabs_used),
+            };
+            let tools = if s.accelerate { "other tools accelerated" } else { "other tools not accelerated" };
+            lines.push(Line::from(vec![
+                bold("  plan        ", Color::White),
+                Span::raw(format!("{} · {tabs} · {tools}", s.name)),
+            ]));
+            if s.tabs_full() || !s.accelerate {
+                lines.push(Line::from(vec![bold("  upgrade     ", Color::Yellow), Span::raw(s.way_up())]));
+            }
+            lines.push(Line::from(""));
+        }
+    }
+    lines
 }
 
 /// A gateway's measured columns, then its estimate; the two are never summed.
@@ -548,6 +590,51 @@ mod tests {
         assert_eq!(RANGES[b.range], "30d");
         b.cycle();
         assert_eq!(RANGES[b.range], "24h", "the ranges wrap");
+    }
+
+    fn text(lines: &[Line]) -> Vec<String> {
+        lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect()
+    }
+
+    fn standing(plan: &str, name: &str, accelerate: bool, limit: i64, used: u64, next: Option<(&str, f64)>) -> Standing {
+        Standing {
+            resolved: true,
+            plan: plan.into(),
+            name: name.into(),
+            accelerate,
+            local_engine: false,
+            local_kai_enso: false,
+            tabs_limit: limit,
+            tabs_used: used,
+            next: next.map(|(n, p)| crate::commands::entitlement::Next { name: n.into(), price: Some(p), contact_sales: false }),
+        }
+    }
+
+    /// The plan heads the cloud column with what the cloud says; the way up appears only
+    /// when something is full or off; nothing is shown for a plan nobody has read.
+    #[test]
+    fn the_plan_heads_the_cloud_column_and_offers_the_way_up_only_when_it_matters() {
+        assert!(plan_lines(&None).is_empty(), "nothing read yet");
+        assert!(plan_lines(&Some(Err("403".into()))).is_empty(), "a cloud that states no plan table says nothing");
+
+        let ok = text(&plan_lines(&Some(Ok(standing("dev", "Pro", true, 2, 1, Some(("Max 5x", 100.0)))))));
+        assert_eq!(ok[0], "  plan        Pro · 1 of 2 Tabs · other tools accelerated");
+        assert_eq!(ok.len(), 2, "room left and accelerating: no upgrade line: {ok:?}");
+
+        let full = text(&plan_lines(&Some(Ok(standing("dev", "Pro", true, 2, 2, Some(("Max 5x", 100.0)))))));
+        assert_eq!(full[1], "  upgrade     Max 5x ($100 a month): https://hanzo.ai/pricing");
+
+        let free = text(&plan_lines(&Some(Ok(standing("free", "Free", false, 0, 0, Some(("Pro", 20.0)))))));
+        assert_eq!(free[0], "  plan        Free · no Tabs · other tools not accelerated");
+        assert!(free[1].contains("Pro ($20 a month)"), "{free:?}");
+
+        let unlimited = text(&plan_lines(&Some(Ok(standing("enterprise", "Enterprise", true, -1, 31, None)))));
+        assert_eq!(unlimited[0], "  plan        Enterprise · 31 Tabs open · other tools accelerated");
+
+        let mut unread = standing("free", "Free", false, 0, 0, None);
+        unread.resolved = false;
+        let t = text(&plan_lines(&Some(Ok(unread))));
+        assert!(t[0].contains("could not be read just now"), "{t:?}");
     }
 
     /// The reader against a gateway that answers as the real one does.

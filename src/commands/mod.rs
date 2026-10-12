@@ -13,6 +13,7 @@ pub mod config;
 pub mod chain;
 pub mod engine;
 pub mod runner;
+pub mod entitlement;
 pub mod savings;
 pub mod scan;
 pub mod status;

@@ -146,6 +146,9 @@ impl Backend for Claude {
             Route::Via(Routing::Gateway { api, token, model, small_fast_model, context_window }) => {
                 cmd.env("ANTHROPIC_BASE_URL", api.trim_end_matches('/'));
                 cmd.env("ANTHROPIC_AUTH_TOKEN", token);
+                // Say what this is: another tool routed through Hanzo. The cloud's
+                // acceleration gate reads it, and refuses it without a subscription.
+                cmd.env("ANTHROPIC_CUSTOM_HEADERS", "X-Hanzo-Accelerate: claude");
                 // The model, every tiering slot Claude resolves subagents/`/compact`
                 // through, and the picker's labels — one pure map from `tier`, so
                 // carrier mapping and slot precedence have exactly one home.
@@ -445,6 +448,8 @@ mod tests {
             .collect();
         assert_eq!(env.get("ANTHROPIC_BASE_URL").map(String::as_str), Some("https://api.hanzo.ai"));
         assert_eq!(env.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str), Some("JWT"));
+        // A routed Claude says what it is, so the cloud's acceleration gate can read it.
+        assert_eq!(env.get("ANTHROPIC_CUSTOM_HEADERS").map(String::as_str), Some("X-Hanzo-Accelerate: claude"));
         assert!(!args.iter().any(|a| a.contains("JWT")), "token must not be in argv");
         // A stray ANTHROPIC_API_KEY must be CLEARED in the child when routing, so our
         // Bearer is the sole credential: never shadowed by the user's own login, and

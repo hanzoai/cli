@@ -55,6 +55,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
 
+use crate::commands::entitlement;
 use crate::config::Config;
 use crate::iam::identity::Identity;
 use crate::iam::provider::{self, Provider};
@@ -474,6 +475,23 @@ pub async fn run(cfg: &mut Config, opts: Options) -> Result<()> {
         do_link = false;
     }
 
+    // Routing another coding tool through Hanzo is a subscription. Ask the plan table
+    // before anything starts, so a person on Free reads one sentence and a link rather
+    // than a refusal mid-session. This is the courtesy and the cloud is the authority:
+    // it refuses the model route and the session itself, so a plan that cannot be read
+    // here (no network, an older cloud, commerce down) is let through to be refused
+    // there if it must be. `--no-route` is the tool on its own account and is free, and
+    // Hanzo's own agent is never asked.
+    if opts.route && kind != BackendKind::Dev && bearer.is_some() {
+        if let Ok(standing) = entitlement::read(cfg).await {
+            if standing.resolved {
+                if let Some(said) = standing.acceleration_refusal() {
+                    return Err(anyhow!(said));
+                }
+            }
+        }
+    }
+
     // Resume: restore cwd + the backend's own resume handle from the local store.
     let (cwd, resume_handle, resume_from) = match &opts.resume {
         Some(raw) => {
@@ -657,7 +675,10 @@ pub async fn run(cfg: &mut Config, opts: Options) -> Result<()> {
             // Fail-open for availability: never block the dev's work on a
             // cloud hiccup — degrade to a local (unlinked) run.
             Ok(Err(e)) => {
-                crate::warn(&format!("could not register session ({e}); continuing locally."));
+                match entitlement::Upgrade::of(&e) {
+                    Some(up) => crate::warn(&format!("this session is not linked: {}", up.say())),
+                    None => crate::warn(&format!("could not register session ({e}); continuing locally.")),
+                }
                 None
             }
             Err(_) => {
