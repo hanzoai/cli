@@ -20,7 +20,7 @@ pub mod monitor;
 pub mod version;
 pub mod up;
 
-// The one coding/agent orchestrator, behind `hanzo code` and `hanzo desktop`.
+// The one coding/agent orchestrator, behind `hanzo dev` and `hanzo desktop`.
 pub mod code;
 
 // Kept resources reachable in the additive model (money, network, provider

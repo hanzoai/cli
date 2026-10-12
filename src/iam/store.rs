@@ -457,7 +457,7 @@ pub(crate) fn add_in(
 /// keyring read can block for as long as a human takes: the OS keychain
 /// auto-locks on idle, and reading it then opens a GUI prompt and waits (the
 /// `keyring` crate sets no timeout). Reading it under the lock would stall EVERY
-/// other `hanzo` process that writes config — including a `hanzo code` whose
+/// other `hanzo` process that writes config — including a `hanzo dev` whose
 /// migration calls `update` — with no explanation and the prompt in another
 /// window. Switching stays instant and never prompts while holding the lock.
 ///
@@ -848,7 +848,7 @@ mod tests {
 
         for want in [ADMIN, ORG, ADMIN] {
             switch_in(&v, &mut c, "hanzo", sel(want)).unwrap();
-            // The `hanzo code` routing bearer, the wallet's cloud-custody bearer
+            // The `hanzo dev` routing bearer, the wallet's cloud-custody bearer
             // and `whoami` all call exactly this.
             let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
             assert_eq!(id.to_string(), want);
@@ -1235,7 +1235,7 @@ mod tests {
     /// RED'S RACE, run for real against one config file on disk.
     ///
     /// Interleaving:
-    ///   A: `hanzo code` starts migrating the legacy credential (in flight)
+    ///   A: `hanzo dev` starts migrating the legacy credential (in flight)
     ///   B: `hanzo auth login` explicitly sets active = hanzo/z, and saves
     ///   A: migration finishes
     ///
@@ -1382,7 +1382,7 @@ mod tests {
     }
 
     /// The migration path writes the keychain too — and it is the one on the
-    /// `hanzo code` critical path, so a stall there is worst of all.
+    /// `hanzo dev` critical path, so a stall there is worst of all.
     #[test]
     fn migration_does_not_touch_the_keychain_under_the_lock() {
         let (v, mut c) = (MemVault::new(), cfg());

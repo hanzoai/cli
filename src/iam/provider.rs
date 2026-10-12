@@ -1,4 +1,4 @@
-//! Model providers a `hanzo code` session can authenticate against, and the
+//! Model providers a `hanzo dev` session can authenticate against, and the
 //! seam that files their API keys.
 //!
 //! A provider KEY is a secret, so it rides the SAME portable credential store as

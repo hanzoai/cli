@@ -3,7 +3,7 @@
 #   systemctl --user enable --now units/hanzo-beat.service
 #   loginctl enable-linger $USER     # beat at boot, before anyone logs in
 #
-# It runs the ONE beat that `hanzo code` and `hanzo link` already hold while they
+# It runs the ONE beat that `hanzo dev` and `hanzo link` already hold while they
 # run — so a box at an idle prompt is not read offline by the console and by
 # whatever is choosing where the next session lands. Nothing else: no shell, no
 # session, one best-effort request every 30 seconds.
