@@ -5,7 +5,10 @@
 //! hanzo.sh is the one implementation of fetching one: platform, asset name,
 //! checksum, second name. Upgrading is running it again, into the directory this
 //! `hanzo` lives in, so the build that answers `hanzo` is the build that was
-//! upgraded.
+//! upgraded. Windows has no `sh`, so there `hanzo` reads the same tool table out
+//! of hanzo.sh and does what it does for each: the release asset
+//! `<binary>-windows-amd64.tar.gz`, checked against its `.sha256`, unpacked,
+//! and swapped in beside the running binary.
 //!
 //! An agent upgrades the way its own file says ([`Upgrade`]): one that ships on
 //! npm (`gemini`, `qwen`, `opencode`, …) is installed under `~/.hanzo`, its
@@ -127,14 +130,100 @@ fn here() -> Result<PathBuf> {
     Ok(exe.parent().context("this binary has no directory")?.to_path_buf())
 }
 
+/// Where the releases are.
+const RELEASES: &str = "https://github.com";
+
+/// One of Hanzo's native tools, as hanzo.sh's table names it.
+#[derive(Debug, PartialEq)]
+struct Native {
+    name: String,
+    repo: String,
+    binary: String,
+}
+
+/// The tool table out of hanzo.sh itself, `TOOLS='<name>:<repo>:<binary>:<second name>…'`:
+/// the one list of Hanzo's native tools, so this side never keeps a second one.
+fn table(script: &str) -> Vec<Native> {
+    let Some(start) = script.find("TOOLS='") else { return Vec::new() };
+    let body = &script[start + 7..];
+    let body = &body[..body.find('\'').unwrap_or(body.len())];
+    body.lines()
+        .filter_map(|row| {
+            let mut f = row.trim().split(':');
+            let (name, repo, binary) = (f.next()?, f.next()?, f.next()?);
+            (!name.is_empty() && repo.contains('/') && !binary.is_empty())
+                .then(|| Native { name: name.into(), repo: repo.into(), binary: binary.into() })
+        })
+        .collect()
+}
+
+/// `<binary>-<platform>.tar.gz` from `tool`'s latest release at `base`, checked
+/// against its `.sha256` before anything is unpacked, then put into `dir` beside
+/// the binary it replaces: a running binary is renamed aside (Windows will not
+/// overwrite one, and lets it be renamed), and the new one moved into its name.
+async fn fetch(client: &reqwest::Client, base: &str, tool: &Native, platform: &str, dir: &Path) -> Result<PathBuf> {
+    use sha2::{Digest, Sha256};
+    let asset = format!("{}-{platform}.tar.gz", tool.binary);
+    let url = format!("{}/{}/releases/latest/download/{asset}", base.trim_end_matches('/'), tool.repo);
+    let get = |u: String| async move {
+        client
+            .get(&u)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .with_context(|| format!("downloading {u}"))?
+            .bytes()
+            .await
+            .with_context(|| format!("reading {u}"))
+    };
+    let sum = get(format!("{url}.sha256")).await?;
+    let want = String::from_utf8_lossy(&sum).split_whitespace().next().unwrap_or_default().to_ascii_lowercase();
+    if want.len() != 64 || !want.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("{asset}.sha256 is not a SHA-256 digest");
+    }
+    let tarball = get(url).await?;
+    let got: String = Sha256::digest(&tarball).iter().map(|b| format!("{b:02x}")).collect();
+    if got != want {
+        bail!("{asset} does not match its checksum (want {want}, got {got})");
+    }
+    let exe = if platform.starts_with("windows") { format!("{}.exe", tool.binary) } else { tool.binary.clone() };
+    let staged = dir.join(format!(".{exe}.new"));
+    let mut found = false;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&tarball[..]));
+    for entry in archive.entries().context("reading the tarball")? {
+        let mut entry = entry.context("reading the tarball")?;
+        if entry.path().ok().and_then(|p| p.file_name().map(|n| n == exe.as_str())) == Some(true) {
+            entry.unpack(&staged).with_context(|| format!("unpacking {exe}"))?;
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        bail!("{asset} holds no {exe}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
+    }
+    let target = dir.join(&exe);
+    let aside = dir.join(format!("{exe}.old"));
+    let _ = std::fs::remove_file(&aside);
+    if target.exists() {
+        std::fs::rename(&target, &aside).with_context(|| format!("moving {} aside", target.display()))?;
+    }
+    std::fs::rename(&staged, &target).with_context(|| format!("installing {}", target.display()))?;
+    // A running binary's old copy cannot be removed on Windows until it exits;
+    // the next upgrade removes it.
+    let _ = std::fs::remove_file(&aside);
+    Ok(target)
+}
+
 pub async fn run(names: Vec<String>) -> Result<()> {
     let plan = plan(&names, installed)?;
     let mut failed = Vec::new();
 
     if !plan.native.is_empty() {
-        if cfg!(windows) {
-            bail!("on Windows, download the release from https://github.com/hanzoai/cli/releases; hanzo.sh is a POSIX installer");
-        }
         let dir = here()?;
         println!("{} {} → {}", "upgrading".bold(), plan.native.join(", "), dir.display());
         let script = reqwest::get(INSTALLER)
@@ -147,18 +236,33 @@ pub async fn run(names: Vec<String>) -> Result<()> {
         if !script.starts_with("#!") {
             bail!("hanzo.sh did not answer with an installer");
         }
-        let status = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(script)
-            .arg("hanzo.sh")
-            .arg("--dir")
-            .arg(&dir)
-            .args(&plan.native)
-            .status()
-            .await
-            .context("running the installer with sh")?;
-        if !status.success() {
-            failed.push(format!("{} ({status})", plan.native.join(", ")));
+        if cfg!(windows) {
+            let tools = table(&script);
+            let client = reqwest::Client::new();
+            for name in &plan.native {
+                let Some(tool) = tools.iter().find(|t| &t.name == name) else {
+                    failed.push(format!("{name} (not in hanzo.sh's table)"));
+                    continue;
+                };
+                match fetch(&client, RELEASES, tool, "windows-amd64", &dir).await {
+                    Ok(bin) => println!("  {} {} → {}", "✓".green(), name, bin.display()),
+                    Err(e) => failed.push(format!("{name} ({e:#})")),
+                }
+            }
+        } else {
+            let status = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .arg("hanzo.sh")
+                .arg("--dir")
+                .arg(&dir)
+                .args(&plan.native)
+                .status()
+                .await
+                .context("running the installer with sh")?;
+            if !status.success() {
+                failed.push(format!("{} ({status})", plan.native.join(", ")));
+            }
         }
     }
 
@@ -262,6 +366,76 @@ mod tests {
         for t in tools() {
             assert_eq!(plan(&names(&[t.name]), |_| false).unwrap().tools, [t]);
         }
+    }
+
+    #[test]
+    fn the_tool_table_is_read_out_of_hanzo_sh() {
+        let script = "#!/bin/sh\nTOOLS='hanzo:hanzoai/cli:hanzo:hanzo-node\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
+        let t = table(script);
+        assert_eq!(t.iter().map(|n| (n.name.as_str(), n.repo.as_str(), n.binary.as_str())).collect::<Vec<_>>(), [
+            ("hanzo", "hanzoai/cli", "hanzo"),
+            ("mcp", "hanzoai/mcp", "hanzo-mcp"),
+            ("dev", "hanzoai/dev", "dev"),
+            ("zt", "hanzozt/zt", "zt"),
+        ]);
+        assert!(table("#!/bin/sh\necho no table\n").is_empty());
+    }
+
+    /// A release server of one asset: the tarball and its `.sha256`, as GitHub serves them.
+    async fn serve(files: Vec<(String, Vec<u8>)>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut c, _)) = l.accept().await else { return };
+                let files = files.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = c.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let (status, body) = files.iter().find(|(p, _)| *p == path).map(|(_, b)| ("200 OK", b.clone())).unwrap_or(("404 Not Found", Vec::new()));
+                    let head = format!("HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
+                    let _ = c.write_all(head.as_bytes()).await;
+                    let _ = c.write_all(&body).await;
+                });
+            }
+        });
+        base
+    }
+
+    fn tarball(name: &str, body: &[u8]) -> Vec<u8> {
+        let mut b = tar::Builder::new(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast()));
+        let mut h = tar::Header::new_gnu();
+        h.set_size(body.len() as u64);
+        h.set_mode(0o755);
+        h.set_cksum();
+        b.append_data(&mut h, name, body).unwrap();
+        b.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_release_asset_is_checked_unpacked_and_swapped_in_beside_the_old_one() {
+        use sha2::{Digest, Sha256};
+        let tool = Native { name: "dev".into(), repo: "hanzoai/dev".into(), binary: "dev".into() };
+        let tgz = tarball("dev.exe", b"new build");
+        let sum: String = Sha256::digest(&tgz).iter().map(|b| format!("{b:02x}")).collect();
+        let path = "/hanzoai/dev/releases/latest/download/dev-windows-amd64.tar.gz";
+        let base = serve(vec![(path.into(), tgz.clone()), (format!("{path}.sha256"), format!("{sum}  dev-windows-amd64.tar.gz\n").into_bytes())]).await;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dev.exe"), b"old build").unwrap();
+        let client = reqwest::Client::new();
+        let bin = fetch(&client, &base, &tool, "windows-amd64", dir.path()).await.unwrap();
+        assert_eq!(bin, dir.path().join("dev.exe"));
+        assert_eq!(std::fs::read(&bin).unwrap(), b"new build");
+        assert!(!dir.path().join(".dev.exe.new").exists());
+
+        // An asset that does not match its checksum is refused, and nothing is replaced.
+        let bad = serve(vec![(path.into(), tarball("dev.exe", b"tampered")), (format!("{path}.sha256"), format!("{sum}  x\n").into_bytes())]).await;
+        let e = fetch(&client, &bad, &tool, "windows-amd64", dir.path()).await.unwrap_err().to_string();
+        assert!(e.contains("does not match its checksum"), "{e}");
+        assert_eq!(std::fs::read(&bin).unwrap(), b"new build");
     }
 
     #[test]
