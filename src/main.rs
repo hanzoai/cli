@@ -1677,9 +1677,10 @@ mod tests {
     /// their resource nouns. (`kms` is NOT here: it is a generated cloud product,
     /// not a removed local verb, so it stays reachable.)
     ///
-    /// `login` is NOT in these lists either, and is the single exception to the
-    /// relocation: signing in is the entry point to everything else, so it keeps a
-    /// top-level name. It aliases `auth login` rather than reimplementing it.
+    /// `login` and `whoami` are NOT in these lists either, and are the two
+    /// exceptions to the relocation: signing in is the entry point to everything
+    /// else, and `hanzo whoami` is what anyone types to check it. Each aliases its
+    /// `auth` verb rather than reimplementing it.
     ///
     /// `dev` and `desktop` are NOT in these lists: starting a session is the CLI's
     /// entry point, so it keeps its own name. `desktop` only points the one
@@ -1696,8 +1697,11 @@ mod tests {
         // it answers where they will reach for it. It is an alias, not a second
         // implementation — the variant dispatches to commands::auth::login, the
         // same function `auth login` reaches, and telemetry labels both "auth".
+        // `whoami` is the second: it is what anyone types to check the first,
+        // and as an unknown word it would start a coding task. It too is an
+        // alias, of commands::auth::show, the function `auth whoami` reaches.
         // Everything else below stays under its noun.
-        for gone in ["logout", "whoami", "switch", "deploy"] {
+        for gone in ["logout", "switch", "deploy"] {
             assert!(
                 !names.iter().any(|n| n == gone),
                 "`{gone}` must no longer be a top-level subcommand"
