@@ -281,7 +281,7 @@ impl CodeArgs {
 enum Commands {
     /// Search, index and read code through the cloud's code index
     ///
-    /// Not a launcher: `hanzo dev` starts every coding session.
+    /// With no index verb (bare, a task, or an agent flag) it is `hanzo dev`.
     Code,
 
     /// Start a coding session: a coding agent with the Hanzo MCP toolset

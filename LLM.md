@@ -146,34 +146,49 @@ text elsewhere is under the same rule and was wrong the same way: `--config`'s
 GLOBAL line cited `hanzo cluster list` on every subcommand screen, and the
 product is `clusters`.
 
-**The coding session, and its ONE resolver** — `hanzo dev` starts it on one of five
-DISTINCT backends: our own `dev` agent (hanzoai/dev, plain `hanzo dev`), `claude`,
-`codex`, Antigravity (`agy`) and Cursor (`agent` / `cursor`). None is an alias of
-another — naming one runs THAT agent, or fails saying it is not installed. The tool is
-a FLAG of `hanzo dev`, never a word (`dev_args` refuses `hanzo dev claude`).
+**The coding session, and its ONE resolver** — `hanzo dev` starts it on our own `dev`
+agent (hanzoai/dev, the default), `claude`, `codex`, `interpreter` (Open Interpreter, a
+Codex fork driven by `dev.rs`), or any agent in `src/commands/code/agents/`. None is an
+alias of another — naming one runs THAT agent, or fails saying it is not installed. The
+tool is a flag (`--claude`, `--qwen`, `--backend NAME`); bare `hanzo` (no command) and
+`hanzo code` with no index verb are `hanzo dev`.
 
 ```
-hanzo dev                  our own agent (the default); a task after it runs headless
-hanzo dev --claude         --codex    --cursor (--agent)    --agy    --backend NAME
+hanzo                      sign in if needed, then the reader's configured agent
+hanzo dev --claude         --codex  --cursor  --agy  --qwen  --opencode  …  --backend NAME
 hanzo dev --claude -- -c   args after `--` go to the tool verbatim
-hanzo "fix the test"       bare session, default backend (the reader's configured agent)
+hanzo "fix the test"       bare session, default backend
 ```
 
-`hanzo code` is NOT a launcher: it is the code index (`search index context file tree
-ask`, the cloud's `/v1/code` product absorbed into a local group with no args of its
-own). `hanzo run` does not exist. `main::retired` refuses each old launching spelling
-(`hanzo run …`; `hanzo code` bare, with a flag, or with a word that is no index verb)
-through clap's own error path (`clap::Error::raw`), one line naming `hanzo dev`; it
-runs after `hoist` and before the parse, because without it `hanzo run claude` would
-fall into the bare grammar as a TASK called "run claude". `hanzo sandbox run` is a
-separate launcher of the same session path, left as it was.
+**Every other agent is one file**, `src/commands/code/agents/<name>.rs`: its names,
+binary, npm package (`hanzo upgrade <name>` installs it under `~/.hanzo/bin`),
+`routable` (its model calls can go through api.hanzo.ai under `--cloud`), `toolset`
+(`Never` / `Always` / `Routed`, when it reads a home of Hanzo's own), `build` (the
+argv, env and files of one run, through `Run`) and `read` (its output on a linked
+run, through `Reader`). No agent reads another's options; `agents/wire.rs` holds only
+the formats several print (Claude's stream-json for qwen/amp/kode, OpenCode's for
+opencode/kilo, Pi's for pi/omp, plain text). A linked session pipes stdout through
+`read`, so a reader that does not match its agent prints NOTHING: each reader is
+tested on a stream captured from that agent (`agents/testdata/`). Readers add per-step
+usage up and fold cache counted apart into input, because the summary reads every
+agent but Claude with cache inside input. The key reaches a routed agent through its
+environment only, never argv or a file; `mod.rs` tests that for every agent, and that
+each is handed the toolset exactly when `toolset` says.
+
+`hanzo code` with an index verb is the code index (`search index context file tree
+ask`, the cloud's `/v1/code` product). `hanzo run` does not exist: `main::retired`
+refuses it through clap's own error path, one line naming `hanzo dev`; it runs after
+`hoist` and before the parse, because without it `hanzo run claude` would fall into
+the bare grammar as a TASK called "run claude". `hanzo sandbox run` is a separate
+launcher of the same session path.
 
 **Routing is direct by default** (`--no-route` is gone, being the default). A third-party
 tool talks straight to the account it is signed in to: `resolve_routing` returns
 `Route::Inherit` and touches no env. `--cloud` (`Options::cloud`) is the opt-in to
 Hanzo's metered models (the credential plan: provider key, bearer, stored Hanzo key).
 `dev` is ours and its account is Hanzo's, so it routes through the gateway when signed in
-without a flag. Antigravity and Cursor have no gateway wire and are always direct. The
+without a flag. An agent whose file says `routable: false` (Antigravity, Cursor, Gemini,
+Copilot, Amp, …) has no gateway wire and is always direct. The
 session banner's first line says which: `your account, direct`, or `Hanzo cloud`.
 
 **Connected accounts for the harness.** A native sign-in (`claude`, `codex`,
