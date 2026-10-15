@@ -18,7 +18,7 @@
 
 use super::{Field, Op, Ty};
 
-/// 2481 coordinates across 144 products (980 typed-flag, 449 --data-fallback writes).
+/// 2482 coordinates across 144 products (980 typed-flag, 449 --data-fallback writes).
 pub(crate) static OPS: &[Op] = &[
     Op { product: "3d", nodes: &[], verb: "content", method: "GET", path: "/v1/3d/{id}/content", params: &["id"], rest: &[], fields: &[], sum: "Implements GET /v1/3d/:id/content (Download 3D splat/glb content)." },
     Op { product: "3d", nodes: &[], verb: "generations", method: "POST", path: "/v1/3d/generations", params: &[], rest: &[], fields: &[], sum: "Implements POST /v1/3d/generations (Text/Image to 3D & Gaussian Splats)." },
@@ -1219,6 +1219,7 @@ pub(crate) static OPS: &[Op] = &[
     Op { product: "iam", nodes: &["oauth"], verb: "token", method: "POST", path: "/v1/iam/oauth/token", params: &[], rest: &[], fields: &[], sum: "Exchanges what your application is holding for the tokens it needs — the one-time code from a finished sign-in, a refresh token, or your own client credentials when the caller is a program rather than a person." },
     Op { product: "iam", nodes: &["oauth", "authorize"], verb: "create", method: "POST", path: "/v1/iam/oauth/authorize", params: &[], rest: &[], fields: &[], sum: "Starts a sign-in — the address you send a browser to, and the beginning of every OAuth and OpenID Connect flow." },
     Op { product: "iam", nodes: &["oauth", "authorize"], verb: "get", method: "GET", path: "/v1/iam/oauth/authorize", params: &[], rest: &[], fields: &[], sum: "Starts a sign-in — the address you send a browser to, and the beginning of every OAuth and OpenID Connect flow." },
+    Op { product: "iam", nodes: &["oauth", "delegation"], verb: "keys", method: "GET", path: "/v1/iam/oauth/delegation/keys", params: &[], rest: &[], fields: &[], sum: "Serves the public half of every delegation key, as a JWKS, to a confidential client allowed to delegate — the one resource server that verifies what it is handed, reading with the credential it delegates with." },
     Op { product: "iam", nodes: &["oauth", "device"], verb: "create", method: "POST", path: "/v1/iam/oauth/device", params: &[], rest: &[], fields: &[], sum: "Starts a sign-in on a device with no browser and no keyboard — a TV, a CLI, a headless box." },
     Op { product: "iam", nodes: &["oauth", "device"], verb: "info", method: "POST", path: "/v1/iam/oauth/device/info", params: &[], rest: &[], fields: &[], sum: "Answers \"what am I approving?\" for a pending device code." },
     Op { product: "iam", nodes: &["oauth", "federation"], verb: "mfa", method: "POST", path: "/v1/iam/oauth/federation/mfa", params: &[], rest: &[], fields: &[], sum: "Completes a sign-in that came in through another identity provider and still owes a second factor." },
