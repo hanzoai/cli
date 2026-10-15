@@ -1680,7 +1680,7 @@ mod tests {
     /// `login` and `whoami` are NOT in these lists either, and are the two
     /// exceptions to the relocation: signing in is the entry point to everything
     /// else, and `hanzo whoami` is what anyone types to check it. Each aliases its
-    /// `auth` verb rather than reimplementing it.
+    /// `auth` verb (`auth login`, `auth show`) rather than reimplementing it.
     ///
     /// `dev` and `desktop` are NOT in these lists: starting a session is the CLI's
     /// entry point, so it keeps its own name. `desktop` only points the one
@@ -1699,7 +1699,7 @@ mod tests {
         // same function `auth login` reaches, and telemetry labels both "auth".
         // `whoami` is the second: it is what anyone types to check the first,
         // and as an unknown word it would start a coding task. It too is an
-        // alias, of commands::auth::show, the function `auth whoami` reaches.
+        // alias, of commands::auth::show, the function `auth show` reaches.
         // Everything else below stays under its noun.
         for gone in ["logout", "switch", "deploy"] {
             assert!(
