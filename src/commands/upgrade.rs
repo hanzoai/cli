@@ -118,7 +118,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
             let package = a.package.expect("planned agents ship on npm");
             println!("{} {} ({package}) → {}", "upgrading".bold(), a.title, prefix.join("bin").display());
             let status = tokio::process::Command::new(&npm)
-                .args(["install", "--global", "--no-audit", "--no-fund", "--loglevel=error", "--prefix"])
+                .args(["install", "--global", "--no-audit", "--no-fund", "--no-update-notifier", "--loglevel=error", "--prefix"])
                 .arg(&prefix)
                 .arg(format!("{package}@latest"))
                 .status()
