@@ -213,7 +213,7 @@ fn moved_in(
 
 /// The command that signs `id` in again: through its own org's client, which is
 /// plain `hanzo auth login` only for the org the default client serves.
-fn relogin(brand: &str, id: &Identity) -> String {
+pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
     let org = if oauth::client(Some(&id.owner)) == oauth::client(None) {
         String::new()
     } else {
@@ -235,6 +235,17 @@ fn relogin(brand: &str, id: &Identity) -> String {
 fn expiring(access_token: &str, now: i64) -> bool {
     const SKEW: i64 = 60;
     jwt_exp(access_token).is_some_and(|exp| exp - SKEW <= now)
+}
+
+/// Whether this access token has already run out, by its own `exp`. PURE but
+/// for the clock. A token with no readable `exp` is not called spent: the server
+/// is the one that knows.
+pub fn spent(access_token: &str) -> bool {
+    spent_at(access_token, now_unix())
+}
+
+fn spent_at(access_token: &str, now: i64) -> bool {
+    jwt_exp(access_token).is_some_and(|exp| exp <= now)
 }
 
 /// Seconds since the epoch, without pulling in a clock abstraction for one read.
@@ -1646,6 +1657,9 @@ mod tests {
         assert!(!expiring(&jwt_until("hanzo", "z", NOW + 61), NOW), "just outside the skew");
         assert!(expiring(&jwt_until("hanzo", "z", NOW + 30), NOW), "would expire in flight");
         assert!(expiring(&jwt_until("hanzo", "z", NOW - 1), NOW), "already spent");
+        assert!(spent_at(&jwt_until("hanzo", "z", NOW - 1), NOW), "spent is past exp");
+        assert!(!spent_at(&jwt_until("hanzo", "z", NOW + 30), NOW), "inside the skew is not spent");
+        assert!(!spent_at("not-a-jwt", NOW), "no exp is the server's to judge");
     }
 
     /// A token we cannot read an expiry out of is LIVE. Validity is the server's

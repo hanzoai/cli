@@ -15,7 +15,7 @@
 //! | `use`    | select the active identity                       |
 //! | `token`  | print the active short-lived access token        |
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
 use crate::config::Config;
 use crate::iam::{login as iam, onboarding, store};
@@ -54,8 +54,15 @@ pub fn use_identity(cfg: &mut Config, brand: &str, identity: Option<String>) -> 
 /// so it pipes byte-exactly; it is never written to disk or the config.
 pub async fn token(cfg: &mut Config, brand: &str) -> Result<()> {
     store::within(cfg, brand)?;
-    let (_id, tok) = store::active_token(cfg, brand).await?
+    let (id, tok) = store::active_token(cfg, brand).await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
+    // What prints here is forwarded by another program (Codex's `auth.command`,
+    // Claude Code's `apiKeyHelper`, hanzo-mcp) to a server that refuses a spent
+    // token with a 401 that program cannot explain. A session that could not be
+    // refreshed ends here instead, saying how to sign in again.
+    if store::spent(&tok.access_token) {
+        bail!("the {id} session has ended; sign in again: {}", store::relogin(brand, &id));
+    }
     println!("{}", tok.access_token);
     Ok(())
 }
