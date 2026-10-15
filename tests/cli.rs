@@ -111,17 +111,18 @@ fn a_bare_hanzo_starts_the_coding_agent() {
     assert!(!stdout.contains("SYNOPSIS"), "a bare hanzo printed the help page: {stdout}");
 }
 
-/// `hanzo run` and every `hanzo code` that is not a code-index operation are gone:
-/// each exits 2 with one line naming `hanzo dev`, and starts nothing.
+/// `hanzo run` is gone: it exits 2 with one line naming `hanzo dev`, and starts
+/// nothing. `hanzo code` in its session form IS `hanzo dev`, so it answers what
+/// `hanzo dev` answers: the tool is a flag.
 #[test]
 fn the_retired_launchers_name_hanzo_dev() {
+    let out = hanzo().args(["code", "claude"]).assert().failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("hanzo dev --claude"), "`hanzo code claude` is `hanzo dev claude`: {stderr}");
     for argv in [
         vec!["run"],
         vec!["run", "claude"],
         vec!["run", "--runc", "dev"],
-        vec!["code"],
-        vec!["code", "claude"],
-        vec!["code", "--claude"],
         vec!["--no-route"],
     ] {
         let out = hanzo().args(&argv).assert().failure().code(2);

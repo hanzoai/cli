@@ -93,7 +93,7 @@ struct Cli {
 /// `hanzo …` (flattened onto [`Cli`]), so both accept exactly the same flags.
 #[derive(clap::Args, Clone)]
 struct CodeArgs {
-    /// Coding backend: dev | claude | codex | agy | cursor (default: dev, our own agent)
+    /// Coding backend: dev | claude | codex | cursor | agy | gemini | qwen | opencode | kilo | crush | pi | copilot | amp | grok (default: dev, our own agent). Each is also a flag: `hanzo --gemini`
     ///
     /// Equivalent to the tool's own flag (`hanzo dev --claude`). Every spelling
     /// resolves in ONE place — `commands::code::backend::select`.
@@ -460,6 +460,15 @@ enum Commands {
 
     /// Print the CLI version
     Version,
+
+    /// Upgrade every Hanzo tool (hanzo, mcp, dev, zt) to its current release, and
+    /// the coding agents installed under ~/.hanzo. Name a tool to upgrade only it;
+    /// naming an agent (gemini, qwen, opencode, kilo, crush, pi, copilot, amp,
+    /// grok) installs it
+    Upgrade {
+        /// Tools to upgrade; none means all of them
+        tools: Vec<String>,
+    },
 
     /// Open the interactive fleet operations console (sandboxes, compute nodes, GPU mesh)
     #[command(visible_alias = "dashboard", visible_alias = "ui", visible_alias = "gui")]
@@ -857,7 +866,7 @@ async fn main() -> Result<()> {
     // `resolve` must ask exactly what `augment` asked.
     let hand = Cli::command();
     let merged = commands::product::augment(hand.clone());
-    let argv = hoist(&merged, std::env::args().collect());
+    let argv = backend_flags(&merged, alias(&merged, hoist(&merged, std::env::args().collect())));
     if let Some(message) = retired(&merged, &argv) {
         clap::Error::raw(clap::error::ErrorKind::InvalidSubcommand, message).exit();
     }
@@ -1007,28 +1016,63 @@ fn leading_globals(argv: &[String]) -> usize {
     i
 }
 
-/// The spellings that started a session before `hanzo dev` was the one launcher:
-/// `hanzo run …`, and `hanzo code …` unless it names a code-index operation.
-/// Each is refused with the command that replaces it.
-fn retired(cmd: &clap::Command, argv: &[String]) -> Option<String> {
-    let at = leading_globals(argv);
-    let name = argv.get(at)?.as_str();
+/// `hanzo code …` is `hanzo dev …` unless it names a code-index operation or asks
+/// for help: the session form is rewritten to `dev` here, before parsing, so the
+/// two spellings are one launcher.
+fn alias(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
+    let at = leading_globals(&argv);
+    if argv.get(at).map(String::as_str) != Some("code") {
+        return argv;
+    }
     let rest = &argv[at + 1..];
-    let gone = match name {
-        "run" => true,
-        "code" => {
-            let help = rest.iter().any(|a| a == "--help" || a == "-h");
-            let index = first_word(rest.iter().cloned())
-                .is_some_and(|w| cmd.find_subcommand("code").is_some_and(|c| c.find_subcommand(&w).is_some()));
-            !(help || index)
-        }
-        _ => false,
+    let help = rest.iter().any(|a| a == "--help" || a == "-h");
+    let index = first_word(rest.iter().cloned())
+        .is_some_and(|w| cmd.find_subcommand("code").is_some_and(|c| c.find_subcommand(&w).is_some()));
+    if !(help || index) {
+        argv[at] = "dev".into();
+    }
+    argv
+}
+
+/// `--<agent>` for every agent of `commands::code::agents` that has no flag of its
+/// own, on a coding session (`hanzo …`, `hanzo dev …`, `hanzo desktop …`): it is
+/// `--backend <agent>`. One table names the agents, so a new row is a new flag.
+fn backend_flags(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
+    let at = leading_globals(&argv);
+    let session = match argv.get(at).map(String::as_str) {
+        None => true,
+        Some(w) if !w.starts_with('-') => matches!(w, "dev" | "desktop") || cmd.find_subcommand(w).is_none(),
+        Some(_) => true,
     };
-    gone.then(|| {
-        format!(
-            "`hanzo {name}` no longer starts a session: use `hanzo dev`, the tool as a flag \
-             (`hanzo dev --claude \"TASK\"`)"
-        )
+    if !session {
+        return argv;
+    }
+    let known = |name: &str| cmd.get_arguments().any(|a| a.get_long() == Some(name) || a.get_all_aliases().is_some_and(|al| al.contains(&name)));
+    let mut i = 1;
+    while i < argv.len() {
+        if argv[i] == "--" {
+            break;
+        }
+        if let Some(name) = argv[i].strip_prefix("--") {
+            if !known(name) && commands::code::backend::BackendKind::parse(name).is_ok() {
+                let name = name.to_string();
+                argv.splice(i..=i, ["--backend".to_string(), name]);
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    argv
+}
+
+/// `hanzo run …` started a session before `hanzo dev` was the one launcher. It is
+/// refused with the command that replaces it.
+fn retired(_cmd: &clap::Command, argv: &[String]) -> Option<String> {
+    let at = leading_globals(argv);
+    (argv.get(at)?.as_str() == "run").then(|| {
+        "`hanzo run` no longer starts a session: use `hanzo dev`, the tool as a flag \
+         (`hanzo dev --claude \"TASK\"`)"
+            .to_string()
     })
 }
 
@@ -1147,6 +1191,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
+        Commands::Upgrade { tools } => commands::upgrade::run(tools).await?,
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
             Some(SandboxCommands::Run(args)) => code_session(&mut config, *args, Target::Repo).await?,
@@ -1436,18 +1481,37 @@ mod tests {
         for (flag, kind) in [
             ("--claude", BackendKind::Claude),
             ("--codex", BackendKind::Codex),
-            ("--agy", BackendKind::Agy),
-            ("--cursor", BackendKind::Cursor),
-            ("--agent", BackendKind::Cursor),
+            ("--agy", BackendKind::parse("agy").unwrap()),
+            ("--cursor", BackendKind::parse("cursor").unwrap()),
+            ("--agent", BackendKind::parse("cursor").unwrap()),
         ] {
             assert_eq!(resolved(&["hanzo", "dev", flag]), kind, "{flag}");
             assert_eq!(resolved(&["hanzo", "dev", flag, "fix it"]), kind, "{flag} + task");
             assert_eq!(resolved(&["hanzo", "dev", flag, "--", "-c"]), kind, "{flag} + passthrough");
         }
         for argv in [["hanzo", "agy"].as_slice(), ["hanzo", "antigravity"].as_slice()] {
-            assert_eq!(resolved(argv), BackendKind::Agy, "{argv:?}");
+            assert_eq!(resolved(argv).as_str(), "agy", "{argv:?}");
         }
-        assert_eq!(resolved(&["hanzo", "agent"]), BackendKind::Cursor);
+        assert_eq!(resolved(&["hanzo", "agent"]).as_str(), "cursor");
+
+        // Every agent in the table is a flag too, through one rewrite.
+        let merged = commands::product::augment(Cli::command());
+        for name in ["gemini", "qwen", "opencode", "kilo", "crush", "pi", "copilot", "amp", "grok", "kilocode"] {
+            let argv: Vec<String> = ["hanzo", "dev", &format!("--{name}"), "fix it"].iter().map(|s| s.to_string()).collect();
+            let argv = backend_flags(&merged, argv);
+            let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
+            let opts = dev_args(args).unwrap().into_options().expect("resolves");
+            assert_eq!(opts.backend, BackendKind::parse(name).unwrap(), "{name}");
+            assert_eq!(opts.task.as_deref(), Some("fix it"));
+            // A bare session takes it too.
+            let bare = backend_flags(&merged, ["hanzo", &format!("--{name}")].iter().map(|s| s.to_string()).collect());
+            assert_eq!(bare[1..], ["--backend".to_string(), name.to_string()]);
+        }
+        // A flag clap knows, and every other command's argv, are left alone.
+        let keep = |line: &[&str]| -> Vec<String> { line.iter().map(|s| s.to_string()).collect() };
+        assert_eq!(backend_flags(&merged, keep(&["hanzo", "--claude"])), keep(&["hanzo", "--claude"]));
+        assert_eq!(backend_flags(&merged, keep(&["hanzo", "vm", "run", "--gemini"])), keep(&["hanzo", "vm", "run", "--gemini"]));
 
         // The task rides after the flag, the passthrough after `--`.
         let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "fix it", "--", "-c"]).expect("parses");
@@ -1495,34 +1559,30 @@ mod tests {
         assert!(err.contains("named twice"), "got: {err}");
     }
 
-    /// `hanzo run` and every `hanzo code` that is not a code-index operation are
-    /// retired spellings of `hanzo dev`: each is refused, naming the command that
-    /// replaces it. The code-index operations and help are not touched.
+    /// `hanzo run` is a retired spelling of `hanzo dev`: refused, naming the command
+    /// that replaces it. `hanzo code` in its session form IS `hanzo dev`; its
+    /// code-index operations and help are untouched.
     #[test]
     fn retired_launch_spellings_name_hanzo_dev() {
         let merged = commands::product::augment(Cli::command());
         let argv = |line: &str| -> Vec<String> {
             std::iter::once("hanzo").chain(line.split_whitespace()).map(String::from).collect()
         };
-        for gone in [
-            "run",
-            "run claude",
-            "run --runc dev",
-            "run --runtime runc --gpus all dev",
-            "code",
-            "code dev",
-            "code claude",
-            "code --claude",
-            "code --dev",
-            "code fix",
-            "--as admin run claude",
-            "--as admin code claude",
-            "-v code",
-        ] {
+        for gone in ["run", "run claude", "run --runc dev", "run --runtime runc --gpus all dev", "--as admin run claude"] {
             let message = retired(&merged, &hoist(&merged, argv(gone)))
                 .unwrap_or_else(|| panic!("`hanzo {gone}` must be refused"));
             assert!(message.contains("`hanzo dev`"), "{gone}: {message}");
             assert!(!message.contains('\n'), "{gone}: one line");
+        }
+        for (said, means) in [
+            ("code", "dev"),
+            ("code --claude", "dev --claude"),
+            ("code --dev", "dev --dev"),
+            ("code fix", "dev fix"),
+            ("--as admin code --codex", "--as admin dev --codex"),
+            ("-v code", "-v dev"),
+        ] {
+            assert_eq!(alias(&merged, hoist(&merged, argv(said))), hoist(&merged, argv(means)), "`hanzo {said}`");
         }
         for kept in [
             "code search",
@@ -1542,11 +1602,13 @@ mod tests {
             "fix the failing test",
             "billing balance",
         ] {
-            assert_eq!(retired(&merged, &hoist(&merged, argv(kept))), None, "`hanzo {kept}`");
+            let line = hoist(&merged, argv(kept));
+            assert_eq!(alias(&merged, line.clone()), line, "`hanzo {kept}`");
+            assert_eq!(retired(&merged, &line), None, "`hanzo {kept}`");
         }
 
-        // The refusal is clap's own error: a command that no longer exists is not
-        // a `Commands` variant, and `code` has no launching grammar left.
+        // `run` is not a `Commands` variant, and `code`'s launching form is the
+        // rewrite above: clap itself knows neither.
         assert!(Cli::try_parse_from(["hanzo", "code", "--claude"]).is_err());
         assert!(!Cli::command().get_subcommands().any(|c| c.get_name() == "run"));
         assert!(Cli::command().get_subcommands().all(|c| c.get_all_aliases().all(|a| a != "run")));
