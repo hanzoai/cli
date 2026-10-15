@@ -45,7 +45,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Auth { .. } => "auth",
         // `hanzo login` and `hanzo auth login` are one command reached two ways,
         // so they report as one label — a split here would read as two products.
-        Commands::Login { .. } => "auth",
+        Commands::Login { .. } | Commands::Whoami { .. } => "auth",
         // The coding session reports as `dev` (a bare `hanzo` too, because it IS
         // that command); `code` is the code index.
         Commands::Code => "code",

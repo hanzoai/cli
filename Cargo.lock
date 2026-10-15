@@ -913,6 +913,7 @@ dependencies = [
  "serde_norway",
  "sha2",
  "sha3",
+ "strsim",
  "tar",
  "tempfile",
  "tiny-bip39",

@@ -56,6 +56,7 @@ members = ["crates/event", "crates/client"]
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }
 hanzo-client = { path = "crates/client", version = "0.1.0" }
+strsim = "0.11"
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"

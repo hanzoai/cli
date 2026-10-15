@@ -331,6 +331,16 @@ enum Commands {
         token: Option<String>,
     },
 
+    /// Show who you are signed in as and in which org — `hanzo auth show` at the top level.
+    ///
+    /// The question people type as one word, so it answers where they type it, by
+    /// the same function as `auth show`.
+    Whoami {
+        /// Brand / tenant: hanzo | lux | zoo | pars | bootnode
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+    },
+
     /// Link this machine to Hanzo cloud: on the org's network over Hanzo ZT, on
     /// the fleet, and with a shell the console can drive
     ///
@@ -867,7 +877,7 @@ async fn main() -> Result<()> {
     let hand = Cli::command();
     let merged = commands::product::augment(hand.clone());
     let argv = backend_flags(&merged, alias(&merged, hoist(&merged, std::env::args().collect())));
-    if let Some(message) = retired(&merged, &argv) {
+    if let Some(message) = retired(&merged, &argv).or_else(|| misspelled(&merged, &argv)) {
         clap::Error::raw(clap::error::ErrorKind::InvalidSubcommand, message).exit();
     }
     let matches = merged.get_matches_from(argv);
@@ -1065,6 +1075,26 @@ fn backend_flags(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     argv
 }
 
+/// A lone unquoted word that is no command but nearly one (`hanzo stauts`) is a
+/// typo, not a coding task: the flattened session positional would start an agent
+/// on it. A one-word task meant as one runs as `hanzo dev <task>`.
+fn misspelled(cmd: &clap::Command, argv: &[String]) -> Option<String> {
+    let at = leading_globals(argv);
+    let word = argv.get(at)?;
+    let lone = argv.len() == at + 1 && !word.starts_with('-') && !word.contains(char::is_whitespace);
+    if !lone || cmd.find_subcommand(word).is_some() || commands::code::backend::BackendKind::names(word) {
+        return None;
+    }
+    let near = cmd
+        .get_subcommands()
+        .filter(|c| !c.is_hide_set())
+        .flat_map(|c| std::iter::once(c.get_name()).chain(c.get_all_aliases()))
+        .map(|name| (strsim::jaro_winkler(word, name), name))
+        .filter(|(score, _)| *score >= 0.85)
+        .max_by(|a, b| a.0.total_cmp(&b.0))?;
+    Some(format!("no command `{word}`: did you mean `hanzo {}`? As a coding task: `hanzo dev \"{word}\"`", near.1))
+}
+
 /// `hanzo run …` started a session before `hanzo dev` was the one launcher. It is
 /// refused with the command that replaces it.
 fn retired(_cmd: &clap::Command, argv: &[String]) -> Option<String> {
@@ -1111,6 +1141,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Login { brand, provider, token } => {
             commands::auth::login(&mut config, &brand, provider, token).await?
         }
+        Commands::Whoami { brand } => commands::auth::show(&mut config, &brand).await?,
         Commands::Auth { command } => match command {
             AuthCommands::Login { brand, provider, token } => {
                 commands::auth::login(&mut config, &brand, provider, token).await?
@@ -1557,6 +1588,20 @@ mod tests {
             Ok(_) => panic!("`claude --codex` must be refused, not resolved"),
         };
         assert!(err.contains("named twice"), "got: {err}");
+    }
+
+    /// A lone word near a command is a typo, refused with the command; a real
+    /// command, an agent's name and a quoted task still run.
+    #[test]
+    fn a_lone_near_miss_names_the_command_and_a_task_still_runs() {
+        let merged = commands::product::augment(Cli::command());
+        let line = |words: &[&str]| -> Vec<String> { std::iter::once("hanzo").chain(words.iter().copied()).map(String::from).collect() };
+        let e = misspelled(&merged, &line(&["stauts"])).expect("a near miss");
+        assert!(e.contains("`hanzo status`"), "{e}");
+        assert!(misspelled(&merged, &line(&["whoami"])).is_none(), "whoami is a command");
+        assert!(misspelled(&merged, &line(&["claude"])).is_none(), "an agent's name");
+        assert!(misspelled(&merged, &line(&["fix the failing test"])).is_none(), "a quoted task");
+        assert!(misspelled(&merged, &line(&["stauts", "--cloud"])).is_none(), "not alone");
     }
 
     /// `hanzo run` is a retired spelling of `hanzo dev`: refused, naming the command
