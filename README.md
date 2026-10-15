@@ -85,7 +85,7 @@ hanzo dev --no-link "…"                     # keep it local, don't stream to c
 not a launcher. `hanzo code …` and `hanzo run …` as launchers are gone: they answer
 with the `hanzo dev` line to use.
 
-Zen models (`enso`, `enso-ultra`, `enso-flash`, `zen5-coder`, …) are Hanzo's own
+Enso and Zen models (`enso`, `enso-flash`, `enso-pro`, `enso-ultra`, `zen6`, …) are Hanzo's own
 family; the gateway is the sole authority on the model catalog.
 
 ## Commands
