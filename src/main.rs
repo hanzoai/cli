@@ -462,9 +462,9 @@ enum Commands {
     Version,
 
     /// Upgrade every Hanzo tool (hanzo, mcp, dev, zt) to its current release, and
-    /// the coding agents installed under ~/.hanzo. Name a tool to upgrade only it;
-    /// naming an agent (gemini, qwen, opencode, kilo, crush, pi, copilot, amp,
-    /// grok) installs it
+    /// every coding agent installed: npm agents under ~/.hanzo, the rest by their
+    /// own updater (`claude update`, `goose update`, …) or uv. Name a tool to
+    /// upgrade only it; naming an npm agent (gemini, qwen, opencode, …) installs it
     Upgrade {
         /// Tools to upgrade; none means all of them
         tools: Vec<String>,
