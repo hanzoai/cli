@@ -37,7 +37,8 @@ use super::{device, oauth, store};
 /// cookie alone is one click from a SuperAdmin token); otherwise the person
 /// signs in anywhere and pastes the callback URL back here.
 pub async fn login(cfg: &mut Config, brand: &str) -> Result<()> {
-    let origin = oauth::server_url(brand)?; // reject unknown brands before opening a browser
+    let brand: &str = &store::realm(cfg, brand)?;
+    let origin = &oauth::server_url(brand)?; // reject unknown brands before opening a browser
     // `--as <org>` signs in to hold another identity — `admin/z` beside
     // `hanzo/z` — through that org's own client, so IAM signs the person in to
     // that org. A missing client is refused here, before any browser opens.
@@ -84,6 +85,7 @@ fn browser_here() -> bool {
 /// as the browser flow — the principal comes from the token's own claims, never
 /// from the caller.
 pub async fn login_with_token(cfg: &mut Config, brand: &str, access_token: &str) -> Result<()> {
+    let brand: &str = &store::realm(cfg, brand)?;
     let before = store::active(cfg, brand);
     add(
         cfg,
@@ -153,6 +155,7 @@ async fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet, before: Option<Id
 /// Listing lives here rather than behind a separate `identities` verb: one
 /// question ("who am I?"), one command, one way.
 pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
+    let brand: &str = &store::realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
 
     if all {
@@ -187,6 +190,7 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
 
 /// `hanzo auth use [IDENTITY] [--brand]`: select the active identity.
 pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result<()> {
+    let brand: &str = &store::realm(cfg, brand)?;
     let sel = identity.map(|s| s.parse::<Selector>()).transpose()?;
     let id = store::switch(cfg, brand, sel)?;
     println!(
@@ -214,6 +218,7 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
 /// dropped here is revoked at the server (RFC 7009), which kills its whole
 /// rotation family.
 pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
+    let brand: &str = &store::realm(cfg, brand)?;
     if all {
         if identity.is_some() {
             bail!("`hanzo auth logout --all` removes every identity; do not also name one");
@@ -284,7 +289,7 @@ async fn revoke_all(brand: &str, removed: &[store::Removed]) {
         let Some(held) = &r.held else {
             continue;
         };
-        if let Err(e) = oauth::revoke(origin, held).await {
+        if let Err(e) = oauth::revoke(&origin, held).await {
             crate::warn(&format!(
                 "signed out of {brand} locally, but {} is still live at the server ({e}) — \
                  revoke it from your account's sessions",

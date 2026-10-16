@@ -21,12 +21,25 @@ use crate::iam::{onboarding, paths, provider, store};
 /// being overwritten by another that read the config before it (the session).
 pub struct Store {
     cfg: Mutex<Config>,
+    /// Whether the stored Hanzo key may be offered: only on a network whose API
+    /// trusts the issuer it was minted under (`hanzo_keys`).
+    hanzo_keys: bool,
 }
 
 impl Store {
     pub fn host(cfg: Config) -> Arc<dyn Host> {
-        Arc::new(Store { cfg: Mutex::new(cfg) })
+        let hanzo_keys = hanzo_keys(&cfg);
+        Arc::new(Store { cfg: Mutex::new(cfg), hanzo_keys })
     }
+}
+
+/// Whether the active network's API trusts hanzo.id, the issuer whose realm the
+/// stored Hanzo key (`hk-`, `sk-`) belongs to. A network with an issuer of its
+/// own (devnet) is never sent it: the key is a production credential, and
+/// devnet runs code no review has passed. There the session routes by the
+/// network's own identity or not through the gateway at all.
+fn hanzo_keys(cfg: &Config) -> bool {
+    store::realm(cfg, paths::DEFAULT_BRAND).is_ok_and(|r| r == paths::DEFAULT_BRAND)
 }
 
 /// What a session reads off `cfg`.
@@ -66,6 +79,9 @@ impl Host for Store {
     }
 
     fn key(&self, p: Provider) -> Result<Option<String>> {
+        if p == Provider::Hanzo && !self.hanzo_keys {
+            return Ok(None);
+        }
         provider::key(match p {
             Provider::Hanzo => provider::Provider::Hanzo,
             Provider::Anthropic => provider::Provider::Anthropic,
@@ -115,4 +131,20 @@ pub async fn session(config: &mut Config, args: Args, target: Target) -> Result<
         opts.mcp = true;
     }
     hanzo_gen::run(Store::host(config.clone()), opts).await
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    /// The stored Hanzo key is hanzo.id's: offered on mainnet and testnet, whose
+    /// APIs trust that issuer, and never to devnet's.
+    #[test]
+    fn the_hanzo_key_stays_with_the_issuer_that_minted_it() {
+        for (network, offered) in [("mainnet", true), ("testnet", true), ("devnet", false)] {
+            let mut cfg = Config::default();
+            cfg.network.active = Some(network.into());
+            assert_eq!(hanzo_keys(&cfg), offered, "{network}");
+        }
+    }
 }

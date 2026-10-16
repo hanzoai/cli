@@ -137,8 +137,8 @@ pub struct UserInfo {
     pub preferred_username: Option<String>,
 }
 
-/// Resolve a brand to its IAM origin, or error with the known set.
-pub fn server_url(brand: &str) -> Result<&'static str> {
+/// Resolve a realm to its IAM origin, or error with the known set.
+pub fn server_url(brand: &str) -> Result<String> {
     paths::server_url_for_brand(brand).ok_or_else(|| {
         anyhow!("unknown brand '{brand}' (expected one of: hanzo, lux, zoo, pars, bootnode)")
     })
@@ -182,7 +182,7 @@ pub async fn login(brand: &str, org: Option<&str>, open: bool, others: &[Shown])
             client(org)
         );
     }
-    let origin = server_url(brand)?;
+    let origin = &server_url(brand)?;
     let pkce = pkce::generate_pkce();
     let state = pkce::generate_state();
 
@@ -434,7 +434,7 @@ async fn serve_signed_in(listener: &TcpListener, page: &str, for_how_long: std::
 
 /// Fetch the userinfo profile for an access token.
 pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
-    let origin = server_url(brand)?;
+    let origin = &server_url(brand)?;
     let resp = reqwest::Client::new()
         .get(paths::iam_url(origin, USERINFO))
         .bearer_auth(access_token)

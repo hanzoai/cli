@@ -576,6 +576,9 @@ enum NetworkCommands {
         rpc: String,
         #[arg(long)]
         api: String,
+        /// The issuer the API trusts (default: hanzo.id)
+        #[arg(long)]
+        iam: Option<String>,
         #[arg(long)]
         explorer: Option<String>,
         #[arg(long)]
@@ -1036,11 +1039,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 chain_id,
                 rpc,
                 api,
+                iam,
                 explorer,
                 label,
                 activate,
             } => commands::network::add(
-                &mut config, name, network_id, chain_id, rpc, api, explorer, label, activate,
+                &mut config, name, network_id, chain_id, rpc, api, iam, explorer, label, activate,
             )?,
         },
         Commands::Wallet { command } => match command {

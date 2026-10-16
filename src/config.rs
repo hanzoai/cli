@@ -249,6 +249,11 @@ pub struct StoredNetwork {
     pub rpc: String,
     /// Hanzo cloud/control API endpoint.
     pub api: String,
+    /// The issuer this network's API trusts: where `hanzo auth login` signs in
+    /// and whose credentials go to `api`. `None` (a network added before this
+    /// field) is the brand's own, hanzo.id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iam: Option<String>,
     /// Block explorer, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explorer: Option<String>,
@@ -402,6 +407,29 @@ mod tests {
     fn code_link_defaults_on() {
         assert!(CodeState::default().link);
         assert!(Config::default().code.link);
+    }
+
+    /// A network added before networks named their issuer still parses, as one
+    /// on the brand's own, and writing it back adds nothing.
+    #[test]
+    fn a_network_without_an_issuer_still_parses() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [network]
+            active = "my-l1"
+
+            [[network.custom]]
+            name = "my-l1"
+            label = "My L1"
+            network_id = 424242
+            chain_id = 424242
+            rpc = "https://rpc.example"
+            api = "https://api.example"
+            "#,
+        )
+        .expect("a config written before `iam` parses");
+        assert_eq!(cfg.network.custom[0].iam, None);
+        assert!(!toml::to_string(&cfg).unwrap().contains("iam"));
     }
 
     /// An existing config with no `[code]` table still links by default — the

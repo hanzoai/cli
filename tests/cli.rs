@@ -283,11 +283,16 @@ fn network_use_persists_across_invocations() {
         );
 }
 
-/// Each built-in network names its own cloud: a sandbox network never reaches
-/// production's API, so nothing selected as testnet or devnet spends live money.
+/// Each built-in network names its own cloud and the issuer that cloud trusts:
+/// a sandbox network never reaches production's API, so nothing selected as
+/// testnet or devnet spends live money, and devnet signs in at its own issuer.
 #[test]
 fn network_sandboxes_name_their_own_api() {
-    for (name, api) in [("devnet", "https://api-dev.hanzo.ai"), ("mainnet", "https://api.hanzo.ai")] {
+    for (name, api, iam) in [
+        ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai"),
+        ("testnet", "https://api-test.hanzo.ai", "https://hanzo.id"),
+        ("mainnet", "https://api.hanzo.ai", "https://hanzo.id"),
+    ] {
         let cfg = tmp();
         hanzo().args(["network", "use", name]).args(cfg_args(&cfg)).assert().success();
         hanzo()
@@ -295,8 +300,49 @@ fn network_sandboxes_name_their_own_api() {
             .args(cfg_args(&cfg))
             .assert()
             .success()
-            .stdout(predicate::str::contains(format!("api        {api}\n")));
+            .stdout(predicate::str::contains(format!("api        {api}\n")))
+            .stdout(predicate::str::contains(format!("iam        {iam}\n")));
     }
+}
+
+/// A token as an issuer mints it, with `iss` stated.
+fn issued(iss: &str, owner: &str, name: &str) -> String {
+    use base64::Engine;
+    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    let claims = format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#);
+    format!("{}.{}.c2ln", b64(br#"{"alg":"RS256","typ":"JWT"}"#), b64(claims.as_bytes()))
+}
+
+/// Identities never cross networks: devnet refuses a hanzo.id credential, holds
+/// none of mainnet's, and each network's `auth token` is its own issuer's.
+#[test]
+fn identities_never_cross_networks() {
+    let (cfg, home) = (tmp(), tmp());
+    let run = |args: &[&str], stdin: Option<&str>| {
+        let mut cmd = hanzo();
+        cmd.args(args).args(cfg_args(&cfg)).env("HOME", home.path());
+        if let Some(input) = stdin {
+            cmd.write_stdin(format!("{input}\n"));
+        }
+        cmd.assert()
+    };
+    let login = ["auth", "login", "--provider", "hanzo", "--token", "-"];
+    let prod = issued("https://hanzo.id", "hanzo", "net");
+    let dev = issued("https://id-dev.hanzo.ai", "hanzo", "net");
+
+    run(&login, Some(&prod)).success();
+    run(&["network", "use", "devnet"], None).success();
+    run(&["auth", "token"], None).failure().stderr(predicate::str::contains("not signed in"));
+    run(&login, Some(&prod))
+        .failure()
+        .stderr(predicate::str::contains("issued by https://hanzo.id"));
+    run(&login, Some(&dev)).success();
+    run(&["auth", "token"], None).success().stdout(format!("{dev}\n"));
+
+    run(&["network", "use", "mainnet"], None).success();
+    run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
+    run(&["network", "use", "testnet"], None).success();
+    run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
 }
 
 /// An unknown network is refused with a useful hint, non-zero.

@@ -27,10 +27,27 @@ pub const DEVICE: &str = "/v1/iam/oauth/device";
 /// IAM serves that client, and the org it signs a person in to.
 pub const APPLICATION: &str = "/v1/iam/auth/application";
 
-/// Resolve a brand key to its canonical IAM `server_url` origin. White-label is
-/// host-based: one IAM deployment serves every brand and selects the tenant by
-/// the origin it is reached on. This is the SINGLE place the mapping lives.
-pub fn server_url_for_brand(brand: &str) -> Option<&'static str> {
+/// Resolve a realm to the IAM origin it signs in at.
+///
+/// A realm is a brand — hanzo, lux, zoo, pars, bootnode — or a brand qualified
+/// by the issuer of the network it signs in on, `hanzo@id-dev.hanzo.ai`, when
+/// that issuer is not the brand's own ([`realm`]). The realm is also the first
+/// segment of every credential's store key and the key of its active pointer,
+/// so identities from two issuers never share a slot.
+pub fn server_url_for_brand(realm: &str) -> Option<String> {
+    match realm.split_once('@') {
+        None => brand_origin(realm).map(str::to_string),
+        Some((brand, authority)) => {
+            brand_origin(brand)?;
+            authority_origin(authority)
+        }
+    }
+}
+
+/// A brand's own IAM origin. White-label is host-based: one IAM deployment
+/// serves every brand and selects the tenant by the origin it is reached on.
+/// This is the SINGLE place the mapping lives.
+fn brand_origin(brand: &str) -> Option<&'static str> {
     match brand {
         // hanzo.id, not api.hanzo.ai. The two are different services: api is
         // the API, hanzo.id is where a person signs in. IAM's authorize
@@ -52,16 +69,78 @@ pub fn server_url_for_brand(brand: &str) -> Option<&'static str> {
     }
 }
 
+/// The origin a realm's `host[:port]` names: https, or http on loopback.
+/// `None` for anything that is not a lowercase DNS name with an optional port.
+fn authority_origin(authority: &str) -> Option<String> {
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => (h, Some(p)),
+        Some(_) => return None,
+        None => (authority, None),
+    };
+    let dns = !host.is_empty()
+        && host.split('.').all(|l| {
+            !l.is_empty()
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        });
+    if !dns {
+        return None;
+    }
+    let scheme = if host == "localhost" || host.starts_with("127.") { "http" } else { "https" };
+    Some(match port {
+        Some(p) => format!("{scheme}://{host}:{p}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
+/// The brand a realm belongs to: the realm itself, or what precedes its `@`.
+pub fn brand_of(realm: &str) -> &str {
+    realm.split_once('@').map_or(realm, |(brand, _)| brand)
+}
+
+/// The realm `brand` signs in to on a network whose issuer is `issuer`.
+///
+/// The networks are Hanzo's, so a network's issuer applies to the default
+/// brand: on a network whose issuer is hanzo.id (mainnet, testnet) the realm is
+/// `hanzo`, and on one with its own (devnet's id-dev.hanzo.ai) it is
+/// `hanzo@id-dev.hanzo.ai`. Any other brand, or a network that names no issuer,
+/// keeps the brand's own. An issuer the realm could not name exactly — not
+/// https (or http on loopback), carrying a path, a query or credentials — is
+/// refused rather than read as the brand's own.
+pub fn realm(brand: &str, issuer: Option<&str>) -> anyhow::Result<String> {
+    let (Some(own), Some(issuer)) = (brand_origin(brand), issuer.filter(|_| brand == DEFAULT_BRAND)) else {
+        return Ok(brand.to_string());
+    };
+    let issuer = trim_server_url(issuer.trim());
+    if issuer == own {
+        return Ok(brand.to_string());
+    }
+    let named = reqwest::Url::parse(issuer).ok().and_then(|url| {
+        let host = url.host_str()?;
+        Some(match url.port() {
+            Some(port) => format!("{brand}@{host}:{port}"),
+            None => format!("{brand}@{host}"),
+        })
+    });
+    match named {
+        Some(realm) if server_url_for_brand(&realm).as_deref() == Some(issuer) => Ok(realm),
+        _ => anyhow::bail!(
+            "the active network's issuer {issuer:?} is not an origin the CLI signs in at \
+             (https://<host>[:port], or http on loopback, and nothing after it)"
+        ),
+    }
+}
+
 /// The default brand for the `hanzo` CLI.
 pub const DEFAULT_BRAND: &str = "hanzo";
 
 /// The `--brand` suffix to suggest in a message, omitted for the default brand.
 /// One place, so every hint the CLI prints is copy-pasteable.
-pub fn brand_flag(brand: &str) -> String {
-    if brand == DEFAULT_BRAND {
-        String::new()
-    } else {
-        format!(" --brand {brand}")
+pub fn brand_flag(realm: &str) -> String {
+    match brand_of(realm) {
+        DEFAULT_BRAND => String::new(),
+        brand => format!(" --brand {brand}"),
     }
 }
 
@@ -87,12 +166,50 @@ mod tests {
     #[test]
     fn brand_origins_are_canonical() {
         // The login host, not the API host — see server_url_for_brand.
-        assert_eq!(server_url_for_brand("hanzo"), Some("https://hanzo.id"));
-        assert_eq!(server_url_for_brand("lux"), Some("https://lux.id"));
-        assert_eq!(server_url_for_brand("zoo"), Some("https://zoo.id"));
-        assert_eq!(server_url_for_brand("bootnode"), Some("https://id.bootno.de"));
-        assert_eq!(server_url_for_brand("pars"), Some("https://pars.id"));
+        assert_eq!(server_url_for_brand("hanzo").as_deref(), Some("https://hanzo.id"));
+        assert_eq!(server_url_for_brand("lux").as_deref(), Some("https://lux.id"));
+        assert_eq!(server_url_for_brand("zoo").as_deref(), Some("https://zoo.id"));
+        assert_eq!(server_url_for_brand("bootnode").as_deref(), Some("https://id.bootno.de"));
+        assert_eq!(server_url_for_brand("pars").as_deref(), Some("https://pars.id"));
         assert_eq!(server_url_for_brand("nope"), None);
+    }
+
+    /// A network with its own issuer signs the default brand in there, under a
+    /// realm of its own; a network on the brand's issuer, or naming none, keeps
+    /// the plain brand, and so the credentials it already holds.
+    #[test]
+    fn a_network_with_its_own_issuer_is_a_realm_of_its_own() {
+        assert_eq!(realm("hanzo", Some("https://hanzo.id")).unwrap(), "hanzo");
+        assert_eq!(realm("hanzo", Some("https://hanzo.id/")).unwrap(), "hanzo");
+        assert_eq!(realm("hanzo", None).unwrap(), "hanzo");
+        let dev = realm("hanzo", Some("https://id-dev.hanzo.ai")).unwrap();
+        assert_eq!(dev, "hanzo@id-dev.hanzo.ai");
+        assert_eq!(server_url_for_brand(&dev).as_deref(), Some("https://id-dev.hanzo.ai"));
+        assert_eq!(brand_of(&dev), "hanzo");
+        assert_eq!(brand_flag(&dev), "");
+        let local = realm("hanzo", Some("http://localhost:8000")).unwrap();
+        assert_eq!(server_url_for_brand(&local).as_deref(), Some("http://localhost:8000"));
+        // Only the default brand follows the network.
+        assert_eq!(realm("lux", Some("https://id-dev.hanzo.ai")).unwrap(), "lux");
+    }
+
+    /// An issuer the realm cannot name exactly is refused, never read as the
+    /// brand's own: that would hand a hanzo.id credential to another network.
+    #[test]
+    fn an_issuer_the_realm_cannot_name_is_refused() {
+        for bad in [
+            "http://id-dev.hanzo.ai",
+            "https://id-dev.hanzo.ai/v1",
+            "https://id-dev.hanzo.ai?x=1",
+            "https://u:p@id-dev.hanzo.ai",
+            "ftp://id-dev.hanzo.ai",
+            "id-dev.hanzo.ai",
+        ] {
+            assert!(realm("hanzo", Some(bad)).is_err(), "{bad} was accepted");
+        }
+        for bad in ["hanzo@", "hanzo@ID.example", "hanzo@a/b", "hanzo@a:x", "nope@id.example", "hanzo@-a.example"] {
+            assert_eq!(server_url_for_brand(bad), None, "{bad} resolved");
+        }
     }
 
     /// No brand may point IAM at an `api.` host.
@@ -110,6 +227,7 @@ mod tests {
     fn no_brand_signs_in_against_an_api_host() {
         for brand in ["hanzo", "lux", "zoo", "bootnode", "pars"] {
             let origin = server_url_for_brand(brand).expect("brand has an origin");
+            let origin = origin.as_str();
             assert!(
                 !origin.contains("://api."),
                 "{brand} signs in against {origin}, which is an API host, not a login host"

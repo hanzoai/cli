@@ -71,6 +71,18 @@ pub fn subject(access_token: &str) -> Option<String> {
     (!claims.sub.trim().is_empty()).then_some(claims.sub)
 }
 
+/// The issuer (`iss`) a token claims, or `None`. A label for matching a
+/// credential to the realm it is filed under, never a decision about the token.
+pub fn issuer(access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Iss {
+        #[serde(default)]
+        iss: String,
+    }
+    let claims: Iss = serde_json::from_slice(&payload(access_token)?).ok()?;
+    (!claims.iss.trim().is_empty()).then_some(claims.iss)
+}
+
 /// The client a token was issued to: its `azp`, else its one `aud`, or `None`.
 /// Which client to present when refreshing or revoking it; IAM checks it.
 pub fn party(access_token: &str) -> Option<String> {

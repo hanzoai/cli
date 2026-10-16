@@ -16,7 +16,7 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::config::{Config, StoredIdentity};
 
-use super::identity::{Identity, Selector};
+use super::identity::{self, Identity, Selector};
 use super::oauth;
 use super::paths::{self, brand_flag};
 use super::token::{self, TokenSet, Vault};
@@ -47,6 +47,7 @@ pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity>
 /// surfaced downstream as "X-Org-Id required" rather than "your session ended".
 /// A seam a caller can get wrong is not a seam; there is now nothing to choose.
 pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, TokenSet)>> {
+    let brand: &str = &realm(cfg, brand)?;
     // The vault is dropped before the await below: `Vault` is not `Send`, and
     // holding one across it would make every caller's future un-spawnable.
     let Some((id, tok)) = active_token_in(&*token::vault()?, cfg, brand)? else {
@@ -79,10 +80,10 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     }
     // One more try when IAM did not answer at all: a dropped connection is the
     // commonest reason, and the second attempt costs a second.
-    let mut answer = oauth::refresh(origin, &tok).await;
+    let mut answer = oauth::refresh(&origin, &tok).await;
     if answer.as_ref().is_err_and(|e| !e.is::<oauth::Spent>()) {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        answer = oauth::refresh(origin, &tok).await;
+        answer = oauth::refresh(&origin, &tok).await;
     }
     let fresh = match answer {
         Ok(fresh) => fresh,
@@ -155,6 +156,7 @@ enum Adopted {
 /// SuperAdmin is an identity a person signs in to on purpose, never one a refresh
 /// hands them. Any other relabel is refused, where the reason is still known.
 fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<Adopted> {
+    issued(brand, &fresh.access_token)?;
     let claimed = Identity::from_access_token(&fresh.access_token)
         .context("identifying the refreshed credential")?;
     if &claimed == id {
@@ -209,6 +211,44 @@ fn moved_in(
     })?;
     token::take(v, brand, from)?;
     Ok(())
+}
+
+/// The realm `brand` is on the ACTIVE network — THE one place a network decides
+/// which credentials a command may file, find and send.
+///
+/// Every function here that takes a brand resolves it through this, so no
+/// caller can reach another network's identities, whatever it passes: on devnet
+/// `hanzo` is `hanzo@id-dev.hanzo.ai`, and a credential hanzo.id signed is not
+/// in that realm. A realm passed back in (the detached account menu carries one)
+/// must be the one the active network names.
+pub(crate) fn realm(cfg: &Config, brand: &str) -> Result<String> {
+    let network = crate::commands::network::active(cfg);
+    let want = paths::realm(paths::brand_of(brand), network.iam.as_deref())?;
+    if brand != paths::brand_of(brand) && brand != want {
+        bail!("{brand} is not a realm of the active network {} ({want})", network.name);
+    }
+    Ok(want)
+}
+
+/// Refuse a credential its realm's issuer did not sign, by the token's own
+/// `iss`: one filed in a realm is one sent to that realm's network, so a
+/// hanzo.id credential is never filed where devnet would receive it, nor a
+/// devnet one where mainnet would. A token that states no issuer is held to
+/// this only in a network's own realm, where every credential states one.
+fn issued(realm: &str, access_token: &str) -> Result<()> {
+    let Some(origin) = paths::server_url_for_brand(realm) else {
+        return Ok(()); // an unknown brand is refused by `oauth::server_url`
+    };
+    match identity::issuer(access_token) {
+        Some(iss) if paths::trim_server_url(&iss) == origin => Ok(()),
+        None if !realm.contains('@') => Ok(()),
+        stated => bail!(
+            "this credential was issued by {}, and {realm} signs in at {origin} — refusing to \
+             file or send it; run `hanzo auth login{}`",
+            stated.as_deref().unwrap_or("no stated issuer"),
+            brand_flag(realm)
+        ),
+    }
 }
 
 /// The command that signs `id` in again: through its own org's client, which is
@@ -315,6 +355,9 @@ pub fn remove_all(cfg: &mut Config, brand: &str) -> Result<Vec<Removed>> {
 
 /// Every identity known for `brand`, in stable display order.
 pub fn list(cfg: &Config, brand: &str) -> Vec<Identity> {
+    let Ok(brand) = realm(cfg, brand) else {
+        return Vec::new();
+    };
     let mut ids: Vec<Identity> = cfg
         .auth
         .identities
@@ -334,6 +377,7 @@ pub fn list(cfg: &Config, brand: &str) -> Vec<Identity> {
 /// The active identity for `brand`, if one is set AND still indexed. A pointer
 /// at an unknown identity resolves to `None` — it never falls through to another.
 pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
+    let brand: &str = &realm(cfg, brand).ok()?;
     let raw = cfg.auth.active.get(brand)?;
     let id = match raw.parse::<Selector>().ok()? {
         Selector::Exact(id) => id,
@@ -360,6 +404,7 @@ fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
 /// is not in that org, rather than answer for the one that would speak instead.
 /// `None` without `--as`, or with nothing signed in. Pure: the index only.
 pub fn within(cfg: &Config, brand: &str) -> Result<Option<Identity>> {
+    let brand: &str = &realm(cfg, brand)?;
     let (Some(org), Some(id)) = (cfg.org.as_deref(), acting(cfg, brand)) else {
         return Ok(None);
     };
@@ -445,8 +490,10 @@ pub(crate) fn add_in(
     brand: &str,
     tokens: &TokenSet,
 ) -> Result<Identity> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     let id = Identity::from_access_token(&tokens.access_token)?;
+    issued(brand, &tokens.access_token)?;
     token::store(v, brand, &id, tokens)?;
     cfg.update(|c| {
         index(c, brand, &id);
@@ -485,6 +532,7 @@ pub(crate) fn switch_in(
     brand: &str,
     sel: Option<Selector>,
 ) -> Result<Identity> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching anything
     let target = match &sel {
         Some(s) => resolve_selector(cfg, brand, s)?,
@@ -533,6 +581,7 @@ pub(crate) fn active_token_in(
     cfg: &mut Config,
     brand: &str,
 ) -> Result<Option<(Identity, TokenSet)>> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     migrate_in(v, cfg, brand)?;
 
@@ -556,6 +605,7 @@ pub(crate) fn active_token_in(
             brand_flag(brand)
         );
     }
+    issued(brand, &tokens.access_token)?;
     Ok(Some((id, tokens)))
 }
 
@@ -565,6 +615,7 @@ pub(crate) fn token_for_in(
     brand: &str,
     id: &Identity,
 ) -> Result<Option<TokenSet>> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     // Only ever resolve an identity we actually INDEX — the same membership
     // `active`/`switch`/`remove` use — never an arbitrary slot a caller named.
@@ -588,6 +639,7 @@ pub(crate) fn token_for_in(
             brand_flag(brand)
         );
     }
+    issued(brand, &tokens.access_token)?;
     Ok(Some(tokens))
 }
 
@@ -641,6 +693,7 @@ pub(crate) fn remove_in(
     brand: &str,
     sel: Option<Selector>,
 ) -> Result<Removed> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     // Resolve + de-index atomically against fresh state, THEN drop the secret.
     // Index-first is the crash-safe order: the index is the only reference, so an
@@ -672,6 +725,7 @@ pub(crate) fn remove_in(
 }
 
 pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Vec<Removed>> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     let ids = cfg.update(|c| {
         let ids = list(c, brand);
@@ -799,6 +853,82 @@ mod tests {
             std::thread::current().id()
         )));
         c
+    }
+
+    /// `cfg()` on devnet, whose issuer is its own.
+    fn devnet() -> Config {
+        let mut c = cfg();
+        c.network.active = Some("devnet".into());
+        c
+    }
+
+    /// A token as an issuer mints it: `iss` stated.
+    fn issued_jwt(iss: &str, owner: &str, name: &str) -> String {
+        claims_jwt(&format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#))
+    }
+
+    // ---- networks ------------------------------------------------------------
+
+    /// Devnet runs unreviewed code, so a credential hanzo.id signed is never
+    /// filed where devnet would be sent it — stated issuer or none.
+    #[test]
+    fn devnet_refuses_a_credential_its_issuer_did_not_sign() {
+        let (v, mut c) = (MemVault::new(), devnet());
+        for token in [issued_jwt("https://hanzo.id", "hanzo", "z"), jwt("hanzo", "z")] {
+            let err = add_in(&v, &mut c, "hanzo", &tokens(&token)).unwrap_err().to_string();
+            assert!(err.contains("signs in at https://id-dev.hanzo.ai"), "{err}");
+        }
+        assert!(list(&c, "hanzo").is_empty());
+    }
+
+    /// One network's identities are not another's: each is filed in its own
+    /// realm, found only on its own network, and presented only there.
+    #[test]
+    fn identities_never_cross_networks() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        let on = |c: &mut Config, network: &str| {
+            let network = network.to_string();
+            c.update(|x| {
+                x.network.active = Some(network);
+                Ok(())
+            })
+            .unwrap();
+        };
+        let prod = issued_jwt("https://hanzo.id", "hanzo", "z");
+        let own = issued_jwt("https://id-dev.hanzo.ai", "hanzo", "z");
+        on(&mut c, "mainnet");
+        add_in(&v, &mut c, "hanzo", &tokens(&prod)).unwrap();
+
+        // Devnet holds nothing until signed in on devnet.
+        on(&mut c, "devnet");
+        assert!(active_token_in(&v, &mut c, "hanzo").unwrap().is_none());
+        assert!(list(&c, "hanzo").is_empty());
+        add_in(&v, &mut c, "hanzo", &tokens(&own)).unwrap();
+        assert!(v.has("hanzo/hanzo/z"));
+        assert!(v.has("hanzo@id-dev.hanzo.ai/hanzo/z"));
+        let (_, t) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(t.access_token, own);
+
+        // Testnet trusts hanzo.id, so it is mainnet's realm.
+        for network in ["mainnet", "testnet"] {
+            on(&mut c, network);
+            let (_, t) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+            assert_eq!(t.access_token, prod, "{network}");
+        }
+        // Mainnet's realm refuses devnet's credential as devnet's refuses hanzo.id's.
+        assert!(add_in(&v, &mut c, "hanzo", &tokens(&own)).is_err());
+        let _ = std::fs::remove_file(c.effective_path());
+    }
+
+    /// A realm handed back in must be the active network's: a command on mainnet
+    /// cannot reach devnet's identities by naming their realm.
+    #[test]
+    fn a_realm_is_only_the_active_networks() {
+        assert_eq!(realm(&devnet(), "hanzo").unwrap(), "hanzo@id-dev.hanzo.ai");
+        assert_eq!(realm(&devnet(), "hanzo@id-dev.hanzo.ai").unwrap(), "hanzo@id-dev.hanzo.ai");
+        assert_eq!(realm(&cfg(), "hanzo").unwrap(), "hanzo");
+        assert!(realm(&cfg(), "hanzo@id-dev.hanzo.ai").is_err());
+        assert!(realm(&devnet(), "hanzo@evil.example").is_err());
     }
 
     fn sel(s: &str) -> Option<Selector> {
