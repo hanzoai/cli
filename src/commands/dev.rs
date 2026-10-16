@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::commands::{network, savings};
-use crate::config::Config;
+use crate::config::{Config, StoredNetwork};
 use crate::iam::{onboarding, paths, provider, store};
 
 /// The CLI as Gen's host: this invocation's config, ONE copy for the life of the
@@ -21,15 +21,40 @@ use crate::iam::{onboarding, paths, provider, store};
 /// being overwritten by another that read the config before it (the session).
 pub struct Store {
     cfg: Mutex<Config>,
+    /// The network the session started on, fixed for its life: its API is the
+    /// one the session calls, so its realm is the only one the session is
+    /// handed a credential from, however the config changes meanwhile.
+    network: StoredNetwork,
     /// Whether the stored Hanzo key may be offered: only on a network whose API
     /// trusts the issuer it was minted under (`hanzo_keys`).
     hanzo_keys: bool,
 }
 
 impl Store {
-    pub fn host(cfg: Config) -> Arc<dyn Host> {
+    pub fn host(mut cfg: Config) -> Arc<dyn Host> {
+        let network = network::active(&cfg);
+        cfg.network.bound = Some(network.name.clone());
         let hanzo_keys = hanzo_keys(&cfg);
-        Arc::new(Store { cfg: Mutex::new(cfg), hanzo_keys })
+        Arc::new(Store { cfg: Mutex::new(cfg), network, hanzo_keys })
+    }
+
+    /// The realm `brand` has on the session's network, as it started.
+    fn realm(&self, brand: &str) -> Result<String> {
+        let Some(issuer) = self.network.iam.as_deref() else {
+            anyhow::bail!("the network {} names no issuer, so no credential is sent to it", self.network.name);
+        };
+        paths::realm(brand, issuer)
+    }
+
+    /// The command that prints a fresh token for `brand`: this build, bound to
+    /// the session's network and holding it to the realm the session started
+    /// with, so the helper refuses rather than print another network's.
+    fn helper(&self, exe: String, brand: &str) -> Vec<String> {
+        let realm = self.realm(brand).unwrap_or_else(|_| brand.to_string());
+        std::iter::once(exe)
+            .chain(hanzo_gen::host::token(&realm))
+            .chain(["--network".to_string(), self.network.name.clone()])
+            .collect()
     }
 }
 
@@ -64,7 +89,13 @@ impl Host for Store {
     fn account<'a>(&'a self, brand: &'a str) -> Pending<'a, Result<Option<Account>>> {
         Box::pin(async move {
             let mut cfg = self.cfg.lock().await;
-            Ok(store::active_token(&mut cfg, brand).await?.map(|(id, t)| Account {
+            // The realm as the session started, or nothing: a network redefined
+            // meanwhile must not hand this session another issuer's credential.
+            let realm = self.realm(brand)?;
+            if store::realm(&cfg, brand)? != realm {
+                anyhow::bail!("the network {} changed since this session started; start it again", self.network.name);
+            }
+            Ok(store::active_token(&mut cfg, &realm).await?.map(|(id, t)| Account {
                 owner: id.owner,
                 name: id.name,
                 token: t.access_token,
@@ -75,7 +106,7 @@ impl Host for Store {
     fn refresh(&self, brand: &str) -> Vec<String> {
         // This build, not whichever `hanzo` PATH finds first.
         let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "hanzo".into());
-        std::iter::once(exe).chain(hanzo_gen::host::token(brand)).collect()
+        self.helper(exe, brand)
     }
 
     fn key(&self, p: Provider) -> Result<Option<String>> {
@@ -146,5 +177,22 @@ mod network_tests {
             cfg.network.active = Some(network.into());
             assert_eq!(hanzo_keys(&cfg), offered, "{network}");
         }
+    }
+
+    /// The token helper names the session's network and its realm, so selecting
+    /// another network meanwhile cannot make it print that network's token.
+    #[test]
+    fn the_token_helper_is_bound_to_the_sessions_network() {
+        let mut cfg = Config::default();
+        cfg.network.active = Some("devnet".into());
+        let store = Store {
+            network: network::active(&cfg),
+            hanzo_keys: hanzo_keys(&cfg),
+            cfg: Mutex::new(cfg),
+        };
+        assert_eq!(
+            store.helper("hanzo".into(), "hanzo"),
+            ["hanzo", "auth", "token", "--brand", "hanzo@id-dev.hanzo.ai", "--network", "devnet"]
+        );
     }
 }

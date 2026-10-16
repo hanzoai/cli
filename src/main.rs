@@ -415,6 +415,10 @@ enum AuthCommands {
     Token {
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
+        /// The network whose credential to print, whatever is selected now.
+        /// A session's token helper names the network the session started on.
+        #[arg(long)]
+        network: Option<String>,
     },
 }
 
@@ -725,6 +729,10 @@ async fn main() -> Result<()> {
     // Keyed by the FIELD name, which is clap's arg id — `--as` is only the long
     // spelling, and get_one("as") is always None.
     config.org = matches.get_one::<String>("org").cloned();
+    // So is the network: the one active as it starts, kept through every reload,
+    // so a network selected in another shell meanwhile never moves where this
+    // invocation's credentials go.
+    config.network.bound = Some(commands::network::active(&config).name);
     let telemetry = telemetry::build(&config);
 
     // A matched generated operation dispatches first, through the shared seam.
@@ -915,7 +923,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             AuthCommands::Use { identity, brand } => {
                 commands::auth::use_identity(&mut config, &brand, identity)?
             }
-            AuthCommands::Token { brand } => commands::auth::token(&mut config, &brand).await?,
+            AuthCommands::Token { brand, network } => {
+                if let Some(network) = network {
+                    commands::network::bind(&mut config, &network)?;
+                }
+                commands::auth::token(&mut config, &brand).await?
+            }
         },
         Commands::Engine { command } => match command {
             EngineCommands::Serve {

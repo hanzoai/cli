@@ -232,6 +232,12 @@ pub struct NetworkState {
     /// Custom networks added via `hanzo network add`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom: Vec<StoredNetwork>,
+    /// The network THIS invocation is on, never written: the one active when it
+    /// started, or the one `auth token --network` names. A long-running command
+    /// keeps it through every reload, so selecting another network in another
+    /// shell never changes where this one's credentials go.
+    #[serde(skip)]
+    pub bound: Option<String>,
 }
 
 /// A network descriptor. For a sovereign L1, `network_id == chain_id`.
@@ -336,7 +342,8 @@ impl Config {
     /// be a function of its inputs rather than of `self`'s prior contents — any
     /// un-persisted in-memory edit is intentionally discarded. `f` may fail, in
     /// which case nothing is written. On success `self` IS the persisted state,
-    /// plus `org`, which belongs to this invocation and is never written.
+    /// plus `org` and the bound network, which belong to this invocation and are
+    /// never written.
     pub fn update<T>(&mut self, f: impl FnOnce(&mut Config) -> Result<T>) -> Result<T> {
         let path = self.effective_path();
         if let Some(dir) = path.parent() {
@@ -347,6 +354,7 @@ impl Config {
         let _lock = Lock::acquire(&path)?;
         let mut fresh = Self::load(Some(path.clone()))?;
         fresh.org = self.org.clone();
+        fresh.network.bound = self.network.bound.clone();
         let out = f(&mut fresh)?;
         fresh.write_atomic(&path)?;
         *self = fresh;
@@ -409,8 +417,26 @@ mod tests {
         assert!(Config::default().code.link);
     }
 
-    /// A network added before networks named their issuer still parses, as one
-    /// on the brand's own, and writing it back adds nothing.
+    /// The bound network belongs to the invocation: a write keeps it in memory,
+    /// whatever the file says, and never puts it in the file.
+    #[test]
+    fn the_bound_network_survives_a_write_and_is_never_written() {
+        let mut cfg = tmp_cfg("bound");
+        let path = cfg.effective_path();
+        cfg.network.bound = Some("devnet".into());
+        cfg.update(|c| {
+            c.network.active = Some("mainnet".into());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cfg.network.bound.as_deref(), Some("devnet"));
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("bound"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A network added before networks named their issuer still parses — as one
+    /// that names none, and so is sent no credential — and writing it back adds
+    /// nothing.
     #[test]
     fn a_network_without_an_issuer_still_parses() {
         let cfg: Config = toml::from_str(

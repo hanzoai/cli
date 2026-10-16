@@ -87,7 +87,8 @@ fn authority_origin(authority: &str) -> Option<String> {
     if !dns {
         return None;
     }
-    let scheme = if host == "localhost" || host.starts_with("127.") { "http" } else { "https" };
+    let loopback = host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok_and(|a| a.is_loopback());
+    let scheme = if loopback { "http" } else { "https" };
     Some(match port {
         Some(p) => format!("{scheme}://{host}:{p}"),
         None => format!("{scheme}://{host}"),
@@ -99,22 +100,27 @@ pub fn brand_of(realm: &str) -> &str {
     realm.split_once('@').map_or(realm, |(brand, _)| brand)
 }
 
-/// The realm `brand` signs in to on a network whose issuer is `issuer`.
+/// The realm `brand` signs in to on a network whose API trusts `issuer`.
 ///
-/// The networks are Hanzo's, so a network's issuer applies to the default
-/// brand: on a network whose issuer is hanzo.id (mainnet, testnet) the realm is
-/// `hanzo`, and on one with its own (devnet's id-dev.hanzo.ai) it is
-/// `hanzo@id-dev.hanzo.ai`. Any other brand, or a network that names no issuer,
-/// keeps the brand's own. An issuer the realm could not name exactly — not
-/// https (or http on loopback), carrying a path, a query or credentials — is
-/// refused rather than read as the brand's own.
-pub fn realm(brand: &str, issuer: Option<&str>) -> anyhow::Result<String> {
-    let (Some(own), Some(issuer)) = (brand_origin(brand), issuer.filter(|_| brand == DEFAULT_BRAND)) else {
-        return Ok(brand.to_string());
-    };
+/// A network on hanzo.id (mainnet, testnet) trusts every brand's issuer beside
+/// it — one API validates hanzo and its white-label brands — so each brand keeps
+/// its own realm, and its credentials. A network with an issuer of its own
+/// (devnet's id-dev.hanzo.ai) trusts that issuer alone: the default brand signs
+/// in there under `hanzo@id-dev.hanzo.ai`, and every other brand is refused,
+/// because its credential would be sent to an API that trusts none of them. An
+/// issuer the realm could not name exactly — not https (or http on loopback),
+/// carrying a path, a query or credentials — is refused rather than read as
+/// hanzo.id.
+pub fn realm(brand: &str, issuer: &str) -> anyhow::Result<String> {
     let issuer = trim_server_url(issuer.trim());
-    if issuer == own {
+    if Some(issuer) == brand_origin(DEFAULT_BRAND) {
         return Ok(brand.to_string());
+    }
+    if brand != DEFAULT_BRAND {
+        anyhow::bail!(
+            "{brand} does not sign in on a network whose API trusts {issuer} alone; \
+             sign in as {DEFAULT_BRAND} there"
+        );
     }
     let named = reqwest::Url::parse(issuer).ok().and_then(|url| {
         let host = url.host_str()?;
@@ -126,7 +132,7 @@ pub fn realm(brand: &str, issuer: Option<&str>) -> anyhow::Result<String> {
     match named {
         Some(realm) if server_url_for_brand(&realm).as_deref() == Some(issuer) => Ok(realm),
         _ => anyhow::bail!(
-            "the active network's issuer {issuer:?} is not an origin the CLI signs in at \
+            "the network's issuer {issuer:?} is not an origin the CLI signs in at \
              (https://<host>[:port], or http on loopback, and nothing after it)"
         ),
     }
@@ -175,22 +181,23 @@ mod tests {
     }
 
     /// A network with its own issuer signs the default brand in there, under a
-    /// realm of its own; a network on the brand's issuer, or naming none, keeps
-    /// the plain brand, and so the credentials it already holds.
+    /// realm of its own, and refuses every other brand; a network on hanzo.id
+    /// keeps each brand's own realm, and so the credentials it already holds.
     #[test]
     fn a_network_with_its_own_issuer_is_a_realm_of_its_own() {
-        assert_eq!(realm("hanzo", Some("https://hanzo.id")).unwrap(), "hanzo");
-        assert_eq!(realm("hanzo", Some("https://hanzo.id/")).unwrap(), "hanzo");
-        assert_eq!(realm("hanzo", None).unwrap(), "hanzo");
-        let dev = realm("hanzo", Some("https://id-dev.hanzo.ai")).unwrap();
+        assert_eq!(realm("hanzo", "https://hanzo.id").unwrap(), "hanzo");
+        assert_eq!(realm("hanzo", "https://hanzo.id/").unwrap(), "hanzo");
+        assert_eq!(realm("lux", "https://hanzo.id").unwrap(), "lux");
+        let dev = realm("hanzo", "https://id-dev.hanzo.ai").unwrap();
         assert_eq!(dev, "hanzo@id-dev.hanzo.ai");
         assert_eq!(server_url_for_brand(&dev).as_deref(), Some("https://id-dev.hanzo.ai"));
         assert_eq!(brand_of(&dev), "hanzo");
         assert_eq!(brand_flag(&dev), "");
-        let local = realm("hanzo", Some("http://localhost:8000")).unwrap();
+        let local = realm("hanzo", "http://localhost:8000").unwrap();
         assert_eq!(server_url_for_brand(&local).as_deref(), Some("http://localhost:8000"));
-        // Only the default brand follows the network.
-        assert_eq!(realm("lux", Some("https://id-dev.hanzo.ai")).unwrap(), "lux");
+        for brand in ["lux", "zoo", "pars", "bootnode"] {
+            assert!(realm(brand, "https://id-dev.hanzo.ai").is_err(), "{brand} signs in on devnet");
+        }
     }
 
     /// An issuer the realm cannot name exactly is refused, never read as the
@@ -204,12 +211,23 @@ mod tests {
             "https://u:p@id-dev.hanzo.ai",
             "ftp://id-dev.hanzo.ai",
             "id-dev.hanzo.ai",
+            "http://127.evil.example",
         ] {
-            assert!(realm("hanzo", Some(bad)).is_err(), "{bad} was accepted");
+            assert!(realm("hanzo", bad).is_err(), "{bad} was accepted");
         }
         for bad in ["hanzo@", "hanzo@ID.example", "hanzo@a/b", "hanzo@a:x", "nope@id.example", "hanzo@-a.example"] {
             assert_eq!(server_url_for_brand(bad), None, "{bad} resolved");
         }
+    }
+
+    /// Plain http only on an address that is loopback, parsed — never on a name
+    /// that merely starts like one.
+    #[test]
+    fn only_a_loopback_address_signs_in_over_http() {
+        assert_eq!(server_url_for_brand("hanzo@127.0.0.1:8000").as_deref(), Some("http://127.0.0.1:8000"));
+        assert_eq!(server_url_for_brand("hanzo@localhost").as_deref(), Some("http://localhost"));
+        assert_eq!(server_url_for_brand("hanzo@127.evil.example").as_deref(), Some("https://127.evil.example"));
+        assert_eq!(server_url_for_brand("hanzo@127.0.0.1.example").as_deref(), Some("https://127.0.0.1.example"));
     }
 
     /// No brand may point IAM at an `api.` host.

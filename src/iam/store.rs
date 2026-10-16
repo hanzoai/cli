@@ -218,12 +218,21 @@ fn moved_in(
 ///
 /// Every function here that takes a brand resolves it through this, so no
 /// caller can reach another network's identities, whatever it passes: on devnet
-/// `hanzo` is `hanzo@id-dev.hanzo.ai`, and a credential hanzo.id signed is not
-/// in that realm. A realm passed back in (the detached account menu carries one)
-/// must be the one the active network names.
+/// `hanzo` is `hanzo@id-dev.hanzo.ai`, a credential hanzo.id signed is not in
+/// that realm, and no other brand has one. A realm passed back in (the detached
+/// account menu, a session's token helper) must be the one the active network
+/// names. A network that names no issuer is sent no credential at all.
 pub(crate) fn realm(cfg: &Config, brand: &str) -> Result<String> {
     let network = crate::commands::network::active(cfg);
-    let want = paths::realm(paths::brand_of(brand), network.iam.as_deref())?;
+    let Some(issuer) = network.iam.as_deref() else {
+        bail!(
+            "the network {} names no issuer, so no credential is sent to it; name the one its \
+             API trusts with `hanzo network add {} … --iam <origin>`",
+            network.name,
+            network.name
+        );
+    };
+    let want = paths::realm(paths::brand_of(brand), issuer)?;
     if brand != paths::brand_of(brand) && brand != want {
         bail!("{brand} is not a realm of the active network {} ({want})", network.name);
     }
@@ -917,6 +926,31 @@ mod tests {
         }
         // Mainnet's realm refuses devnet's credential as devnet's refuses hanzo.id's.
         assert!(add_in(&v, &mut c, "hanzo", &tokens(&own)).is_err());
+        let _ = std::fs::remove_file(c.effective_path());
+    }
+
+    /// A network that names no issuer is sent no credential; on devnet no brand
+    /// but the default has one.
+    #[test]
+    fn no_issuer_no_credential_and_no_other_brand_on_devnet() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        c.network.custom.push(crate::config::StoredNetwork {
+            name: "mine".into(),
+            label: "mine".into(),
+            network_id: 7,
+            chain_id: 7,
+            rpc: "https://rpc.example".into(),
+            api: "https://api.example".into(),
+            iam: None,
+            explorer: None,
+        });
+        c.network.bound = Some("mine".into());
+        assert!(active_token_in(&v, &mut c, "hanzo").is_err());
+        assert!(list(&c, "hanzo").is_empty());
+        c.network.bound = Some("devnet".into());
+        assert!(realm(&c, "lux").is_err());
+        assert!(active_token_in(&v, &mut c, "lux").is_err());
         let _ = std::fs::remove_file(c.effective_path());
     }
 

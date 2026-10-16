@@ -339,10 +339,24 @@ fn identities_never_cross_networks() {
     run(&login, Some(&dev)).success();
     run(&["auth", "token"], None).success().stdout(format!("{dev}\n"));
 
+    // No other brand signs in on devnet: its API trusts id-dev alone.
+    run(&["auth", "login", "--brand", "lux", "--provider", "hanzo", "--token", "-"], Some(&prod))
+        .failure()
+        .stderr(predicate::str::contains("lux does not sign in"));
+
     run(&["network", "use", "mainnet"], None).success();
     run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
     run(&["network", "use", "testnet"], None).success();
     run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
+
+    // A devnet session's token helper is bound to devnet: selecting another
+    // network meanwhile changes nothing it prints, and its realm is refused
+    // anywhere but on devnet.
+    let helper = ["auth", "token", "--brand", "hanzo@id-dev.hanzo.ai", "--network", "devnet"];
+    run(&helper, None).success().stdout(format!("{dev}\n"));
+    run(&["auth", "token", "--brand", "hanzo@id-dev.hanzo.ai"], None)
+        .failure()
+        .stderr(predicate::str::contains("not a realm of the active network"));
 }
 
 /// An unknown network is refused with a useful hint, non-zero.
