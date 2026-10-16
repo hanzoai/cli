@@ -175,7 +175,8 @@ async fn start_ttyd(port: u16, shell: &Shell, writable: bool) -> Result<Ttyd> {
         );
     }
 
-    let mut c = Command::new("ttyd");
+    let ttyd = hanzo_gen::exe::find("ttyd").context("ttyd is not installed (brew install ttyd)")?;
+    let mut c = Command::from(hanzo_gen::exe::command(ttyd));
     c.arg("--port")
         .arg(port.to_string())
         // Loopback ONLY: the fabric is the single way in, so the shell is never
@@ -338,12 +339,14 @@ pub async fn run(
 struct Tmux(Option<PathBuf>);
 
 impl Tmux {
-    fn command(&self) -> Command {
-        let mut c = Command::new(hanzo_gen::exe::find("tmux").unwrap_or_else(|| "tmux".into()));
+    /// tmux, by its full path (`exe::find`), at this server's socket. `None` when
+    /// tmux is not installed: nothing is run by a bare name.
+    fn command(&self) -> Option<Command> {
+        let mut c = Command::from(hanzo_gen::exe::command(hanzo_gen::exe::find("tmux")?));
         if let Some(socket) = &self.0 {
             c.arg("-S").arg(socket);
         }
-        c
+        Some(c)
     }
 }
 
@@ -467,7 +470,7 @@ fn worth_reporting(last: &str, now: &str) -> bool {
 /// Where the shared session's active pane is, as tmux reports it.
 async fn active_path(tmux: &Tmux) -> Option<String> {
     let out = tmux
-        .command()
+        .command()?
         .args(["display-message", "-p", "-t", "hanzo", "#{pane_current_path}"])
         .output()
         .await
@@ -500,16 +503,11 @@ async fn active_path(tmux: &Tmux) -> Option<String> {
 /// the session may not exist yet. Creating it is idempotent — an existing session
 /// makes `new-session` fail, which is exactly the outcome that needs no action.
 async fn pin(tmux: &Tmux, url: Option<&str>) {
-    let _ = tmux
-        .command()
-        .args(["new-session", "-d", "-s", "hanzo"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await;
+    let Some(mut new) = tmux.command() else { return };
+    let _ = new.args(["new-session", "-d", "-s", "hanzo"]).stdout(Stdio::null()).stderr(Stdio::null()).status().await;
     for args in bar_args(url) {
-        let _ = tmux
-            .command()
+        let Some(mut set) = tmux.command() else { return };
+        let _ = set
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -531,7 +529,7 @@ fn bar_args(url: Option<&str>) -> [Vec<String>; 2] {
 ///
 /// `None` means tmux could not be spawned at all.
 async fn attach(tmux: &Tmux) -> Option<i32> {
-    tmux.command()
+    tmux.command()?
         .args(["new", "-A", "-s", "hanzo"])
         .status()
         .await
@@ -860,7 +858,7 @@ async fn supervise(bin: &std::path::Path, args: &[String], mut guard: Guard) -> 
     let mut backoff = BACKOFF.0;
     loop {
         let started = std::time::Instant::now();
-        let mut child = tokio::process::Command::new(bin)
+        let mut child = tokio::process::Command::from(hanzo_gen::exe::command(bin))
             .args(args)
             .kill_on_drop(true)
             .spawn()
@@ -949,7 +947,7 @@ pub async fn status(cfg: &mut Config, signer: Signer) -> Result<()> {
         Err(e) => println!("  {} {e}", "unreadable:".red()),
     }
     println!("{}", "tunnels".bold());
-    let ps = std::process::Command::new("ps").args(["-eo", "pid=,args="]).output();
+    let ps = hanzo_gen::exe::find("ps").and_then(|ps| hanzo_gen::exe::command(ps).args(["-eo", "pid=,args="]).output().ok());
     let running = ps.map(|o| tunnels(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default();
     if running.is_empty() {
         println!("  no zt tunnel is running here");
@@ -1036,7 +1034,7 @@ mod tests {
     impl Drop for Server {
         fn drop(&mut self) {
             if let (Some(bin), Some(socket)) = (hanzo_gen::exe::find("tmux"), &self.tmux.0) {
-                let _ = std::process::Command::new(bin)
+                let _ = hanzo_gen::exe::command(bin)
                     .arg("-S")
                     .arg(socket)
                     .arg("kill-server")

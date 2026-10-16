@@ -19,7 +19,8 @@
 #   HANZO_INSTALL_PREFIX install dir            (default ~/.local/bin)
 #   HANZO_VERSION        pin a tag              (default: highest stable semver)
 #   HANZO_INSTALL_SIGNER the workflow that must have built the asset, for a tool
-#                        whose releases are attested (e.g. .github/workflows/release.yml)
+#                        whose releases are attested (e.g. .github/workflows/release.yml);
+#                        such a tool is installed from vX.Y.Z tags only
 #
 # The convention every published Hanzo binary follows, and the only thing this
 # needs to know: the asset is <BIN>-<os>-<arch>.tar.gz, it is accompanied by
@@ -96,6 +97,15 @@ esac
 target="${os}-${arch}"
 
 TAG="${HANZO_VERSION:-}"
+# An attested tool ships from `vX.Y.Z` tags only: the form its release workflow
+# runs on and its tag ruleset guards. Any other tag in its repository is one no
+# release of it made, whatever assets it carries.
+form='(rust-)?v'
+[ -z "$SIGNER" ] || form='v'
+if [ -n "$TAG" ] && [ -n "$SIGNER" ]; then
+  printf '%s' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+    || die "$TAG is not a release tag of $REPO (vX.Y.Z)"
+fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -143,9 +153,9 @@ if [ -z "$TAG" ]; then
   tags > "$tmp/refs" || die "could not list the tags of $REPO"
   # One ref per pkt-line, "<len><sha> refs/tags/<tag>", with NULs around the
   # capability list; a peeled "<tag>^{}" line fails the pattern.
-  tr '\000' '\n' < "$tmp/refs" | awk '
-    $2 ~ /^refs\/tags\/(rust-)?v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ {
-      tag = substr($2, 11); version = tag; sub(/^(rust-)?v/, "", version)
+  tr '\000' '\n' < "$tmp/refs" | awk -v form="$form" '
+    $2 ~ ("^refs/tags/" form "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$") {
+      tag = substr($2, 11); version = tag; sub("^" form, "", version)
       print version "\t" tag
     }' | sort -t . -k1,1nr -k2,2nr -k3,3nr | awk '{ print $2 }' > "$tmp/tags"
   while read -r candidate; do
@@ -195,18 +205,29 @@ fetch "$asset.sha256" "$tmp/$asset.sha256" \
 # from the same release as the archive, so it proves the bytes arrived whole and
 # nothing about where they came from. The attestation does: Sigstore's record
 # that THIS repository's $SIGNER, run for THIS tag, built exactly these bytes.
-# gh carries the verification, so it is checked when a signed-in gh is here, and
-# a mismatch refuses the install. Without one it is not checked, and the line
-# says so and how to check it — never a silent pass.
+# gh carries the verification, so it is checked when a signed-in gh that can
+# verify an attestation's tag is here, and a verification that ran and failed
+# refuses the install, with gh's reason. Otherwise it is not checked, and the
+# line says why and how to check it — never a silent pass.
 if [ -n "$SIGNER" ]; then
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  if ! command -v gh >/dev/null 2>&1; then
+    unchecked="needs gh"
+  elif ! gh auth status >/dev/null 2>&1; then
+    unchecked="needs a signed-in gh"
+  elif ! gh attestation verify --help 2>/dev/null | grep -q -- '--source-ref'; then
+    unchecked="$(gh --version 2>/dev/null | head -1 || true) cannot check an attestation's tag"
+  else
+    unchecked=""
+  fi
+  if [ -z "$unchecked" ]; then
     gh attestation verify "$tmp/$asset" --repo "$REPO" --signer-workflow "$REPO/$SIGNER" \
-      --source-ref "refs/tags/$TAG" >/dev/null 2>&1 \
-      || die "$asset has no attestation that $REPO/$SIGNER built it at $TAG — refusing to install"
+      --source-ref "refs/tags/$TAG" > "$tmp/provenance" 2>&1 \
+      || { sed 's/^/  /' "$tmp/provenance" >&2
+           die "$asset has no attestation that $REPO/$SIGNER built it at $TAG — refusing to install"; }
     printf '%s: provenance: %s built %s at %s\n' "$BIN" "$REPO/$SIGNER" "$asset" "$TAG"
   else
-    printf '%s: provenance not checked (needs a signed-in gh): gh attestation verify %s --repo %s --signer-workflow %s/%s\n' \
-      "$BIN" "$asset" "$REPO" "$REPO" "$SIGNER"
+    printf '%s: provenance not checked (%s): gh attestation verify %s --repo %s --signer-workflow %s/%s --source-ref refs/tags/%s\n' \
+      "$BIN" "$unchecked" "$asset" "$REPO" "$REPO" "$SIGNER" "$TAG"
   fi
 fi
 

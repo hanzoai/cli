@@ -276,7 +276,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
                 let npm = hanzo_gen::exe::find("npm").context("installing an agent needs npm (Node.js 20 or newer)")?;
                 npm_used = true;
                 println!("{} {} ({package}) → {}", "upgrading".bold(), t.title, prefix.join("bin").display());
-                tokio::process::Command::new(&npm)
+                tokio::process::Command::from(hanzo_gen::exe::command(&npm))
                     .args(["install", "--global", "--no-audit", "--no-fund", "--no-update-notifier", "--loglevel=error", "--prefix"])
                     .arg(&prefix)
                     .arg(format!("{package}@latest"))
@@ -288,7 +288,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
             Upgrade::Own(args) => match agents::find_program(&root, t.programs) {
                 Some(bin) => {
                     println!("{} {} ({} {})", "upgrading".bold(), t.title, bin.display(), args.join(" "));
-                    tokio::process::Command::new(&bin).args(args).status().await.with_context(|| format!("running {}", bin.display()))?.success()
+                    tokio::process::Command::from(hanzo_gen::exe::command(&bin)).args(args).status().await.with_context(|| format!("running {}", bin.display()))?.success()
                 }
                 None => {
                     println!("  {} {} is not installed: see https://docs.hanzo.ai/docs/guides/coding for its installer", "✗".red(), t.title);
@@ -298,7 +298,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
             Upgrade::Uv(package) => match hanzo_gen::exe::find("uv") {
                 Some(uv) => {
                     println!("{} {} (uv tool upgrade {package})", "upgrading".bold(), t.title);
-                    tokio::process::Command::new(uv).args(["tool", "upgrade", package]).status().await.context("running uv")?.success()
+                    tokio::process::Command::from(hanzo_gen::exe::command(uv)).args(["tool", "upgrade", package]).status().await.context("running uv")?.success()
                 }
                 None => {
                     println!("  {} {} upgrades with uv, which is not installed", "✗".red(), t.title);

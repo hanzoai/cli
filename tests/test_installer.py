@@ -186,13 +186,18 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(self.prefix.exists())
 
     # A stand-in gh: signed in, and its `attestation verify` answers `verdict`
-    # and records how it was asked.
-    def signed_in_gh(self, verdict):
+    # and records how it was asked. One that is `old` predates the command, as
+    # Ubuntu's gh 2.45.0 does: `unknown command "attestation"`, exit 1.
+    def signed_in_gh(self, verdict, old=False):
+        attest = ('echo \'unknown command "attestation" for "gh"\' >&2; exit 1' if old else
+                  f'[ "$3" = --help ] && {{ echo "  --source-ref string"; exit 0; }}; '
+                  f'echo "$@" >> "{self.root}/gh-asked"; echo "no attestation matched" >&2; exit {verdict}')
         self.executable("gh", f"""#!/bin/sh
 case "$1 $2" in
   "auth status") exit 0 ;;
   "auth token") exit 1 ;;
-  "attestation verify") echo "$@" >> "{self.root}/gh-asked"; exit {verdict} ;;
+  "--version ") echo "gh version 2.45.0 (2024-03-04)"; exit 0 ;;
+  "attestation verify") {attest} ;;
 esac
 exit 1
 """)
@@ -218,7 +223,37 @@ exit 1
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("refusing to install", result.stderr)
+        self.assertIn("no attestation matched", result.stderr, "gh's own reason is shown")
         self.assertFalse((self.prefix / "hanzo-mcp").exists())
+
+    def test_a_gh_that_cannot_verify_says_so_and_does_not_refuse(self):
+        # gh before `attestation verify --source-ref` cannot check anything: that is
+        # an unchecked install, named with its version, never a tamper verdict.
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.signed_in_gh(0, old=True)
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provenance not checked (gh version 2.45.0 (2024-03-04) cannot check an attestation's tag)", result.stdout)
+        self.assertIn("--source-ref refs/tags/v1.0.0", result.stdout)
+        self.assertFalse((self.root / "gh-asked").exists())
+
+    def test_an_attested_tool_installs_from_its_release_tags_only(self):
+        # Its release workflow runs on vX.Y.Z and its ruleset guards v*: a higher
+        # rust-v tag carrying the right asset names is no release of it.
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.tags("rust-v9.9.9", "v1.0.0")
+        self.release("rust-v9.9.9", "linux-amd64")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("v1.0.0 linux-amd64", result.stdout)
+        self.assertNotIn("rust-v9.9.9", result.stdout)
+        self.env["HANZO_VERSION"] = "rust-v9.9.9"
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rust-v9.9.9 is not a release tag of hanzoai/mcp (vX.Y.Z)", result.stderr)
 
     def test_without_a_signed_in_gh_the_install_says_provenance_was_not_checked(self):
         self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
@@ -226,8 +261,9 @@ exit 1
         self.release("v1.0.0", "linux-amd64")
         result = self.install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("provenance not checked", result.stdout)
+        self.assertIn("provenance not checked (needs a signed-in gh)", result.stdout)
         self.assertIn("gh attestation verify", result.stdout)
+        self.assertIn("--source-ref refs/tags/v1.0.0", result.stdout)
 
     def test_no_stable_release_with_this_build_fails(self):
         self.tags("v2.0.0", "v1.0.0-rc.1")

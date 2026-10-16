@@ -953,7 +953,7 @@ dependencies = [
 [[package]]
 name = "hanzo-gen"
 version = "0.1.0"
-source = "git+https://github.com/hanzoai/gen?rev=67411192cdef0b2b74e8a908b7daab8b8915b9fb#67411192cdef0b2b74e8a908b7daab8b8915b9fb"
+source = "git+https://github.com/hanzoai/gen?rev=7846eed181a15047e5b1b3ec1a092a9a4d8ad82b#7846eed181a15047e5b1b3ec1a092a9a4d8ad82b"
 dependencies = [
  "anyhow",
  "base64",
