@@ -5,7 +5,7 @@
 //!
 //! - **The cloud**: `GET /v1/usage/summary` for the org, over the selected range,
 //!   through the one authenticated seam. Read every ten seconds; it shows the fields
-//!   the cloud answers (`commands::savings::Llm`) and says so when it answers none of
+//!   the cloud answers (`hanzo_gen::savings::Llm`) and says so when it answers none of
 //!   the cache fields. The linked provider accounts sit beside the org's
 //!   Hanzo-routed usage, as the cloud sends them.
 //! - **A local kai-gateway** (`hanzo-inc/kai-gateway`): `GET /dashboard/savings`
@@ -34,7 +34,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Notify;
 
-use crate::commands::savings::{self, int, pct, usd, Llm, Plan};
+use crate::commands::savings;
+use hanzo_gen::savings::{int, pct, usd, Llm, Plan};
 use crate::config::Config;
 
 /// The windows `t` steps through.

@@ -56,6 +56,10 @@ members = ["crates/event", "crates/client"]
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }
 hanzo-client = { path = "crates/client", version = "0.1.0" }
+# The coding-agent harness: `hanzo dev`, a bare `hanzo`, `hanzo desktop` and the
+# session, target and kit clients all run it, with this CLI as its host
+# (`commands::dev::Store`). Pinned by commit; a Gen release moves it.
+hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "782d221ba6c8fce36605c217b906f4ab103959e8" }
 strsim = "0.11"
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }
@@ -101,3 +105,9 @@ sha3 = "0.10"                                             # Keccak-256 for EVM a
 assert_cmd = "2.0"
 predicates = "3.1"
 libc = "0.2"
+
+# Gen consumes `hanzo-client` from this repository by pinned commit. Building
+# here, that git source IS `crates/client`, so it resolves to the path and one
+# copy links.
+[patch."https://github.com/hanzoai/cli"]
+hanzo-client = { path = "crates/client" }

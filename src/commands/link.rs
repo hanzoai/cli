@@ -45,9 +45,9 @@ mod zt;
 
 pub use network::Caller;
 
-use crate::commands::code::event::Status;
-use crate::commands::code::session::SessionClient;
-use crate::commands::code::{context, target};
+use hanzo_gen::event::Status;
+use hanzo_gen::session::SessionClient;
+use hanzo_gen::{context, target};
 use crate::commands::share;
 use crate::config::Config;
 use crate::iam::paths::DEFAULT_BRAND;
@@ -254,7 +254,7 @@ pub async fn run(
     // that announced itself once and went quiet reads offline while the shell it
     // published is still serving. The guard beats until this command returns —
     // detached and best-effort, never on the critical path of getting a shell up.
-    let _machine = target::beat(cfg, &api, &context::machine_id(), &context::hostname());
+    let _machine = target::beat(crate::commands::dev::Store::host(cfg.clone()), &api, &context::machine_id(), &context::hostname());
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
@@ -987,7 +987,7 @@ pub async fn rm(cfg: &mut Config, name: String, signer: Signer) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::code::testmock::MockCloud;
+    use super::network::tests::Fake;
     use anyhow::anyhow;
 
     /// The tunnel signs in with `--as <org>` only for an identity held in that
@@ -1016,17 +1016,18 @@ mod tests {
     /// the console can never see a finished session still advertising a terminal.
     #[tokio::test]
     async fn a_clean_exit_closes_the_session_and_withdraws_the_terminal() {
-        let mock = MockCloud::start().await;
-        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+        let fake = Fake::serve(200, "{}").await;
+        let client = SessionClient::new(&fake.base, "T").unwrap();
 
         finish(&client, Some("sess_1"), Ok(())).await.unwrap();
 
-        let reqs = mock.requests();
-        assert_eq!(reqs.len(), 1, "one act, one request");
-        assert_eq!(reqs[0].method, "PATCH");
-        assert_eq!(reqs[0].path, "/v1/agents/sessions/sess_1");
-        assert_eq!(reqs[0].json()["status"], "done");
-        assert_eq!(reqs[0].json()["terminal"], "");
+        // One act, one request.
+        let (method, path, _, _, body) = fake.one();
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(method, "PATCH");
+        assert_eq!(path, "/v1/agents/sessions/sess_1");
+        assert_eq!(body["status"], "done");
+        assert_eq!(body["terminal"], "");
     }
 
     /// The failing exits are the ones that used to leak: a tunnel that died, a
@@ -1035,17 +1036,17 @@ mod tests {
     /// unchanged, because recording an ending must not swallow one.
     #[tokio::test]
     async fn a_failed_link_ends_as_an_error_and_still_reports_it() {
-        let mock = MockCloud::start().await;
-        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+        let fake = Fake::serve(200, "{}").await;
+        let client = SessionClient::new(&fake.base, "T").unwrap();
 
         let err = finish(&client, Some("sess_1"), Err(anyhow!("share ended: exit 1")))
             .await
             .unwrap_err();
 
         assert!(err.to_string().contains("share ended"), "got: {err}");
-        let reqs = mock.requests();
-        assert_eq!(reqs[0].json()["status"], "error");
-        assert_eq!(reqs[0].json()["terminal"], "");
+        let body: serde_json::Value = serde_json::from_str(&fake.one().4).unwrap();
+        assert_eq!(body["status"], "error");
+        assert_eq!(body["terminal"], "");
     }
 
     /// Cloud being unreachable costs a stale row, never a failed command: the
@@ -1053,8 +1054,8 @@ mod tests {
     /// would be reporting the wrong thing.
     #[tokio::test]
     async fn a_control_plane_that_refuses_the_close_does_not_fail_the_link() {
-        let mock = MockCloud::start_status(403).await;
-        let client = SessionClient::new(&mock.base_url(), "T").unwrap();
+        let fake = Fake::serve(403, "{}").await;
+        let client = SessionClient::new(&fake.base, "T").unwrap();
 
         assert!(finish(&client, Some("sess_1"), Ok(())).await.is_ok());
     }

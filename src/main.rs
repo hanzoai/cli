@@ -6,7 +6,6 @@ use std::path::PathBuf;
 mod commands;
 mod config;
 mod image;
-mod private;
 mod iam;
 mod telemetry;
 // ZAP reaches the local host over a UNIX socket. Windows has none, so there the
@@ -14,12 +13,11 @@ mod telemetry;
 #[cfg(unix)]
 mod zap;
 
-/// Tell the user something went sideways WITHOUT failing the run — one place, so
-/// every warning the CLI prints looks the same and none of them lands on stdout,
-/// where it would corrupt what a caller is piping (`hanzo auth token`).
-pub fn warn(msg: &str) {
-    eprintln!("{} {}", "warning:".yellow().bold(), msg);
-}
+/// Every warning the CLI prints goes through Gen's one `warn`, so they all look
+/// the same and none lands on stdout.
+pub use hanzo_gen::warn;
+
+use commands::dev::Target;
 
 #[derive(Parser)]
 #[command(name = "hanzo")]
@@ -80,198 +78,13 @@ struct Cli {
     /// The coding-session args, flattened so a bare `hanzo [flags] [task]` is a
     /// coding session with them. Ignored when an explicit subcommand is given.
     #[command(flatten)]
-    code: CodeArgs,
+    code: hanzo_gen::Args,
 
     /// Optional: a truly-bare `hanzo` (no subcommand) launches a cloud-linked
     /// coding session from the flattened `code` args above. `--help`/`-h` and every
     /// explicit subcommand are handled by clap before that fallback ever applies.
     #[command(subcommand)]
     command: Option<Commands>,
-}
-
-/// The coding-session arguments — shared between `hanzo dev` and a bare
-/// `hanzo …` (flattened onto [`Cli`]), so both accept exactly the same flags.
-#[derive(clap::Args, Clone)]
-struct CodeArgs {
-    /// Coding backend: dev | claude | codex | cursor | agy | gemini | qwen | opencode | kilo | crush | pi | copilot | amp | grok (default: dev, our own agent). Each is also a flag: `hanzo --gemini`
-    ///
-    /// Equivalent to the tool's own flag (`hanzo dev --claude`). Every spelling
-    /// resolves in ONE place — `commands::code::backend::select`.
-    #[arg(long, value_name = "BACKEND", group = "backend_name")]
-    backend: Option<String>,
-
-    /// Use our own `dev` agent (same as `--backend dev`). This is the default.
-    #[arg(long, group = "backend_name")]
-    dev: bool,
-
-    /// Use the `claude` backend (same as `--backend claude`).
-    #[arg(long, group = "backend_name")]
-    claude: bool,
-
-    /// Use the `codex` backend (same as `--backend codex`).
-    #[arg(long, group = "backend_name")]
-    codex: bool,
-
-    /// Use Antigravity (same as `--backend agy`).
-    #[arg(long, group = "backend_name")]
-    agy: bool,
-
-    /// Use Cursor's agent (same as `--backend cursor`). `--agent` is the same flag.
-    #[arg(long, visible_alias = "agent", group = "backend_name")]
-    cursor: bool,
-
-    /// Force streaming this session to Hanzo cloud (mission-control) on. Already
-    /// the default for a signed-in run; `--link` only overrides a persisted
-    /// `code.link = false`.
-    #[arg(long)]
-    link: bool,
-
-    /// Never stream to cloud, even when signed in or `code.link = true`.
-    #[arg(long)]
-    no_link: bool,
-
-    /// Run the session on Hanzo's metered cloud models (api.hanzo.ai) instead of
-    /// the tool's own account. Without it `--claude`, `--codex`, `--agy` and
-    /// `--cursor` talk straight to the account the tool is signed in to.
-    #[arg(long)]
-    cloud: bool,
-
-    /// Do not attach the Hanzo MCP toolset.
-    #[arg(long)]
-    no_mcp: bool,
-
-    /// Also load the repository's own `.mcp.json` MCP servers. Off by default: a
-    /// repo is untrusted and any server it declares would run with your session's
-    /// model key — only pass this for repos you trust.
-    #[arg(long)]
-    project_mcp: bool,
-
-    /// Ask before each action instead of auto-approving it (`--safe` is an alias).
-    /// Mutually exclusive with `--no-sandbox`.
-    #[arg(long, visible_alias = "safe", conflicts_with = "no_sandbox")]
-    ask: bool,
-
-    /// Escalate PAST auto-approve to run unconfined on bare metal (runc / native host)
-    /// with direct GPU pass-through, dropping the sandbox.
-    #[arg(long, visible_alias = "runc", visible_alias = "bare")]
-    no_sandbox: bool,
-
-    /// Container / sandbox isolation runtime: `runc` (bare-metal native GPU), `microvm`, `container`, or `host`
-    #[arg(long, value_name = "RUNTIME")]
-    runtime: Option<String>,
-
-    /// GPU allocation for high-performance agentic execution: `all` (default for runc), `cuda` (GB10), `rocm` (gfx1151), or `none`
-    #[arg(long, value_name = "GPUS")]
-    gpus: Option<String>,
-
-    /// Resume a prior linked session by its cloud session id.
-    #[arg(long, value_name = "SESSION_ID")]
-    resume: Option<String>,
-
-    /// Brand / tenant for auth: hanzo | lux | zoo | pars | bootnode
-    #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
-    brand: String,
-
-    /// Claude theme to apply (Claude backend only), e.g. `dracula`. `--theme none`
-    /// skips theming.
-    #[arg(long)]
-    theme: Option<String>,
-
-    /// The gateway model to use, e.g. `enso`, `enso-ultra`, `zen5-coder`. Applies
-    /// on the metered Hanzo gateway route only; a direct provider key names its own
-    /// model. No client-side allowlist — the gateway validates the id.
-    #[arg(long, value_name = "MODEL")]
-    model: Option<String>,
-
-    /// The task to run headless. Omit it for an interactive session.
-    #[arg(value_name = "TASK")]
-    positional: Option<String>,
-
-    /// A second word; only a bare `hanzo <backend> "fix it"` binds it.
-    #[arg(value_name = "TASK")]
-    tail: Option<String>,
-
-    /// Extra args passed verbatim to the backend (after `--`).
-    #[arg(last = true, allow_hyphen_values = true)]
-    passthrough: Vec<String>,
-}
-
-impl CodeArgs {
-    /// Collapse the flag spellings and `--backend` into the one name the resolver
-    /// reads. clap's `backend_name` group already guarantees at most one is set,
-    /// so this chain never arbitrates — it only transcribes.
-    fn named_backend(&self) -> Option<String> {
-        if self.dev {
-            Some("dev".into())
-        } else if self.claude {
-            Some("claude".into())
-        } else if self.codex {
-            Some("codex".into())
-        } else if self.agy {
-            Some("agy".into())
-        } else if self.cursor {
-            Some("cursor".into())
-        } else {
-            self.backend.clone()
-        }
-    }
-
-    /// Map the parsed args to the code runner's [`Options`]. The `no_*` flags become
-    /// their positive sense here, and the backend is resolved here — both in exactly
-    /// ONE place, shared by `hanzo dev`, a bare `hanzo …` and `hanzo desktop`.
-    fn into_options(self) -> Result<commands::code::Options> {
-        let is_runc = self.no_sandbox
-            || matches!(
-                self.runtime.as_deref().map(str::to_lowercase).as_deref(),
-                Some("runc" | "native" | "host" | "none" | "bare")
-            );
-        if let Some(gpu) = self.gpus.as_deref().map(str::to_lowercase) {
-            match gpu.as_str() {
-                "none" | "0" | "off" => {
-                    std::env::set_var("CUDA_VISIBLE_DEVICES", "");
-                    std::env::set_var("ROCR_VISIBLE_DEVICES", "");
-                    std::env::set_var("HIP_VISIBLE_DEVICES", "");
-                }
-                "cuda" | "nvidia" => {
-                    if std::env::var("CUDA_VISIBLE_DEVICES").unwrap_or_default().is_empty() {
-                        std::env::set_var("CUDA_VISIBLE_DEVICES", "all");
-                    }
-                }
-                "rocm" | "amd" if std::env::var("ROCR_VISIBLE_DEVICES").unwrap_or_default().is_empty() => {
-                    std::env::set_var("ROCR_VISIBLE_DEVICES", "0");
-                    std::env::set_var("HIP_VISIBLE_DEVICES", "0");
-                }
-                _ => {}
-            }
-        }
-        let named = self.named_backend();
-        // The reader's configured agent, if any. Loaded best-effort — the coding
-        // agent must start even when `$HOME` is odd — so an unreadable settings
-        // file leaves this None and the built-in default stands.
-        let configured = commands::code::configured_agent();
-        let (backend, task) = commands::code::backend::select(commands::code::backend::Selection {
-            positional: self.positional,
-            tail: self.tail,
-            named,
-            configured,
-        })?;
-        Ok(commands::code::Options {
-            backend,
-            link: self.link,
-            no_link: self.no_link,
-            cloud: self.cloud,
-            mcp: !self.no_mcp,
-            project_mcp: self.project_mcp,
-            ask: self.ask,
-            no_sandbox: is_runc,
-            resume: self.resume,
-            brand: self.brand,
-            theme: self.theme,
-            model: self.model,
-            task,
-            passthrough: self.passthrough,
-        })
-    }
 }
 
 /// `hanzo <resource> <command>` — the resource-noun tree. Every cloud capability
@@ -298,14 +111,14 @@ enum Commands {
     /// A trailing task runs headless (`hanzo dev --claude "fix the failing
     /// test"`); omit it for an interactive session.
     #[command(verbatim_doc_comment)]
-    Dev(CodeArgs),
+    Dev(hanzo_gen::Args),
 
     /// Point an agent at the desktop and browser instead of the repo
     ///
     /// The same session as `hanzo dev` — same backends, same linking, same
     /// metering — aimed somewhere else. The Hanzo browser/computer tools ARE
     /// how it drives the desktop, so this pins the toolset on.
-    Desktop(CodeArgs),
+    Desktop(hanzo_gen::Args),
 
     /// Manage identities and credentials
     Auth {
@@ -708,7 +521,7 @@ enum UpCommands {
 #[derive(Subcommand)]
 enum SandboxCommands {
     /// Run a coding agent in an isolated sandbox (matches `sbx run <agent>`)
-    Run(Box<CodeArgs>),
+    Run(Box<hanzo_gen::Args>),
     /// List active sandboxes & agent workspaces
     #[command(alias = "ls", alias = "ps")]
     List,
@@ -848,12 +661,12 @@ async fn main() -> Result<()> {
         return iam::oauth::serve_detached_menu().await;
     }
     // The lazy MCP proxy a coding agent is handed in place of hanzo-mcp
-    // (`commands::code::mcp`). It runs before the command tree is built: the agent
+    // (`hanzo_gen::mcp`). It runs before the command tree is built: the agent
     // waits on it, and the tree is not needed to forward a pipe.
     {
         let argv: Vec<String> = std::env::args().skip(1).collect();
         if argv.first().map(String::as_str) == Some("__mcp") {
-            return commands::code::mcp::main(&argv[1..]).await;
+            return hanzo_gen::mcp::main(&argv[1..]).await;
         }
     }
     // `hanzo --help` or `hanzo help` prints the root man page — NAME/SYNOPSIS/
@@ -930,60 +743,16 @@ async fn main() -> Result<()> {
         None => {
             // A truly-bare `hanzo [flags] [task]`: the entry point, so linking is
             // forced on. Everything past that is the SAME session path `hanzo
-            // code` takes — `code_session`, not a second launcher.
+            // code` takes — `commands::dev::session`, not a second launcher.
             let mut code = cli.code;
             code.link = true;
             let started = std::time::Instant::now();
-            let outcome = code_session(&mut config, code, Target::Repo).await;
+            let outcome = commands::dev::session(&mut config, code, Target::Repo).await;
             telemetry.command("dev", started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
             outcome
         }
     }
-}
-
-/// THE coding-session launcher. Every spelling the CLI offers — a bare
-/// `hanzo [flags] [task]`, `hanzo dev …` and `hanzo dev --<tool> …` — arrives
-/// here, and they differ in NOTHING but how the backend was named (resolved
-/// once, in `commands::code::backend::select`) and whether the bare invocation
-/// forced linking on.
-///
-/// Do not add a second launcher for a new spelling: add the spelling to
-/// `select` and let it land here like the rest.
-async fn code_session(
-    config: &mut config::Config,
-    args: CodeArgs,
-    target: Target,
-) -> Result<()> {
-    iam::onboarding::first_run(config, iam::paths::DEFAULT_BRAND).await;
-    let mut opts = args.into_options()?;
-    if target == Target::Desktop {
-        // The browser/computer tools ARE how an agent drives a desktop, so this
-        // target cannot run without them and never inherits a persisted opt-out.
-        opts.mcp = true;
-    }
-    commands::code::run(config, opts).await
-}
-
-/// The args of `hanzo dev`: our own agent unless a flag names another tool, and
-/// the tool is a flag, never a positional, so one session has one spelling.
-fn dev_args(mut args: CodeArgs) -> Result<CodeArgs> {
-    if let Some(tool) = args.positional.as_deref().filter(|w| commands::code::backend::BackendKind::names(w)) {
-        anyhow::bail!("name the tool with a flag: `hanzo dev --{tool}`");
-    }
-    if args.named_backend().is_none() {
-        args.dev = true;
-    }
-    Ok(args)
-}
-
-/// What a session is pointed at. The ONLY thing that ever differed between
-/// `hanzo dev` and the old `agent run --mode desktop`, now carried as a value
-/// instead of a second command with its own flag.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Target {
-    Repo,
-    Desktop,
 }
 
 /// The first subcommand token on an argv tail: flags are skipped, and so are the
@@ -1044,10 +813,11 @@ fn alias(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     argv
 }
 
-/// `--<agent>` for every agent of `commands::code::agents` that has no flag of its
+/// `--<agent>` for every agent of `hanzo_gen::agents` that has no flag of its
 /// own, on a coding session (`hanzo …`, `hanzo dev …`, `hanzo desktop …`): it is
-/// `--backend <agent>`. One table names the agents, so a new row is a new flag.
-fn backend_flags(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
+/// `--backend <agent>` ([`hanzo_gen::args::expand`]). One table names the agents,
+/// so a new row is a new flag.
+fn backend_flags(cmd: &clap::Command, argv: Vec<String>) -> Vec<String> {
     let at = leading_globals(&argv);
     let session = match argv.get(at).map(String::as_str) {
         None => true,
@@ -1057,22 +827,7 @@ fn backend_flags(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     if !session {
         return argv;
     }
-    let known = |name: &str| cmd.get_arguments().any(|a| a.get_long() == Some(name) || a.get_all_aliases().is_some_and(|al| al.contains(&name)));
-    let mut i = 1;
-    while i < argv.len() {
-        if argv[i] == "--" {
-            break;
-        }
-        if let Some(name) = argv[i].strip_prefix("--") {
-            if !known(name) && commands::code::backend::BackendKind::parse(name).is_ok() {
-                let name = name.to_string();
-                argv.splice(i..=i, ["--backend".to_string(), name]);
-                i += 1;
-            }
-        }
-        i += 1;
-    }
-    argv
+    hanzo_gen::args::expand(cmd, argv)
 }
 
 /// A lone unquoted word that is no command but nearly one (`hanzo stauts`) is a
@@ -1082,7 +837,7 @@ fn misspelled(cmd: &clap::Command, argv: &[String]) -> Option<String> {
     let at = leading_globals(argv);
     let word = argv.get(at)?;
     let lone = argv.len() == at + 1 && !word.starts_with('-') && !word.contains(char::is_whitespace);
-    if !lone || cmd.find_subcommand(word).is_some() || commands::code::backend::BackendKind::names(word) {
+    if !lone || cmd.find_subcommand(word).is_some() || hanzo_gen::backend::BackendKind::names(word) {
         return None;
     }
     let near = cmd
@@ -1134,10 +889,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         // code-index operations (resolved before this match) run under that name.
         Commands::Code => anyhow::bail!("`hanzo code` takes a code-index subcommand: `hanzo code --help`"),
 
-        Commands::Desktop(args) => code_session(&mut config, args, Target::Desktop).await?,
+        Commands::Desktop(args) => commands::dev::session(&mut config, args, Target::Desktop).await?,
 
         // `hanzo dev` IS the launcher.
-        Commands::Dev(args) => code_session(&mut config, dev_args(args)?, Target::Repo).await?,
+        Commands::Dev(args) => commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?,
         Commands::Login { brand, provider, token } => {
             commands::auth::login(&mut config, &brand, provider, token).await?
         }
@@ -1181,7 +936,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             Some(LinkCommands::Rm { name, signer }) => commands::link::rm(&mut config, name, signer).await?,
         },
 
-        Commands::Beat => commands::code::target::present(&config).await?,
+        Commands::Beat => hanzo_gen::target::present(commands::dev::Store::host(config.clone())).await?,
 
         Commands::Config { command } => match command {
             ConfigCommands::List => commands::config::list(&config)?,
@@ -1225,7 +980,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Upgrade { tools } => commands::upgrade::run(tools).await?,
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
-            Some(SandboxCommands::Run(args)) => code_session(&mut config, *args, Target::Repo).await?,
+            Some(SandboxCommands::Run(args)) => commands::dev::session(&mut config, *args, Target::Repo).await?,
             Some(SandboxCommands::List) => list_sandboxes(),
             Some(SandboxCommands::Explore) => explore_sandboxes(),
             Some(SandboxCommands::Launch { template, node }) => {
@@ -1463,7 +1218,7 @@ mod tests {
     }
 
     /// `hanzo agent run --mode code` was a second spelling of `hanzo dev` — the
-    /// same options reaching the same `code::run`, differing in nothing. It is
+    /// same options reaching the same `hanzo_gen::run`, differing in nothing. It is
     /// gone. What it alone could do, point an agent at a desktop instead of a
     /// repo, is now its own command rather than a mode flag on another one.
     #[test]
@@ -1487,14 +1242,14 @@ mod tests {
     /// asserts the RESOLVED options, which is the only place a fork could hide.
     #[test]
     fn every_entry_spelling_resolves_to_one_session() {
-        use commands::code::backend::BackendKind;
+        use hanzo_gen::backend::BackendKind;
 
         // The resolved backend for an argv, whichever spelling it used. `hanzo dev`
         // is our own agent unless a flag names another tool (see `dispatch`).
         fn resolved(argv: &[&str]) -> BackendKind {
             let cli = Cli::try_parse_from(argv).expect("parses");
             let args = match cli.command {
-                Some(Commands::Dev(a)) => dev_args(a).expect("dev resolves"),
+                Some(Commands::Dev(a)) => a.dev("hanzo dev").expect("dev resolves"),
                 None => cli.code,
                 _ => panic!("expected a coding session for {argv:?}"),
             };
@@ -1532,7 +1287,7 @@ mod tests {
             let argv = backend_flags(&merged, argv);
             let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{name}: {e}"));
             let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-            let opts = dev_args(args).unwrap().into_options().expect("resolves");
+            let opts = args.dev("hanzo dev").unwrap().into_options().expect("resolves");
             assert_eq!(opts.backend, BackendKind::parse(name).unwrap(), "{name}");
             assert_eq!(opts.task.as_deref(), Some("fix it"));
             // A bare session takes it too.
@@ -1547,7 +1302,7 @@ mod tests {
         // The task rides after the flag, the passthrough after `--`.
         let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "fix it", "--", "-c"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let opts = dev_args(args).unwrap().into_options().expect("resolves");
+        let opts = args.dev("hanzo dev").unwrap().into_options().expect("resolves");
         assert_eq!(opts.task.as_deref(), Some("fix it"));
         assert_eq!(opts.passthrough, ["-c"]);
 
@@ -1558,13 +1313,13 @@ mod tests {
         ])
         .expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let opts = dev_args(args).unwrap().into_options().expect("resolves");
+        let opts = args.dev("hanzo dev").unwrap().into_options().expect("resolves");
         assert!(!opts.cloud && opts.no_link && !opts.mcp && opts.no_sandbox);
         assert_eq!(opts.resume.as_deref(), Some("abc"));
         // `--cloud` opts into Hanzo's metered models; `--no-route` is gone, being the default.
         let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "--cloud"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        assert!(dev_args(args).unwrap().into_options().expect("resolves").cloud);
+        assert!(args.dev("hanzo dev").unwrap().into_options().expect("resolves").cloud);
         assert!(Cli::try_parse_from(["hanzo", "dev", "--claude", "--no-route"]).is_err());
         assert!(Cli::try_parse_from(["hanzo", "--no-route"]).is_err());
         let cli = Cli::try_parse_from(["hanzo", "dev", "--link"]).expect("parses");
@@ -1664,13 +1419,13 @@ mod tests {
     fn dev_takes_the_tool_as_a_flag() {
         let cli = Cli::try_parse_from(["hanzo", "dev", "claude"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let err = dev_args(args).err().expect("a tool named as a word is refused").to_string();
+        let err = args.dev("hanzo dev").err().expect("a tool named as a word is refused").to_string();
         assert!(err.contains("`hanzo dev --claude`"), "got: {err}");
 
         // A task that merely looks like prose is a task.
         let cli = Cli::try_parse_from(["hanzo", "dev", "fix the claude bug"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        assert_eq!(dev_args(args).unwrap().positional.as_deref(), Some("fix the claude bug"));
+        assert_eq!(args.dev("hanzo dev").unwrap().positional.as_deref(), Some("fix the claude bug"));
     }
 
     /// The old top-level verbs are GONE from the derive tree — relocated under
@@ -1684,7 +1439,7 @@ mod tests {
     ///
     /// `dev` and `desktop` are NOT in these lists: starting a session is the CLI's
     /// entry point, so it keeps its own name. `desktop` only points the one
-    /// session path elsewhere — see [`code_session`]. `code` stays as the
+    /// session path elsewhere — see [`commands::dev::session`]. `code` stays as the
     /// code-index group and `run` is gone. `agent` IS gone: `agent run --mode
     /// code` was a second spelling of `hanzo dev`, and its desktop mode became
     /// `hanzo desktop`.

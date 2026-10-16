@@ -45,7 +45,7 @@ pub fn install() -> Result<PathBuf> {
     let path = dir.join("index.html");
     // Rewritten every run: the page is a build artifact of THIS binary, and a
     // copy left by an older one would be served forever otherwise.
-    crate::private::write(&path, page().as_bytes()).context("writing the terminal page")?;
+    hanzo_gen::private::write(&path, page().as_bytes()).context("writing the terminal page")?;
     Ok(path)
 }
 

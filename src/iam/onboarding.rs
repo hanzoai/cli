@@ -19,7 +19,7 @@ use std::io::IsTerminal;
 
 use crate::config::Config;
 
-use super::native::{self, NativeAgent};
+use hanzo_gen::native::{self, NativeAgent};
 use super::provider::{self, Provider};
 use super::secret::{read_trimmed, secret_source, SecretSource};
 use super::{login, oauth};
@@ -206,11 +206,11 @@ fn mark_provider(cfg: &mut Config, provider: Provider) -> Result<()> {
 /// that session through the gateway — the session it just created is the
 /// account the next `hanzo` should use.
 fn mark_native(cfg: &mut Config, backend: &str) -> Result<()> {
-    crate::commands::code::settings::Settings::remember_agent(backend)?;
-    crate::commands::code::settings::Settings::pin_account(backend)?;
+    hanzo_gen::settings::Settings::remember_agent(backend)?;
+    hanzo_gen::settings::Settings::pin_account(backend)?;
     // Joins the set of connected accounts. A later sign-in adds; it does not
     // replace, so the harness can still use any of them.
-    crate::commands::code::harness::connect_home(backend)?;
+    hanzo_gen::harness::connect_home(backend)?;
     cfg.update(|c| {
         c.auth.provider = None;
         c.code.own_account = true;
@@ -245,7 +245,7 @@ async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Re
     mark_provider(cfg, Provider::Hanzo)?;
     // The harness's shared login. A native pin from an earlier sign-in must
     // not keep launching that agent once the gateway is the account in use.
-    crate::commands::code::settings::Settings::pin_account("hanzo")
+    hanzo_gen::settings::Settings::pin_account("hanzo")
 }
 
 /// Sign in with a provider's OWN key (OpenAI / Anthropic): read it off stdin or a
@@ -268,7 +268,7 @@ async fn provider_key_login(
 /// Refuse filing `key` under `provider` when the key's OWN prefix names a
 /// DIFFERENT vendor — fail CLOSED, never warn-and-store.
 ///
-/// A key is filed under the provider it authenticates, and `code::route_plan`
+/// A key is filed under the provider it authenticates, and `hanzo_gen`'s route plan
 /// routes by that provider label: a coding session sends the stored key, in an
 /// auth header, to THAT vendor's API. So filing an OpenAI `sk-` key under
 /// `--provider anthropic` would later transmit it to api.anthropic.com — leaking a

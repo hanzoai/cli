@@ -84,7 +84,7 @@ pub trait Vault {
 /// and cross-compiles to every target.
 ///
 /// Protection is filesystem permissions — mode `0600`, written atomically through
-/// [`crate::private::write`], the SAME primitive (and the same guarantee) behind
+/// [`hanzo_gen::private::write`], the SAME primitive (and the same guarantee) behind
 /// `config.toml`, `machine-id` and the run-target records, and the same
 /// protection `~/.ssh/id_*` relies on. Encrypting the bytes would need a key, and
 /// there is no OS keychain to hold that key — so it would sit beside the
@@ -132,7 +132,7 @@ impl FileVault {
             std::fs::create_dir_all(dir).context("creating the credential store directory")?;
         }
         let bytes = serde_json::to_vec(map).context("serializing the credential store")?;
-        crate::private::write(&self.path, &bytes).context("writing the credential store")
+        hanzo_gen::private::write(&self.path, &bytes).context("writing the credential store")
     }
 }
 

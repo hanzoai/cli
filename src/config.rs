@@ -6,7 +6,7 @@
 //! (IAM tokens, local wallet keys) live in the OS keychain via `keyring`, never
 //! here. See `iam::token` and `commands::wallet`.
 
-use crate::private;
+use hanzo_gen::private;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -180,7 +180,7 @@ pub struct StoredIdentity {
 /// is ON by default: a signed-in `hanzo dev` links unless the user opts out.
 /// Opt out per-invocation with `--no-link`, or persist the opt-out here with
 /// `link = false`. The default only affects SIGNED-IN users: the privacy gate
-/// in `commands::code::run` is structural and unchanged — an UNAUTHENTICATED run
+/// in `hanzo_gen::run` is structural and unchanged — an UNAUTHENTICATED run
 /// holds no cloud client and streams nothing regardless of this default.
 ///
 /// `#[serde(default)]` on the container fills a missing `link` from this
@@ -348,7 +348,7 @@ impl Config {
         Ok(out)
     }
 
-    /// Write the whole config atomically, owner-only. See [`crate::private`] —
+    /// Write the whole config atomically, owner-only. See [`hanzo_gen::private`] —
     /// the ONE way anything in this CLI writes a file it does not want torn or
     /// world-readable.
     fn write_atomic(&self, path: &Path) -> Result<()> {

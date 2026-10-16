@@ -283,7 +283,7 @@ fn at_rest_key(state: &Path) -> Result<Option<String>> {
 /// overwrite.
 fn install_key(state: &Path) -> Result<String> {
     let path = state.join("master.key");
-    if let Err(e) = crate::private::create(&path, key().as_bytes()) {
+    if let Err(e) = hanzo_gen::private::create(&path, key().as_bytes()) {
         if e.kind() != std::io::ErrorKind::AlreadyExists {
             return Err(e).with_context(|| format!("creating {}", path.display()));
         }

@@ -364,7 +364,7 @@ mod tests {
     // A registry, spoken to over TCP the way a registry speaks: an anonymous
     // request refused with a challenge, a token fetched from the realm it
     // names, and the request again with the token. Hand-rolled (the same
-    // approach as `commands::code::testmock`) so no test-only HTTP dependency
+    // approach as `hanzo_gen`'s testmock) so no test-only HTTP dependency
     // is pulled in, and reachable because a loopback registry is plain HTTP.
 
     use std::sync::{Arc, Mutex};

@@ -25,9 +25,9 @@ use ratatui::{
 };
 use serde::Deserialize;
 
-use crate::commands::code::context::{self, Machine, Metrics, Spec};
-use crate::commands::code::sample::Sampler;
-use crate::commands::code::target;
+use hanzo_gen::context::{self, Machine, Metrics, Spec};
+use hanzo_gen::sample::Sampler;
+use hanzo_gen::target;
 use crate::commands::product::Seam;
 use crate::commands::{network, status};
 use crate::config::Config;
@@ -174,7 +174,7 @@ impl Board {
                 });
                 let _beat = active
                     .is_some()
-                    .then(|| target::beat(&cfg, &api, &context::machine_id(), &context::hostname()));
+                    .then(|| target::beat(crate::commands::dev::Store::host(cfg.clone()), &api, &context::machine_id(), &context::hostname()));
                 for tick in 0u64.. {
                     if tick % NET_EVERY == 0 && tx.send(Update::Networks(networks(&mut cfg).await)).is_err() {
                         break;
@@ -869,7 +869,7 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::code::context::Gpu;
+    use hanzo_gen::context::Gpu;
     use ratatui::{backend::TestBackend, Terminal};
 
     fn spark_machine() -> Machine {

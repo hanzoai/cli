@@ -267,24 +267,25 @@ fn url_id(id: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     /// One request the fake observed: method, path, authorization, x-org-id, body.
-    type Seen = (String, String, String, String, String);
+    pub(crate) type Seen = (String, String, String, String, String);
 
-    /// A canned `/v1/network` plane — hand-rolled over TCP, the same approach as
-    /// `code::testmock`, so no test-only HTTP dependency is pulled in.
-    struct Fake {
-        base: String,
+    /// A canned control plane — one status and body for every request —
+    /// hand-rolled over TCP, so no test-only HTTP dependency is pulled in. The
+    /// `/v1/network` tests here and `link`'s session tests both ask it.
+    pub(crate) struct Fake {
+        pub(crate) base: String,
         seen: Arc<Mutex<Vec<Seen>>>,
     }
 
     impl Fake {
-        async fn serve(status: u16, body: &'static str) -> Fake {
+        pub(crate) async fn serve(status: u16, body: &'static str) -> Fake {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             let seen: Arc<Mutex<Vec<Seen>>> = Arc::new(Mutex::new(Vec::new()));
@@ -338,7 +339,7 @@ mod tests {
             Fake { base, seen }
         }
 
-        fn one(&self) -> Seen {
+        pub(crate) fn one(&self) -> Seen {
             let seen = self.seen.lock().unwrap();
             assert_eq!(seen.len(), 1, "one call, one request: {seen:?}");
             seen[0].clone()

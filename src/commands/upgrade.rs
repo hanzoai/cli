@@ -25,8 +25,8 @@ use anyhow::{bail, Context, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 
-use super::code::agents::{self, Agent, Upgrade};
-use super::code::backend::BackendKind;
+use hanzo_gen::agents::{self, Agent, Upgrade};
+use hanzo_gen::backend::BackendKind;
 
 /// Hanzo's native tools, as hanzo.sh names them.
 pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "zt"];
@@ -306,7 +306,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
         };
         match (ok, agents::find_program(t.programs)) {
             (true, Some(bin)) => {
-                let v = super::code::backend::backend_version(&bin.display().to_string()).unwrap_or_else(|| "?".into());
+                let v = hanzo_gen::backend::backend_version(&bin.display().to_string()).unwrap_or_else(|| "?".into());
                 println!("  {} {} {v}", "✓".green(), t.name);
             }
             _ => failed.push(t.name.to_string()),

@@ -16,6 +16,15 @@ the CLI; discovery/marketing repos link here, never copy it.
   sha256-verified, second-name symlink). No token: the repo is public.
 - from source: `cargo install --path .` · build gate: `cargo build` / `cargo test` / `cargo clippy --bin hanzo`
 
+**The coding harness is Hanzo Gen** (hanzoai/gen, crate `hanzo-gen`, pinned by rev in
+Cargo.toml). `hanzo`, `hanzo dev`, `hanzo desktop` and `hanzo sandbox run` flatten its
+`hanzo_gen::Args` and run `hanzo_gen::run` with this CLI as its host
+(`commands/dev.rs` `Store`: the IAM store, the provider vault, network/org/`code.*`
+config, and `commands/savings.rs`, the meter read through the seam). Below,
+`gen:src/…` names a file in hanzoai/gen. A change to the harness is a Gen commit, then a
+rev bump here; `[patch."https://github.com/hanzoai/cli"]` resolves Gen's `hanzo-client`
+to `crates/client`, so one copy links.
+
 **This binary answers to TWO names, and that is by design.** cloud's Go control
 binary (`hanzoai/cloud`, `cmd/hanzo`) owns a small set of control verbs and
 delegates every other verb to US, through `cloud/cli/link.go` `fabricCLI()`,
@@ -148,7 +157,7 @@ product is `clusters`.
 
 **The coding session, and its ONE resolver** — `hanzo dev` starts it on our own `dev`
 agent (hanzoai/dev, the default), `claude`, `codex`, `interpreter` (Open Interpreter, a
-Codex fork driven by `dev.rs`), or any agent in `src/commands/code/agents/`. None is an
+Codex fork driven by `dev.rs`), or any agent in `gen:src/agents/`. None is an
 alias of another — naming one runs THAT agent, or fails saying it is not installed. The
 tool is a flag (`--claude`, `--qwen`, `--backend NAME`); bare `hanzo` (no command) and
 `hanzo code` with no index verb are `hanzo dev`.
@@ -160,7 +169,7 @@ hanzo dev --claude -- -c   args after `--` go to the tool verbatim
 hanzo "fix the test"       bare session, default backend
 ```
 
-**Every other agent is one file**, `src/commands/code/agents/<name>.rs`: its names,
+**Every other agent is one file**, `gen:src/agents/<name>.rs`: its names,
 binary, npm package (`hanzo upgrade <name>` installs it under `~/.hanzo/bin`),
 `routable` (its model calls can go through api.hanzo.ai under `--cloud`), `toolset`
 (`Never` / `Always` / `Routed`, when it reads a home of Hanzo's own), `build` (the
@@ -198,7 +207,7 @@ session banner's first line says which: `your account, direct`, or `Hanzo cloud`
 `harness` in `~/.hanzo/settings.json`, or `HANZO_HARNESS_ACCOUNT` for one run,
 names which of those a bare session uses; `hanzo` means the gateway. Each
 session appends the account it actually used to `~/.hanzo/usage.jsonl`.
-`commands/code/harness.rs` is that table; its end-to-end test selects every
+`gen:src/harness.rs` is that table; its end-to-end test selects every
 connected account against a temporary directory.
 
 `hanzo desktop` is the SAME session pointed somewhere else — at a browser and
@@ -222,7 +231,7 @@ the word. Naming the backend twice (`hanzo claude --codex`) is REFUSED rather th
 resolved by a precedence rule nobody could remember. If you are adding a spelling, add it
 to `select`; if you are adding a launch path, you are forking the command.
 
-`dev` and `codex` share one driver (`code/dev.rs` `Agent`) because ours began as a fork
+`dev` and `codex` share one driver (`gen:src/dev.rs` `Agent`) because ours began as a fork
 of the other and they speak the same `-c` overrides and JSONL stream — they differ only
 in the program exec'd, so a third is a const, not a file. The `model_catalog_json` we
 write for them must carry EVERY field their parser requires: it rejects the whole
@@ -262,8 +271,8 @@ supervise`. Three things are worth knowing:
 
 **`hanzo console` opens on Compute** (`commands/up/compute.rs`), sparkDash's DGX
 Spark board in a terminal. ONE data model on both surfaces: a machine's `spec` +
-`metrics` (`code/context.rs`, cloud's `agent.Metrics`) — this machine read locally
-every 2s by `code/sample.rs` `Sampler`, siblings from `GET /v1/agent/targets` (the
+`metrics` (`gen:src/context.rs`, cloud's `agent.Metrics`) — this machine read locally
+every 2s by `gen:src/sample.rs` `Sampler`, siblings from `GET /v1/agent/targets` (the
 same heartbeat platform.hanzo.ai `/platform/computers` draws, history from
 `GET /v1/compute/fleet/samples?unit=`), networks from `GET /v1/network`, accounts
 from the local identity store. The heartbeat (`target::beat`) holds ONE `Sampler`,
@@ -283,7 +292,7 @@ their parents) plus :8000/:30000, read as vLLM or SGLang Prometheus. Cloud reads
 on their own task with a 10s ceiling: a slow API never stalls the local board.
 
 **Savings: what a session used, read three ways and never added together**
-(`commands/savings.rs` shared; `code/summary.rs` the end-of-session block;
+(`gen:src/savings.rs` shared, the meter read in `commands/savings.rs`; `gen:src/summary.rs` the end-of-session block;
 `up/savings.rs` console page 6). *Reported* tokens are what a backend's own stream
 disclosed — headless runs only (Claude `result`, dev `turn.completed`); an interactive
 run is the tool's own screen and reports nothing. *Listed price* is those tokens at
@@ -389,7 +398,7 @@ hanzo link rm NAME                           unpublish
   own: clap counts a global as an argument, so `hanzo --as X network routers` and
   `hanzo --as X engine status` were refused before this.
 
-**Fleet presence outlives the session** (`hanzo beat`, `commands/code/target.rs::present`).
+**Fleet presence outlives the session** (`hanzo beat`, `gen:src/target.rs::present`).
 A target is live only while something beats, and the beat was held ONLY inside
 `hanzo dev` and `hanzo link` — so a lab box at an idle prompt, or one whose last
 session ended an hour ago, read OFFLINE to the console and to whatever places the
@@ -1002,9 +1011,9 @@ checkout (`$HANZO_HOST_BIN` overrides; never `$PATH`, where `host` is the DNS to
 **The session channel** — `hanzo dev` is watchable and steerable from the dashboard while it
 runs. One channel, two directions, one transport, one vocabulary.
 
-- **OUT** (`src/commands/code/session.rs`): register on `POST /v1/agents/sessions`, forward each
+- **OUT** (`gen:src/session.rs`): register on `POST /v1/agents/sessions`, forward each
   parsed event to `POST …/:id/events`, close with `PATCH …/:id`. Unchanged; already shipped.
-- **IN** (`src/commands/code/control.rs`): drain `GET /v1/agents/sessions/:id/control?after=<seq>`
+- **IN** (`gen:src/control.rs`): drain `GET /v1/agents/sessions/:id/control?after=<seq>`
   once a second. Cursor-driven, so an applied command is never redelivered and a reconnect replays
   exactly what was missed, in order, once. The durable log IS the buffer — nothing is queued locally.
 - **The op set is CLOUD'S, not ours.** `pause` · `resume` · `stop` · `message` — the `Cmd*`
@@ -1049,7 +1058,7 @@ runs. One channel, two directions, one transport, one vocabulary.
 Claude Code are two products sharing one binary. Two modules keep them decomplected;
 both are pure functions of the resolved ROUTE, so every reader agrees without coordinating.
 
-- **`code/home.rs` — whose config home this run uses.** A ROUTED run
+- **`gen:src/home.rs` — whose config home this run uses.** A ROUTED run
   (`Route::Via`) relocates `CLAUDE_CONFIG_DIR` to `~/.hanzo/claude`, because that is
   when a saved `/model` could outrank `ANTHROPIC_MODEL` and when Hanzo's injected
   tiers could leak back out. A direct run (`Route::Inherit`) and `FailClosed` keep
@@ -1060,7 +1069,7 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
   only where we relocated. **Everything that reads or writes that home — the launch
   env, `transcript_path`, `theme::apply` — must take the route.** A path hard-coded to
   either home is a file that does not exist on the other one.
-- **`code/tier.rs` — the zen ⇆ carrier table, the ONE source of truth.** Claude Code
+- **`gen:src/tier.rs` — the zen ⇆ carrier table, the ONE source of truth.** Claude Code
   budgets a context window only from ids it RECOGNIZES, so a custom id (`zen5-pro`)
   gets the fallback budget and is clamped client-side. A tier therefore names a
   CARRIER (`claude-opus-4-8[1m]`) that Claude budgets from, and a per-run
@@ -1086,7 +1095,7 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
 
 **Key entry points**: `src/main.rs` (clap tree + bare-`hanzo` flatten), `src/commands/`
 (one module per resource; `product/` = generated cloud tree), `src/iam/` (identity,
-token store, HIP-0111 OIDC PKCE), `src/commands/code/` (coding wrapper). Secrets arrive
+token store, HIP-0111 OIDC PKCE), `gen:src/` (coding wrapper). Secrets arrive
 on stdin only, never argv; credentials in OS keychain or a `0600` file.
 
 **`--as <org>` signs in through `<org>-cli`** (`iam/oauth.rs::client`, HIP-0111
@@ -1314,7 +1323,7 @@ an arm, a task each of five kinds, in a jail with a fresh home): through `hanzo 
 server it was handed has answered, and `hanzo-mcp` is a Python process that imports the cloud client before it
 answers (5 to 30 s). So:
 
-- **The toolset is attached through `hanzo __mcp -- hanzo-mcp …`** (`commands/code/mcp.rs`, answered before the command
+- **The toolset is attached through `hanzo __mcp -- hanzo-mcp …`** (`gen:src/mcp.rs`, answered before the command
   tree is built). The proxy answers the handshake and the lists from `~/.hanzo/mcp/<key>.json`, owner-only, and starts
   the real server on the first call that needs it. A first session, or one after the server changed (its name, size and
   modification time are in the key, not its path: a link or a bind mount is the same server) or 30 days, starts it at once as before and keeps what it said. Warm, the
@@ -1322,7 +1331,7 @@ answers (5 to 30 s). So:
 - **Claude Code defers the toolset's schemas** (`ENABLE_TOOL_SEARCH=true`, `claude.rs`), on the Anthropic wire only: the
   request's tool definitions fall from 53 (121 KB) to 12 (44 KB), and the 30 Hanzo tools cost a search when one is
   used. A model off that wire keeps the client's default.
-- **The kit and the cloud session are read together** (`code/mod.rs`), the session for `LINK_WAIT` (2 s) at most: a
+- **The kit and the cloud session are read together** (`gen:src/lib.rs`), the session for `LINK_WAIT` (2 s) at most: a
   slow cloud costs a run its link, never its first model call. The kit's wait is 2 s. The end-of-run block asks the
   cloud (the price list, 1 s; the meter, 1.5 s) only when stdout is a terminal: a script's process ends when the agent
   does (Claude Code, `after the result` 0.9 s median through `hanzo dev` against 0.08 s bare).
