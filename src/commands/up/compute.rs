@@ -27,7 +27,7 @@ use serde::Deserialize;
 
 use hanzo_gen::context::{self, Machine, Metrics, Spec};
 use hanzo_gen::sample::Sampler;
-use hanzo_gen::target;
+use hanzo_gen::{target, Root};
 use crate::commands::product::Seam;
 use crate::commands::{network, status};
 use crate::config::Config;
@@ -172,9 +172,17 @@ impl Board {
                     all: held.iter().map(|i| format!("{}/{}", i.owner, i.name)).collect(),
                     api: api.clone(),
                 });
-                let _beat = active
-                    .is_some()
-                    .then(|| target::beat(crate::commands::dev::Store::host(cfg.clone()), &api, &context::machine_id(), &context::hostname()));
+                let root = Root::user();
+                let _beat = root.as_ref().filter(|_| active.is_some()).map(|root| {
+                    target::beat(
+                        crate::commands::dev::Store::host(cfg.clone()),
+                        root,
+                        paths::DEFAULT_BRAND,
+                        &api,
+                        &context::machine_id(root),
+                        &context::hostname(root),
+                    )
+                });
                 for tick in 0u64.. {
                     if tick % NET_EVERY == 0 && tx.send(Update::Networks(networks(&mut cfg).await)).is_err() {
                         break;
@@ -186,7 +194,8 @@ impl Board {
                 }
             });
         }
-        Board { host: context::hostname(), rx: Some(rx), ..Default::default() }
+        let host = Root::user().map(|r| context::hostname(&r)).unwrap_or_default();
+        Board { host, rx: Some(rx), ..Default::default() }
     }
 
     /// Take everything the reader has sent since the last frame.

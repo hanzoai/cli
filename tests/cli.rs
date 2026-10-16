@@ -14,11 +14,19 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-/// A `hanzo` invocation with clean, non-interactive output.
+/// A `hanzo` invocation with clean, non-interactive output, in a home of its
+/// own: the binary keeps state under HOME (a telemetry id, at least), and a test
+/// run is nobody's home. A test that needs a particular home sets HOME after.
 fn hanzo() -> Command {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let home = HOME.get_or_init(|| tempfile::tempdir().expect("a home for the tests"));
     let mut cmd = Command::cargo_bin("hanzo").expect("hanzo binary builds");
     cmd.env("NO_COLOR", "1");
     cmd.env("HANZO_NO_ANIMATION", "1");
+    cmd.env("HOME", home.path());
+    for v in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
+        cmd.env_remove(v);
+    }
     cmd
 }
 
@@ -32,6 +40,29 @@ fn cfg_args(cfg: &tempfile::TempDir) -> [String; 2] {
 
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().expect("tempdir")
+}
+
+// ── What gen reads ───────────────────────────────────────────────────────────
+
+/// `gen` reads what this CLI has on file through `hanzo config profile` — the one
+/// reader of the config, so there is no second parser to drift — and holds it to
+/// its own `Profile`. A `code.link = false` here keeps a gen session local. The
+/// verb is for gen, so `hanzo config --help` does not offer it.
+#[test]
+fn config_profile_is_what_gen_reads() {
+    let c = tmp();
+    let read = |c: &tempfile::TempDir| -> hanzo_gen::Profile {
+        let a = hanzo().args(["config", "profile"]).args(cfg_args(c)).assert().success();
+        serde_json::from_slice(&a.get_output().stdout).expect("a Profile")
+    };
+    let fresh = read(&c);
+    assert!(fresh.link, "a session links by default");
+    assert!(fresh.api.starts_with("https://"), "{}", fresh.api);
+    assert!(fresh.identities.is_empty() && fresh.provider.is_none());
+    hanzo().args(["config", "set", "code.link", "false"]).args(cfg_args(&c)).assert().success();
+    assert!(!read(&c).link, "the opt-out reaches gen");
+    let help = hanzo().args(["config", "--help"]).assert().success();
+    assert!(!String::from_utf8_lossy(&help.get_output().stdout).contains("profile"));
 }
 
 // ── Version + surface ────────────────────────────────────────────────────────

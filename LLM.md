@@ -20,7 +20,12 @@ the CLI; discovery/marketing repos link here, never copy it.
 Cargo.toml). `hanzo`, `hanzo dev`, `hanzo desktop` and `hanzo sandbox run` flatten its
 `hanzo_gen::Args` and run `hanzo_gen::run` with this CLI as its host
 (`commands/dev.rs` `Store`: the IAM store, the provider vault, network/org/`code.*`
-config, and `commands/savings.rs`, the meter read through the seam). Below,
+config, and `commands/savings.rs`, the meter read through the seam; ONE config for
+the host's life, so an IAM identity move sticks across heartbeats). Standalone
+`gen` asks this CLI for the same profile with the hidden `hanzo config profile`
+(JSON, no secret): the one reader of this config. Every path the harness writes
+under a home comes from `hanzo_gen::Root` (`Root::need()` here; tests pass
+`Root::at(tempdir)`), and the suite passes with HOME empty and read-only. Below,
 `gen:src/…` names a file in hanzoai/gen. A change to the harness is a Gen commit, then a
 rev bump here; `[patch."https://github.com/hanzoai/cli"]` resolves Gen's `hanzo-client`
 to `crates/client`, so one copy links.

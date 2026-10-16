@@ -206,11 +206,12 @@ fn mark_provider(cfg: &mut Config, provider: Provider) -> Result<()> {
 /// that session through the gateway — the session it just created is the
 /// account the next `hanzo` should use.
 fn mark_native(cfg: &mut Config, backend: &str) -> Result<()> {
-    hanzo_gen::settings::Settings::remember_agent(backend)?;
-    hanzo_gen::settings::Settings::pin_account(backend)?;
+    let root = hanzo_gen::Root::need()?;
+    hanzo_gen::settings::Settings::remember_agent(&root, backend)?;
+    hanzo_gen::settings::Settings::pin_account(&root, backend)?;
     // Joins the set of connected accounts. A later sign-in adds; it does not
     // replace, so the harness can still use any of them.
-    hanzo_gen::harness::connect_home(backend)?;
+    hanzo_gen::harness::connect_home(&root, backend)?;
     cfg.update(|c| {
         c.auth.provider = None;
         c.code.own_account = true;
@@ -245,7 +246,7 @@ async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Re
     mark_provider(cfg, Provider::Hanzo)?;
     // The harness's shared login. A native pin from an earlier sign-in must
     // not keep launching that agent once the gateway is the account in use.
-    hanzo_gen::settings::Settings::pin_account("hanzo")
+    hanzo_gen::settings::Settings::pin_account(&hanzo_gen::Root::need()?, "hanzo")
 }
 
 /// Sign in with a provider's OWN key (OpenAI / Anthropic): read it off stdin or a

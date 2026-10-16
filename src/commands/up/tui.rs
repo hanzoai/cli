@@ -227,16 +227,25 @@ pub struct App {
     pub next_id: usize,
     pub cluster_telemetry: Option<crate::commands::monitor::ClusterTelemetry>,
     pub telemetry_rx: Option<std::sync::mpsc::Receiver<crate::commands::monitor::ClusterTelemetry>>,
+    /// Where the sandbox list is kept (`~/.hanzo/sandboxes.json`), or nowhere:
+    /// an App built to print from, or in a test, persists nothing.
+    store: Option<PathBuf>,
 }
 
 impl Default for App {
+    /// An App that persists nothing.
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl App {
-    pub fn new() -> Self {
+    /// This user's sandbox list, under the one root the harness resolves.
+    pub fn store() -> Option<PathBuf> {
+        hanzo_gen::Root::user().map(|r| r.hanzo().join("sandboxes.json"))
+    }
+
+    pub fn new(store: Option<PathBuf>) -> Self {
         let (spark_live, evo_live, router_live, coderouter_live) = Self::probe_network_services();
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -285,6 +294,7 @@ impl App {
             next_id: 1,
             cluster_telemetry: None,
             telemetry_rx: Some(rx),
+            store,
         };
 
         let live_agents = Self::discover_host_agents();
@@ -1102,30 +1112,25 @@ impl App {
     // ── Persistence ─────────────────────────────────────────────────────────
 
     #[allow(dead_code)]
-    fn load_persisted() -> Result<Vec<Sandbox>> {
-        let path = Self::storage_path()?;
+    fn load_persisted(&self) -> Result<Vec<Sandbox>> {
+        let Some(path) = &self.store else { return Ok(Vec::new()) };
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let data = std::fs::read_to_string(&path)
+        let data = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
         let list: Vec<Sandbox> = serde_json::from_str(&data)?;
         Ok(list)
     }
 
     pub fn save_persisted(&self) -> Result<()> {
-        let path = Self::storage_path()?;
+        let Some(path) = &self.store else { return Ok(()) };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let data = serde_json::to_string_pretty(&self.sandboxes)?;
-        std::fs::write(&path, data)?;
+        std::fs::write(path, data)?;
         Ok(())
-    }
-
-    fn storage_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("no home directory")?;
-        Ok(home.join(".hanzo").join("sandboxes.json"))
     }
 
     // ── Navigation & Interactions ───────────────────────────────────────────
@@ -1533,7 +1538,7 @@ pub fn run_dashboard() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("failed to create ratatui terminal")?;
 
-    let mut app = App::new();
+    let mut app = App::new(App::store());
     // Only the interactive console reads the machine and beats; `sbx ls` and
     // friends build an App to print from and must not.
     app.compute = super::compute::Board::start();
@@ -2809,7 +2814,7 @@ mod tests {
 
     #[test]
     fn test_app_initialization() {
-        let app = App::new();
+        let app = App::new(None);
         assert!(!app.sandboxes.is_empty(), "seed sandboxes should be present");
         assert!(!app.local_models.is_empty(), "local models should be present");
         assert!(!app.cloud_services.is_empty(), "cloud services should be present");
@@ -2822,7 +2827,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_view_switching() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         assert_eq!(app.current_view, DashboardView::Compute);
 
         app.set_view(DashboardView::Sandboxes);
@@ -2855,7 +2860,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         assert_eq!(DashboardView::all().len(), 6);
         assert_eq!(DashboardView::Savings.title(), "6: Savings");
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.set_view(DashboardView::Savings);
         let mut terminal = Terminal::new(TestBackend::new(136, 36)).unwrap();
         terminal.draw(|f| ui(f, &app)).unwrap();
@@ -2870,7 +2875,7 @@ mod tests {
 
     #[test]
     fn test_navigation_across_views() {
-        let mut app = App::new();
+        let mut app = App::new(None);
 
         // LocalModels navigation
         app.set_view(DashboardView::LocalModels);
@@ -2899,7 +2904,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_navigation() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let total = app.sandboxes.len();
         assert!(total >= 2);
 
@@ -2915,7 +2920,7 @@ mod tests {
 
     #[test]
     fn test_pane_and_tab_switching() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         assert_eq!(app.focused_pane, FocusedPane::Sandboxes);
         app.switch_pane();
         assert_eq!(app.focused_pane, FocusedPane::Detail);
@@ -2931,7 +2936,7 @@ mod tests {
 
     #[test]
     fn test_toggle_start_stop() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_status = app.sandboxes[0].status.clone();
 
         app.toggle_start_stop();
@@ -2943,7 +2948,7 @@ mod tests {
 
     #[test]
     fn test_toggle_network_block() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_status = app.sandboxes[0].network_logs[0].status;
 
         app.toggle_block();
@@ -2955,7 +2960,7 @@ mod tests {
 
     #[test]
     fn test_create_and_remove_sandbox() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_count = app.sandboxes.len();
 
         app.create_sandbox();
@@ -2968,7 +2973,7 @@ mod tests {
 
     #[test]
     fn test_network_metrics_calculation() {
-        let app = App::new();
+        let app = App::new(None);
         let (total, allowed, blocked) = app.network_metrics();
         assert_eq!(total, allowed + blocked);
         assert!(total > 0);
@@ -2976,7 +2981,7 @@ mod tests {
 
     #[test]
     fn test_refresh_all() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.refresh_all();
         assert!(!app.local_models.is_empty());
         assert!(!app.cloud_services.is_empty());
@@ -2984,7 +2989,7 @@ mod tests {
 
     #[test]
     fn test_all_agents_running() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.start_all_agents();
         assert!(app.sandboxes.iter().all(|s| s.status == SandboxStatus::Running));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Claude Code"));
@@ -2995,7 +3000,7 @@ mod tests {
 
     #[test]
     fn test_model_and_container_actions() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_node = app.target_node.clone();
         app.toggle_target_node();
         assert_ne!(app.target_node, initial_node);
@@ -3024,7 +3029,7 @@ mod tests {
         let height = 36u16;
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.set_view(DashboardView::Sandboxes);
         app.focused_pane = FocusedPane::Detail;
         app.selected_network_row = 2; // api.github.com

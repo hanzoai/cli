@@ -426,6 +426,9 @@ enum ConfigCommands {
     Get { key: String },
     /// Set one dotted key
     Set { key: String, value: String },
+    /// What a coding session reads off this config, as JSON (for `gen`)
+    #[command(hide = true)]
+    Profile,
 }
 
 #[derive(Subcommand)]
@@ -936,12 +939,16 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             Some(LinkCommands::Rm { name, signer }) => commands::link::rm(&mut config, name, signer).await?,
         },
 
-        Commands::Beat => hanzo_gen::target::present(commands::dev::Store::host(config.clone())).await?,
+        Commands::Beat => {
+            let host = commands::dev::Store::host(config.clone());
+            hanzo_gen::target::present(host, &hanzo_gen::Root::need()?, iam::paths::DEFAULT_BRAND).await?
+        }
 
         Commands::Config { command } => match command {
             ConfigCommands::List => commands::config::list(&config)?,
             ConfigCommands::Get { key } => commands::config::get(&config, &key)?,
             ConfigCommands::Set { key, value } => commands::config::set(&mut config, &key, &value)?,
+            ConfigCommands::Profile => commands::dev::profile(&config)?,
         },
         Commands::Runner { command } => match command {
             RunnerCommands::Start => commands::runner::start().await?,
@@ -1057,7 +1064,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
 }
 
 fn list_sandboxes() {
-    let app = commands::up::tui::App::new();
+    let app = commands::up::tui::App::new(commands::up::tui::App::store());
     if app.sandboxes.is_empty() {
         println!("No active sandboxes or agent runtimes.");
     } else {
@@ -1096,7 +1103,7 @@ fn explore_sandboxes() {
 }
 
 fn list_models() {
-    let app = commands::up::tui::App::new();
+    let app = commands::up::tui::App::new(commands::up::tui::App::store());
     println!("{:<36} {:<16} {:<24} {:<10} {:<18} ENDPOINT", "MODEL ID", "BACKEND", "TARGET NODE", "PARAMS", "STATUS");
     for m in &app.local_models {
         println!(
@@ -1195,6 +1202,14 @@ async fn load_cluster_fleet(target_node: &str, model_override: Option<&str>) -> 
 mod tests {
     use super::*;
 
+    /// A home of its own for these tests: resolving a backend reads the
+    /// configured agent from `~/.hanzo/settings.json`, and creates the file when
+    /// it is missing, so it must never be the developer's.
+    fn root() -> hanzo_gen::Root {
+        static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        hanzo_gen::Root::at(DIR.get_or_init(|| tempfile::tempdir().expect("a temp dir")).path())
+    }
+
     /// A truly-bare `hanzo` parses to no subcommand, so it falls through to the
     /// coding-session fallback.
     #[test]
@@ -1253,7 +1268,7 @@ mod tests {
                 None => cli.code,
                 _ => panic!("expected a coding session for {argv:?}"),
             };
-            args.into_options().expect("resolves").backend
+            args.into_options(root()).expect("resolves").backend
         }
 
         // Our own agent is the default, however the session was entered.
@@ -1287,7 +1302,7 @@ mod tests {
             let argv = backend_flags(&merged, argv);
             let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{name}: {e}"));
             let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-            let opts = args.dev("hanzo dev").unwrap().into_options().expect("resolves");
+            let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
             assert_eq!(opts.backend, BackendKind::parse(name).unwrap(), "{name}");
             assert_eq!(opts.task.as_deref(), Some("fix it"));
             // A bare session takes it too.
@@ -1302,7 +1317,7 @@ mod tests {
         // The task rides after the flag, the passthrough after `--`.
         let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "fix it", "--", "-c"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let opts = args.dev("hanzo dev").unwrap().into_options().expect("resolves");
+        let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
         assert_eq!(opts.task.as_deref(), Some("fix it"));
         assert_eq!(opts.passthrough, ["-c"]);
 
@@ -1313,13 +1328,13 @@ mod tests {
         ])
         .expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let opts = args.dev("hanzo dev").unwrap().into_options().expect("resolves");
+        let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
         assert!(!opts.cloud && opts.no_link && !opts.mcp && opts.no_sandbox);
         assert_eq!(opts.resume.as_deref(), Some("abc"));
         // `--cloud` opts into Hanzo's metered models; `--no-route` is gone, being the default.
         let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "--cloud"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        assert!(args.dev("hanzo dev").unwrap().into_options().expect("resolves").cloud);
+        assert!(args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves").cloud);
         assert!(Cli::try_parse_from(["hanzo", "dev", "--claude", "--no-route"]).is_err());
         assert!(Cli::try_parse_from(["hanzo", "--no-route"]).is_err());
         let cli = Cli::try_parse_from(["hanzo", "dev", "--link"]).expect("parses");
@@ -1338,7 +1353,7 @@ mod tests {
 
         // Positional-vs-flag is the resolver's own refusal, on the bare grammar.
         let cli = Cli::try_parse_from(["hanzo", "claude", "--codex"]).expect("parses");
-        let err = match cli.code.into_options() {
+        let err = match cli.code.into_options(root()) {
             Err(e) => e.to_string(),
             Ok(_) => panic!("`claude --codex` must be refused, not resolved"),
         };

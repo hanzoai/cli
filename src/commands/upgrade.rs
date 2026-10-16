@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 use hanzo_gen::agents::{self, Agent, Upgrade};
 use hanzo_gen::backend::BackendKind;
+use hanzo_gen::Root;
 
 /// Hanzo's native tools, as hanzo.sh names them.
 pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "zt"];
@@ -110,11 +111,11 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
 
 /// Whether `t` is installed the way it upgrades: an npm agent under `~/.hanzo/bin`,
 /// a self-updating one anywhere, a uv one in uv's tool directory.
-fn installed(t: &Tool) -> bool {
+fn installed(root: &Root, t: &Tool) -> bool {
     match t.upgrade {
-        Upgrade::Npm(_) => agents::prefix().is_some_and(|p| t.programs.iter().any(|b| p.join("bin").join(b).is_file())),
-        Upgrade::Own(_) => agents::find_program(t.programs).is_some(),
-        Upgrade::Uv(_) => agents::find_program(t.programs).is_some_and(|p| by_uv(&p)),
+        Upgrade::Npm(_) => t.programs.iter().any(|b| agents::prefix(root).join("bin").join(b).is_file()),
+        Upgrade::Own(_) => agents::find_program(root, t.programs).is_some(),
+        Upgrade::Uv(_) => agents::find_program(root, t.programs).is_some_and(|p| by_uv(&p)),
     }
 }
 
@@ -220,7 +221,8 @@ async fn fetch(client: &reqwest::Client, base: &str, tool: &Native, platform: &s
 }
 
 pub async fn run(names: Vec<String>) -> Result<()> {
-    let plan = plan(&names, installed)?;
+    let root = Root::need()?;
+    let plan = plan(&names, |t| installed(&root, t))?;
     let mut failed = Vec::new();
 
     if !plan.native.is_empty() {
@@ -266,7 +268,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
         }
     }
 
-    let prefix = agents::prefix().context("no home directory")?;
+    let prefix = agents::prefix(&root);
     let mut npm_used = false;
     for t in &plan.tools {
         let ok = match t.upgrade {
@@ -283,7 +285,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
                     .with_context(|| format!("running npm for {package}"))?
                     .success()
             }
-            Upgrade::Own(args) => match agents::find_program(t.programs) {
+            Upgrade::Own(args) => match agents::find_program(&root, t.programs) {
                 Some(bin) => {
                     println!("{} {} ({} {})", "upgrading".bold(), t.title, bin.display(), args.join(" "));
                     tokio::process::Command::new(&bin).args(args).status().await.with_context(|| format!("running {}", bin.display()))?.success()
@@ -304,7 +306,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
                 }
             },
         };
-        match (ok, agents::find_program(t.programs)) {
+        match (ok, agents::find_program(&root, t.programs)) {
             (true, Some(bin)) => {
                 let v = hanzo_gen::backend::backend_version(&bin.display().to_string()).unwrap_or_else(|| "?".into());
                 println!("  {} {} {v}", "✓".green(), t.name);

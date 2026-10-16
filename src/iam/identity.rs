@@ -9,6 +9,11 @@ use serde::Deserialize;
 use std::fmt;
 use std::str::FromStr;
 
+// `owner` and `name` are held to the ONE check of a claimed part: the slot
+// `{brand}/{owner}/{name}` this store files under is the same `owner/name` the
+// harness labels its records with.
+use hanzo_gen::host::claim;
+
 /// Who a token authenticates as. Derived from the token's OWN claims, so a
 /// stored credential can never be mislabeled into another principal's slot.
 /// IAM names a principal `owner/name`; `owner` is ALSO the org the gateway
@@ -118,8 +123,8 @@ impl Identity {
     /// choosing — see `iam::store::add`, which takes no identity argument.
     fn new(owner: impl Into<String>, name: impl Into<String>) -> Result<Self> {
         let (owner, name) = (owner.into(), name.into());
-        check_component("owner", &owner)?;
-        check_component("name", &name)?;
+        claim("owner", &owner)?;
+        claim("name", &name)?;
         Ok(Self { owner, name })
     }
 
@@ -158,35 +163,6 @@ impl Identity {
     }
 }
 
-/// Reject anything that could break out of its slot in the keychain key
-/// (`{brand}/{owner}/{name}`) or the `owner/name` index string. A claim is
-/// attacker-influenced data: an `owner` of `../hanzo` or `a/b` would let a
-/// forged token address ANOTHER identity's storage slot. Structure over trust
-/// — and ONLY structure: IAM mints usernames like "Grace Hopper" or "José",
-/// so the rule is a deny-list of what actually escapes a slot (separators,
-/// control bytes, non-space whitespace), never an allowlist of blessed ASCII.
-fn check_component(field: &str, v: &str) -> Result<()> {
-    if v.is_empty() {
-        bail!("token claim `{field}` is empty");
-    }
-    if v.len() > 128 {
-        bail!("token claim `{field}` is too long ({} > 128)", v.len());
-    }
-    if !v.starts_with(|c: char| c.is_alphanumeric()) {
-        bail!("token claim `{field}` must start with a letter or digit: {v:?}");
-    }
-    if v.ends_with(' ') {
-        bail!("token claim `{field}` ends with a space: {v:?}");
-    }
-    if let Some(bad) = v
-        .chars()
-        .find(|&c| c == '/' || c == '\\' || c.is_control() || (c.is_whitespace() && c != ' '))
-    {
-        bail!("token claim `{field}` contains an unsupported character {bad:?}: {v:?}");
-    }
-    Ok(())
-}
-
 impl fmt::Display for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.owner, self.name)
@@ -209,7 +185,7 @@ impl FromStr for Selector {
         match s.split_once('/') {
             Some((owner, name)) => Ok(Selector::Exact(Identity::new(owner, name)?)),
             None => {
-                check_component("owner", s)?;
+                claim("owner", s)?;
                 Ok(Selector::Owner(s.to_string()))
             }
         }

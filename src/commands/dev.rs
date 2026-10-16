@@ -2,62 +2,67 @@
 //! as its host: the account, the stored keys and the cloud meter come from the
 //! CLI's own store, in process.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use hanzo_gen::host::Pending;
-use hanzo_gen::{Account, Args, Host, Profile, Provider};
+use hanzo_gen::{Account, Args, Host, Profile, Provider, Root};
 use serde_json::Value;
 
 use crate::commands::{network, savings};
 use crate::config::Config;
 use crate::iam::{onboarding, paths, provider, store};
 
-/// The CLI as Gen's host: this invocation's config, read on every ask.
+/// The CLI as Gen's host: this invocation's config, ONE copy for the life of the
+/// host. `store::active_token` refreshes in place and re-files an identity IAM
+/// moved, so every later ask — a heartbeat an hour on — speaks as the moved one.
 pub struct Store {
-    cfg: Config,
+    cfg: Mutex<Config>,
 }
 
 impl Store {
     pub fn host(cfg: Config) -> Arc<dyn Host> {
-        Arc::new(Store { cfg })
+        Arc::new(Store { cfg: Mutex::new(cfg) })
+    }
+
+    /// The config as it stands. The lock is never held across an await.
+    fn config(&self) -> Config {
+        self.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn keep(&self, cfg: Config) {
+        *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = cfg;
     }
 }
 
 impl Host for Store {
     fn profile(&self) -> Profile {
-        let net = network::active(&self.cfg);
+        let cfg = self.config();
+        let net = network::active(&cfg);
         Profile {
             local: net.name == "local",
             api: net.api,
-            org: self.cfg.org.clone(),
-            provider: self.cfg.auth.provider.clone(),
-            identities: self.cfg.auth.identities.iter().map(|i| (i.owner.clone(), i.name.clone())).collect(),
-            link: self.cfg.code.link,
-            theme: self.cfg.code.theme.clone(),
-            // This build, not whichever `hanzo` PATH finds first.
-            refresh: vec![
-                std::env::current_exe()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| "hanzo".into()),
-                "auth".into(),
-                "token".into(),
-            ],
+            org: cfg.org.clone(),
+            provider: cfg.auth.provider.clone(),
+            identities: cfg.auth.identities.iter().map(|i| (i.owner.clone(), i.name.clone())).collect(),
+            link: cfg.code.link,
+            theme: cfg.code.theme.clone(),
         }
     }
 
     fn account<'a>(&'a self, brand: &'a str) -> Pending<'a, Result<Option<Account>>> {
         Box::pin(async move {
-            // `active_token` refreshes, and re-files an identity IAM moved. The
-            // credential store is the shared state, not this struct, so each ask
-            // takes its own copy of the config.
-            let mut cfg = self.cfg.clone();
-            Ok(store::active_token(&mut cfg, brand).await?.map(|(id, t)| Account {
-                owner: id.owner,
-                name: id.name,
-                token: t.access_token,
-            }))
+            let mut cfg = self.config();
+            let held = store::active_token(&mut cfg, brand).await;
+            self.keep(cfg);
+            Ok(held?.map(|(id, t)| Account { owner: id.owner, name: id.name, token: t.access_token }))
         })
+    }
+
+    fn refresh(&self, brand: &str) -> Vec<String> {
+        // This build, not whichever `hanzo` PATH finds first.
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "hanzo".into());
+        std::iter::once(exe).chain(hanzo_gen::host::token(brand)).collect()
     }
 
     fn key(&self, p: Provider) -> Result<Option<String>> {
@@ -70,10 +75,20 @@ impl Host for Store {
 
     fn meter<'a>(&'a self, query: &'a [String]) -> Pending<'a, std::result::Result<Value, String>> {
         Box::pin(async move {
-            let mut cfg = self.cfg.clone();
-            savings::summary(&mut cfg, query).await
+            let mut cfg = self.config();
+            let read = savings::summary(&mut cfg, query).await;
+            self.keep(cfg);
+            read
         })
     }
+}
+
+/// `hanzo config profile`: what a session reads off this CLI's config, as JSON —
+/// the one reader `gen` asks rather than parsing the file a second time. No
+/// secret is in it.
+pub fn profile(cfg: &Config) -> Result<()> {
+    println!("{}", serde_json::to_string(&Store { cfg: Mutex::new(cfg.clone()) }.profile())?);
+    Ok(())
 }
 
 /// What a session is pointed at. The ONLY thing that ever differed between
@@ -95,7 +110,7 @@ pub enum Target {
 /// `select` and let it land here like the rest.
 pub async fn session(config: &mut Config, args: Args, target: Target) -> Result<()> {
     onboarding::first_run(config, paths::DEFAULT_BRAND).await;
-    let mut opts = args.into_options()?;
+    let mut opts = args.into_options(Root::need()?)?;
     if target == Target::Desktop {
         // The browser/computer tools ARE how an agent drives a desktop, so this
         // target cannot run without them and never inherits a persisted opt-out.

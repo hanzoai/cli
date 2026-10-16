@@ -47,7 +47,7 @@ pub use network::Caller;
 
 use hanzo_gen::event::Status;
 use hanzo_gen::session::SessionClient;
-use hanzo_gen::{context, target};
+use hanzo_gen::{context, target, Root};
 use crate::commands::share;
 use crate::config::Config;
 use crate::iam::paths::DEFAULT_BRAND;
@@ -254,7 +254,15 @@ pub async fn run(
     // that announced itself once and went quiet reads offline while the shell it
     // published is still serving. The guard beats until this command returns —
     // detached and best-effort, never on the critical path of getting a shell up.
-    let _machine = target::beat(crate::commands::dev::Store::host(cfg.clone()), &api, &context::machine_id(), &context::hostname());
+    let root = Root::need()?;
+    let _machine = target::beat(
+        crate::commands::dev::Store::host(cfg.clone()),
+        &root,
+        DEFAULT_BRAND,
+        &api,
+        &context::machine_id(&root),
+        &context::hostname(&root),
+    );
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
@@ -290,7 +298,7 @@ pub async fn run(
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    let host = context::hostname();
+    let host = context::hostname(&root);
     // A registry that cannot take the row does not take the SHELL with it.
     //
     // The tunnel is up and serving by now; the row is how the console FINDS it,

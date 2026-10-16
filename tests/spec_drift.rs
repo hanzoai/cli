@@ -127,8 +127,11 @@ fn the_committed_spec_names_the_release_it_was_generated_from() {
 /// re-implements the rule it is gating tests its own copy of it.
 #[test]
 fn the_live_server_contradicts_this_command_tree_in_neither_direction() {
+    // The binary it asks keeps state under HOME; a gate run is nobody's home.
+    let home = tempfile::tempdir().expect("a home for the binary under test");
     let out = Command::new(env!("CARGO_BIN_EXE_driftgate"))
         .args(["--hanzo", env!("CARGO_BIN_EXE_hanzo")])
+        .env("HOME", home.path())
         .output()
         .expect("run driftgate");
     assert!(
