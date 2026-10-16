@@ -7,6 +7,11 @@
 //! testnet 36962 @ rpc.testnet.hanzo.network, devnet 36964 @ rpc.devnet.hanzo.network;
 //! local is the 1337 localnet convention @ localhost:9630. Custom/sovereign networks are
 //! added with `network add` and persisted in config.
+//!
+//! Each network has its own cloud, so its own API: mainnet api.hanzo.ai (live money),
+//! testnet api-test.hanzo.ai (mainnet's release, Square sandbox), devnet
+//! api-dev.hanzo.ai (the `dev` branch, Square sandbox). Selecting testnet or devnet
+//! therefore never reaches production's books.
 
 use crate::config::{Config, StoredNetwork};
 use anyhow::{bail, Result};
@@ -33,7 +38,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             network_id: 36962,
             chain_id: 36962,
             rpc: "https://rpc.testnet.hanzo.network".into(),
-            api: "https://api.hanzo.ai".into(),
+            api: "https://api-test.hanzo.ai".into(),
             explorer: Some("https://explorer.testnet.hanzo.network".into()),
         },
         StoredNetwork {
@@ -42,7 +47,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             network_id: 36964,
             chain_id: 36964,
             rpc: "https://rpc.devnet.hanzo.network".into(),
-            api: "https://api.hanzo.ai".into(),
+            api: "https://api-dev.hanzo.ai".into(),
             explorer: Some("https://explorer.devnet.hanzo.network".into()),
         },
         StoredNetwork {

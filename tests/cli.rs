@@ -245,7 +245,27 @@ fn network_use_persists_across_invocations() {
         .args(cfg_args(&cfg))
         .assert()
         .success()
-        .stdout(predicate::str::contains("testnet").and(predicate::str::contains("36962")));
+        .stdout(
+            predicate::str::contains("testnet")
+                .and(predicate::str::contains("36962"))
+                .and(predicate::str::contains("https://api-test.hanzo.ai")),
+        );
+}
+
+/// Each built-in network names its own cloud: a sandbox network never reaches
+/// production's API, so nothing selected as testnet or devnet spends live money.
+#[test]
+fn network_sandboxes_name_their_own_api() {
+    for (name, api) in [("devnet", "https://api-dev.hanzo.ai"), ("mainnet", "https://api.hanzo.ai")] {
+        let cfg = tmp();
+        hanzo().args(["network", "use", name]).args(cfg_args(&cfg)).assert().success();
+        hanzo()
+            .args(["network", "current"])
+            .args(cfg_args(&cfg))
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!("api        {api}\n")));
+    }
 }
 
 /// An unknown network is refused with a useful hint, non-zero.
