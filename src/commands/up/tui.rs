@@ -3083,8 +3083,11 @@ mod tests {
             lines.push(row);
         }
 
+        // The dumps land in a directory of this test's own: a fixed /tmp name is
+        // shared by every user and every concurrent run on the machine.
+        let out = tempfile::tempdir().unwrap();
         let json_data = serde_json::to_string(&lines).unwrap();
-        let _ = std::fs::write("/tmp/sbx_tui_dump.json", json_data);
+        std::fs::write(out.path().join("sbx_tui_dump.json"), json_data).unwrap();
 
         // Also dump LocalModels view
         app.set_view(DashboardView::LocalModels);
@@ -3112,6 +3115,11 @@ mod tests {
             model_lines.push(row);
         }
         let model_json = serde_json::to_string(&model_lines).unwrap();
-        let _ = std::fs::write("/tmp/sbx_models_dump.json", model_json);
+        std::fs::write(out.path().join("sbx_models_dump.json"), model_json).unwrap();
+        for dump in ["sbx_tui_dump.json", "sbx_models_dump.json"] {
+            let rows: Vec<Vec<serde_json::Value>> =
+                serde_json::from_str(&std::fs::read_to_string(out.path().join(dump)).unwrap()).unwrap();
+            assert_eq!(rows.len(), height as usize, "{dump} is the whole screen");
+        }
     }
 }

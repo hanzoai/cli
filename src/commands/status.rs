@@ -60,7 +60,7 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
     // Signed out, this refuses and names the way in: an empty cloud is never
     // rendered as though it were the truth. The local GPU machines are
     // `--infer`, and never stand in for a cloud that did not answer.
-    let seam = Seam::open(cfg).await?;
+    let seam = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await?;
     // Concurrent: three independent reads, so the page costs one round trip.
     let (clusters, apps, nodes) = tokio::join!(
         read(&seam, "/v1/k8s/clusters", "clusters"),

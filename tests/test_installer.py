@@ -185,6 +185,50 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("checksum MISMATCH", result.stderr)
         self.assertFalse(self.prefix.exists())
 
+    # A stand-in gh: signed in, and its `attestation verify` answers `verdict`
+    # and records how it was asked.
+    def signed_in_gh(self, verdict):
+        self.executable("gh", f"""#!/bin/sh
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "auth token") exit 1 ;;
+  "attestation verify") echo "$@" >> "{self.root}/gh-asked"; exit {verdict} ;;
+esac
+exit 1
+""")
+
+    def test_an_attested_tool_is_verified_against_its_workflow_and_tag(self):
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.signed_in_gh(0)
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        asked = (self.root / "gh-asked").read_text().split()
+        self.assertIn("--signer-workflow", asked)
+        self.assertEqual(asked[asked.index("--signer-workflow") + 1], "hanzoai/mcp/.github/workflows/release.yml")
+        self.assertEqual(asked[asked.index("--source-ref") + 1], "refs/tags/v1.0.0")
+        self.assertIn("provenance: hanzoai/mcp/.github/workflows/release.yml built", result.stdout)
+
+    def test_an_attestation_that_does_not_match_refuses_the_install(self):
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.signed_in_gh(1)
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to install", result.stderr)
+        self.assertFalse((self.prefix / "hanzo-mcp").exists())
+
+    def test_without_a_signed_in_gh_the_install_says_provenance_was_not_checked(self):
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provenance not checked", result.stdout)
+        self.assertIn("gh attestation verify", result.stdout)
+
     def test_no_stable_release_with_this_build_fails(self):
         self.tags("v2.0.0", "v1.0.0-rc.1")
         self.release("v1.0.0-rc.1", "linux-amd64")

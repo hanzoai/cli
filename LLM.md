@@ -13,7 +13,11 @@ the CLI; discovery/marketing repos link here, never copy it.
 - `curl -fsSL https://hanzo.sh | sh` — the ONE published install line, on every surface.
   hanzo.sh drives THIS repo's `install.sh` once per tool (`hanzo`, `hanzo-mcp`, `dev`);
   `install.sh` is the one implementation of "fetch a Hanzo binary" (per-platform asset,
-  sha256-verified, second-name symlink). No token: the repo is public.
+  sha256-verified, second-name symlink). No token: the repo is public. A tool whose
+  releases are attested names its workflow (`HANZO_INSTALL_SIGNER`, hanzo.sh's fifth
+  field; gen's `.github/workflows/release.yml`), and the download's attestation is
+  checked against it and the tag with a signed-in `gh` — a mismatch refuses, no
+  `gh` says it was not checked. The `.sha256` alone comes from the same release.
 - from source: `cargo install --path .` · build gate: `cargo build` / `cargo test` / `cargo clippy --bin hanzo`
 
 **The coding harness is Hanzo Gen** (hanzoai/gen, crate `hanzo-gen`, pinned by rev in
@@ -25,7 +29,11 @@ the host's life, so an IAM identity move sticks across heartbeats). Standalone
 `gen` asks this CLI for the same profile with the hidden `hanzo config profile`
 (JSON, no secret): the one reader of this config. Every path the harness writes
 under a home comes from `hanzo_gen::Root` (`Root::need()` here; tests pass
-`Root::at(tempdir)`), and the suite passes with HOME empty and read-only. Below,
+`Root::at(tempdir)`), and hanzo.yml runs `make test` with HOME empty and
+read-only, then empty and writable and still empty after. A test never reaches a
+person's tmux either: `link`'s `Tmux` names the server (the default socket for a
+link, a temp socket a test kills after). The usage meter and `Seam::open` take the
+brand a session runs as. Below,
 `gen:src/…` names a file in hanzoai/gen. A change to the harness is a Gen commit, then a
 rev bump here; `[patch."https://github.com/hanzoai/cli"]` resolves Gen's `hanzo-client`
 to `crates/client`, so one copy links.

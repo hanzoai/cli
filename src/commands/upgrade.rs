@@ -273,7 +273,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
     for t in &plan.tools {
         let ok = match t.upgrade {
             Upgrade::Npm(package) => {
-                let npm = which::which("npm").context("installing an agent needs npm (Node.js 20 or newer)")?;
+                let npm = hanzo_gen::exe::find("npm").context("installing an agent needs npm (Node.js 20 or newer)")?;
                 npm_used = true;
                 println!("{} {} ({package}) → {}", "upgrading".bold(), t.title, prefix.join("bin").display());
                 tokio::process::Command::new(&npm)
@@ -295,12 +295,12 @@ pub async fn run(names: Vec<String>) -> Result<()> {
                     false
                 }
             },
-            Upgrade::Uv(package) => match which::which("uv") {
-                Ok(uv) => {
+            Upgrade::Uv(package) => match hanzo_gen::exe::find("uv") {
+                Some(uv) => {
                     println!("{} {} (uv tool upgrade {package})", "upgrading".bold(), t.title);
                     tokio::process::Command::new(uv).args(["tool", "upgrade", package]).status().await.context("running uv")?.success()
                 }
-                Err(_) => {
+                None => {
                     println!("  {} {} upgrades with uv, which is not installed", "✗".red(), t.title);
                     false
                 }
@@ -308,7 +308,7 @@ pub async fn run(names: Vec<String>) -> Result<()> {
         };
         match (ok, agents::find_program(&root, t.programs)) {
             (true, Some(bin)) => {
-                let v = hanzo_gen::backend::backend_version(&bin.display().to_string()).unwrap_or_else(|| "?".into());
+                let v = hanzo_gen::exe::version(&bin.display().to_string(), hanzo_gen::backend::VERSION_WAIT).unwrap_or_else(|| "?".into());
                 println!("  {} {} {v}", "✓".green(), t.name);
             }
             _ => failed.push(t.name.to_string()),

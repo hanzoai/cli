@@ -691,7 +691,7 @@ async fn call(
     query: Vec<String>,
     raw: bool,
 ) -> Result<()> {
-    let seam = Seam::open(cfg).await?;
+    let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await?;
     let Reply { status, body: resp } = seam.send(method, &path, &query, body).await?;
 
     if (200..300).contains(&status) {
@@ -749,7 +749,9 @@ pub(crate) struct Seam {
 }
 
 impl Seam {
-    pub(crate) async fn open(cfg: &mut Config) -> Result<Self> {
+    /// The seam as `brand`'s active identity: the CLI's own commands speak as
+    /// the default brand, and a session's meter as the brand the session runs as.
+    pub(crate) async fn open(cfg: &mut Config, brand: &str) -> Result<Self> {
         // WHERE, and over WHICH WIRE. A LOCAL origin also gets a host started (or
         // reused) behind it, so the same command tree runs against a checkout with
         // no server up — over ZAP, the native transport, because the CLI is first
@@ -760,11 +762,11 @@ impl Seam {
         // is NOT refused here — the call goes out unauthenticated and the server
         // decides. That is the same rule this module already follows for a 403:
         // the refusal is always the server's, never a client-side guess.
-        let identity = store::active_token(cfg, paths::DEFAULT_BRAND).await?;
+        let identity = store::active_token(cfg, brand).await?;
         if identity.is_none() && matches!(origin, Origin::Http(_)) {
             bail!("not signed in — run `hanzo auth login`");
         }
-        let held = store::list(cfg, paths::DEFAULT_BRAND);
+        let held = store::list(cfg, brand);
         let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
         Ok(Self { origin, token, hint, org: cfg.org.clone(), wire: Http::default() })

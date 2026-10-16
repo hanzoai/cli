@@ -953,14 +953,13 @@ dependencies = [
 [[package]]
 name = "hanzo-gen"
 version = "0.1.0"
-source = "git+https://github.com/hanzoai/gen?rev=775f313b22317ff0b0644ec5dcd55d7342085cbb#775f313b22317ff0b0644ec5dcd55d7342085cbb"
+source = "git+https://github.com/hanzoai/gen?rev=67411192cdef0b2b74e8a908b7daab8b8915b9fb#67411192cdef0b2b74e8a908b7daab8b8915b9fb"
 dependencies = [
  "anyhow",
  "base64",
  "chrono",
  "clap",
  "colored",
- "dirs",
  "hanzo-client",
  "libc",
  "rand 0.8.6",

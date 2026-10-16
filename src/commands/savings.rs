@@ -15,12 +15,12 @@ use crate::config::Config;
 /// How long one cloud read may take.
 const PATIENCE: Duration = Duration::from_secs(10);
 
-/// `GET /v1/usage/summary` through the one authenticated seam, as its `data`. A
-/// refusal, a transport fault and an error envelope are each a reason, never an
-/// empty document.
-pub async fn summary(cfg: &mut Config, query: &[String]) -> Result<Value, String> {
+/// `GET /v1/usage/summary` through the one authenticated seam, as `brand`'s
+/// account, as its `data`. A refusal, a transport fault and an error envelope
+/// are each a reason, never an empty document.
+pub async fn summary(cfg: &mut Config, brand: &str, query: &[String]) -> Result<Value, String> {
     let call = async {
-        let seam = Seam::open(cfg).await.map_err(|e| format!("{e:#}"))?;
+        let seam = Seam::open(cfg, brand).await.map_err(|e| format!("{e:#}"))?;
         let reply = seam
             .send(Method::GET, "/v1/usage/summary", query, None)
             .await

@@ -54,6 +54,7 @@ use crate::iam::paths::DEFAULT_BRAND;
 use crate::iam::store;
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::{Child, Command};
@@ -325,8 +326,25 @@ pub async fn run(
 
     // From here the registry may hold a LIVE row, so every way out — including
     // the ones that are errors — has to travel through `finish`.
-    let out = serve(&client, listing.as_deref(), &mut sh).await;
-    finish(&client, listing.as_deref(), out).await
+    let tmux = Tmux::default();
+    let out = serve(&client, listing.as_deref(), &mut sh, &tmux).await;
+    finish(&tmux, &client, listing.as_deref(), out).await
+}
+
+/// The tmux server a link works in: the user's own (its default socket), or one
+/// at a socket of its own — what a test runs, so a test never touches the
+/// session a person is working in.
+#[derive(Clone, Default)]
+struct Tmux(Option<PathBuf>);
+
+impl Tmux {
+    fn command(&self) -> Command {
+        let mut c = Command::new(hanzo_gen::exe::find("tmux").unwrap_or_else(|| "tmux".into()));
+        if let Some(socket) = &self.0 {
+            c.arg("-S").arg(socket);
+        }
+        c
+    }
 }
 
 /// Publish the shell and hold it until the link ends.
@@ -337,11 +355,11 @@ pub async fn run(
 /// only the first two returned at all.
 /// `id` is `None` when the registry refused the row: everything the console needs
 /// is skipped and everything the SHELL needs still happens.
-async fn serve(client: &SessionClient, id: Option<&str>, sh: &mut share::Share) -> Result<()> {
+async fn serve(client: &SessionClient, id: Option<&str>, sh: &mut share::Share, tmux: &Tmux) -> Result<()> {
     let url = sh.url.clone();
 
     // Wear the URL. Part of PUBLISHING, not of attaching — see `pin`.
-    pin(Some(&url)).await;
+    pin(tmux, Some(&url)).await;
 
     let _where = match id {
         Some(id) => {
@@ -352,7 +370,7 @@ async fn serve(client: &SessionClient, id: Option<&str>, sh: &mut share::Share) 
                 crate::warn(&format!("could not publish the terminal URL ({e})"));
             }
             // Follow the shell. Held for exactly this session's lifetime.
-            Some(follow(client.clone(), id.to_string()))
+            Some(follow(client.clone(), id.to_string(), tmux.clone()))
         }
         None => None,
     };
@@ -370,7 +388,7 @@ async fn serve(client: &SessionClient, id: Option<&str>, sh: &mut share::Share) 
     // When tmux will not take the terminal, the link is NOT over — the tunnel is
     // still serving and the browser can still drive it — so hold it instead.
     let held = async {
-        if took_over(attach().await) {
+        if took_over(attach(tmux).await) {
             Ok(()) // the caller had the shell and left it: the link is done
         } else {
             println!(
@@ -421,11 +439,11 @@ impl Drop for Where {
 /// the active pane — rather than from anything this process tracks itself. Only a
 /// CHANGE is reported: an unchanged path is not news, and a PATCH per tick would
 /// be a write loop that says nothing.
-fn follow(client: SessionClient, id: String) -> Where {
+fn follow(client: SessionClient, id: String, tmux: Tmux) -> Where {
     Where(tokio::spawn(async move {
         let mut last = String::new();
         loop {
-            if let Some(now) = active_path().await.filter(|p| worth_reporting(&last, p)) {
+            if let Some(now) = active_path(&tmux).await.filter(|p| worth_reporting(&last, p)) {
                 // Best-effort, exactly like the heartbeat: a console showing a
                 // slightly stale directory is not worth failing a shell over.
                 if client.set_cwd(&id, &now).await.is_ok() {
@@ -447,8 +465,9 @@ fn worth_reporting(last: &str, now: &str) -> bool {
 }
 
 /// Where the shared session's active pane is, as tmux reports it.
-async fn active_path() -> Option<String> {
-    let out = Command::new("tmux")
+async fn active_path(tmux: &Tmux) -> Option<String> {
+    let out = tmux
+        .command()
         .args(["display-message", "-p", "-t", "hanzo", "#{pane_current_path}"])
         .output()
         .await
@@ -480,15 +499,17 @@ async fn active_path() -> Option<String> {
 /// on: ttyd does not run its command until a browser connects, so at publish time
 /// the session may not exist yet. Creating it is idempotent — an existing session
 /// makes `new-session` fail, which is exactly the outcome that needs no action.
-async fn pin(url: Option<&str>) {
-    let _ = Command::new("tmux")
+async fn pin(tmux: &Tmux, url: Option<&str>) {
+    let _ = tmux
+        .command()
         .args(["new-session", "-d", "-s", "hanzo"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .await;
     for args in bar_args(url) {
-        let _ = Command::new("tmux")
+        let _ = tmux
+            .command()
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -509,8 +530,8 @@ fn bar_args(url: Option<&str>) -> [Vec<String>; 2] {
 /// Put the caller on the same tmux session ttyd serves, and report how it exited.
 ///
 /// `None` means tmux could not be spawned at all.
-async fn attach() -> Option<i32> {
-    Command::new("tmux")
+async fn attach(tmux: &Tmux) -> Option<i32> {
+    tmux.command()
         .args(["new", "-A", "-s", "hanzo"])
         .status()
         .await
@@ -541,13 +562,13 @@ fn took_over(code: Option<i32>) -> bool {
 /// `SessionClient::set_status`), so the row cannot end up closed-but-watchable or
 /// watchable-but-closed. Best effort: cloud being unreachable costs a stale row,
 /// not a failed command.
-async fn finish(client: &SessionClient, id: Option<&str>, out: Result<()>) -> Result<()> {
+async fn finish(tmux: &Tmux, client: &SessionClient, id: Option<&str>, out: Result<()>) -> Result<()> {
     if let Some(id) = id {
         let _ = client.set_status(id, Status::of(out.is_ok())).await;
     }
     // The tmux session outlives the link. Leaving the URL up would advertise a
     // tunnel that stopped answering the moment this returned.
-    pin(None).await;
+    pin(tmux, None).await;
     out
 }
 
@@ -996,6 +1017,35 @@ pub async fn rm(cfg: &mut Config, name: String, signer: Signer) -> Result<()> {
 mod tests {
     use super::*;
     use super::network::tests::Fake;
+
+    /// A tmux server of the test's own, at a socket in a temp dir, stopped when
+    /// the test ends: a link test must never reach the server a person works in.
+    struct Server {
+        _dir: tempfile::TempDir,
+        tmux: Tmux,
+    }
+
+    impl Server {
+        fn start() -> Server {
+            let dir = tempfile::tempdir().unwrap();
+            let tmux = Tmux(Some(dir.path().join("tmux.sock")));
+            Server { _dir: dir, tmux }
+        }
+    }
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            if let (Some(bin), Some(socket)) = (hanzo_gen::exe::find("tmux"), &self.tmux.0) {
+                let _ = std::process::Command::new(bin)
+                    .arg("-S")
+                    .arg(socket)
+                    .arg("kill-server")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
     use anyhow::anyhow;
 
     /// The tunnel signs in with `--as <org>` only for an identity held in that
@@ -1027,7 +1077,12 @@ mod tests {
         let fake = Fake::serve(200, "{}").await;
         let client = SessionClient::new(&fake.base, "T").unwrap();
 
-        finish(&client, Some("sess_1"), Ok(())).await.unwrap();
+        let server = Server::start();
+        finish(&server.tmux, &client, Some("sess_1"), Ok(())).await.unwrap();
+        // The bar it cleared was the test's own server's, not the one a person works in.
+        if hanzo_gen::exe::find("tmux").is_some() {
+            assert!(server.tmux.0.as_ref().unwrap().exists(), "finish spoke to some other tmux server");
+        }
 
         // One act, one request.
         let (method, path, _, _, body) = fake.one();
@@ -1047,7 +1102,8 @@ mod tests {
         let fake = Fake::serve(200, "{}").await;
         let client = SessionClient::new(&fake.base, "T").unwrap();
 
-        let err = finish(&client, Some("sess_1"), Err(anyhow!("share ended: exit 1")))
+        let server = Server::start();
+        let err = finish(&server.tmux, &client, Some("sess_1"), Err(anyhow!("share ended: exit 1")))
             .await
             .unwrap_err();
 
@@ -1065,7 +1121,8 @@ mod tests {
         let fake = Fake::serve(403, "{}").await;
         let client = SessionClient::new(&fake.base, "T").unwrap();
 
-        assert!(finish(&client, Some("sess_1"), Ok(())).await.is_ok());
+        let server = Server::start();
+        assert!(finish(&server.tmux, &client, Some("sess_1"), Ok(())).await.is_ok());
     }
 
     // ONE LINK, MANY SHELLS. The default runs a wrapper rather than a fixed tmux

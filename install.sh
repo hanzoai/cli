@@ -18,6 +18,8 @@
 #   HANZO_INSTALL_ALIAS  second name, same build (default hanzo-node; "" = none)
 #   HANZO_INSTALL_PREFIX install dir            (default ~/.local/bin)
 #   HANZO_VERSION        pin a tag              (default: highest stable semver)
+#   HANZO_INSTALL_SIGNER the workflow that must have built the asset, for a tool
+#                        whose releases are attested (e.g. .github/workflows/release.yml)
 #
 # The convention every published Hanzo binary follows, and the only thing this
 # needs to know: the asset is <BIN>-<os>-<arch>.tar.gz, it is accompanied by
@@ -30,6 +32,7 @@ BIN="${HANZO_INSTALL_BIN:-hanzo}"
 # delegates to. One build, two names — never two versions.
 DELEGATE="${HANZO_INSTALL_ALIAS-hanzo-node}"
 PREFIX="${HANZO_INSTALL_PREFIX:-$HOME/.local/bin}"
+SIGNER="${HANZO_INSTALL_SIGNER:-}"
 
 die() { printf '\n%s: %s\n' "$BIN" "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "need $1 on PATH"; }
@@ -187,6 +190,25 @@ fetch "$asset.sha256" "$tmp/$asset.sha256" \
   elif command -v shasum   >/dev/null 2>&1; then shasum -a 256 -c "$asset.sha256";
   else die "need sha256sum or shasum to verify the download"; fi ) >/dev/null \
   || die "checksum MISMATCH for $asset — refusing to install"
+
+# PROVENANCE, for a tool whose releases are attested. The checksum above came
+# from the same release as the archive, so it proves the bytes arrived whole and
+# nothing about where they came from. The attestation does: Sigstore's record
+# that THIS repository's $SIGNER, run for THIS tag, built exactly these bytes.
+# gh carries the verification, so it is checked when a signed-in gh is here, and
+# a mismatch refuses the install. Without one it is not checked, and the line
+# says so and how to check it — never a silent pass.
+if [ -n "$SIGNER" ]; then
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    gh attestation verify "$tmp/$asset" --repo "$REPO" --signer-workflow "$REPO/$SIGNER" \
+      --source-ref "refs/tags/$TAG" >/dev/null 2>&1 \
+      || die "$asset has no attestation that $REPO/$SIGNER built it at $TAG — refusing to install"
+    printf '%s: provenance: %s built %s at %s\n' "$BIN" "$REPO/$SIGNER" "$asset" "$TAG"
+  else
+    printf '%s: provenance not checked (needs a signed-in gh): gh attestation verify %s --repo %s --signer-workflow %s/%s\n' \
+      "$BIN" "$asset" "$REPO" "$REPO" "$SIGNER"
+  fi
+fi
 
 tar -xzf "$tmp/$asset" -C "$tmp"
 [ -f "$tmp/$BIN$ext" ] || die "archive did not contain '$BIN$ext'"

@@ -59,7 +59,7 @@ hanzo-client = { path = "crates/client", version = "0.1.0" }
 # The coding-agent harness: `hanzo dev`, a bare `hanzo`, `hanzo desktop` and the
 # session, target and kit clients all run it, with this CLI as its host
 # (`commands::dev::Store`). Pinned by commit; a Gen release moves it.
-hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "775f313b22317ff0b0644ec5dcd55d7342085cbb" }
+hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "67411192cdef0b2b74e8a908b7daab8b8915b9fb" }
 strsim = "0.11"
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }

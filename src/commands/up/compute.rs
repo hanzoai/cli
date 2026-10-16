@@ -328,7 +328,7 @@ async fn networks(cfg: &mut Config) -> Result<Vec<Network>, String> {
 /// One list off the cloud through the one authenticated seam `hanzo status` reads by.
 async fn read(cfg: &mut Config, path: &str, key: &str) -> Result<Vec<serde_json::Value>, String> {
     let call = async {
-        let seam = Seam::open(cfg).await.map_err(|e| format!("{e:#}"))?;
+        let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await.map_err(|e| format!("{e:#}"))?;
         status::read(&seam, path, key).await
     };
     tokio::time::timeout(PATIENCE, call)

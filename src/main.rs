@@ -669,7 +669,7 @@ async fn main() -> Result<()> {
     {
         let argv: Vec<String> = std::env::args().skip(1).collect();
         if argv.first().map(String::as_str) == Some("__mcp") {
-            return hanzo_gen::mcp::main(&argv[1..]).await;
+            return hanzo_gen::mcp::main(hanzo_gen::Root::user(), &argv[1..]).await;
         }
     }
     // `hanzo --help` or `hanzo help` prints the root man page — NAME/SYNOPSIS/

@@ -2,20 +2,23 @@
 //! as its host: the account, the stored keys and the cloud meter come from the
 //! CLI's own store, in process.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Result;
 use hanzo_gen::host::Pending;
 use hanzo_gen::{Account, Args, Host, Profile, Provider, Root};
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 use crate::commands::{network, savings};
 use crate::config::Config;
 use crate::iam::{onboarding, paths, provider, store};
 
 /// The CLI as Gen's host: this invocation's config, ONE copy for the life of the
-/// host. `store::active_token` refreshes in place and re-files an identity IAM
-/// moved, so every later ask — a heartbeat an hour on — speaks as the moved one.
+/// host, behind one lock held for the whole of each ask. `store::active_token`
+/// refreshes in place and re-files an identity IAM moved; holding the lock from
+/// the read to the write is what keeps a move made by one ask (a heartbeat) from
+/// being overwritten by another that read the config before it (the session).
 pub struct Store {
     cfg: Mutex<Config>,
 }
@@ -24,38 +27,35 @@ impl Store {
     pub fn host(cfg: Config) -> Arc<dyn Host> {
         Arc::new(Store { cfg: Mutex::new(cfg) })
     }
+}
 
-    /// The config as it stands. The lock is never held across an await.
-    fn config(&self) -> Config {
-        self.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    fn keep(&self, cfg: Config) {
-        *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = cfg;
+/// What a session reads off `cfg`.
+fn profile_of(cfg: &Config) -> Profile {
+    let net = network::active(cfg);
+    Profile {
+        local: net.name == "local",
+        api: net.api,
+        org: cfg.org.clone(),
+        provider: cfg.auth.provider.clone(),
+        identities: cfg.auth.identities.iter().map(|i| (i.owner.clone(), i.name.clone())).collect(),
+        link: cfg.code.link,
+        theme: cfg.code.theme.clone(),
     }
 }
 
 impl Host for Store {
-    fn profile(&self) -> Profile {
-        let cfg = self.config();
-        let net = network::active(&cfg);
-        Profile {
-            local: net.name == "local",
-            api: net.api,
-            org: cfg.org.clone(),
-            provider: cfg.auth.provider.clone(),
-            identities: cfg.auth.identities.iter().map(|i| (i.owner.clone(), i.name.clone())).collect(),
-            link: cfg.code.link,
-            theme: cfg.code.theme.clone(),
-        }
+    fn profile(&self) -> Pending<'_, Profile> {
+        Box::pin(async move { profile_of(&*self.cfg.lock().await) })
     }
 
     fn account<'a>(&'a self, brand: &'a str) -> Pending<'a, Result<Option<Account>>> {
         Box::pin(async move {
-            let mut cfg = self.config();
-            let held = store::active_token(&mut cfg, brand).await;
-            self.keep(cfg);
-            Ok(held?.map(|(id, t)| Account { owner: id.owner, name: id.name, token: t.access_token }))
+            let mut cfg = self.cfg.lock().await;
+            Ok(store::active_token(&mut cfg, brand).await?.map(|(id, t)| Account {
+                owner: id.owner,
+                name: id.name,
+                token: t.access_token,
+            }))
         })
     }
 
@@ -73,12 +73,10 @@ impl Host for Store {
         })
     }
 
-    fn meter<'a>(&'a self, query: &'a [String]) -> Pending<'a, std::result::Result<Value, String>> {
+    fn meter<'a>(&'a self, brand: &'a str, query: &'a [String]) -> Pending<'a, std::result::Result<Value, String>> {
         Box::pin(async move {
-            let mut cfg = self.config();
-            let read = savings::summary(&mut cfg, query).await;
-            self.keep(cfg);
-            read
+            let mut cfg = self.cfg.lock().await;
+            savings::summary(&mut cfg, brand, query).await
         })
     }
 }
@@ -87,7 +85,7 @@ impl Host for Store {
 /// the one reader `gen` asks rather than parsing the file a second time. No
 /// secret is in it.
 pub fn profile(cfg: &Config) -> Result<()> {
-    println!("{}", serde_json::to_string(&Store { cfg: Mutex::new(cfg.clone()) }.profile())?);
+    println!("{}", serde_json::to_string(&profile_of(cfg))?);
     Ok(())
 }
 

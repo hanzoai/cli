@@ -153,7 +153,7 @@ impl Board {
                 loop {
                     let range = RANGES[shared.range.load(Ordering::Relaxed) % RANGES.len()];
                     let query = vec![format!("range={range}")];
-                    if tx_cloud.send(Update::Cloud(savings::summary(&mut cfg, &query).await)).is_err() {
+                    if tx_cloud.send(Update::Cloud(savings::summary(&mut cfg, crate::iam::paths::DEFAULT_BRAND, &query).await)).is_err() {
                         break;
                     }
                     tokio::select! {
