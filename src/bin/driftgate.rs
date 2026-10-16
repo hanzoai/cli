@@ -246,6 +246,9 @@ const CONTRADICTED: usize = 0;
 /// ahead of the deploy, `POST /v1/billing/usage` included, which the first
 /// capture against this pin still found denied.
 ///
+/// 0 -> 1 against @86dcaea809: `GET /v1/pricing/enso` (`hanzo pricing enso`),
+/// which the pin declares and api.hanzo.ai's binary predates.
+///
 /// IT USED TO BE CALLED A PHANTOM, and that was false by construction. A phantom
 /// is a command addressing a route NO DOCUMENT claims; every generated coordinate
 /// is claimed by the document it was generated from, and the chain digests refuse
@@ -253,7 +256,7 @@ const CONTRADICTED: usize = 0;
 /// "the deploy has not landed" as "this repo invented a route" points a hard
 /// failure at the wrong owner and buries the real phantom class — the
 /// hand-written literals, which keep the name and keep failing hard.
-const AHEAD: usize = 0;
+const AHEAD: usize = 1;
 
 /// Coordinates whose evidence cannot decide anything, because the prefix that
 /// answers for them answers the same way for a route nobody wrote — a relay door
