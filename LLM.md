@@ -184,7 +184,7 @@ hanzo "fix the test"       bare session, default backend
 
 **Every other agent is one file**, `gen:src/agents/<name>.rs`: its names,
 binary, npm package (`hanzo upgrade <name>` installs it under `~/.hanzo/bin`),
-`routable` (its model calls can go through api.hanzo.ai under `--cloud`), `toolset`
+`routable` (its model calls can go through api.hanzo.ai under `--metered`), `toolset`
 (`Never` / `Always` / `Routed`, when it reads a home of Hanzo's own), `build` (the
 argv, env and files of one run, through `Run`) and `read` (its output on a linked
 run, through `Reader`). No agent reads another's options; `agents/wire.rs` holds only
@@ -206,7 +206,7 @@ launcher of the same session path.
 
 **Routing is direct by default** (`--no-route` is gone, being the default). A third-party
 tool talks straight to the account it is signed in to: `resolve_routing` returns
-`Route::Inherit` and touches no env. `--cloud` (`Options::cloud`) is the opt-in to
+`Route::Inherit` and touches no env. `--metered` (`Options::cloud`) is the opt-in to
 Hanzo's metered models (the credential plan: provider key, bearer, stored Hanzo key).
 `dev` is ours and its account is Hanzo's, so it routes through the gateway when signed in
 without a flag. An agent whose file says `routable: false` (Antigravity, Cursor, Gemini,
@@ -316,7 +316,7 @@ the default), no dollars for a model it does not name. Claude counts cache token
 apart from input and dev/codex inside it (`Tally`, `Ended.apart`). *Metered* is
 `GET /v1/usage/summary?range=custom&start&end` for the session window, asked only
 for a routed run that reported nothing, and labelled org-wide (it includes other
-sessions) and possibly lagging. A run on the backend's own account (the default, no `--cloud`;
+sessions) and possibly lagging. A run on the backend's own account (the default, no `--metered`;
 Cursor, Antigravity: `resolve_routing` always `Inherit` for those two, and
 `External::build` attaches no MCP) says "not observed". The cloud summary is read
 tolerantly (`Llm::of`): `cacheReadTokens`, `cacheWriteTokens`, `cachedShare` (a

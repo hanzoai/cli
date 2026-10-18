@@ -67,23 +67,29 @@ streams live to mission-control. Auto-approve is on by default; the repo's own
 Plain `hanzo dev` runs our own Hanzo Dev agent — `curl -fsSL https://hanzo.sh | sh`
 installs it. Another tool is a flag: `--claude`, `--codex`, `--cursor` (`--agent`) or
 `--agy`. A third-party tool talks straight to the account it is already signed in to;
-`--cloud` runs it on Hanzo's metered models instead. Hanzo Dev's account is Hanzo's, so
+`--metered` runs it on Hanzo's metered models instead. Hanzo Dev's account is Hanzo's, so
 it uses the cloud when you are signed in.
 
 ```bash
 hanzo dev "port this module to async"       # our own agent, headless on that task
 hanzo dev --claude "fix the failing test"   # Claude Code, on your own Claude account
 hanzo dev --claude -- -c                    # args after `--` go to the tool
-hanzo dev --codex --cloud "…"               # Codex on Hanzo's metered models
+hanzo dev --codex --metered "…"             # Codex on Hanzo's metered models
 hanzo dev --model enso-ultra "refactor the auth middleware"
 hanzo dev --resume <session-id>             # continue a prior session
 hanzo dev --ask "…"                         # confirm each action (alias: --safe)
 hanzo dev --no-link "…"                     # keep it local, don't stream to cloud
 ```
 
-`hanzo code` is the code index (`search`, `index`, `context`, `file`, `tree`, `ask`),
-not a launcher. `hanzo code …` and `hanzo run …` as launchers are gone: they answer
-with the `hanzo dev` line to use.
+`hanzo --cloud "task"` executes remotely in a Hanzo sandbox and returns a session
+ID. Add `--watch` to follow progress; closing the terminal leaves the cloud run
+working. `hanzo --cloud` lists runs, and `hanzo --teleport SESSION_ID` fetches a
+finished run's branch. See [Cloud coding sessions](CLOUD-SESSIONS.md) for setup,
+follow-ups, and the supported workflow.
+
+`hanzo code` also serves the code index (`search`, `index`, `context`, `file`,
+`tree`, `ask`). Its task form forwards to `hanzo dev`; `hanzo code --cloud` uses
+the same remote execution path.
 
 Enso and Zen models (`enso`, `enso-flash`, `enso-pro`, `enso-ultra`, `zen6`, …) are Hanzo's own
 family; the gateway is the sole authority on the model catalog.

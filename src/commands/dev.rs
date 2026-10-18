@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use hanzo_gen::host::Pending;
-use hanzo_gen::{Account, Args, Host, Profile, Provider, Root};
+use hanzo_gen::{Account, Host, Profile, Provider, Root};
+use super::cloud_sessions::SessionArgs;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
@@ -153,7 +154,10 @@ pub enum Target {
 ///
 /// Do not add a second launcher for a new spelling: add the spelling to
 /// `select` and let it land here like the rest.
-pub async fn session(config: &mut Config, args: Args, target: Target) -> Result<()> {
+pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> Result<()> {
+    if args.remote.cloud_execution || args.remote.teleport.is_some() {
+        return super::cloud_sessions::run(config, args, target == Target::Desktop).await;
+    }
     onboarding::first_run(config, paths::DEFAULT_BRAND).await;
     let mut opts = args.into_options(Root::need()?)?;
     if target == Target::Desktop {

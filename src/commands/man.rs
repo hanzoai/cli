@@ -121,6 +121,10 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   `hanzo status` shows cloud health and local inference cluster status.\n\n",
     );
 
+    o.push_str("    `hanzo --cloud \"task\"` runs in a cloud sandbox; `--watch` follows it.\n\
+        \x20   `hanzo --cloud` lists runs; `--cloud --resume ID --watch` follows one.\n\
+        \x20   `hanzo --teleport ID` fetches its branch into a clean checkout.\n\
+        \x20   `--metered` selects Hanzo models for a local session.\n\n");
     o.push_str(&format!("{}\n", b("GLOBAL FLAGS")));
     for (f, d) in [
         ("--config=FILE", "Use a custom CLI config file for this invocation."),
