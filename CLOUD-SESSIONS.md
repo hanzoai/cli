@@ -75,6 +75,8 @@ but failed inference with `402: a billable tenant is required (no anonymous
 usage)`. This is a production identity/billing failure, not successful cloud
 execution. The CLI prints the actual run failure and exits nonzero. Production
 health and full parity must not be claimed from the successful first probe alone.
+A repeat repository-backed plan run, `sess_58451903b3e7afe6ebe9494c51de0b24`,
+failed with the same 402, confirming this also affects GitHub-backed execution.
 
 Still unimplemented here: uploading a local repository bundle, importing the
 native harness conversation into a local session, and delivering follow-up
