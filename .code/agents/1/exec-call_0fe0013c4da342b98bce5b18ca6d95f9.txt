@@ -1,0 +1,144 @@
+file:/etc/gitconfig	filter.lfs.process=git-lfs filter-process
+file:/etc/gitconfig	filter.lfs.required=true
+file:/etc/gitconfig	filter.lfs.clean=git-lfs clean -- %f
+file:/etc/gitconfig	filter.lfs.smudge=git-lfs smudge -- %f
+file:/home/sandbox/.gitconfig	include.path=~/.vim/gitinclude
+file:/home/sandbox/.vim/gitinclude	core.editor=~/.vim/bin/git-editor
+file:/home/sandbox/.vim/gitinclude	merge.tool=vim
+file:/home/sandbox/.vim/gitinclude	mergetool.keepbackup=false
+file:/home/sandbox/.vim/gitinclude	mergetool.vim.cmd=vim -u ~/.vimgitrc -f -c Gvdiff! $MERGED
+file:/home/sandbox/.gitconfig	include.path=~/.gitinclude
+file:/home/sandbox/.gitinclude	alias.br=branch
+file:/home/sandbox/.gitinclude	alias.ci=commit
+file:/home/sandbox/.gitinclude	alias.co=checkout
+file:/home/sandbox/.gitinclude	alias.co-ours=checkout --ours
+file:/home/sandbox/.gitinclude	alias.co-theirs=checkout --theirs
+file:/home/sandbox/.gitinclude	alias.coi=checkout-index
+file:/home/sandbox/.gitinclude	alias.coi-ours=checkout-index -f -a --stage=2
+file:/home/sandbox/.gitinclude	alias.coi-theirs=checkout-index -f -a --stage=3
+file:/home/sandbox/.gitinclude	alias.cp=cherry-pick
+file:/home/sandbox/.gitinclude	alias.df=diff
+file:/home/sandbox/.gitinclude	alias.ds=diff --stat
+file:/home/sandbox/.gitinclude	alias.ds=diff --staged
+file:/home/sandbox/.gitinclude	alias.g=grep --break --heading --line-number
+file:/home/sandbox/.gitinclude	alias.last=log --graph --pretty=format':%C(yellow)%h%Cblue%d%Creset %s %C(white)%an, %ar%Creset' -n 20
+file:/home/sandbox/.gitinclude	alias.lc=log ORIG_HEAD.. --stat --no-merges
+file:/home/sandbox/.gitinclude	alias.lp=log --patch --pretty=format':%C(yellow)%h%Cblue%d%Creset %s %C(white)%an, %ar%Creset'
+file:/home/sandbox/.gitinclude	alias.ls=log --stat --pretty=format':%C(yellow)%h%Cblue%d%Creset %s %C(white)%an, %ar%Creset'
+file:/home/sandbox/.gitinclude	alias.mt=mergetool -y
+file:/home/sandbox/.gitinclude	alias.pu=pull
+file:/home/sandbox/.gitinclude	alias.pul=pull
+file:/home/sandbox/.gitinclude	alias.pus=push
+file:/home/sandbox/.gitinclude	alias.rb=rebase
+file:/home/sandbox/.gitinclude	alias.rbc=rebase --continue
+file:/home/sandbox/.gitinclude	alias.rbs=rebase --skip
+file:/home/sandbox/.gitinclude	alias.rl=reflog
+file:/home/sandbox/.gitinclude	alias.rp=remote prune
+file:/home/sandbox/.gitinclude	alias.rs=remote show
+file:/home/sandbox/.gitinclude	alias.rt=remote
+file:/home/sandbox/.gitinclude	alias.ru=remote update
+file:/home/sandbox/.gitinclude	alias.sb=show-branch
+file:/home/sandbox/.gitinclude	alias.st=status -s
+file:/home/sandbox/.gitinclude	alias.catchup=log --patch --reverse --topo-order _ribbon..origin/main
+file:/home/sandbox/.gitinclude	alias.changes=diff --name-status -r
+file:/home/sandbox/.gitinclude	alias.current-branch=!git symbolic-ref -q HEAD | sed -e 's|^refs/heads/||'
+file:/home/sandbox/.gitinclude	alias.delete-merged=!git pull --prune && git branch --merged | grep -v '*' | xargs -n 1 git branch -d
+file:/home/sandbox/.gitinclude	alias.diffall=diff HEAD
+file:/home/sandbox/.gitinclude	alias.diffstat=diff --stat
+file:/home/sandbox/.gitinclude	alias.fetch-all=fetch --depth=999999999
+file:/home/sandbox/.gitinclude	alias.forget=rm --cached
+file:/home/sandbox/.gitinclude	alias.git2ssh=!cat $(git rev-parse --git-dir)/config | sed -e 's/url = git:/url = ssh:/' > /tmp/config && mv /tmp/config $(git rev-parse --git-dir)/config
+file:/home/sandbox/.gitinclude	alias.lost=!git fsck | awk '/dangling commit/ {print $3}' | git show --format='SHA1: %C(yellow)%h%Cblue%d%Creset %s %C(white)%an, %ar%Creset' --stdin | awk '/SHA1/ {sub("SHA1: ", ""); print}'
+file:/home/sandbox/.gitinclude	alias.merge-ours=!git checkout --ours   . && git add -u && git commit
+file:/home/sandbox/.gitinclude	alias.merge-theirs=!git checkout --theirs . && git add -u && git commit
+file:/home/sandbox/.gitinclude	alias.new=!hub create && git push --set-upstream origin main
+file:/home/sandbox/.gitinclude	alias.pop=stash pop
+file:/home/sandbox/.gitinclude	alias.push-new=!git push -u origin `git rev-parse --abbrev-ref HEAD`
+file:/home/sandbox/.gitinclude	alias.record=!sh -c '(git add -p -- $@ && git commit) || git reset' --
+file:/home/sandbox/.gitinclude	alias.reset-origin=!git fetch && git reset --hard origin/`git rev-parse --abbrev-ref HEAD`
+file:/home/sandbox/.gitinclude	alias.reset-author=commit --amend --reset-author --no-edit
+file:/home/sandbox/.gitinclude	alias.ribbon=tag --force _ribbon origin/main
+file:/home/sandbox/.gitinclude	alias.root=!pwd
+file:/home/sandbox/.gitinclude	alias.serve=daemon --reuseaddr --verbose  --base-path=. --export-all ./.git
+file:/home/sandbox/.gitinclude	alias.stage=add
+file:/home/sandbox/.gitinclude	alias.staged=diff --staged
+file:/home/sandbox/.gitinclude	alias.svn-ci=svn dcommit
+file:/home/sandbox/.gitinclude	alias.svn-up=svn rebase
+file:/home/sandbox/.gitinclude	alias.tags=tag -l
+file:/home/sandbox/.gitinclude	alias.track=checkout -t
+file:/home/sandbox/.gitinclude	alias.undo=reset --soft HEAD^
+file:/home/sandbox/.gitinclude	alias.unstage=reset HEAD
+file:/home/sandbox/.gitinclude	alias.unstaged=diff
+file:/home/sandbox/.gitinclude	alias.unstash=stash apply
+file:/home/sandbox/.gitinclude	core.autocrlf=false
+file:/home/sandbox/.gitinclude	core.excludesfile=~/.cvsignore
+file:/home/sandbox/.gitinclude	core.whitespace=trailing-space,space-before-tab
+file:/home/sandbox/.gitinclude	core.editor=vim
+file:/home/sandbox/.gitinclude	color.branch=true
+file:/home/sandbox/.gitinclude	color.diff=true
+file:/home/sandbox/.gitinclude	color.interactive=true
+file:/home/sandbox/.gitinclude	color.status=true
+file:/home/sandbox/.gitinclude	color.ui=true
+file:/home/sandbox/.gitinclude	advice.statushints=false
+file:/home/sandbox/.gitinclude	branch.autosetupmerge=always
+file:/home/sandbox/.gitinclude	branch.autosetuprebase=always
+file:/home/sandbox/.gitinclude	push.default=simple
+file:/home/sandbox/.gitinclude	rebase.autosquash=true
+file:/home/sandbox/.gitinclude	rerere.enabled=true
+file:/home/sandbox/.gitinclude	credential.helper=cache --timeout=31536000
+file:/home/sandbox/.gitinclude	grep.linenumber=true
+file:/home/sandbox/.gitinclude	instaweb.httpd=webrick
+file:/home/sandbox/.gitinclude	diff.mnemonicprefix=true
+file:/home/sandbox/.gitinclude	diff.renames=copies
+file:/home/sandbox/.gitinclude	merge.stat=true
+file:/home/sandbox/.gitinclude	hub.protocol=ssh
+file:/home/sandbox/.gitinclude	gist.browse=true
+file:/home/sandbox/.gitinclude	http.https://gopkg.in.followredirects=true
+file:/home/sandbox/.gitconfig	safe.directory=/work
+file:.git/config	core.repositoryformatversion=0
+file:.git/config	core.filemode=true
+file:.git/config	core.bare=false
+file:.git/config	core.logallrefupdates=true
+file:.git/config	remote.origin.url=https://github.com/hanzoai/cli.git
+file:.git/config	remote.origin.fetch=+refs/heads/main:refs/remotes/origin/main
+file:.git/config	branch.main.remote=origin
+file:.git/config	branch.main.merge=refs/heads/main
+file:.git/config	branch.main.rebase=true
+file:.git/config	branch.agent/bc95cca0d2cd.remote=.
+file:.git/config	branch.agent/bc95cca0d2cd.merge=refs/heads/main
+file:.git/config	branch.agent/bc95cca0d2cd.rebase=true
+file:.git/config	user.name=Hanzo Dev
+file:.git/config	user.email=dev@hanzo.ai
+---
+HANZO_API_KEY=eyJhbGciOiJSUzI1NiIsImtpZCI6ImNlcnQtZGVsZWdhdGlvbiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2hhbnpvLmlkIiwic3ViIjoiMmQ0ZDY3YWItMzBmMS00NzRlLWI4MWYtZjYwNDYxODUyMjU5IiwiYXVkIjpbImh0dHBzOi8vYXBpLmhhbnpvLmFpIl0sImV4cCI6MTc5MjQ0MjMwNiwibmJmIjoxNzkyNDQwODIwLCJpYXQiOjE3OTI0NDA4MjAsImp0aSI6Ill6SkNzMUZhY3VkbVN2aWNlTzAyZ0RjcVl4QVE0WmQ4Qm5QUGV1UGZ0bzAiLCJzY29wZSI6ImFpOmluZmVyZW5jZSIsIm93bmVyIjoiaGFuem8iLCJvcmdhbml6YXRpb24iOiJoYW56byIsImVtYWlsIjoiekBoYW56by5haSIsIm5hbWUiOiJ6IiwicHJlZmVycmVkX3VzZXJuYW1lIjoieiIsImRpc3BsYXlOYW1lIjoiWiIsImJpbGxpbmdfYWNjb3VudCI6Im9yZzpoYW56byIsInRva2VuVHlwZSI6ImFjY2Vzcy10b2tlbiIsIm9yZ3MiOlt7Im9yZyI6ImhhbnpvIiwicm9sZSI6Im1lbWJlciJ9XSwiYWN0Ijp7InN1YiI6ImFkbWluL2hhbnpvLWNsb3VkIiwib3duZXIiOiJhZG1pbiIsIm5hbWUiOiJoYW56by1jbG91ZCJ9LCJkaWQiOiJkaWQ6bHV4OjJkNGQ2N2FiLTMwZjEtNDc0ZS1iODFmLWY2MDQ2MTg1MjI1OSJ9.ayrQJyYZUAeU01D8tTlMg9w8A4O2Crm6HmIGMEz1TR4tV3Uw4KRI3LJ24VhBwgLn57upLUZ5o_t6YBcCesn-T4S-U76E1_eOpLoHXL5mAbcrGHRX_Z2L8nD1WzUkz_2dtaAF2g7--jQ5NqQxoDP_2oYDu5dkOLzOgVEw2EiDcXy8OAiKWzD0qSWU1jylIjgy0Ancrnf_7NctBgQ-4kNrB6PXBuV8WvveG3iPLXtO8aEYqeog0uz2hSq2JFBOkmtzIYsjrYpvxN1MVCxGOvgYcLgkRELszI6cf_zQ5C927y9EdVscO36nIbsIVdFjgtkerb25enm1-ZxhdMzkfnOc2ahMjCRVB2_Zu15pBcog6jHVTNL0ztRV670Ts7oytWBAg1-EidizNBYqrGqlWsPJHmCSAsFa5rvm3aTLkMBDgOV2wU2Ha7VajWBEfF1Jcu9_-1BzWT1tRZ8u41fNMGnloee-C_43dRILv7CC7rZtXj5rVsxOzRoVc1-3vWHo08B8IvGhOaGIOy2djksW5invlUsTzaDMNY9ubaWFQaSMybqGCDX5AoGQPlszOYIpyGjjZ5VHkGVsZzFCkGyeWvud22PyiFosWR78yeMbWaIlR1j-Vnsw6dmP_sjEbTtNsU-kcSicXDyCV2wQSFK4rVwf7PXYdZRHWrZebpYDF8sjmLM
+---
+total 29
+drwxr-x--- 1 sandbox sandbox  120 Oct 19 20:13 .
+drwxr-xr-x 1 root    root      60 Oct 19 20:13 ..
+lrwxrwxrwx 1 sandbox sandbox   56 Sep  7 05:12 .SpaceVim.d -> /home/sandbox/.ellipsis/packages/files/common/SpaceVim.d
+lrwxrwxrwx 1 sandbox sandbox   63 Sep  7 05:12 .Xdefaults -> /home/sandbox/.ellipsis/packages/files/platform/linux/Xdefaults
+lrwxrwxrwx 1 sandbox sandbox   51 Sep  7 05:12 .ackrc -> /home/sandbox/.ellipsis/packages/files/common/ackrc
+drwxr-xr-x 1 sandbox sandbox   60 Oct 19 20:13 .agents
+-rw-r--r-- 1 sandbox sandbox  220 Feb 13  2026 .bash_logout
+-rw-r--r-- 1 sandbox sandbox 3771 Feb 13  2026 .bashrc
+lrwxrwxrwx 1 sandbox sandbox   49 Sep  7 05:12 .bin -> /home/sandbox/.ellipsis/packages/files/common/bin
+drwxr-xr-x 1 sandbox sandbox 4096 Sep  7 05:12 .cargo
+drwxr-xr-x 1 sandbox sandbox  100 Oct 19 20:13 .code
+lrwxrwxrwx 1 sandbox sandbox   52 Sep  7 05:12 .config -> /home/sandbox/.ellipsis/packages/files/common/config
+drwxr-xr-x 1 sandbox sandbox 4096 Sep  7 05:12 .config.bak
+lrwxrwxrwx 1 sandbox sandbox   51 Sep  7 05:12 .ctags -> /home/sandbox/.ellipsis/packages/files/common/ctags
+lrwxrwxrwx 1 sandbox sandbox   55 Sep  7 05:12 .cvsignore -> /home/sandbox/.ellipsis/packages/files/common/cvsignore
+lrwxrwxrwx 1 sandbox sandbox   55 Sep  7 05:12 .dircolors -> /home/sandbox/.ellipsis/packages/files/common/dircolors
+drwxr-xr-x 1 sandbox sandbox 4096 Sep  7 05:12 .ellipsis
+lrwxrwxrwx 1 sandbox sandbox   51 Sep  7 05:12 .fonts -> /home/sandbox/.ellipsis/packages/files/common/fonts
+lrwxrwxrwx 1 sandbox sandbox   53 Sep  7 05:12 .gdbinit -> /home/sandbox/.ellipsis/packages/files/common/gdbinit
+lrwxrwxrwx 1 sandbox sandbox   49 Sep  7 05:12 .ghc -> /home/sandbox/.ellipsis/packages/files/common/ghc
+lrwxrwxrwx 1 sandbox sandbox   50 Sep  7 05:12 .ghci -> /home/sandbox/.ellipsis/packages/files/common/ghci
+-rw-r--r-- 1 sandbox sandbox   84 Oct 19 20:13 .gitconfig
+lrwxrwxrwx 1 sandbox sandbox   56 Sep  7 05:12 .gitinclude -> /home/sandbox/.ellipsis/packages/files/common/gitinclude
+lrwxrwxrwx 1 sandbox sandbox   43 Sep  7 05:12 .gvimrc -> /home/sandbox/.ellipsis/packages/vim/gvimrc
+lrwxrwxrwx 1 sandbox sandbox   50 Sep  7 05:12 .hgrc -> /home/sandbox/.ellipsis/packages/files/common/hgrc
+lrwxrwxrwx 1 sandbox sandbox   63 Sep  7 05:12 .hushlogin -> /home/sandbox/.ellipsis/packages/files/platform/linux/hushlogin
+lrwxrwxrwx 1 sandbox sandbox   44 Sep  7 05:12 .inputrc -> /home/sandbox/.ellipsis/packages/vim/inputrc
+lrwxrwxrwx 1 sandbox sandbox   53 Sep  7 05:12 .ipython -> /home/sandbox/.ellipsis/packages/files/common/ipython
+lrwxrwxrwx 1 sandbox sandbox   51 Sep  7 05:12 .irbrc -> /home/sandbox/.ellipsis/packages/files/common/irbrc
