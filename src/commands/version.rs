@@ -138,7 +138,11 @@ fn real(p: &Path) -> PathBuf {
 /// shelling out, so this answers the same way in a bare environment.
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|dir| dir.join(name)).find(|p| is_executable(p))
+    which_in(name, &path)
+}
+
+fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|dir| dir.join(name)).find(|p| is_executable(p))
 }
 
 #[cfg(unix)]
@@ -258,13 +262,7 @@ mod tests {
         stub(&late, DELEGATE, "hanzo 2.0.0");
 
         let joined = std::env::join_paths([&early, &late]).unwrap();
-        // SAFETY: single-threaded test; restored before returning.
-        let prev = std::env::var_os("PATH");
-        std::env::set_var("PATH", &joined);
-        let found = which(DELEGATE).expect("finds the delegate");
-        if let Some(prev) = prev {
-            std::env::set_var("PATH", prev);
-        }
+        let found = which_in(DELEGATE, &joined).expect("finds the delegate");
 
         assert_eq!(version_of(&found).as_deref(), Some("1.0.0"), "the earlier PATH entry wins");
     }
