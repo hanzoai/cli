@@ -490,12 +490,15 @@ fn live_login_whoami_usage_with_env_token() {
         .stdout(predicate::str::contains("/"))
         .stdout(predicate::str::contains("not signed in").not());
 
-    // `usage` fans out to api.hanzo.ai with each held account's own token. A
-    // stacked view always renders; a broke/expired account is a row state, not
-    // a crash — so success + at least one row is the honest assertion.
-    hanzo()
-        .arg("usage")
+    // Exercise the published command and verify that the response belongs to
+    // an authenticated account, rather than accepting an HTML page or empty JSON.
+    let usage = hanzo()
+        .args(["usage", "summary"])
         .args(cfg_args(&cfg))
         .assert()
         .success();
+    let summary: serde_json::Value = serde_json::from_slice(&usage.get_output().stdout)
+        .expect("usage summary returns JSON");
+    assert!(summary["scope"]["org"].as_str().is_some_and(|v| !v.is_empty()));
+    assert!(summary["scope"]["user"].as_str().is_some_and(|v| !v.is_empty()));
 }

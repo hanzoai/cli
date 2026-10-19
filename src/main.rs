@@ -78,7 +78,7 @@ struct Cli {
     /// The coding-session args, flattened so a bare `hanzo [flags] [task]` is a
     /// coding session with them. Ignored when an explicit subcommand is given.
     #[command(flatten)]
-    code: hanzo_gen::Args,
+    code: commands::cloud_sessions::SessionArgs,
 
     /// Optional: a truly-bare `hanzo` (no subcommand) launches a cloud-linked
     /// coding session from the flattened `code` args above. `--help`/`-h` and every
@@ -98,8 +98,9 @@ enum Commands {
     Code,
 
     /// Start a coding session: a coding agent with the Hanzo MCP toolset
-    /// attached, on the account its tool is signed in to (`--cloud` for
-    /// Hanzo's metered models), and the session streamed live to mission control
+    /// attached, on the account its tool is signed in to (`--metered` for
+    /// Hanzo's metered models), and the session streamed live to mission control.
+    /// Use `--cloud` to execute the task remotely in a Hanzo sandbox.
     ///
     /// Runs our own `dev` agent by default. Name another tool with a flag:
     ///
@@ -111,14 +112,14 @@ enum Commands {
     /// A trailing task runs headless (`hanzo dev --claude "fix the failing
     /// test"`); omit it for an interactive session.
     #[command(verbatim_doc_comment)]
-    Dev(hanzo_gen::Args),
+    Dev(commands::cloud_sessions::SessionArgs),
 
     /// Point an agent at the desktop and browser instead of the repo
     ///
     /// The same session as `hanzo dev` — same backends, same linking, same
     /// metering — aimed somewhere else. The Hanzo browser/computer tools ARE
     /// how it drives the desktop, so this pins the toolset on.
-    Desktop(hanzo_gen::Args),
+    Desktop(commands::cloud_sessions::SessionArgs),
 
     /// Manage identities and credentials
     Auth {
@@ -528,7 +529,7 @@ enum UpCommands {
 #[derive(Subcommand)]
 enum SandboxCommands {
     /// Run a coding agent in an isolated sandbox (matches `sbx run <agent>`)
-    Run(Box<hanzo_gen::Args>),
+    Run(Box<commands::cloud_sessions::SessionArgs>),
     /// List active sandboxes & agent workspaces
     #[command(alias = "ls", alias = "ps")]
     List,
@@ -821,7 +822,8 @@ fn alias(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     let help = rest.iter().any(|a| a == "--help" || a == "-h");
     let index = first_word(rest.iter().cloned())
         .is_some_and(|w| cmd.find_subcommand("code").is_some_and(|c| c.find_subcommand(&w).is_some()));
-    if !(help || index) {
+    let cloud = rest.iter().any(|a| a == "--cloud" || a == "--teleport");
+    if cloud || !(help || index) {
         argv[at] = "dev".into();
     }
     argv
@@ -1348,8 +1350,8 @@ mod tests {
         let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
         assert!(!opts.cloud && opts.no_link && !opts.mcp && opts.no_sandbox);
         assert_eq!(opts.resume.as_deref(), Some("abc"));
-        // `--cloud` opts into Hanzo's metered models; `--no-route` is gone, being the default.
-        let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "--cloud"]).expect("parses");
+        // `--metered` selects cloud models for a local run; `--cloud` executes remotely.
+        let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "--metered"]).expect("parses");
         let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
         assert!(args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves").cloud);
         assert!(Cli::try_parse_from(["hanzo", "dev", "--claude", "--no-route"]).is_err());
