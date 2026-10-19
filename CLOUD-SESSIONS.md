@@ -70,13 +70,13 @@ The CLI workspace tests and spec derivation gates pass. A live read-only run,
 completed successfully. Live session listing, completed-session inspection,
 GitHub connection status, and environment listing also answered successfully.
 
-A later live build probe, `sess_b1148a7e2be0ea3433d20dd42c189549`, leased a sandbox
-but failed inference with `402: a billable tenant is required (no anonymous
-usage)`. This is a production identity/billing failure, not successful cloud
-execution. The CLI prints the actual run failure and exits nonzero. Production
-health and full parity must not be claimed from the successful first probe alone.
-A repeat repository-backed plan run, `sess_58451903b3e7afe6ebe9494c51de0b24`,
-failed with the same 402, confirming this also affects GitHub-backed execution.
+The delegated-identity 402 failure found during live testing is fixed in production
+(API v8.5.838 and later). IAM's confined inference token carries a validated
+billing organization even though its role is deliberately limited to member.
+The API now preserves that validated organization without granting admin access.
+A production cloud completion test passed after deployment. Token login and a
+local dev task that writes and verifies a file also passed against production.
+See [E2E.md](E2E.md) for repeatable source and public-installer checks.
 
 Still unimplemented here: uploading a local repository bundle, importing the
 native harness conversation into a local session, and delivering follow-up
