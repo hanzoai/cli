@@ -1,4 +1,5 @@
-ref=86dcaea8092b3597a6325b7abd6df0b820978160
-sha256=8886c3c7b7f8e5feee00b09a36241a3a283fc43a24ccdb1264dc44606115f901
+ref=v8.5.844
+sha256=5ca4ed58f87827cb879e409da8f803ef57b52b29123d2403868ed6af66aa8e2f
 repo=hanzo-inc/cloud
-path=openapi.yaml
+path=/v1/openapi.json
+url=https://api.hanzo.ai/v1/openapi.json
