@@ -234,7 +234,11 @@ if [ -n "$SIGNER" ] || [ "$STRICT" = 1 ]; then
     "$@" > "$tmp/provenance" 2>&1 \
       || { sed 's/^/  /' "$tmp/provenance" >&2
            die "$asset has no matching provenance for $REPO at $TAG — refusing to install"; }
-    printf '%s: provenance: verified %s from %s at %s\n' "$BIN" "$asset" "$REPO" "$TAG"
+    if [ -n "$SIGNER" ]; then
+        printf '%s: provenance: %s/%s built %s at %s\n' "$BIN" "$REPO" "$SIGNER" "$asset" "$TAG"
+    else
+        printf '%s: provenance: verified %s from %s at %s\n' "$BIN" "$asset" "$REPO" "$TAG"
+    fi
   else
     printf '%s: provenance not checked (%s): gh attestation verify %s --repo %s --signer-workflow %s/%s --source-ref refs/tags/%s\n' \
       "$BIN" "$unchecked" "$asset" "$REPO" "$REPO" "$SIGNER" "$TAG"
