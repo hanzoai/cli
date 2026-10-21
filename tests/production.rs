@@ -101,3 +101,64 @@ fn production_cloud_session_completes() {
         "cloud task did not report the repository's package name"
     );
 }
+
+#[test]
+#[ignore = "leases production sandboxes to verify an in-flight instruction and handoff"]
+fn production_cloud_instruction_follows_the_new_session() {
+    let s = Session::new();
+    let started = s
+        .cmd()
+        .args([
+            "--cloud",
+            "--mode",
+            "plan",
+            "--timeout-seconds",
+            "120",
+            "--repo",
+            "github.com/hanzoai/cli",
+            "-p",
+            "Run sleep 60, then read Cargo.toml and report the package name. Do not edit files.",
+        ])
+        .assert()
+        .success();
+    let output = String::from_utf8_lossy(&started.get_output().stdout);
+    let id = output
+        .lines()
+        .find_map(|line| line.strip_prefix("Cloud coding session: "))
+        .expect("cloud start must return a session id");
+    // The accepted run is registered asynchronously. Wait until its first
+    // progress event is visible before asking it to redirect.
+    for _ in 0..30 {
+        let state = s
+            .cmd()
+            .args(["agent", "sessions", "get", id])
+            .assert()
+            .success();
+        let value: serde_json::Value = serde_json::from_slice(&state.get_output().stdout).unwrap();
+        if value["recentEvents"]
+            .as_array()
+            .is_some_and(|events| !events.is_empty())
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    let followed = s.cmd().args([
+        "--cloud", id, "-p",
+        "Skip the sleep. Read Cargo.toml and include HANZO_HANDOFF_OK and the package name in your answer. Do not edit files.",
+        "--watch",
+    ]).assert();
+    // Stop the original if the redirection was refused; stopping an already
+    // finished original is harmless. Each accepted run also has a 120s budget.
+    let _ = s.cmd().args(["agent", "sessions", "stop", id]).output();
+    let followed = followed.success();
+    let text = String::from_utf8_lossy(&followed.get_output().stdout);
+    assert!(
+        text.contains("Follow-up session: sess_"),
+        "no handoff: {text}"
+    );
+    assert!(
+        text.contains("HANZO_HANDOFF_OK") && text.contains("hanzo-cli"),
+        "follow-up did not verify the checkout: {text}"
+    );
+}

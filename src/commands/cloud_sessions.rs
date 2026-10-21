@@ -57,9 +57,21 @@ pub struct CloudArgs {
     /// What the cloud run may do: build, plan, or setup.
     #[arg(long, requires = "cloud_execution", value_parser = ["build", "plan", "setup"])]
     mode: Option<String>,
+    /// Run on a registered machine you own instead of a managed sandbox.
+    #[arg(long, requires = "cloud_execution")]
+    target: Option<String>,
+    /// Bound cloud execution time in seconds (maximum 30 minutes).
+    #[arg(long, requires = "cloud_execution", value_parser = clap::value_parser!(u32).range(1..=1800))]
+    timeout_seconds: Option<u32>,
+    /// Reasoning effort for the cloud agent.
+    #[arg(long, requires = "cloud_execution", value_parser = ["low", "medium", "high"])]
+    effort: Option<String>,
     /// Follow cloud progress until the run finishes (Ctrl-C only detaches).
     #[arg(long, requires = "cloud_execution")]
     watch: bool,
+    /// Wait for an accepted instruction's follow-up session, then follow it.
+    #[arg(long, requires_all = ["cloud_execution", "resume"], conflicts_with_all = ["cloud_prompt", "positional", "tail"])]
+    await_followup: bool,
     /// Fetch a cloud run's branch into this clean repository.
     #[arg(long, value_name = "SESSION_ID", conflicts_with_all = ["cloud_execution", "resume", "positional", "tail"])]
     pub teleport: Option<String>,
@@ -75,6 +87,7 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
         return checkout(&seam, id).await;
     }
     let named = args.named_backend();
+    let explicit_harness = named.is_some();
     let (backend, task, previous) = if let Some(prompt) = remote.cloud_prompt {
         if args.tail.is_some() || (args.resume.is_some() && args.positional.is_some()) {
             bail!("name the previous session once: hanzo -p 'task' --cloud SESSION_ID");
@@ -97,6 +110,10 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
     };
     let Some(task) = task else {
         if let Some(id) = previous {
+            if remote.await_followup {
+                let next = wait_for_followup(&seam, &id).await?;
+                return watch(&seam, &next, true).await;
+            }
             return watch(&seam, &id, remote.watch).await;
         }
         let page = call(&seam, Method::GET, "/v1/agent/sessions?kind=coding", None).await?;
@@ -123,10 +140,34 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
     let mut body = json!({"prompt": task, "tool": backend.as_str(), "desktop": desktop});
     if let Some(id) = previous {
         let prior = detail(&seam, &id).await?;
-        if !finished(field(&prior, "status")) && field(&prior, "status") != "paused" {
-            bail!(
-                "session {id} is still running; wait for it to finish before starting a follow-up"
+        if !finished(field(&prior, "status")) {
+            if explicit_harness
+                || remote.repo.is_some()
+                || remote.base.is_some()
+                || remote.mode.is_some()
+                || remote.target.is_some()
+                || remote.timeout_seconds.is_some()
+                || remote.effort.is_some()
+                || args.model.is_some()
+            {
+                bail!("steering keeps the running session's configuration; send only the new prompt, or start a separate cloud task");
+            }
+            call(
+                &seam,
+                Method::POST,
+                &format!("/v1/agent/coding/{id}/steer"),
+                Some(json!({"text": task})),
+            )
+            .await?;
+            println!(
+                "Instruction accepted. Session {id} will keep its work and start a follow-up."
             );
+            if remote.watch {
+                let next = wait_for_followup(&seam, &id).await?;
+                return watch(&seam, &next, true).await;
+            }
+            println!("Follow: hanzo --cloud --resume {id} --await-followup");
+            return Ok(());
         }
         if field(&prior, "branch").is_empty() {
             bail!(
@@ -177,10 +218,15 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
         ("base", remote.base),
         ("mode", remote.mode),
         ("model", args.model),
+        ("targetId", remote.target),
+        ("effort", remote.effort),
     ] {
         if let Some(value) = value {
             body[key] = json!(value);
         }
+    }
+    if let Some(seconds) = remote.timeout_seconds {
+        body["timeoutSeconds"] = json!(seconds);
     }
     let accepted = call(&seam, Method::POST, "/v1/agent/coding", Some(body)).await?;
     let id = field(&accepted, "sessionId");
@@ -260,10 +306,19 @@ fn same_repo(origin: &str, remote: &str) -> bool {
 }
 
 async fn watch(seam: &Seam, id: &str, follow: bool) -> Result<()> {
+    let mut id = id.to_owned();
     let mut last = 0;
     let mut status = String::new();
     loop {
-        let info = detail(seam, id).await?;
+        let info = detail(seam, &id).await?;
+        if follow {
+            if let Some(next) = followup(&info)? {
+                id = next;
+                last = 0;
+                status.clear();
+                continue;
+            }
+        }
         if let Some(events) = info.get("recentEvents").and_then(Value::as_array) {
             for event in events {
                 let seq = event.get("seq").and_then(Value::as_i64).unwrap_or(0);
@@ -296,6 +351,43 @@ async fn watch(seam: &Seam, id: &str, follow: bool) -> Result<()> {
                 result?;
                 println!("Detached; cloud session {id} continues running.");
                 return Ok(());
+            }
+        }
+    }
+}
+
+fn followup(info: &Value) -> Result<Option<String>> {
+    if let Some(events) = info.get("recentEvents").and_then(Value::as_array) {
+        for event in events.iter().rev() {
+            let payload = &event["payload"];
+            if field(payload, "status") == "followed" {
+                if !field(payload, "error").is_empty() {
+                    bail!("cloud follow-up failed: {}", field(payload, "error"));
+                }
+                let next = field(payload, "next");
+                session_id(next)?;
+                return Ok(Some(next.to_owned()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn wait_for_followup(seam: &Seam, id: &str) -> Result<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+    loop {
+        if let Some(next) = followup(&detail(seam, id).await?)? {
+            println!("Follow-up session: {next}");
+            return Ok(next);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("follow-up has not started yet; inspect session {id} for its handoff status");
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+            result = tokio::signal::ctrl_c() => {
+                result?;
+                bail!("detached while waiting; the accepted follow-up continues in the cloud");
             }
         }
     }
@@ -412,6 +504,28 @@ async fn checkout(seam: &Seam, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn handoffs_follow_the_new_session_and_surface_failures() {
+        assert_eq!(followup(&json!({"recentEvents": []})).unwrap(), None);
+        assert_eq!(
+            followup(&json!({"recentEvents": [
+                {"payload": {"status":"stopped"}},
+                {"payload": {"status":"followed", "next":"sess_next"}}
+            ]}))
+            .unwrap(),
+            Some("sess_next".into())
+        );
+        assert!(followup(&json!({"recentEvents": [
+            {"payload": {"status":"followed", "error":"capacity exhausted"}}
+        ]}))
+        .unwrap_err()
+        .to_string()
+        .contains("capacity exhausted"));
+        assert!(followup(&json!({"recentEvents": [
+            {"payload": {"status":"followed", "next":"../other"}}
+        ]}))
+        .is_err());
+    }
     #[test]
     fn origins_are_normalized_without_credentials() {
         for input in [
