@@ -1,7 +1,7 @@
 //! `hanzo upgrade [tool…]`: every Hanzo tool to its current release, and the
 //! coding agents `hanzo` runs.
 //!
-//! Hanzo's own tools (`hanzo`, `mcp`, `dev`, `zt`) are native binaries, and
+//! Hanzo's own tools (`hanzo`, `mcp`, `dev`, `gen`, `zt`) are native binaries, and
 //! hanzo.sh is the one implementation of fetching one: platform, asset name,
 //! checksum, second name. Upgrading is running it again, into the directory this
 //! `hanzo` lives in, so the build that answers `hanzo` is the build that was
@@ -30,7 +30,7 @@ use hanzo_gen::backend::BackendKind;
 use hanzo_gen::Root;
 
 /// Hanzo's native tools, as hanzo.sh names them.
-pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "zt"];
+pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "gen", "zt"];
 
 /// The installer, served at the root of hanzo.sh.
 const INSTALLER: &str = "https://hanzo.sh";
@@ -93,7 +93,10 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
         let n = n.trim().to_ascii_lowercase();
         let native = match n.as_str() {
             "hanzo-mcp" => Some("mcp"),
-            "hanzo-node" | "cli" => Some("hanzo"),
+            "hanzo-dev" => Some("dev"),
+            "hanzo-gen" => Some("gen"),
+            "hanzo-zet" => Some("zt"),
+            "hanzo-cli" | "cli" => Some("hanzo"),
             other => NATIVE.iter().copied().find(|t| *t == other),
         };
         if let Some(t) = native {
@@ -360,7 +363,14 @@ mod tests {
     #[test]
     fn an_unknown_name_is_refused_with_the_list() {
         let e = plan(&names(&["nope"]), |_| false).unwrap_err().to_string();
-        assert!(e.contains("upgradable: hanzo, mcp, dev, zt, claude, codex, interpreter, cursor"), "{e}");
+        assert!(e.contains("upgradable: hanzo, mcp, dev, gen, zt, claude, codex, interpreter, cursor"), "{e}");
+    }
+
+    #[test]
+    fn prefixed_product_names_upgrade_their_native_binaries() {
+        let p = plan(&names(&["hanzo-dev", "hanzo-gen", "hanzo-mcp", "hanzo-zet"]), |_| false).unwrap();
+        assert_eq!(p.native, names(&["dev", "gen", "mcp", "zt"]));
+        assert!(p.tools.is_empty());
     }
 
     #[test]
@@ -372,7 +382,7 @@ mod tests {
 
     #[test]
     fn the_tool_table_is_read_out_of_hanzo_sh() {
-        let script = "#!/bin/sh\nTOOLS='hanzo:hanzoai/cli:hanzo:hanzo-node\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
+        let script = "#!/bin/sh\nTOOLS='hanzo:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
         let t = table(script);
         assert_eq!(t.iter().map(|n| (n.name.as_str(), n.repo.as_str(), n.binary.as_str())).collect::<Vec<_>>(), [
             ("hanzo", "hanzoai/cli", "hanzo"),
