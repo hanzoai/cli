@@ -18,6 +18,7 @@ pub mod scan;
 pub mod status;
 pub mod monitor;
 pub mod version;
+pub mod doctor;
 pub mod upgrade;
 pub mod up;
 

@@ -26,15 +26,25 @@ accounts are checked by the service. `--model` names a model for harnesses that
 support it. `--mode plan` reads without pushing; `--mode setup` inspects the
 repository's environment. The normal mode is `build`.
 
+`--target MACHINE_ID` selects a registered machine you own for a build run.
+`--timeout-seconds 600` bounds the execution budget (1–1800 seconds), and
+`--effort low|medium|high` selects reasoning effort for supported harnesses.
+Steering a running session preserves its configuration; start a new task to
+change its repository, harness, model, mode or execution settings.
+
 Without `--repo`, the CLI reads origin and the current branch, refuses known
 unpushed commits or a missing upstream, and warns about uncommitted files.
 Only pushed files reach the sandbox. GitHub and Hanzo forge origins are supported;
 there is no local repository bundle upload. An explicit `--repo` targets that
 remote directly and does not upload or inspect the local checkout.
 
-Follow-up tasks require a finished or paused run. They use the service's `after`
-field to continue from prior work on a new branch. This CLI does not currently
-redirect a running cloud sandbox. Ctrl-C while watching only detaches the viewer.
+Follow-up tasks on finished runs use the service's `after` field to continue
+from prior work on a new branch. On running or paused sessions, the new instruction
+redirects the run: it keeps its current work, then starts a follow-up. Add `--watch`
+to wait for that handoff and follow the new session. To reconnect during the
+handoff, run `hanzo --cloud --resume SESSION_ID --await-followup`. This is an
+interrupt-and-continue operation; retractable message queues are still pending.
+Ctrl-C while watching only detaches the viewer.
 The terminal shows recent events; the browser session holds the transcript.
 
 `--teleport` checks the repository identity and clean working tree, fetches the
@@ -79,8 +89,9 @@ local dev task that writes and verifies a file also passed against production.
 See [E2E.md](E2E.md) for repeatable source and public-installer checks.
 
 Still unimplemented here: uploading a local repository bundle, importing the
-native harness conversation into a local session, and delivering follow-up
-instructions to a running cloud sandbox. Scheduling, environment configuration,
+native harness conversation into a local session, and retractable queued messages.
+The new steering workflow requires the matching API release and production
+verification before being counted as shipped. Scheduling, environment configuration,
 pause/stop, PR creation/merge, browser/mobile handoff, and CI auto-fix were not
 verified end to end in this change. Published API routes alone do not prove those
 workflows.

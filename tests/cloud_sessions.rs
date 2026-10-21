@@ -13,8 +13,29 @@ fn cloud_entry_points_are_exposed() {
             .stdout(
                 predicate::str::contains("--cloud")
                     .and(predicate::str::contains("--teleport"))
+                    .and(predicate::str::contains("--await-followup"))
+                    .and(predicate::str::contains("--target"))
                     .and(predicate::str::contains("--watch")),
             );
+    }
+}
+
+#[test]
+fn cloud_controls_require_a_cloud_session_and_valid_bounds() {
+    for args in [
+        vec!["--await-followup"],
+        vec!["--cloud", "--await-followup"],
+        vec!["--target", "machine"],
+        vec!["--effort", "high"],
+        vec!["--cloud", "--timeout-seconds", "0", "task"],
+        vec!["--cloud", "--timeout-seconds", "1801", "task"],
+    ] {
+        Command::cargo_bin("hanzo")
+            .unwrap()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("error:"));
     }
 }
 

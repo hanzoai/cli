@@ -15,7 +15,7 @@
 #
 #   HANZO_INSTALL_REPO   owning repo            (default hanzoai/cli)
 #   HANZO_INSTALL_BIN    binary + asset prefix  (default hanzo)
-#   HANZO_INSTALL_ALIAS  second name, same build (default hanzo-node; "" = none)
+#   HANZO_INSTALL_ALIAS  second name, same build (default hanzo-cli; "" = none)
 #   HANZO_INSTALL_PREFIX install dir            (default ~/.local/bin)
 #   HANZO_VERSION        pin a tag              (default: highest stable semver)
 #   HANZO_INSTALL_SIGNER the workflow that must have built the asset, for a tool
@@ -31,9 +31,10 @@ REPO="${HANZO_INSTALL_REPO:-hanzoai/cli}"
 BIN="${HANZO_INSTALL_BIN:-hanzo}"
 # The second name this same build installs under: what cloud's control binary
 # delegates to. One build, two names — never two versions.
-DELEGATE="${HANZO_INSTALL_ALIAS-hanzo-node}"
+DELEGATE="${HANZO_INSTALL_ALIAS-hanzo-cli}"
 PREFIX="${HANZO_INSTALL_PREFIX:-$HOME/.local/bin}"
 SIGNER="${HANZO_INSTALL_SIGNER:-}"
+STRICT="${HANZO_INSTALL_STRICT:-0}"
 
 die() { printf '\n%s: %s\n' "$BIN" "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "need $1 on PATH"; }
@@ -41,6 +42,23 @@ need() { command -v "$1" >/dev/null 2>&1 || die "need $1 on PATH"; }
 need curl
 need tar
 need awk
+
+case "$STRICT" in 0|1) ;; *) die "HANZO_INSTALL_STRICT must be 0 or 1" ;; esac
+# Check the verifier before downloading. Strict mode requires repository- and
+# tag-bound provenance for every tool, including those without a pinned workflow.
+unchecked=""
+if [ -n "$SIGNER" ] || [ "$STRICT" = 1 ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    unchecked="needs gh"
+  elif ! gh auth status >/dev/null 2>&1; then
+    unchecked="needs a signed-in gh"
+  elif ! gh attestation verify --help 2>/dev/null | grep -q -- '--source-ref'; then
+    unchecked="$(gh --version 2>/dev/null | head -1 || true) cannot check an attestation's tag"
+  fi
+  if [ "$STRICT" = 1 ] && [ -n "$unchecked" ]; then
+    die "strict verification unavailable ($unchecked). Install or upgrade GitHub CLI: https://cli.github.com/ and run gh auth login. Nothing was installed."
+  fi
+fi
 
 # A private repo answers 404 to an anonymous asset fetch, so carry a token when
 # one is available. Public installs need none.
@@ -209,25 +227,22 @@ fetch "$asset.sha256" "$tmp/$asset.sha256" \
 # verify an attestation's tag is here, and a verification that ran and failed
 # refuses the install, with gh's reason. Otherwise it is not checked, and the
 # line says why and how to check it — never a silent pass.
-if [ -n "$SIGNER" ]; then
-  if ! command -v gh >/dev/null 2>&1; then
-    unchecked="needs gh"
-  elif ! gh auth status >/dev/null 2>&1; then
-    unchecked="needs a signed-in gh"
-  elif ! gh attestation verify --help 2>/dev/null | grep -q -- '--source-ref'; then
-    unchecked="$(gh --version 2>/dev/null | head -1 || true) cannot check an attestation's tag"
-  else
-    unchecked=""
-  fi
+if [ -n "$SIGNER" ] || [ "$STRICT" = 1 ]; then
   if [ -z "$unchecked" ]; then
-    gh attestation verify "$tmp/$asset" --repo "$REPO" --signer-workflow "$REPO/$SIGNER" \
-      --source-ref "refs/tags/$TAG" > "$tmp/provenance" 2>&1 \
+    set -- gh attestation verify "$tmp/$asset" --repo "$REPO" --source-ref "refs/tags/$TAG"
+    if [ -n "$SIGNER" ]; then set -- "$@" --signer-workflow "$REPO/$SIGNER"; fi
+    "$@" > "$tmp/provenance" 2>&1 \
       || { sed 's/^/  /' "$tmp/provenance" >&2
-           die "$asset has no attestation that $REPO/$SIGNER built it at $TAG — refusing to install"; }
-    printf '%s: provenance: %s built %s at %s\n' "$BIN" "$REPO/$SIGNER" "$asset" "$TAG"
+           die "$asset has no matching provenance for $REPO at $TAG — refusing to install"; }
+    if [ -n "$SIGNER" ]; then
+        printf '%s: provenance: %s/%s built %s at %s\n' "$BIN" "$REPO" "$SIGNER" "$asset" "$TAG"
+    else
+        printf '%s: provenance: verified %s from %s at %s\n' "$BIN" "$asset" "$REPO" "$TAG"
+    fi
   else
     printf '%s: provenance not checked (%s): gh attestation verify %s --repo %s --signer-workflow %s/%s --source-ref refs/tags/%s\n' \
       "$BIN" "$unchecked" "$asset" "$REPO" "$REPO" "$SIGNER" "$TAG"
+    printf '%s: provenance: upgrade GitHub CLI at https://cli.github.com/, run gh auth login, then rerun this installer.\n' "$BIN"
   fi
 fi
 
@@ -241,7 +256,7 @@ chmod 755 "$PREFIX/$BIN$ext"
 printf '%s: installed %s\n' "$BIN" "$PREFIX/$BIN$ext"
 
 # The SAME build under a second name. cloud's control binary hands every verb it
-# does not own to `hanzo-node` (it resolves that name before `hanzo`), so the two
+# does not own to `hanzo-cli` (it resolves that name before `hanzo`), so the two
 # names must never be two versions: install one and not the other, or upgrade one
 # and not the other, and a user types `hanzo`, gets delegated, and runs an old
 # build with no version anywhere on screen. That is not theoretical — a stale
@@ -259,6 +274,15 @@ if [ -n "$DELEGATE" ]; then
   [ -e "$PREFIX/$DELEGATE$ext" ] \
     || die "could not install the second name $PREFIX/$DELEGATE$ext — a half-install is not an install"
   printf '%s: installed %s (the same build, second name)\n' "$BIN" "$PREFIX/$DELEGATE$ext"
+fi
+
+# Retire only the symlink this installer used to create for the CLI. A real
+# network-node executable (or a link to hanzod) is never removed.
+if [ "$BIN" = hanzo ] && [ "$DELEGATE" = hanzo-cli ] && [ -L "$PREFIX/hanzo-node$ext" ]; then
+  old_target=$(readlink "$PREFIX/hanzo-node$ext" || true)
+  case "$old_target" in
+    "hanzo$ext"|"$PREFIX/hanzo$ext") rm "$PREFIX/hanzo-node$ext" ;;
+  esac
 fi
 
 # Whatever PATH says, name the copy that would ACTUALLY run. An earlier entry
