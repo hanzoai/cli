@@ -8,10 +8,17 @@
 <title>Hanzo</title>
 <style>
 /*__XTERM_CSS__*/
+@font-face {
+  font-family: 'Geist Mono';
+  src: local('Geist Mono'), local('GeistMono'), local('GeistMono-Regular');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
 :root { color-scheme: dark }
 html, body {
   margin: 0; height: 100%; background: #000; overflow: hidden;
-  font-family: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+  font-family: 'Geist Mono', 'Zen Mono', ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
 }
 /* The terminal owns the page, minus whatever the key row takes. */
 #term { position: absolute; inset: 0; padding: 6px 8px; }
