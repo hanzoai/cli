@@ -88,7 +88,7 @@ the same file (a copy where links are unavailable), and warns when another
 precedence that let a stale twin hide.
 
 The remaining gaps are elsewhere:
-- PyPI carries `hanzo`, `hanzo-cli` and `hanzo-cli` as SEPARATE projects that
+- PyPI carries `hanzo`, `hanzo-cli` and `hanzo-node` as SEPARATE projects that
   are not this crate. `curl hanzo.sh | sh` used to install one of them at the
   name `hanzo`, into `~/.local/bin`, which outranks `/usr/local/bin` on a normal
   PATH. It now calls THIS installer instead, so there is one download path and
@@ -278,7 +278,7 @@ supervise`. Three things are worth knowing:
   hanzoai/vm) owns the fold — the CLI does not have a second copy of it.
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage`
 - cloud: `hanzo up` (+ `--attest`); network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
-- fabric/fleet: `hanzo link` (below), `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`
+- fabric/fleet: `hanzo link` (below), `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`, `hanzo doctor` (paths, versions, auth, GPU runtime; `--verify` re-downloads current releases and checks provenance, `--offline` skips the network)
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 - the whole cloud, one screen: `hanzo status` (see below)
 
