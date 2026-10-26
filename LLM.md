@@ -1129,6 +1129,28 @@ command (`sign in again: hanzo --as admin auth login`), never another identity.
 `auth show` under `--as <org>` with no identity held there refuses rather than
 name the default.
 
+**Which account a sign-in continues as** (`src/iam/login.rs`). hanzo.id answers an
+authorize request from the browser's latest session unless asked otherwise, so a
+person holding several identities used to land on whichever account the browser
+signed in last. `chooser` sends `prompt=select_account` when more than one
+identity is held (or under `--as`, or with `--choose`); `--account` sends
+`login_hint` instead: an address as given, a held `owner/name` by its token's
+`sub` (unique where an address is not), an unheld one by its name, and an
+`owner/name` in an org with its own client signs in through that client.
+`activates` decides the active identity: a chosen account (chooser, `--account`,
+`--token -`) or the first one becomes active; an account nobody chose is filed
+beside the active identity (`store::file(.., activate: false)`), and `report`
+prints `active:` either way. The loopback page is static (who signed in, who the
+terminal uses) and `oauth::finish` closes the port when the command returns;
+there is no detached menu process and no browser-side switch, `hanzo auth use` is
+the one way. `relogin` names the identity (`--account <owner/name>`).
+`auth logout` ends the browser's issuer session too (`oauth::end_session`, OIDC
+RP-Initiated Logout at `/v1/iam/oauth/logout`): through `hanzo-cli`, whose
+registered `http://127.0.0.1/callback` brings the tab back on any port with its
+`state`; `client_id` only, never `id_token_hint`, since IAM ends every session
+the browser holds either way and a hint would write a signed identity assertion
+into browser history. No browser here, or no terminal, prints the link instead.
+
 **`crates/client` — the Rust client for `api.hanzo.ai`, and the CLI is one consumer
 of it, not its owner.** The binary used to carry its own transport in `src/http.rs`;
 that file is gone. What was duplicated now lives in a library crate any Rust caller

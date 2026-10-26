@@ -143,6 +143,12 @@ enum Commands {
         /// `--token -` reads the credential from stdin (never argv)
         #[arg(long, value_name = "TOKEN")]
         token: Option<String>,
+        /// The account to continue as: `owner/name` or an email address
+        #[arg(long, value_name = "ACCOUNT", conflicts_with = "token")]
+        account: Option<String>,
+        /// Show the account chooser even when one account is held
+        #[arg(long, conflicts_with = "token")]
+        choose: bool,
     },
 
     /// Show who you are signed in as and in which org — `hanzo auth show` at the top level.
@@ -382,6 +388,12 @@ enum AuthCommands {
         /// `--token -` reads the credential from stdin (never argv)
         #[arg(long, value_name = "TOKEN")]
         token: Option<String>,
+        /// The account to continue as: `owner/name` or an email address
+        #[arg(long, value_name = "ACCOUNT", conflicts_with = "token")]
+        account: Option<String>,
+        /// Show the account chooser even when one account is held
+        #[arg(long, conflicts_with = "token")]
+        choose: bool,
     },
     /// Sign out one identity (or `--all`) and remove the credential
     Logout {
@@ -666,11 +678,6 @@ enum WalletCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // The signed-in page stays up after `hanzo login` returns, so a click in
-    // the top-right account menu can switch identity. Started by login itself.
-    if std::env::var_os("HANZO_LOGIN_FD").is_some() {
-        return iam::oauth::serve_detached_menu().await;
-    }
     // The lazy MCP proxy a coding agent is handed in place of hanzo-mcp
     // (`hanzo_gen::mcp`). It runs before the command tree is built: the agent
     // waits on it, and the tree is not needed to forward a pipe.
@@ -909,13 +916,13 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
 
         // `hanzo dev` IS the launcher.
         Commands::Dev(args) => commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?,
-        Commands::Login { brand, provider, token } => {
-            commands::auth::login(&mut config, &brand, provider, token).await?
+        Commands::Login { brand, provider, token, account, choose } => {
+            commands::auth::login(&mut config, &brand, provider, token, account, choose).await?
         }
         Commands::Whoami { brand } => commands::auth::show(&mut config, &brand).await?,
         Commands::Auth { command } => match command {
-            AuthCommands::Login { brand, provider, token } => {
-                commands::auth::login(&mut config, &brand, provider, token).await?
+            AuthCommands::Login { brand, provider, token, account, choose } => {
+                commands::auth::login(&mut config, &brand, provider, token, account, choose).await?
             }
             AuthCommands::Logout { identity, brand, all } => {
                 commands::auth::logout(&mut config, &brand, identity, all).await?

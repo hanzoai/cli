@@ -22,9 +22,17 @@ use crate::iam::{login as iam, onboarding, store};
 
 /// `hanzo auth login` — sign in through Hanzo IAM (OIDC), or store a provider key.
 /// Bare on a terminal shows the interactive picker; `--provider`/`--token -` is
-/// the non-interactive path. The credential is filed in the portable vault.
-pub async fn login(cfg: &mut Config, brand: &str, provider: Option<String>, token: Option<String>) -> Result<()> {
-    onboarding::run_login(cfg, brand, provider, token).await
+/// the non-interactive path, and `--account`/`--choose` sign in to Hanzo with
+/// that account or the chooser. The credential is filed in the portable vault.
+pub async fn login(
+    cfg: &mut Config,
+    brand: &str,
+    provider: Option<String>,
+    token: Option<String>,
+    account: Option<String>,
+    choose: bool,
+) -> Result<()> {
+    onboarding::run_login(cfg, brand, provider, token, account, choose).await
 }
 
 /// `hanzo auth logout [IDENTITY] [--all]` — sign out one identity (default: the

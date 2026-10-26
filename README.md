@@ -108,7 +108,7 @@ Multi-identity, like `gh auth switch` — hold many principals at once and switc
 between them; a second login never clobbers the first.
 
 ```bash
-hanzo auth login [--provider hanzo|openai|anthropic] [--token -]
+hanzo auth login [--provider hanzo|openai|anthropic] [--token -] [--account owner/name|email] [--choose]
 hanzo auth show                 # the active identity
 hanzo auth list                 # every identity, active one marked
 hanzo auth use [owner/name]     # switch active identity
@@ -120,6 +120,15 @@ hanzo usage samples             # per-provider: one linked account's own plan
 hanzo billing balance | deposit
 hanzo connector add|list|verify|rm --provider cloudflare
 ```
+
+Holding more than one identity, `auth login` asks hanzo.id for its account chooser
+(the accounts signed in on that browser, and "Use another account") instead of
+continuing as the browser's latest session; `--account` names the account and
+`--choose` shows the chooser regardless. The account you choose becomes active;
+one hanzo.id answered with on its own is added beside the active identity, and
+the output says which identity the terminal uses. `auth logout` revokes the
+session at IAM and signs the browser out of hanzo.id too, so the next sign-in
+asks again.
 
 Secrets arrive on **stdin only**, never argv (`--token -`) — nothing lands in
 shell history, `ps`, or CI logs. Credentials live in the OS keychain (macOS /

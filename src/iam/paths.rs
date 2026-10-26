@@ -18,6 +18,9 @@ pub const TOKEN: &str = "/v1/iam/oauth/token";
 pub const USERINFO: &str = "/v1/iam/oauth/userinfo";
 /// Revocation endpoint (RFC 7009 §2.1) — what makes `logout` reach the server.
 pub const REVOKE: &str = "/v1/iam/oauth/revoke";
+/// End-session endpoint (OIDC RP-Initiated Logout 1.0 §2) — what ends the
+/// browser's session, so the next sign-in asks instead of reusing it.
+pub const LOGOUT: &str = "/v1/iam/oauth/logout";
 /// Device authorization endpoint (RFC 8628 §3.1) — the sign-in for a machine
 /// with no browser of its own. IAM publishes it in its own discovery document
 /// and answers it today; this is the same address written where the CLI's other

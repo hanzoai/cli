@@ -7,7 +7,7 @@
 //! one answer in exactly one place.
 //!
 //! HARD INVARIANT — the active identity changes ONLY by explicit user action
-//! (`hanzo auth login`, `hanzo auth use`). There is no auto-switch, no fallback and no
+//! (choosing the account at `hanzo auth login`, `hanzo auth use`). There is no auto-switch, no fallback and no
 //! cascade: if the active identity's credential is missing, the run is
 //! UNAUTHENTICATED. It never quietly becomes some other identity you happen to
 //! hold. Acting as the wrong principal is worse than not acting.
@@ -21,14 +21,16 @@ use super::oauth;
 use super::paths::{self, brand_flag};
 use super::token::{self, TokenSet, Vault};
 
-/// Add the identity `tokens` authenticates as, and make it active.
+/// File the identity `tokens` authenticates as, and make it active only when
+/// `activate`: a sign-in adds an account the person did not choose beside the
+/// active identity, never in its place (`login::activates`).
 ///
 /// There is NO identity parameter, by design: the identity is derived from the
 /// token's own claims, so no caller — not even this crate — can file a
 /// credential under a principal of its choosing. Re-adding an identity that is
 /// already known UPDATES it in place; it never duplicates the index row.
-pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity> {
-    add_in(&*token::vault()?, cfg, brand, tokens)
+pub fn file(cfg: &mut Config, brand: &str, tokens: &TokenSet, activate: bool) -> Result<Identity> {
+    file_in(&*token::vault()?, cfg, brand, tokens, activate)
 }
 
 /// Resolve the ACTIVE identity's credential for `brand`, REFRESHED if the access
@@ -268,7 +270,9 @@ pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
     } else {
         format!(" --as {}", id.owner)
     };
-    format!("hanzo{org} auth login{}", brand_flag(brand))
+    // Named, so the sign-in comes back as this identity and not whichever
+    // account the browser holds.
+    format!("hanzo{org} auth login --account {id}{}", brand_flag(brand))
 }
 
 /// Whether this access token is spent, or close enough that spending it would
@@ -493,11 +497,23 @@ pub fn render(cfg: &Config, brand: &str) -> String {
 
 // ---- the vault-parameterised core (unit-testable; see `token::Vault`) -------
 
+/// [`file_in`], activating: the shape the store's own tests sign in with.
+#[cfg(test)]
 pub(crate) fn add_in(
     v: &dyn Vault,
     cfg: &mut Config,
     brand: &str,
     tokens: &TokenSet,
+) -> Result<Identity> {
+    file_in(v, cfg, brand, tokens, true)
+}
+
+pub(crate) fn file_in(
+    v: &dyn Vault,
+    cfg: &mut Config,
+    brand: &str,
+    tokens: &TokenSet,
+    activate: bool,
 ) -> Result<Identity> {
     let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
@@ -506,7 +522,10 @@ pub(crate) fn add_in(
     token::store(v, brand, &id, tokens)?;
     cfg.update(|c| {
         index(c, brand, &id);
-        set_active(c, brand, &id); // `hanzo auth login` IS the explicit user action
+        // Choosing the account at sign-in IS the explicit user action.
+        if activate {
+            set_active(c, brand, &id);
+        }
         Ok(())
     })?;
     // An explicit login to this brand supersedes any pre-multi-identity
@@ -975,6 +994,22 @@ mod tests {
         add_in(v, c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
     }
 
+    /// A sign-in nobody chose files the account beside the active identity
+    /// and leaves the active one where it was; a chosen one takes its place.
+    #[test]
+    fn filing_unasked_keeps_the_active_identity() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        let other = file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "grundy")), false).unwrap();
+        assert_eq!(other.to_string(), "hanzo/grundy");
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), "hanzo/z");
+        assert!(list(&c, "hanzo").contains(&other), "the account was not filed");
+        assert!(token_for_in(&v, &c, "hanzo", &other).unwrap().is_some());
+
+        file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "grundy")), true).unwrap();
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), "hanzo/grundy");
+    }
+
     // ---- the incident ------------------------------------------------------
 
     /// THE regression: a second login must not clobber the first.
@@ -1052,11 +1087,11 @@ mod tests {
     /// A session is renewed through the client of the org it belongs to.
     #[test]
     fn signing_in_again_names_the_identitys_own_org() {
-        assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login");
-        assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login");
-        assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --brand lux");
+        assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --account admin/z");
+        assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login --account hanzo/z");
+        assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --account lux/a --brand lux");
         let err = adopted("hanzo", &ident(ADMIN), tokens(&jwt("hanzo", "z"))).unwrap_err();
-        assert!(err.to_string().contains("run `hanzo --as admin auth login`"), "{err}");
+        assert!(err.to_string().contains("run `hanzo --as admin auth login --account admin/z`"), "{err}");
     }
 
     /// `--as` naming an org with no identity held there is refused by name,

@@ -234,14 +234,14 @@ fn confirm_provider(provider: Provider) {
 
 /// Sign in as a Hanzo IDENTITY (the OIDC browser flow, or a supplied token), and
 /// record `hanzo` as the active provider so model routing uses the gateway.
-async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Result<()> {
+async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>, account: Option<&str>, choose: bool) -> Result<()> {
     oauth::server_url(brand)?; // reject an unknown brand before any I/O
     match token {
         Some(t) => {
             let raw = read_identity_token(t)?;
             login::login_with_token(cfg, brand, &raw).await?;
         }
-        None => login::login(cfg, brand).await?,
+        None => login::login(cfg, brand, account, choose).await?,
     }
     mark_provider(cfg, Provider::Hanzo)?;
     // The harness's shared login. A native pin from an earlier sign-in must
@@ -313,7 +313,7 @@ async fn paste_key_login(cfg: &mut Config, token: Option<String>) -> Result<()> 
 
 async fn dispatch_choice(cfg: &mut Config, brand: &str, choice: Choice) -> Result<()> {
     match choice {
-        Choice::Hanzo => hanzo_login(cfg, brand, None).await,
+        Choice::Hanzo => hanzo_login(cfg, brand, None, None, false).await,
         Choice::Native(agent) => native_login(cfg, agent).await,
         Choice::Paste => paste_key_login(cfg, None).await,
     }
@@ -403,14 +403,24 @@ pub async fn run_login(
     brand: &str,
     provider: Option<String>,
     token: Option<String>,
+    account: Option<String>,
+    choose: bool,
 ) -> Result<()> {
+    // Naming the account, or asking for the chooser, is a Hanzo sign-in.
+    let hanzo = account.is_some() || choose;
     if let Some(p) = provider {
         if let Some(agent) = native::find(&p) {
+            if hanzo {
+                bail!("--account and --choose pick a Hanzo account; `--provider {p}` signs in to {}", agent.title);
+            }
             return native_login(cfg, agent).await;
         }
         let provider = Provider::parse(&p)?;
         return match provider {
-            Provider::Hanzo => hanzo_login(cfg, brand, token).await,
+            Provider::Hanzo => hanzo_login(cfg, brand, token, account.as_deref(), choose).await,
+            Provider::OpenAI | Provider::Anthropic if hanzo => {
+                bail!("--account and --choose pick a Hanzo account; `--provider {p}` stores a {} key", provider.label())
+            }
             Provider::OpenAI | Provider::Anthropic => {
                 provider_key_login(cfg, provider, token).await
             }
@@ -418,9 +428,9 @@ pub async fn run_login(
     }
 
     // No explicit provider.
-    if let Some(t) = token {
-        // Back-compat: `hanzo auth login --token -` files a Hanzo identity.
-        return hanzo_login(cfg, brand, Some(t)).await;
+    if token.is_some() || hanzo {
+        // `--token -` files a Hanzo identity; `--account`/`--choose` sign one in.
+        return hanzo_login(cfg, brand, token, account.as_deref(), choose).await;
     }
 
     if interactive() {
@@ -437,7 +447,7 @@ pub async fn run_login(
     }
 
     // Non-interactive, nothing specified: the browser OIDC default (unchanged).
-    hanzo_login(cfg, brand, None).await
+    hanzo_login(cfg, brand, None, None, false).await
 }
 
 /// The bare-`hanzo` FRESH greeting: on an interactive terminal with no
