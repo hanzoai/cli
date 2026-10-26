@@ -19,7 +19,21 @@ curl -fsSL https://hanzo.sh | sh
 One install line, and it is the same one every Hanzo surface prints. It resolves the
 release asset for your platform (linux · macOS on amd64 · arm64, Windows on amd64),
 verifies its sha256, and puts `hanzo` in `~/.local/bin` — along with `hanzo-mcp` (the
-MCP server) and `dev` (the coding agent `hanzo dev` runs). Re-run to upgrade.
+MCP server), `hanzo-dev`, `hanzo-gen`, and `hanzo-zet`. The short names `dev`,
+`gen`, `mcp`, and `zt` remain available. Re-run to upgrade.
+
+These are prebuilt native binaries; the installer does not compile crates. Node and
+Bot have public source but no downloadable native releases yet, so they are not
+included. `hanzo-node` is reserved for the network node, not an alias for the CLI.
+
+A provenance warning means the tool installed but its provenance was not verified.
+Use `curl -fsSL https://hanzo.sh | sh -s -- --strict` to require provenance verification
+before installation (requires a current, authenticated GitHub CLI and release
+attestations). Checksums are required in either mode.
+
+Run `hanzo doctor` to check executable paths, versions, authentication and GPU
+runtimes. `--offline` skips network checks; `--verify` downloads current releases
+and compares installed bytes against checksummed, provenance-verified artifacts.
 
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
 "fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh | sh -s -- hanzo`.
@@ -188,7 +202,7 @@ hanzo link dial <service> <port> [--install]   # a local port onto a service on 
 hanzo link status | rm <name>   # what is up here; unpublish
 ```
 
-`hanzo-node` is not a second program: the installer writes it as a symlink to this same
+`hanzo-cli` is not a second program: the installer writes it as a symlink to this same
 binary, because cloud's Go control binary resolves that name first and delegates to it.
 One build, two names, so the two can never be different versions.
 
