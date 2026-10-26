@@ -13,6 +13,7 @@
 //! release can never outlive its binary.
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use std::path::PathBuf;
 
 const INDEX: &str = include_str!("../../assets/term/index.html");
@@ -20,6 +21,10 @@ const XTERM_JS: &str = include_str!("../../assets/term/xterm.js");
 const XTERM_CSS: &str = include_str!("../../assets/term/xterm.css");
 const FIT_JS: &str = include_str!("../../assets/term/addon-fit.js");
 const CLIENT_JS: &str = include_str!("../../assets/term/client.js");
+/// Geist Mono, the one face the terminal is set in, carried inside the page: a
+/// machine has no reason to have it installed, and a missing face falls to
+/// whatever the browser calls serif.
+const FONT: &[u8] = include_bytes!("../../assets/term/font.woff2");
 
 /// The assembled page.
 ///
@@ -29,6 +34,7 @@ const CLIENT_JS: &str = include_str!("../../assets/term/client.js");
 /// beyond the socket it already holds.
 pub fn page() -> String {
     INDEX
+        .replace("__FONT__", &base64::engine::general_purpose::STANDARD.encode(FONT))
         .replace("/*__XTERM_CSS__*/", XTERM_CSS)
         .replace("/*__XTERM_JS__*/", XTERM_JS)
         .replace("/*__FIT_JS__*/", FIT_JS)
@@ -58,9 +64,16 @@ mod tests {
     #[test]
     fn the_page_has_no_holes_left_in_it() {
         let p = page();
-        for hole in ["__XTERM_CSS__", "__XTERM_JS__", "__FIT_JS__", "__CLIENT_JS__"] {
+        for hole in ["__FONT__", "__XTERM_CSS__", "__XTERM_JS__", "__FIT_JS__", "__CLIENT_JS__"] {
             assert!(!p.contains(hole), "{hole} was never substituted");
         }
+    }
+
+    /// The face is in the page, so a machine that has never heard of Geist Mono
+    /// still draws it.
+    #[test]
+    fn the_face_travels_inside_the_page() {
+        assert!(page().contains("url('data:font/woff2;base64,"), "Geist Mono must be embedded, not looked up");
     }
 
     /// The library is really inlined, not referenced — ttyd serves ONE document
