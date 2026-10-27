@@ -131,8 +131,8 @@ hanzo auth link list            # AI provider accounts signed in on your machine
 hanzo auth logout [identity] [--all]
 hanzo usage summary             # your own footprint over a window
 hanzo usage samples             # per-provider: one linked account's own plan
-hanzo billing balance | deposit
-hanzo connector add|list|verify|rm --provider cloudflare
+hanzo billing balance
+hanzo connection credential <provider> | list | rm <id>
 ```
 
 Holding more than one identity, `auth login` asks hanzo.id for its account chooser
@@ -151,9 +151,8 @@ Windows) or an owner-only `0600` file otherwise.
 ### Cloud
 
 ```bash
-hanzo agents run <agent>                 # run one of your org's agents, keep the run
-hanzo clusters create|list|pools|rm      # the compute you rent, and BYO clusters
-hanzo cloud list|accounts                # bring your own DigitalOcean / AWS / GCP
+hanzo agent run <agent>                  # run one of your org's agents, keep the run
+hanzo compute clusters create|list|rm|pools # the compute you rent, and BYO clusters
 hanzo engine serve <model>               # serve a model locally on an OpenAI-compatible endpoint
 hanzo up [--link <cluster>]     # local k3s in a microVM; writes ~/.kube/hanzo.yaml
 hanzo host serve [service]      # the Hanzo Cloud API from this machine (was `hanzo up`)
@@ -166,7 +165,7 @@ part of this install and the command says so when it is missing.
 
 Your org's statements with their sources and two times: `--as-of` is when a thing was
 so, `--as-known` is how much the graph had heard. The model is at
-[docs.hanzo.ai/docs/services/graph](https://docs.hanzo.ai/docs/services/graph).
+[docs.hanzo.ai/docs/openapi/graph](https://docs.hanzo.ai/docs/openapi/graph).
 
 ```bash
 hanzo graph create --assertions '{"entity":"acme/svc/api","relation":"owner","value":"acme/team/core","names":true,"at":"2026-09-01T00:00:00Z","source":"wiki/api"}'
