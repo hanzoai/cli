@@ -1,3 +1,4 @@
-ref=v8.5.930
+ref=11ab80d643a650a15efe062bc557fef4634def1e
 sha256=baceaf03e56ad0ba8572aa612977804086ea66903e344a03336fe51f41535106
 repo=hanzo-inc/cloud
+path=openapi.yaml
