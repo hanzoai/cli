@@ -49,6 +49,7 @@ use crate::config::Config;
 use crate::zap;
 use crate::iam::{paths, store};
 
+mod alias;
 mod generated;
 pub(crate) use generated::{OPS, PRODUCTS};
 
@@ -110,7 +111,7 @@ pub fn augment(mut cmd: Command) -> Command {
             true => cmd.mut_subcommand(product, |local| absorb(local, product)),
         };
     }
-    cmd
+    alias::mount(cmd)
 }
 
 /// Merge a generated product into the local command that owns its bare name: each
@@ -412,6 +413,10 @@ pub fn resolve(hand: &Command, matches: &ArgMatches) -> Option<Resolved> {
     while let Some((n, mm)) = m.subcommand() {
         chain.push(n);
         m = mm;
+    }
+    // A friendly alias (`hanzo git issues list` → `task projects issues list`).
+    if let Some((a, op)) = alias::find(&chain) {
+        return Some(alias::preset(a, resolve_leaf(op, m)));
     }
     // Absorbed: the local command owns the name, so a node IT declares is its own
     // — including the bare command itself, which `absorb` never gives an op.

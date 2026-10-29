@@ -1258,3 +1258,46 @@ fn a_union_flag_sends_json_as_json_and_text_as_text() {
     // A scalar that happens to parse as JSON is still text: the union admits no number.
     assert_eq!(send("42"), serde_json::json!("42"));
 }
+
+// ---- friendly aliases: `hanzo git issues …` reuses the task ops ------------
+
+#[test]
+fn git_issue_aliases_resolve_to_the_task_routes() {
+    let cases: &[(&[&str], &str, &str)] = &[
+        (&["hanzo", "git", "issues", "list", "cloud"], "GET", "/v1/task/projects/{key}/issues"),
+        (&["hanzo", "git", "issues", "get", "cloud", "3"], "GET", "/v1/task/projects/{key}/issues/{num}"),
+        (&["hanzo", "git", "issues", "create", "cloud", "--title", "t"], "POST", "/v1/task/projects/{key}/issues"),
+        (&["hanzo", "git", "issues", "edit", "cloud", "3", "--priority", "high"], "PATCH", "/v1/task/projects/{key}/issues/{num}"),
+        (&["hanzo", "git", "issues", "comment", "cloud", "3", "--comment", "hi"], "PATCH", "/v1/task/projects/{key}/issues/{num}"),
+        (&["hanzo", "git", "issues", "comments", "cloud", "3"], "GET", "/v1/task/projects/{key}/issues/{num}/comments"),
+        (&["hanzo", "git", "projects", "list"], "GET", "/v1/task/projects"),
+    ];
+    for (argv, method, path) in cases {
+        let m = matches_of(argv);
+        let Some(Resolved::Leaf { op, .. }) = resolve(&hand(), &m) else {
+            panic!("{argv:?}: expected a leaf");
+        };
+        assert_eq!((op.method, op.path), (*method, *path), "{argv:?}");
+    }
+}
+
+#[test]
+fn git_issues_close_presets_status_done() {
+    let m = matches_of(&["hanzo", "git", "issues", "close", "cloud", "3", "--comment", "fixed"]);
+    let Some(Resolved::Leaf { op, values, body, .. }) = resolve(&hand(), &m) else {
+        panic!("expected a leaf");
+    };
+    assert_eq!(op.method, "PATCH");
+    assert_eq!(values, vec!["cloud", "3"]);
+    let LeafBody::Typed(b) = body else { panic!("typed body") };
+    assert_eq!(b, json!({"status": "done", "comment": "fixed"}));
+}
+
+#[test]
+fn an_alias_whose_target_is_not_served_is_not_mounted() {
+    // labels/milestones light up only once cloud serves them and the spec is
+    // regenerated; until then the group must not exist rather than 404.
+    let served = find_op(&["task", "projects", "labels", "list"]).is_some();
+    let parsed = augment(hand()).try_get_matches_from(["hanzo", "git", "labels", "list", "cloud"]).is_ok();
+    assert_eq!(served, parsed);
+}
