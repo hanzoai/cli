@@ -86,9 +86,51 @@ pub trait Transport: Send + Sync {
 }
 
 /// HTTPS, over `reqwest`. The shipped transport.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Http {
     client: reqwest::Client,
+}
+
+/// An HTTPS client that trusts the web's roots AND this machine's own.
+///
+/// `reqwest` with `rustls-tls` trusts only webpki's Mozilla set, so a machine
+/// whose egress re-signs TLS — a corporate proxy, a sandbox MITM — fails
+/// every call with an unknown-issuer error even though the machine itself
+/// trusts its own CA. This builder keeps the Mozilla set and adds every root
+/// the OS store carries (that is where such a CA lives), plus every
+/// certificate in a PEM bundle `HANZO_CA_BUNDLE` names when one is set, so
+/// one extra CA file covers a machine whose store was never updated. Added
+/// roots are trusted in addition to, never instead of, the built-ins.
+pub fn tls_builder() -> reqwest::ClientBuilder {
+    let mut builder = reqwest::Client::builder();
+    for cert in rustls_native_certs::load_native_certs().certs {
+        if let Ok(root) = reqwest::Certificate::from_der(cert.as_ref()) {
+            builder = builder.add_root_certificate(root);
+        }
+    }
+    if let Ok(bundle) = std::env::var("HANZO_CA_BUNDLE") {
+        if let Ok(pem) = std::fs::read(&bundle) {
+            if let Ok(roots) = reqwest::Certificate::from_pem_bundle(&pem) {
+                for root in roots {
+                    builder = builder.add_root_certificate(root);
+                }
+            }
+        }
+    }
+    builder
+}
+
+/// The shipped HTTPS client: [`tls_builder`] built, falling back to a plain
+/// client when the build itself fails so a caller never loses the call over
+/// a builder error.
+pub fn tls_client() -> reqwest::Client {
+    tls_builder().build().unwrap_or_else(|_| reqwest::Client::new())
+}
+
+impl Default for Http {
+    fn default() -> Self {
+        Http { client: tls_client() }
+    }
 }
 
 impl Http {

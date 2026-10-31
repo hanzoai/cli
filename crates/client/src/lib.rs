@@ -44,7 +44,7 @@ use serde_json::Value;
 
 pub use crate::error::Error;
 pub use crate::grant::{Grant, ISSUE, ISSUER};
-pub use crate::http::{Http, Method, Reply, Request, Transport};
+pub use crate::http::{tls_builder, tls_client, Http, Method, Reply, Request, Transport};
 pub use crate::result::{Approval, Outcome};
 
 /// Where the platform answers.

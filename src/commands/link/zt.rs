@@ -7,6 +7,7 @@
 
 use crate::commands::{launch, vm};
 use anyhow::{anyhow, bail, Context, Result};
+use hanzo_client::tls_client;
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -82,7 +83,7 @@ impl Session {
     /// Sign in with an IAM access token (ext-jwt). `None` when the controller
     /// answers 401: no identity on the fabric has the token's subject yet.
     pub async fn open(iam_token: &str) -> Result<Option<Session>> {
-        let http = reqwest::Client::new();
+        let http = tls_client();
         let api = format!("{CONTROLLER}/edge/client/v1");
         let answer = http
             .post(format!("{api}/authenticate?method=ext-jwt"))
