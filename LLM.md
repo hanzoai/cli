@@ -1229,3 +1229,10 @@ a projection that repairs its source hides the defect at the one place it can be
   fix is upstream in zip's translate, which should give the artifact a conventional
   name. The CLI must not rename it locally: a projection that improves its source's
   vocabulary is a projection nobody can check against the source.
+
+## Multi-Org, Sandbox Mode & Token Refresh Fixes (2026-10-07)
+
+- **Sandbox Mode Preservation**: `Approval::Auto` in `src/commands/code/dev.rs` no longer passes `-c sandbox_mode=workspace-write` to `dev`, respecting the user's `sandbox_mode` configured in `config.toml` (e.g. `danger-full-access`).
+- **Default Org Configuration (`config.default_org`)**: Added `default_org: Option<String>` to persisted `Config` in `src/config.rs`. `main.rs` resolves the effective org via `--as <org>`, then `config.default_org`, then `HANZO_ORG` env var. This allows commands like `hanzo allowance get` and `hanzo link` to automatically target the intended billing organization.
+- **Atomic Refresh Token Rotation**: In `src/iam/store.rs`, `active_token` re-reads the stored token *inside* the config lock before invoking refresh. If another process (e.g., `hanzo beat`) refreshed concurrently, the fresh token is used, eliminating IAM refresh token reuse errors and invalidations.
+

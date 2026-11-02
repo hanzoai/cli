@@ -72,5 +72,6 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Wallet { .. } => "wallet",
         Commands::Share { .. } => "share",
         Commands::Init { .. } => "init",
+        Commands::Pull { .. } => "pull",
     }
 }

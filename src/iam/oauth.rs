@@ -409,7 +409,11 @@ async fn exchange_code(
 /// and fails CONFUSINGLY, because a stale token reads downstream as "X-Org-Id
 /// required" or "a validated principal is required" rather than "log in again".
 pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
-    let resp = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+    let resp = client
         .post(paths::iam_url(origin, TOKEN))
         .form(&[
             ("grant_type", "refresh_token"),

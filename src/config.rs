@@ -88,6 +88,9 @@ pub struct Config {
     /// file on disk.
     #[serde(skip)]
     pub org: Option<String>,
+    /// The default org to act in when --as is omitted. Persisted in config.
+    #[serde(default)]
+    pub default_org: Option<String>,
     /// Signed-in identities + the active one per brand. NEVER holds a token.
     #[serde(default)]
     pub auth: AuthState,
@@ -368,6 +371,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             org: None,
+            default_org: None,
             auth: AuthState::default(),
             sdk_paths: SdkPaths::default(),
             network: NetworkState::default(),

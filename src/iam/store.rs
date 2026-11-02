@@ -72,12 +72,16 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     // on the one that just refreshed, and the token on disk is now fresh. Spending
     // the rt we read BEFORE the lock would be the replay this exists to prevent.
     let _guard = crate::config::Lock::acquire(&token::lock_subject())?;
-    if let Some((id2, tok2)) = active_token_in(&*token::vault()?, cfg, brand)? {
+    let (use_rt, use_id) = if let Some((id2, tok2)) = active_token_in(&*token::vault()?, cfg, brand)? {
         if !expiring(&tok2.access_token, now_unix()) {
             return Ok(Some((id2, tok2)));
         }
-    }
-    let fresh = match oauth::refresh(origin, rt).await {
+        let token_rt = tok2.refresh_token.unwrap_or_else(|| rt.to_string());
+        (token_rt, id2)
+    } else {
+        (rt.to_string(), id.clone())
+    };
+    let fresh = match oauth::refresh(origin, &use_rt).await {
         Ok(fresh) => fresh,
         Err(e) => {
             // Still fall back — a caller that would have sent a spent token still
@@ -94,8 +98,8 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
             return Ok(Some((id, tok)));
         }
     };
-    let fresh = adopted(brand, &id, fresh)?;
-    if let Err(e) = token::store(&*token::vault()?, brand, &id, &fresh) {
+    let fresh = adopted(brand, &use_id, fresh)?;
+    if let Err(e) = token::store(&*token::vault()?, brand, &use_id, &fresh) {
         // NOT swallowed. IAM rotates on every grant and treats a re-presented
         // refresh token as a replay, revoking the whole family — so the token still
         // on disk is already dead, and the next run will have to sign in again. Say
@@ -106,7 +110,7 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
             brand_flag(brand)
         ));
     }
-    Ok(Some((id, fresh)))
+    Ok(Some((use_id, fresh)))
 }
 
 /// Accept a refreshed credential for `id`, or refuse it. PURE.

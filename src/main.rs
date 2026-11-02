@@ -544,6 +544,16 @@ enum Commands {
         /// Project name
         name: Option<String>,
     },
+
+    /// Pull a cloud coding run's branch into the local repository
+    Pull {
+        /// The coding session ID or run hash (e.g. `sess_...` or `65a4760da6f0`)
+        id: String,
+
+        /// Target directory for the checkout (defaults to current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -881,9 +891,10 @@ async fn main() -> Result<()> {
     let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
     // The org selection belongs to this invocation, so it is read from the command
     // line and never written to the file the line above loaded.
-    // Keyed by the FIELD name, which is clap's arg id — `--as` is only the long
-    // spelling, and get_one("as") is always None.
-    config.org = matches.get_one::<String>("org").cloned();
+    let flag_org = matches.get_one::<String>("org").cloned();
+    config.org = flag_org
+        .or_else(|| config.default_org.clone())
+        .or_else(|| std::env::var("HANZO_ORG").ok());
     let telemetry = telemetry::build(&config);
 
     // A matched generated operation dispatches first, through the shared seam.
@@ -1185,6 +1196,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             commands::share::run(&mut config, target, backend_mode, name).await?
         }
         Commands::Init { template, name } => commands::init::run(template, name).await?,
+        Commands::Pull { id, dir } => commands::pull::run(&id, dir).await?,
     }
     Ok(())
 }

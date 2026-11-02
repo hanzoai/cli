@@ -92,8 +92,6 @@ impl Backend for Agent {
             Approval::Auto => {
                 args.push("-c".into());
                 args.push(cfg_string("approval_policy", "never"));
-                args.push("-c".into());
-                args.push(cfg_string("sandbox_mode", "workspace-write"));
             }
             Approval::Bypass => args.push("--dangerously-bypass-approvals-and-sandbox".into()),
             Approval::Ask => {}
@@ -411,7 +409,7 @@ mod tests {
         // Auto-approve is ON by default: stop asking but KEEP the workspace sandbox
         // (never the full bypass).
         assert!(args.iter().any(|a| a == r#"approval_policy="never""#));
-        assert!(args.iter().any(|a| a == r#"sandbox_mode="workspace-write""#));
+        assert!(!args.iter().any(|a| a.contains("sandbox_mode")), "sandbox_mode must not override config.toml");
         assert!(!args.iter().any(|a| a.contains("yolo") || a.contains("dangerously-bypass")));
         // The gateway model's real (1M) window is named as dev's own setting
         // (the true-1M path), since the default window exceeds the 272K fallback.
@@ -583,7 +581,7 @@ mod tests {
 
         let auto = build(Approval::Auto);
         assert!(auto.iter().any(|a| a == r#"approval_policy="never""#));
-        assert!(auto.iter().any(|a| a == r#"sandbox_mode="workspace-write""#));
+        assert!(!auto.iter().any(|a| a.contains("sandbox_mode")), "auto approval leaves sandbox_mode to config.toml");
         assert!(!auto.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox"));
 
         let ask = build(Approval::Ask);
