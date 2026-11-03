@@ -70,7 +70,7 @@ fn decode_hex(s: &str) -> Result<Vec<u8>> {
 
 /// EVM address (lowercase 0x…) = last 20 bytes of Keccak256(uncompressed pubkey).
 fn address_from_vk(vk: &VerifyingKey) -> String {
-    let point = vk.to_encoded_point(false); // 0x04 || X || Y (65 bytes)
+    let point = vk.to_sec1_point(false); // 0x04 || X || Y (65 bytes)
     let hash = Keccak256::digest(&point.as_bytes()[1..]);
     format!("0x{}", hexlower(&hash[12..]))
 }

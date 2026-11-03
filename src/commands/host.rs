@@ -28,7 +28,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use colored::*;
 use hanzo_client::Method;
-use rand::RngCore;
+use rand::TryRng;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -253,12 +253,16 @@ const SHARED_KEY_SHA256: &str = "cd80b74bd7fc76170d3355339fbe4797ac5ae226aa5f28a
 /// not one.
 pub fn key() -> String {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng.try_fill_bytes(&mut bytes).expect("OS RNG");
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 fn shared(key: &str) -> bool {
-    format!("{:x}", Sha256::digest(key.trim().as_bytes())) == SHARED_KEY_SHA256
+    Sha256::digest(key.trim().as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+        == SHARED_KEY_SHA256
 }
 
 /// The key the host starts with. One the caller's environment already names is
