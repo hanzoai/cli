@@ -9,7 +9,11 @@
   },
   "homepage": "https://hanzo.ai",
   "bin": {
-    "hanzo": "bin/hanzo.js"
+    "hanzo": "bin/hanzo.js",
+    "hanzo-dev": "bin/hanzo.js",
+    "hanzo-mcp": "bin/hanzo.js",
+    "hanzo-engine": "bin/hanzo.js",
+    "hanzo-node": "bin/hanzo.js"
   },
   "files": [
     "bin/",

@@ -14,13 +14,12 @@ hanzo "add pagination to the /v1/orders endpoint and write the tests"
 
 ```bash
 curl -fsSL https://hanzo.sh | sh
-npm i -g @hanzo/cli
+npm i -g hanzo
 ```
 
-One install line on Unix (`curl -fsSL https://hanzo.sh | sh`) or cross-platform via npm (`npm i -g @hanzo/cli`, including Windows). It resolves the
+One install line on Unix (`curl -fsSL https://hanzo.sh | sh`) or cross-platform via npm (`npm i -g hanzo`, including Windows). It resolves the
 release asset for your platform (linux · macOS on amd64 · arm64, Windows on amd64),
-verifies its sha256, and puts `hanzo` in `~/.local/bin` (or `@hanzo/cli/bin`) — along with `hanzo-mcp` (the
-MCP server), `hanzo-dev`, `hanzo-gen`, and `hanzo-zet`. The short names `dev`,
+verifies its sha256, and puts `hanzo` in `~/.local/bin` (or `@hanzo/cli/bin`) — and lazily fetches companion tools (`hanzo-dev`, `hanzo-mcp`, `hanzo-engine`, `hanzo-node`, `hanzo-vm`, `hanzo-zet`, `hanzo-gen`) on demand. The short names `dev`,
 `gen`, `mcp`, and `zt` remain available. Re-run to upgrade.
 
 These are prebuilt native binaries; the installer does not compile crates. Node and
