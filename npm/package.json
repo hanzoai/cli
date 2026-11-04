@@ -1,7 +1,7 @@
 {
   "name": "@hanzo/cli",
-  "version": "8.5.91",
-  "description": "Hanzo CLI — manage Hanzo AI cloud resources",
+  "version": "8.5.909",
+  "description": "Hanzo CLI — unified CLI, coding agent (dev), MCP server, local inference engine, and node",
   "license": "MIT",
   "repository": {
     "type": "git",

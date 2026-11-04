@@ -199,17 +199,32 @@ async function installOne(name, { key, target, dest, ext, optional }) {
     } else if (tool.kind === "vm") {
       await fetchVm({ key, dest, ext });
     } else {
-      const base = tool.versioned
+      const primaryBase = tool.versioned
         ? `https://github.com/${tool.repo}/releases/download/v${VERSION}`
         : `https://github.com/${tool.repo}/releases/latest/download`;
-      await fetchStandardTool({
-        base,
-        bin: tool.bin,
-        alias: tool.alias,
-        target,
-        dest,
-        ext,
-      });
+      try {
+        await fetchStandardTool({
+          base: primaryBase,
+          bin: tool.bin,
+          alias: tool.alias,
+          target,
+          dest,
+          ext,
+        });
+      } catch (err) {
+        if (tool.versioned && String(err.message || err).startsWith("404 ")) {
+          await fetchStandardTool({
+            base: `https://github.com/${tool.repo}/releases/latest/download`,
+            bin: tool.bin,
+            alias: tool.alias,
+            target,
+            dest,
+            ext,
+          });
+        } else {
+          throw err;
+        }
+      }
     }
     const label = tool.versioned ? `${tool.bin} ${VERSION}` : tool.bin;
     console.error(`@hanzo/cli: installed ${label} (${target})`);
