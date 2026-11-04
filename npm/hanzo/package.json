@@ -1,0 +1,72 @@
+{
+  "name": "hanzo",
+  "version": "8.5.909",
+  "description": "Hanzo — unified CLI, coding agent (dev), MCP server, local inference engine, node, and TypeScript client in one lightweight install.",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanzoai/cli.git",
+    "directory": "npm/hanzo"
+  },
+  "homepage": "https://hanzo.ai",
+  "bin": {
+    "hanzo": "bin/hanzo.js",
+    "hanzo-dev": "bin/hanzo.js",
+    "hanzo-mcp": "bin/hanzo.js",
+    "hanzo-engine": "bin/hanzo.js",
+    "hanzo-node": "bin/hanzo.js"
+  },
+  "type": "module",
+  "types": "./cloud.d.ts",
+  "exports": {
+    ".": {
+      "types": "./cloud.d.ts",
+      "import": "./cloud.mjs",
+      "require": "./cloud.cjs"
+    },
+    "./ai": {
+      "types": "./ai.d.ts",
+      "import": "./ai.mjs",
+      "require": "./ai.cjs"
+    },
+    "./ui": {
+      "types": "./ui.d.ts",
+      "import": "./ui.mjs",
+      "require": "./ui.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "cloud.mjs",
+    "cloud.cjs",
+    "cloud.d.ts",
+    "ai.mjs",
+    "ai.cjs",
+    "ai.d.ts",
+    "ui.mjs",
+    "ui.cjs",
+    "ui.d.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "@hanzo/ai": "^0.7.0",
+    "@hanzo/cli": "^8.5.910",
+    "hanzoai": "^8.5.914"
+  },
+  "peerDependencies": {
+    "@hanzo/ui": ">=8.0.0",
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@hanzo/ui": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -22,19 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The unified `hanzo` front door (hanzo-js/hanzo) ships beside @hanzo/cli:
-      # it depends on it, so the two go out together. Fetched as a public
-      # tarball: this run's token is scoped to hanzoai/cli and answers 404 for
-      # another org's repo (checkout), and a bare `git clone` on the runner
-      # prompts for credentials. codeload needs neither.
-      - name: The hanzo package source
-        run: |
-          set -euo pipefail
-          mkdir -p .hanzo-pkg
-          curl -fsSL https://codeload.github.com/hanzo-js/hanzo/tar.gz/refs/heads/main \
-            | tar -xz -C .hanzo-pkg --strip-components=1
-          node -p 'const p=require("./.hanzo-pkg/package.json"); p.name+"@"+p.version'
-
+      # The unified `hanzo` front door lives beside @hanzo/cli in npm/hanzo and
+      # depends on it, so one run publishes both, @hanzo/cli first.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -54,7 +43,7 @@ jobs:
             echo "publishing @hanzo/cli@$NEW (current on npm: $OLD)"
             echo "cli=true" >> "$GITHUB_OUTPUT"
           fi
-          HNEW=$(node -p 'require(process.argv[1]).version' "$GITHUB_WORKSPACE/.hanzo-pkg/package.json")
+          HNEW=$(node -p 'require(process.argv[1]).version' "$GITHUB_WORKSPACE/npm/hanzo/package.json")
           HOLD=$(npm view hanzo version --registry https://registry.npmjs.org 2>/dev/null || echo 0.0.0)
           if curl -fsSL "https://registry.npmjs.org/hanzo/$HNEW" >/dev/null 2>&1; then
             echo "npm already serves hanzo@$HNEW"
@@ -89,7 +78,7 @@ jobs:
 
       - name: Publish hanzo
         if: steps.ahead.outputs.hanzo == 'true'
-        working-directory: .hanzo-pkg
+        working-directory: npm/hanzo
         env:
           NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
         run: npm publish --access public --ignore-scripts --no-provenance --registry https://registry.npmjs.org
