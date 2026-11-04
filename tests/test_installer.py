@@ -351,6 +351,47 @@ class NpmBinLauncherTests(unittest.TestCase):
                 data["Path"],
             )
 
+    def test_launcher_lazily_installs_missing_companion_on_first_use(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg_dir = Path(tmp)
+            bin_dir = pkg_dir / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            # Fake install.js that lazily creates requested binaries in bin/
+            install_js = pkg_dir / "install.js"
+            install_js.write_text(
+                "const fs = require('node:fs');\n"
+                "const path = require('node:path');\n"
+                "const binDir = path.join(__dirname, 'bin');\n"
+                "const map = { dev: 'dev', mcp: 'hanzo-mcp', engine: 'hanzo-engine', hanzo: 'hanzo' };\n"
+                "for (const arg of process.argv.slice(2)) {\n"
+                "  const name = map[arg] || arg;\n"
+                "  const p = path.join(binDir, name);\n"
+                "  fs.writeFileSync(p, `#!/bin/sh\\necho lazy-${name}:$*\\n`, { mode: 0o755 });\n"
+                "}\n"
+            )
+
+            # Pre-install only `hanzo` (lightweight postinstall state)
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
+            hanzo.chmod(0o755)
+
+            env = dict(os.environ)
+            env["PATH"] = "/usr/bin:/bin"
+            result = subprocess.run(
+                ["node", str(copied_launcher), "dev", "status"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((bin_dir / "dev").exists(), "dev should be lazily installed")
+            self.assertTrue((bin_dir / "hanzo-mcp").exists(), "hanzo-mcp should be lazily installed")
+            self.assertEqual(result.stdout.strip(), "lazy-dev:dev status")
+
 
 if __name__ == "__main__":
     unittest.main()
