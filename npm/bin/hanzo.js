@@ -7,7 +7,7 @@
 // binary's for the same reason.
 const { spawnSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
-const { join } = require("node:path");
+const { delimiter, join } = require("node:path");
 
 const bin = join(__dirname, process.platform === "win32" ? "hanzo.exe" : "hanzo");
 if (!existsSync(bin)) {
@@ -17,6 +17,16 @@ if (!existsSync(bin)) {
   );
   process.exit(1);
 }
-const r = spawnSync(bin, process.argv.slice(2), { stdio: "inherit" });
+
+const env = { ...process.env };
+const pathKey =
+  Object.keys(env).find((key) => key.toLowerCase() === "path") || "PATH";
+
+env[pathKey] = __dirname + delimiter + (env[pathKey] || "");
+
+const r = spawnSync(bin, process.argv.slice(2), {
+  stdio: "inherit",
+  env,
+});
 if (r.error) { console.error("hanzo:", r.error.message); process.exit(1); }
 process.exit(r.status ?? 0);

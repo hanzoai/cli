@@ -12,15 +12,24 @@
 // each asset. This script runs on every `npm install` and then that binary is
 // executed, so it is a supply chain: an unverified download here is arbitrary
 // code execution on every machine that installs us.
-const { createWriteStream, mkdirSync, chmodSync, existsSync } = require("node:fs");
+const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, symlinkSync, unlinkSync } = require("node:fs");
 const { createHash } = require("node:crypto");
-const { readFile, rm } = require("node:fs/promises");
+const { rm } = require("node:fs/promises");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 
 const VERSION = require("./package.json").version;
 const REPO = "hanzoai/cli";
+
+// Companion native binaries installed beside `hanzo` (matching hanzo.sh's TOOLS table)
+// so `hanzo dev`, `hanzo-mcp`, `gen`, and `zt` work out of the box when installed via npm.
+const COMPANIONS = [
+  { repo: "hanzoai/mcp", bin: "hanzo-mcp", alias: "mcp" },
+  { repo: "hanzoai/dev", bin: "dev", alias: "hanzo-dev" },
+  { repo: "hanzoai/gen", bin: "gen", alias: "hanzo-gen" },
+  { repo: "hanzozt/zt", bin: "zt", alias: "hanzo-zet" },
+];
 
 // The asset ids the release matrix actually emits (release-matrix.yml).
 // windows-arm64 and linux-*-musl are deliberately absent: a name here that the
@@ -40,20 +49,23 @@ async function get(url) {
   return res;
 }
 
-async function main() {
-  const key = `${process.platform}-${process.arch}`;
-  const target = TARGETS[key];
-  if (!target) {
-    // Not an error. A platform we do not build for should not fail an install
-    // that may not even use this package; `hanzo` will say so if it is run.
-    console.warn(`@hanzo/cli: no prebuilt binary for ${key}; skipping download.`);
-    return;
+function linkAlias(dest, binName, aliasName, ext) {
+  if (!aliasName) return;
+  const src = join(dest, `${binName}${ext}`);
+  const dst = join(dest, `${aliasName}${ext}`);
+  if (!existsSync(src)) return;
+  try {
+    if (existsSync(dst)) unlinkSync(dst);
+    symlinkSync(`${binName}${ext}`, dst);
+  } catch {
+    copyFileSync(src, dst);
+    if (process.platform !== "win32") chmodSync(dst, 0o755);
   }
+}
 
-  const base = `https://github.com/${REPO}/releases/download/v${VERSION}`;
-  const asset = `hanzo-${target}.tar.gz`;
+async function fetchTool({ base, bin, alias, target, dest, ext }) {
+  const asset = `${bin}-${target}.tar.gz`;
   const tmp = join(__dirname, asset);
-  const dest = join(__dirname, "bin");
 
   const want = (await (await get(`${base}/${asset}.sha256`)).text()).trim().split(/\s+/)[0];
 
@@ -74,9 +86,52 @@ async function main() {
   execFileSync("tar", ["-xzf", tmp, "-C", dest]);
   await rm(tmp, { force: true });
 
-  const bin = join(dest, process.platform === "win32" ? "hanzo.exe" : "hanzo");
-  if (existsSync(bin) && process.platform !== "win32") chmodSync(bin, 0o755);
+  const out = join(dest, `${bin}${ext}`);
+  if (existsSync(out) && process.platform !== "win32") chmodSync(out, 0o755);
+  linkAlias(dest, bin, alias, ext);
+}
+
+async function main() {
+  const key = `${process.platform}-${process.arch}`;
+  const target = TARGETS[key];
+  if (!target) {
+    // Not an error. A platform we do not build for should not fail an install
+    // that may not even use this package; `hanzo` will say so if it is run.
+    console.warn(`@hanzo/cli: no prebuilt binary for ${key}; skipping download.`);
+    return;
+  }
+
+  const dest = join(__dirname, "bin");
+  const ext = process.platform === "win32" ? ".exe" : "";
+
+  await fetchTool({
+    base: `https://github.com/${REPO}/releases/download/v${VERSION}`,
+    bin: "hanzo",
+    alias: "hanzo-cli",
+    target,
+    dest,
+    ext,
+  });
   console.log(`@hanzo/cli: installed hanzo ${VERSION} (${target})`);
+
+  if (process.env.HANZO_NPM_CLI_ONLY === "1") return;
+
+  for (const tool of COMPANIONS) {
+    try {
+      await fetchTool({
+        base: `https://github.com/${tool.repo}/releases/latest/download`,
+        bin: tool.bin,
+        alias: tool.alias,
+        target,
+        dest,
+        ext,
+      });
+      console.log(`@hanzo/cli: installed ${tool.bin} (${target})`);
+    } catch (err) {
+      if (String(err.message || err).includes("checksum mismatch")) throw err;
+      console.warn(`@hanzo/cli: optional companion ${tool.bin} skipped (${err.message})`);
+    }
+  }
 }
 
 main().catch((err) => {
