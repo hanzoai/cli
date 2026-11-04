@@ -193,6 +193,7 @@ async function fetchVm({ key, dest, ext }) {
 async function installOne(name, { key, target, dest, ext, optional }) {
   const tool = TOOLS[name];
   if (!tool) return;
+  let fellBack = false;
   try {
     if (tool.kind === "engine") {
       await fetchEngine({ key, dest, ext });
@@ -213,6 +214,7 @@ async function installOne(name, { key, target, dest, ext, optional }) {
         });
       } catch (err) {
         if (tool.versioned && String(err.message || err).startsWith("404 ")) {
+          fellBack = true;
           await fetchStandardTool({
             base: `https://github.com/${tool.repo}/releases/latest/download`,
             bin: tool.bin,
@@ -226,7 +228,7 @@ async function installOne(name, { key, target, dest, ext, optional }) {
         }
       }
     }
-    const label = tool.versioned ? `${tool.bin} ${VERSION}` : tool.bin;
+    const label = tool.versioned && !fellBack ? `${tool.bin} ${VERSION}` : `${tool.bin} (latest release)`;
     console.error(`@hanzo/cli: installed ${label} (${target})`);
   } catch (err) {
     if (!optional || String(err.message || err).includes("checksum mismatch")) throw err;

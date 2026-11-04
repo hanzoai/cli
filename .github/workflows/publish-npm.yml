@@ -22,6 +22,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The unified `hanzo` front door (hanzo-js/hanzo) ships beside @hanzo/cli:
+      # it depends on it, so the two go out together. A plain `git clone` on the
+      # runner prompts for credentials even for a public repo; checkout does not.
+      - uses: actions/checkout@v4
+        with:
+          repository: hanzo-js/hanzo
+          path: .hanzo-pkg
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -41,8 +49,7 @@ jobs:
             echo "publishing @hanzo/cli@$NEW (current on npm: $OLD)"
             echo "cli=true" >> "$GITHUB_OUTPUT"
           fi
-          git clone --depth 1 https://github.com/hanzo-js/hanzo.git "$RUNNER_TEMP/hanzo-pkg"
-          HNEW=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/hanzo-pkg/package.json")
+          HNEW=$(node -p 'require(process.argv[1]).version' "$GITHUB_WORKSPACE/.hanzo-pkg/package.json")
           HOLD=$(npm view hanzo version --registry https://registry.npmjs.org 2>/dev/null || echo 0.0.0)
           if curl -fsSL "https://registry.npmjs.org/hanzo/$HNEW" >/dev/null 2>&1; then
             echo "npm already serves hanzo@$HNEW"
@@ -77,7 +84,7 @@ jobs:
 
       - name: Publish hanzo
         if: steps.ahead.outputs.hanzo == 'true'
-        working-directory: ${{ runner.temp }}/hanzo-pkg
+        working-directory: .hanzo-pkg
         env:
           NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
         run: npm publish --access public --ignore-scripts --no-provenance --registry https://registry.npmjs.org

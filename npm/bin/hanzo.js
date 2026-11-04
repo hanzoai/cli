@@ -6,7 +6,7 @@
 // `hanzo-vm`, `zt`, `hanzod`) are always discoverable, and lazily fetches any
 // missing companion binary on first invocation via `../install.js`.
 const { spawnSync } = require("node:child_process");
-const { existsSync } = require("node:fs");
+const { existsSync, realpathSync } = require("node:fs");
 const { basename, delimiter, join } = require("node:path");
 
 const ext = process.platform === "win32" ? ".exe" : "";
@@ -29,10 +29,28 @@ const TOOL_BINS = {
   node: "hanzod",
 };
 
+// A tool counts as present when its native binary sits beside this launcher,
+// or anywhere on PATH as a REAL binary. npm's own global shims (`hanzo-mcp`,
+// `hanzo-dev`, … all symlinks to this very file) are on PATH too, and must not
+// count: treating one as the tool skips the download and then execs nothing.
+function realBinary(p) {
+  try {
+    return !realpathSync(p).endsWith(".js");
+  } catch {
+    return false;
+  }
+}
+
+function hasLocal(tool) {
+  return existsSync(join(__dirname, (TOOL_BINS[tool] || tool) + ext));
+}
+
 function hasTool(tool) {
+  if (hasLocal(tool)) return true;
   const binName = (TOOL_BINS[tool] || tool) + ext;
   for (const dir of (env[pathKey] || "").split(delimiter)) {
-    if (dir && existsSync(join(dir, binName))) return true;
+    const p = dir && join(dir, binName);
+    if (p && existsSync(p) && realBinary(p)) return true;
   }
   return false;
 }
@@ -92,7 +110,9 @@ if (rawName === "hanzo-dev" || rawName === "dev") {
   }
 }
 
-const missing = required.filter((t) => !hasTool(t));
+// The binary this launcher execs must be HERE (it is run by absolute path);
+// companions only need to be findable on PATH, which starts here.
+const missing = required.filter((t) => (t === targetTool ? !hasLocal(t) : !hasTool(t)));
 if (missing.length > 0 && existsSync(installScript) && env.HANZO_NO_LAZY_INSTALL !== "1") {
   spawnSync(process.execPath, [installScript, ...missing], {
     stdio: "inherit",
