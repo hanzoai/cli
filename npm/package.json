@@ -1,6 +1,6 @@
 {
   "name": "@hanzo/cli",
-  "version": "8.5.909",
+  "version": "8.5.910",
   "description": "Hanzo CLI — unified CLI, coding agent (dev), MCP server, local inference engine, and node",
   "license": "MIT",
   "repository": {
