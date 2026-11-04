@@ -1,6 +1,6 @@
 {
   "name": "hanzo",
-  "version": "8.5.909",
+  "version": "9.0.2",
   "description": "Hanzo — unified CLI, coding agent (dev), MCP server, local inference engine, node, and TypeScript client in one lightweight install.",
   "license": "BSD-3-Clause",
   "repository": {
