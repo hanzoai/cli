@@ -16,15 +16,14 @@ jobs:
           ORG_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           ORG_NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
         run: |
-          set -uo pipefail
-          curl -fsSL https://raw.githubusercontent.com/hanzoai/ci/1983074a463e15d3c21efd7925babbddedd5daaf/bin/kms -o "$RUNNER_TEMP/kms"
-          KMS_TOKEN=$(bash "$RUNNER_TEMP/kms" NPM_TOKEN prod)
+          curl -fsSL https://raw.githubusercontent.com/hanzoai/ci/1983074a463e15d3c21efd7925babbddedd5daaf/bin/kms -o "$RUNNER_TEMP/kms" || echo "kms script fetch failed"
+          KMS_TOKEN=$(bash "$RUNNER_TEMP/kms" NPM_TOKEN prod 2>"$RUNNER_TEMP/kms.err") || echo "kms read failed: $(head -c 300 "$RUNNER_TEMP/kms.err")"
           for name in KMS_TOKEN ORG_NPM_TOKEN ORG_NPM_AUTH_TOKEN; do
             tok="${!name:-}"
-            [ -n "$tok" ] || { echo "$name: (empty)"; continue; }
+            echo "$name: length=${#tok}"
+            if [ "${#tok}" -lt 8 ]; then continue; fi
             echo "::add-mask::$tok"
             printf '//registry.npmjs.org/:_authToken=%s\n' "$tok" > "$RUNNER_TEMP/npmrc"
-            who=$(NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm whoami --registry https://registry.npmjs.org 2>&1 | tail -1)
-            perm=$(NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm access list collaborators @hanzo/cli --json 2>/dev/null | tr -d '\n ' | head -c 300)
-            echo "$name: whoami=$who"
+            echo "$name: whoami=$(NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm whoami --registry https://registry.npmjs.org 2>&1 | tail -1)"
           done
+          exit 0
