@@ -35,19 +35,29 @@ jobs:
           OLD=$(npm view @hanzo/cli version --registry https://registry.npmjs.org 2>/dev/null || echo 0.0.0)
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
           if curl -fsSL "https://registry.npmjs.org/@hanzo/cli/$NEW" >/dev/null 2>&1; then
-            echo "npm already serves @hanzo/cli@$NEW — nothing to publish."
-            echo "yes=false" >> "$GITHUB_OUTPUT"
+            echo "npm already serves @hanzo/cli@$NEW"
+            echo "cli=false" >> "$GITHUB_OUTPUT"
           else
             echo "publishing @hanzo/cli@$NEW (current on npm: $OLD)"
-            echo "yes=true" >> "$GITHUB_OUTPUT"
+            echo "cli=true" >> "$GITHUB_OUTPUT"
+          fi
+          git clone --depth 1 https://github.com/hanzo-js/hanzo.git "$RUNNER_TEMP/hanzo-pkg"
+          HNEW=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/hanzo-pkg/package.json")
+          HOLD=$(npm view hanzo version --registry https://registry.npmjs.org 2>/dev/null || echo 0.0.0)
+          if curl -fsSL "https://registry.npmjs.org/hanzo/$HNEW" >/dev/null 2>&1; then
+            echo "npm already serves hanzo@$HNEW"
+            echo "hanzo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publishing hanzo@$HNEW (current on npm: $HOLD)"
+            echo "hanzo=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Test launcher and installer
-        if: steps.ahead.outputs.yes == 'true'
+        if: steps.ahead.outputs.cli == 'true' || steps.ahead.outputs.hanzo == 'true'
         run: python3 -m unittest tests/test_installer.py
 
       - name: The npm credential, from KMS
-        if: steps.ahead.outputs.yes == 'true'
+        if: steps.ahead.outputs.cli == 'true' || steps.ahead.outputs.hanzo == 'true'
         env:
           KMS_CLIENT_ID: ${{ secrets.KMS_CLIENT_ID }}
           KMS_CLIENT_SECRET: ${{ secrets.KMS_CLIENT_SECRET }}
@@ -58,9 +68,16 @@ jobs:
           echo "::add-mask::$TOKEN"
           printf '//registry.npmjs.org/:_authToken=%s\n' "$TOKEN" > "$RUNNER_TEMP/.npmrc"
 
-      - name: Publish
-        if: steps.ahead.outputs.yes == 'true'
+      - name: Publish @hanzo/cli
+        if: steps.ahead.outputs.cli == 'true'
         working-directory: npm
+        env:
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
+        run: npm publish --access public --ignore-scripts --no-provenance --registry https://registry.npmjs.org
+
+      - name: Publish hanzo
+        if: steps.ahead.outputs.hanzo == 'true'
+        working-directory: ${{ runner.temp }}/hanzo-pkg
         env:
           NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
         run: npm publish --access public --ignore-scripts --no-provenance --registry https://registry.npmjs.org
