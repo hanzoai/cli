@@ -15,7 +15,7 @@
 // binaries (`dev`, `mcp`, `engine`, `node`, `zt`, `vm`, `gen`) are fetched
 // lazily on first use by `bin/hanzo.js` (or eagerly with `HANZO_NPM_EAGER=1` /
 // `node install.js --all`).
-const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, renameSync, symlinkSync, unlinkSync } = require("node:fs");
+const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const { rm } = require("node:fs/promises");
 const { join } = require("node:path");
@@ -151,15 +151,34 @@ async function fetchEngine({ key, dest, ext }) {
     dest,
   });
 
-  const extracted = join(dest, `hanzoai${ext}`);
-  const out = join(dest, `hanzo-engine${ext}`);
-  if (existsSync(extracted)) {
-    if (existsSync(out)) unlinkSync(out);
-    renameSync(extracted, out);
-  }
-  if (existsSync(out) && process.platform !== "win32") chmodSync(out, 0o755);
-  linkAlias(dest, "hanzo-engine", "hanzoai", ext);
+  const engine = join(dest, `hanzoai${ext}`);
+  if (existsSync(engine) && process.platform !== "win32") chmodSync(engine, 0o755);
+  writeFileSync(join(dest, "hanzo-engine"), ENGINE_ADAPTER, { mode: 0o755 });
 }
+
+// The CLI runs `hanzo-engine serve -m MODEL [engine args…]` (commands/engine.rs).
+// The released engine binary (`hanzoai`) has no `serve`: it takes its options
+// first and then a model selector, and serves HTTP only when given a port. This
+// adapter is that translation, and nothing else: any other argv passes through.
+const ENGINE_ADAPTER = `#!/bin/sh
+# hanzo-engine: adapts \`serve -m MODEL [opts]\` to the released engine binary.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+engine="$here/hanzoai"
+[ "\${1:-}" = serve ] || exec "$engine" "$@"
+shift
+model=""; port=""; set -- "$@" --hanzo-end
+while [ "$1" != --hanzo-end ]; do
+  case "$1" in
+    -m|--model) model="$2"; shift 2 ;;
+    -p|--port) port="$2"; shift 2 ;;
+    --overlay) shift 2 ;;
+    *) set -- "$@" "$1"; shift ;;
+  esac
+done
+shift
+[ -n "$model" ] || { echo "hanzo-engine: serve needs -m MODEL" >&2; exit 2; }
+exec "$engine" --port "\${port:-\${HANZO_ENGINE_PORT:-1234}}" "$@" run -m "$model"
+`;
 
 async function fetchVm({ key, dest, ext }) {
   const vmTarget = VM_TARGETS[key];
