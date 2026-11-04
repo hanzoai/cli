@@ -23,12 +23,17 @@ jobs:
       - uses: actions/checkout@v4
 
       # The unified `hanzo` front door (hanzo-js/hanzo) ships beside @hanzo/cli:
-      # it depends on it, so the two go out together. A plain `git clone` on the
-      # runner prompts for credentials even for a public repo; checkout does not.
-      - uses: actions/checkout@v4
-        with:
-          repository: hanzo-js/hanzo
-          path: .hanzo-pkg
+      # it depends on it, so the two go out together. Fetched as a public
+      # tarball: this run's token is scoped to hanzoai/cli and answers 404 for
+      # another org's repo (checkout), and a bare `git clone` on the runner
+      # prompts for credentials. codeload needs neither.
+      - name: The hanzo package source
+        run: |
+          set -euo pipefail
+          mkdir -p .hanzo-pkg
+          curl -fsSL https://codeload.github.com/hanzo-js/hanzo/tar.gz/refs/heads/main \
+            | tar -xz -C .hanzo-pkg --strip-components=1
+          node -p 'const p=require("./.hanzo-pkg/package.json"); p.name+"@"+p.version'
 
       - uses: actions/setup-node@v4
         with:

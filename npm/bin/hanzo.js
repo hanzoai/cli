@@ -112,6 +112,10 @@ if (rawName === "hanzo-dev" || rawName === "dev") {
 
 // The binary this launcher execs must be HERE (it is run by absolute path);
 // companions only need to be findable on PATH, which starts here.
+// `@hanzo/mcp` taught `… mcp serve`; the native server serves stdio bare, so a
+// leading `serve` is the same request and must not die as an unknown command.
+if (targetTool === "mcp" && argv[0] === "serve") argv = argv.slice(1);
+
 const missing = required.filter((t) => (t === targetTool ? !hasLocal(t) : !hasTool(t)));
 if (missing.length > 0 && existsSync(installScript) && env.HANZO_NO_LAZY_INSTALL !== "1") {
   spawnSync(process.execPath, [installScript, ...missing], {
