@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -297,11 +298,12 @@ class NpmBinLauncherTests(unittest.TestCase):
             hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
             hanzo.chmod(0o755)
 
+            node_bin = shutil.which("node") or "node"
             env = dict(os.environ)
             # Ensure bin_dir is NOT in PATH before launching hanzo.js
             env["PATH"] = "/usr/bin:/bin"
             result = subprocess.run(
-                ["node", str(copied_launcher), "status"],
+                [node_bin, str(copied_launcher), "status"],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -379,10 +381,11 @@ class NpmBinLauncherTests(unittest.TestCase):
             hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
             hanzo.chmod(0o755)
 
+            node_bin = shutil.which("node") or "node"
             env = dict(os.environ)
             env["PATH"] = "/usr/bin:/bin"
             result = subprocess.run(
-                ["node", str(copied_launcher), "dev", "status"],
+                [node_bin, str(copied_launcher), "dev", "status"],
                 env=env,
                 capture_output=True,
                 text=True,
