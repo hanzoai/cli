@@ -1,0 +1,66 @@
+name: Publish @hanzo/cli
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'npm/**'
+      - '.github/workflows/publish-npm.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: [linux-amd64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Ahead of the registry?
+        id: ahead
+        working-directory: npm
+        run: |
+          set -euo pipefail
+          NEW=$(node -p 'require("./package.json").version')
+          OLD=$(npm view @hanzo/cli version --registry https://registry.npmjs.org 2>/dev/null || echo 0.0.0)
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          if curl -fsSL "https://registry.npmjs.org/@hanzo/cli/$NEW" >/dev/null 2>&1; then
+            echo "npm already serves @hanzo/cli@$NEW — nothing to publish."
+            echo "yes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publishing @hanzo/cli@$NEW (current on npm: $OLD)"
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test launcher and installer
+        if: steps.ahead.outputs.yes == 'true'
+        run: python3 -m unittest tests/test_installer.py
+
+      - name: The npm credential, from KMS
+        if: steps.ahead.outputs.yes == 'true'
+        env:
+          KMS_CLIENT_ID: ${{ secrets.KMS_CLIENT_ID }}
+          KMS_CLIENT_SECRET: ${{ secrets.KMS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/hanzoai/ci/1983074a463e15d3c21efd7925babbddedd5daaf/bin/kms -o "$RUNNER_TEMP/kms"
+          TOKEN=$(bash "$RUNNER_TEMP/kms" NPM_TOKEN prod)
+          echo "::add-mask::$TOKEN"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$TOKEN" > "$RUNNER_TEMP/.npmrc"
+
+      - name: Publish
+        if: steps.ahead.outputs.yes == 'true'
+        working-directory: npm
+        env:
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
+        run: npm publish --access public --ignore-scripts --no-provenance --registry https://registry.npmjs.org
