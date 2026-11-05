@@ -1,0 +1,29 @@
+name: npm whoami (diagnostic)
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  whoami:
+    runs-on: [linux-amd64]
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Which npm identity each credential is
+        env:
+          KMS_CLIENT_ID: ${{ secrets.KMS_CLIENT_ID }}
+          KMS_CLIENT_SECRET: ${{ secrets.KMS_CLIENT_SECRET }}
+          ORG_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          ORG_NPM_AUTH_TOKEN: ${{ secrets.NPM_AUTH_TOKEN }}
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/hanzoai/ci/1983074a463e15d3c21efd7925babbddedd5daaf/bin/kms -o "$RUNNER_TEMP/kms" || echo "kms script fetch failed"
+          KMS_TOKEN=$(bash "$RUNNER_TEMP/kms" NPM_TOKEN prod 2>"$RUNNER_TEMP/kms.err") || echo "kms read failed: $(head -c 300 "$RUNNER_TEMP/kms.err")"
+          for name in KMS_TOKEN ORG_NPM_TOKEN ORG_NPM_AUTH_TOKEN; do
+            tok="${!name:-}"
+            echo "$name: length=${#tok}"
+            if [ "${#tok}" -lt 8 ]; then continue; fi
+            echo "::add-mask::$tok"
+            printf '//registry.npmjs.org/:_authToken=%s\n' "$tok" > "$RUNNER_TEMP/npmrc"
+            echo "$name: whoami=$(NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm whoami --registry https://registry.npmjs.org 2>&1 | tail -1)"
+          done
+          exit 0

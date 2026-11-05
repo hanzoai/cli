@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -276,6 +277,123 @@ exit 1
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("could not list the tags of hanzoai/mcp", result.stderr)
+
+
+class NpmBinLauncherTests(unittest.TestCase):
+    def test_launcher_prepends_bin_dir_to_path(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            # Sibling companion tool in bin_dir (not in caller's PATH)
+            dev = bin_dir / "dev"
+            dev.write_text("#!/bin/sh\necho dev-from-sibling-bin:$*\n")
+            dev.chmod(0o755)
+
+            # Native hanzo binary that dispatches to `dev` via PATH lookup
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
+            hanzo.chmod(0o755)
+
+            node_bin = shutil.which("node") or "node"
+            env = dict(os.environ)
+            # Ensure bin_dir is NOT in PATH before launching hanzo.js
+            env["PATH"] = "/usr/bin:/bin"
+            result = subprocess.run(
+                [node_bin, str(copied_launcher), "status"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "dev-from-sibling-bin:status")
+
+    def test_launcher_preserves_case_insensitive_windows_path_key(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os\n"
+                "keys = [k for k in os.environ if k.lower() == 'path']\n"
+                "print(json.dumps({k: os.environ[k] for k in keys}))\n"
+            )
+            hanzo.chmod(0o755)
+
+            # Simulate Windows-style `Path` key via node environment setup
+            result = subprocess.run(
+                [
+                    "node",
+                    "-e",
+                    (
+                        "for (const k of Object.keys(process.env)) {"
+                        "  if (k.toLowerCase() === 'path') delete process.env[k];"
+                        "}"
+                        "process.env.Path = '/usr/bin:/bin';"
+                        f"process.argv = ['node', {json.dumps(str(copied_launcher))}];"
+                        f"require({json.dumps(str(copied_launcher))});"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads(result.stdout.strip())
+            self.assertIn("Path", data)
+            self.assertTrue(
+                data["Path"].startswith(str(bin_dir) + os.pathsep),
+                data["Path"],
+            )
+
+    def test_launcher_lazily_installs_missing_companion_on_first_use(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg_dir = Path(tmp)
+            bin_dir = pkg_dir / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            # Fake install.js that lazily creates requested binaries in bin/
+            install_js = pkg_dir / "install.js"
+            install_js.write_text(
+                "const fs = require('node:fs');\n"
+                "const path = require('node:path');\n"
+                "const binDir = path.join(__dirname, 'bin');\n"
+                "const map = { dev: 'dev', mcp: 'hanzo-mcp', engine: 'hanzo-engine', hanzo: 'hanzo' };\n"
+                "for (const arg of process.argv.slice(2)) {\n"
+                "  const name = map[arg] || arg;\n"
+                "  const p = path.join(binDir, name);\n"
+                "  fs.writeFileSync(p, `#!/bin/sh\\necho lazy-${name}:$*\\n`, { mode: 0o755 });\n"
+                "}\n"
+            )
+
+            # Pre-install only `hanzo` (lightweight postinstall state)
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
+            hanzo.chmod(0o755)
+
+            node_bin = shutil.which("node") or "node"
+            env = dict(os.environ)
+            env["PATH"] = "/usr/bin:/bin"
+            result = subprocess.run(
+                [node_bin, str(copied_launcher), "dev", "status"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((bin_dir / "dev").exists(), "dev should be lazily installed")
+            self.assertTrue((bin_dir / "hanzo-mcp").exists(), "hanzo-mcp should be lazily installed")
+            self.assertEqual(result.stdout.strip(), "lazy-dev:dev status")
 
 
 if __name__ == "__main__":
