@@ -748,7 +748,12 @@ async fn main() -> Result<()> {
     // line and never written to the file the line above loaded.
     // Keyed by the FIELD name, which is clap's arg id — `--as` is only the long
     // spelling, and get_one("as") is always None.
-    config.org = matches.get_one::<String>("org").cloned();
+    // With no `--as`, the org is the config's `default_org`, then `HANZO_ORG`.
+    config.org = matches
+        .get_one::<String>("org")
+        .cloned()
+        .or_else(|| config.default_org.clone())
+        .or_else(|| std::env::var("HANZO_ORG").ok());
     // So is the network: the one active as it starts, kept through every reload,
     // so a network selected in another shell meanwhile never moves where this
     // invocation's credentials go.
@@ -1030,7 +1035,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
             Some(SandboxCommands::Run(args)) => commands::dev::session(&mut config, *args, Target::Repo).await?,
-            Some(SandboxCommands::List) => list_sandboxes(),
+            Some(SandboxCommands::List) => commands::status::list_sandboxes(&mut config).await?,
             Some(SandboxCommands::Explore) => explore_sandboxes(),
             Some(SandboxCommands::Launch { template, node }) => {
                 println!("✓ Launched sandboxed environment `{template}` on node `{node}`.");
@@ -1042,7 +1047,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             Some(SandboxCommands::Ui) | None => commands::up::dashboard()?,
         },
         Commands::Load { node, model } => load_cluster_fleet(&node, model.as_deref()).await?,
-        Commands::Ls => list_sandboxes(),
+        Commands::Ls => commands::status::list_sandboxes(&mut config).await?,
         Commands::Chain { command } => {
             // The deprecated spelling forwards, but says so — one release only.
             if first_word(std::env::args().skip(1)).as_deref() == Some("fabric") {
@@ -1104,31 +1109,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Init { template, name } => commands::init::run(template, name).await?,
     }
     Ok(())
-}
-
-fn list_sandboxes() {
-    let app = commands::up::tui::App::new(commands::up::tui::App::store());
-    if app.sandboxes.is_empty() {
-        println!("No active sandboxes or agent runtimes.");
-    } else {
-        println!("{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} WORKSPACE", "NAME", "AGENT", "RUNTIME", "STATUS", "CPU", "MEMORY");
-        for sbx in &app.sandboxes {
-            let status_str = match sbx.status {
-                commands::up::tui::SandboxStatus::Running => "Running",
-                commands::up::tui::SandboxStatus::Stopped => "Stopped",
-            };
-            println!(
-                "{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} {}",
-                sbx.name,
-                sbx.agent,
-                sbx.runtime,
-                status_str,
-                format!("{}%", sbx.telemetry.cpu_percent),
-                sbx.telemetry.memory,
-                sbx.path,
-            );
-        }
-    }
 }
 
 fn explore_sandboxes() {

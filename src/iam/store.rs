@@ -74,12 +74,13 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     // Re-read AFTER taking the lock: the process that waited is very likely waiting
     // on the one that just refreshed, and the token on disk is now fresh. Spending
     // the rt we read BEFORE the lock would be the replay this exists to prevent.
+    // And refresh with what the vault holds NOW, not the credential read before it.
     let _guard = crate::config::Lock::acquire(&token::lock_subject())?;
-    if let Some((id2, tok2)) = active_token_in(&*token::vault()?, cfg, brand)? {
-        if !expiring(&tok2.access_token, now_unix()) {
-            return Ok(Some((id2, tok2)));
-        }
-    }
+    let (id, tok) = match active_token_in(&*token::vault()?, cfg, brand)? {
+        Some((id2, tok2)) if !expiring(&tok2.access_token, now_unix()) => return Ok(Some((id2, tok2))),
+        Some(held) if held.1.refresh_token.is_some() => held,
+        _ => (id, tok),
+    };
     // One more try when IAM did not answer at all: a dropped connection is the
     // commonest reason, and the second attempt costs a second.
     let mut answer = oauth::refresh(&origin, &tok).await;

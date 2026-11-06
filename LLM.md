@@ -1350,6 +1350,11 @@ a projection that repairs its source hides the defect at the one place it can be
   name. The CLI must not rename it locally: a projection that improves its source's
   vocabulary is a projection nobody can check against the source.
 
+## Default org, and refresh after the lock (2026-11-06)
+
+- With no `--as`, the org is `default_org` from the config file, then `HANZO_ORG` (`main.rs`).
+- `active_token` (`src/iam/store.rs`) refreshes with the credential the vault holds after taking the lock, not the one read before it: a process that waited may hold a refresh token another one already spent.
+
 ## `hanzo dev` startup, measured (2026-10-12)
 
 What a session waits for before its first model call, from hanzo-inc/kai `benchmarks/coding` (Claude Code, 75 attempts
