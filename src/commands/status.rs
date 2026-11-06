@@ -5,11 +5,11 @@
 //! the one authenticated seam (`product::Seam` — origin from `network`, bearer
 //! from the active identity, no org header ever):
 //!
-//! | surface        | route                      | rows       | the command it is |
-//! |----------------|----------------------------|------------|-------------------|
-//! | clusters       | `GET /v1/k8s/clusters`     | `clusters` | `hanzo k8s clusters list` |
-//! | applications   | `GET /v1/deploy/applications` | `items` (argocd) | `hanzo deploy applications list` |
-//! | compute nodes  | `GET /v1/fleet/workers`    | `workers`  | `hanzo fleet workers` |
+//! | surface        | route                              | rows       | the command it is |
+//! |----------------|------------------------------------|------------|-------------------|
+//! | clusters       | `GET /v1/compute/k8s/clusters`     | `clusters` | `hanzo compute k8s clusters list` |
+//! | applications   | `GET /v1/deploy/applications`      | `items` (argocd) | `hanzo deploy applications list` |
+//! | compute nodes  | `GET /v1/compute/fleet/workers`    | `workers`  | `hanzo compute fleet workers` |
 //!
 //! There is no fourth wire and no CLI-only side channel: everything here is a
 //! route the API, the SDKs and the console already read. The last column is why
@@ -50,6 +50,11 @@ pub(crate) type Reading = std::result::Result<Vec<Value>, String>;
 /// One thing that needs attention: `(what it is, its name, the verdict)`.
 type Problem = (&'static str, String, String);
 
+pub(crate) const CLUSTERS_ROUTE: &str = "/v1/compute/k8s/clusters";
+pub(crate) const APPS_ROUTE: &str = "/v1/deploy/applications";
+pub(crate) const WORKERS_ROUTE: &str = "/v1/compute/fleet/workers";
+pub(crate) const SANDBOXES_ROUTE: &str = "/v1/sandbox";
+
 pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
     if infer_only {
         let telem = crate::commands::monitor::collect_telemetry().await;
@@ -63,9 +68,9 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
     let seam = Seam::open(cfg).await?;
     // Concurrent: three independent reads, so the page costs one round trip.
     let (clusters, apps, nodes) = tokio::join!(
-        read(&seam, "/v1/k8s/clusters", "clusters"),
-        read(&seam, "/v1/deploy/applications", "items"),
-        read(&seam, "/v1/fleet/workers", "workers"),
+        read(&seam, CLUSTERS_ROUTE, "clusters"),
+        read(&seam, APPS_ROUTE, "items"),
+        read(&seam, WORKERS_ROUTE, "workers"),
     );
 
     render(&clusters, &apps, &nodes);
@@ -74,6 +79,42 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
         bail!("no surface answered — nothing above was read from the cloud");
     }
     Ok(())
+}
+
+/// `hanzo sandbox list` / `hanzo ls` — lists the calling org's live sandboxes
+/// from `GET /v1/sandbox` instead of printing local TUI sample fixtures.
+pub async fn list_sandboxes(cfg: &mut Config) -> Result<()> {
+    let seam = Seam::open(cfg).await?;
+    let rows = read(&seam, SANDBOXES_ROUTE, "sandboxes")
+        .await
+        .map_err(|e| anyhow::anyhow!("sandbox list unavailable — {e}"))?;
+    for line in format_sandbox_table(&rows) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+pub(crate) fn format_sandbox_table(rows: &[Value]) -> Vec<String> {
+    if rows.is_empty() {
+        return vec!["No active sandboxes in this organization.".to_string()];
+    }
+    let mut out = Vec::with_capacity(rows.len() + 1);
+    out.push(format!(
+        "{:<28} {:<10} {:<10} {:<10} {:<20} IMAGE",
+        "ID", "CLASS", "RUNTIME", "STATUS", "PROJECT"
+    ));
+    for sbx in rows {
+        out.push(format!(
+            "{:<28} {:<10} {:<10} {:<10} {:<20} {}",
+            first(sbx, &["/id", "/name"], "—"),
+            first(sbx, &["/class"], "—"),
+            first(sbx, &["/runtime"], "—"),
+            first(sbx, &["/status"], "unknown"),
+            first(sbx, &["/project"], "—"),
+            first(sbx, &["/image"], "—"),
+        ));
+    }
+    out
 }
 
 /// Read ONE surface into its rows, or into the reason there are none.
@@ -551,5 +592,43 @@ mod tests {
         assert_eq!(node_count(&json!({"name": "x"})), None);
         // A host that reported no engine gets no engine row at all.
         assert_eq!(engine(&json!({"hostname": "bare"})), "");
+    }
+
+    /// `hanzo status` and `hanzo sandbox list` address the canonical HIP-0139
+    /// routes under `/v1/compute/*` and `/v1/sandbox`, and render the calling
+    /// org's sandboxes (never hardcoded TUI demo fixtures).
+    #[test]
+    fn canonical_status_and_sandbox_list_routes_and_org_table() {
+        assert_eq!(CLUSTERS_ROUTE, "/v1/compute/k8s/clusters");
+        assert_eq!(WORKERS_ROUTE, "/v1/compute/fleet/workers");
+        assert_eq!(SANDBOXES_ROUTE, "/v1/sandbox");
+
+        assert_eq!(
+            format_sandbox_table(&[]),
+            vec!["No active sandboxes in this organization.".to_string()]
+        );
+
+        let org_rows = rows(
+            &json!({
+                "sandboxes": [{
+                    "id": "m_af4b4e5a5c8fdce4b32fbb4f",
+                    "org": "jamessburnss1313",
+                    "class": "dev",
+                    "runtime": "visor",
+                    "status": "running",
+                    "project": "guided-growth",
+                    "image": "oci.hanzo.ai/hanzoai/sandbox:latest"
+                }]
+            }),
+            "sandboxes",
+        )
+        .expect("sandboxes list");
+        let lines = format_sandbox_table(&org_rows);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("m_af4b4e5a5c8fdce4b32fbb4f"), "{}", lines[1]);
+        assert!(lines[1].contains("guided-growth"), "{}", lines[1]);
+        for demo in ["hanzo-bot-1", "claude-workspace", "qwen3-eval", "lux-dex-prover"] {
+            assert!(!lines.join("\n").contains(demo), "must not contain sample fixture {demo}");
+        }
     }
 }

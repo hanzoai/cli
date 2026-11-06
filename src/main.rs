@@ -1125,7 +1125,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
             Some(SandboxCommands::Run(args)) => code_session(&mut config, *args, Target::Repo).await?,
-            Some(SandboxCommands::List) => list_sandboxes(),
+            Some(SandboxCommands::List) => commands::status::list_sandboxes(&mut config).await?,
             Some(SandboxCommands::Explore) => explore_sandboxes(),
             Some(SandboxCommands::Launch { template, node }) => {
                 println!("✓ Launched sandboxed environment `{template}` on node `{node}`.");
@@ -1137,7 +1137,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             Some(SandboxCommands::Ui) | None => commands::up::dashboard()?,
         },
         Commands::Load { node, model } => load_cluster_fleet(&node, model.as_deref()).await?,
-        Commands::Ls => list_sandboxes(),
+        Commands::Ls => commands::status::list_sandboxes(&mut config).await?,
         Commands::Chain { command } => {
             // The deprecated spelling forwards, but says so — one release only.
             if first_word(std::env::args().skip(1)).as_deref() == Some("fabric") {
@@ -1199,31 +1199,6 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Pull { id, dir } => commands::pull::run(&id, dir).await?,
     }
     Ok(())
-}
-
-fn list_sandboxes() {
-    let app = commands::up::tui::App::new();
-    if app.sandboxes.is_empty() {
-        println!("No active sandboxes or agent runtimes.");
-    } else {
-        println!("{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} WORKSPACE", "NAME", "AGENT", "RUNTIME", "STATUS", "CPU", "MEMORY");
-        for sbx in &app.sandboxes {
-            let status_str = match sbx.status {
-                commands::up::tui::SandboxStatus::Running => "Running",
-                commands::up::tui::SandboxStatus::Stopped => "Stopped",
-            };
-            println!(
-                "{:<24} {:<14} {:<20} {:<10} {:<8} {:<10} {}",
-                sbx.name,
-                sbx.agent,
-                sbx.runtime,
-                status_str,
-                format!("{}%", sbx.telemetry.cpu_percent),
-                sbx.telemetry.memory,
-                sbx.path,
-            );
-        }
-    }
 }
 
 fn explore_sandboxes() {
