@@ -7,6 +7,17 @@
 //! testnet 36962 @ rpc.testnet.hanzo.network, devnet 36964 @ rpc.devnet.hanzo.network;
 //! local is the 1337 localnet convention @ localhost:9630. Custom/sovereign networks are
 //! added with `network add` and persisted in config.
+//!
+//! Each network has its own cloud, so its own API: mainnet api.hanzo.ai (live money),
+//! testnet api-test.hanzo.ai (mainnet's release, Square sandbox), devnet
+//! api-dev.hanzo.ai (the `dev` branch, Square sandbox). Selecting testnet or devnet
+//! therefore never reaches production's books.
+//!
+//! And its own issuer, the one its API trusts: hanzo.id for mainnet and testnet,
+//! which runs mainnet's release, and id-dev.hanzo.ai for devnet, which runs code
+//! no review has passed and so never sees a production credential. The issuer
+//! picks the realm every identity is filed and found under (`iam::paths::realm`),
+//! so a credential one network's issuer signed is never sent to another's API.
 
 use crate::config::{Config, StoredNetwork};
 use anyhow::{bail, Result};
@@ -25,6 +36,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             chain_id: 36963,
             rpc: "https://rpc.hanzo.network".into(),
             api: "https://api.hanzo.ai".into(),
+            iam: Some("https://hanzo.id".into()),
             explorer: Some("https://explorer.hanzo.network".into()),
         },
         StoredNetwork {
@@ -33,7 +45,8 @@ pub fn builtins() -> Vec<StoredNetwork> {
             network_id: 36962,
             chain_id: 36962,
             rpc: "https://rpc.testnet.hanzo.network".into(),
-            api: "https://api.hanzo.ai".into(),
+            api: "https://api-test.hanzo.ai".into(),
+            iam: Some("https://hanzo.id".into()),
             explorer: Some("https://explorer.testnet.hanzo.network".into()),
         },
         StoredNetwork {
@@ -42,7 +55,8 @@ pub fn builtins() -> Vec<StoredNetwork> {
             network_id: 36964,
             chain_id: 36964,
             rpc: "https://rpc.devnet.hanzo.network".into(),
-            api: "https://api.hanzo.ai".into(),
+            api: "https://api-dev.hanzo.ai".into(),
+            iam: Some("https://id-dev.hanzo.ai".into()),
             explorer: Some("https://explorer.devnet.hanzo.network".into()),
         },
         StoredNetwork {
@@ -52,6 +66,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             chain_id: 1337,
             rpc: "http://localhost:9630/v1/chain/c/rpc".into(),
             api: "http://localhost:3690".into(),
+            iam: Some("https://hanzo.id".into()),
             explorer: None,
         },
     ]
@@ -62,22 +77,52 @@ pub fn is_builtin(name: &str) -> bool {
     builtins().iter().any(|n| n.name == name)
 }
 
-/// Resolve a network by name — a custom override wins over a built-in.
+/// Resolve a network by name — a custom override wins over a built-in, except
+/// in which API and issuer the name means: an override moves a built-in's chain
+/// endpoints, never where its credentials go.
 pub fn resolve(cfg: &Config, name: &str) -> Option<StoredNetwork> {
-    cfg.network
-        .custom
-        .iter()
-        .find(|n| n.name == name)
-        .cloned()
-        .or_else(|| builtins().into_iter().find(|n| n.name == name))
+    let builtin = builtins().into_iter().find(|n| n.name == name);
+    let custom = cfg.network.custom.iter().find(|n| n.name == name).cloned();
+    match (custom, builtin) {
+        (Some(mut over), Some(builtin)) => {
+            over.api = builtin.api;
+            over.iam = builtin.iam;
+            Some(over)
+        }
+        (custom, builtin) => custom.or(builtin),
+    }
 }
 
-/// The active network: the selected one, or the default (mainnet).
+/// The active network: the one this invocation is bound to, else the selected
+/// one, else the default (mainnet). A bound network that no longer resolves (a
+/// custom one removed meanwhile) is not replaced by another: it is answered with
+/// no API and no issuer, so nothing is sent anywhere.
 pub fn active(cfg: &Config) -> StoredNetwork {
+    if let Some(name) = cfg.network.bound.as_deref() {
+        return resolve(cfg, name).unwrap_or_else(|| StoredNetwork {
+            name: name.to_string(),
+            label: name.to_string(),
+            network_id: 0,
+            chain_id: 0,
+            rpc: String::new(),
+            api: String::new(),
+            iam: None,
+            explorer: None,
+        });
+    }
     let name = cfg.network.active.as_deref().unwrap_or(DEFAULT);
     resolve(cfg, name).unwrap_or_else(|| {
         resolve(cfg, DEFAULT).expect("DEFAULT network must exist among built-ins")
     })
+}
+
+/// Bind this invocation to `name`, which must resolve.
+pub fn bind(cfg: &mut Config, name: &str) -> Result<()> {
+    if resolve(cfg, name).is_none() {
+        bail!("unknown network {name:?}. Run `hanzo network list`.");
+    }
+    cfg.network.bound = Some(name.to_string());
+    Ok(())
 }
 
 /// All networks (built-ins with custom overrides applied, then extra customs).
@@ -108,6 +153,12 @@ fn print_row(n: &StoredNetwork, active_name: &str) {
     );
     println!("             rpc {}", n.rpc.dimmed());
     println!("             api {}", n.api.dimmed());
+    println!("             iam {}", issuer(n).dimmed());
+}
+
+/// The issuer a network signs in at, or what naming none means.
+fn issuer(n: &StoredNetwork) -> String {
+    n.iam.clone().unwrap_or_else(|| "none — no credential is sent".to_string())
 }
 
 /// `hanzo network list`
@@ -132,6 +183,7 @@ pub fn current(cfg: &Config) -> Result<()> {
     println!("  chain_id   {}", n.chain_id);
     println!("  rpc        {}", n.rpc);
     println!("  api        {}", n.api);
+    println!("  iam        {}", issuer(&n));
     if let Some(e) = &n.explorer {
         println!("  explorer   {}", e);
     }
@@ -153,12 +205,12 @@ pub fn use_network(cfg: &mut Config, name: String) -> Result<()> {
         c.network.active = Some(name.clone());
         Ok(())
     })?;
-    let n = active(cfg);
+    let n = resolve(cfg, &name).expect("resolved above");
     println!("{} active network {} ({})", "✓".green(), name.cyan().bold(), n.label);
     Ok(())
 }
 
-/// `hanzo network add <name> --network-id … [--chain-id …] --rpc … --api … [--explorer …]`
+/// `hanzo network add <name> --network-id … [--chain-id …] --rpc … --api … [--iam …] [--explorer …]`
 #[allow(clippy::too_many_arguments)]
 pub fn add(
     cfg: &mut Config,
@@ -167,12 +219,17 @@ pub fn add(
     chain_id: Option<u64>,
     rpc: String,
     api: String,
+    iam: Option<String>,
     explorer: Option<String>,
     label: Option<String>,
     set_active: bool,
 ) -> Result<()> {
     if is_builtin(&name) {
         bail!("{:?} is a built-in network name — pick another for a custom network.", name);
+    }
+    // Refused here, where it was typed, rather than at the first sign-in.
+    if let Some(iam) = &iam {
+        crate::iam::paths::realm(crate::iam::paths::DEFAULT_BRAND, iam)?;
     }
     // Sovereign L1: chain_id defaults to network_id (one ID per env per L1).
     let chain_id = chain_id.unwrap_or(network_id);
@@ -183,6 +240,7 @@ pub fn add(
         chain_id,
         rpc,
         api,
+        iam,
         explorer,
     };
     // Upsert by name, against fresh on-disk state (`update` re-reads, so an edit
@@ -204,4 +262,68 @@ pub fn add(
         println!("  {} now active", name.cyan());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::iam::paths::{realm, server_url_for_brand, DEFAULT_BRAND};
+
+    fn builtin(name: &str) -> StoredNetwork {
+        builtins().into_iter().find(|n| n.name == name).unwrap()
+    }
+
+    /// Each network's API trusts one issuer, and the realm a credential is filed
+    /// under follows it: mainnet and testnet share hanzo.id's, devnet has its own.
+    #[test]
+    fn each_network_signs_in_at_the_issuer_its_api_trusts() {
+        for (name, api, iam, realm_name) in [
+            ("mainnet", "https://api.hanzo.ai", "https://hanzo.id", "hanzo"),
+            ("testnet", "https://api-test.hanzo.ai", "https://hanzo.id", "hanzo"),
+            ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai", "hanzo@id-dev.hanzo.ai"),
+            ("local", "http://localhost:3690", "https://hanzo.id", "hanzo"),
+        ] {
+            let n = builtin(name);
+            assert_eq!(n.api, api, "{name}");
+            assert_eq!(n.iam.as_deref(), Some(iam), "{name}");
+            let r = realm(DEFAULT_BRAND, n.iam.as_deref().unwrap()).unwrap();
+            assert_eq!(r, realm_name, "{name}");
+            assert_eq!(server_url_for_brand(&r).as_deref(), Some(iam), "{name}");
+        }
+    }
+
+    /// A custom entry named for a built-in moves its chain endpoints only: the
+    /// API and issuer stay the built-in's.
+    #[test]
+    fn an_override_never_moves_a_builtins_api_or_issuer() {
+        let mut cfg = Config::default();
+        cfg.network.custom.push(StoredNetwork {
+            name: "devnet".into(),
+            label: "mine".into(),
+            network_id: 1,
+            chain_id: 1,
+            rpc: "https://rpc.example".into(),
+            api: "https://api.hanzo.ai".into(),
+            iam: Some("https://hanzo.id".into()),
+            explorer: None,
+        });
+        let n = resolve(&cfg, "devnet").unwrap();
+        assert_eq!((n.rpc.as_str(), n.label.as_str()), ("https://rpc.example", "mine"));
+        assert_eq!(n.api, "https://api-dev.hanzo.ai");
+        assert_eq!(n.iam.as_deref(), Some("https://id-dev.hanzo.ai"));
+    }
+
+    /// The bound network wins over the selected one, and one that no longer
+    /// resolves is answered with nowhere to send anything, never with mainnet.
+    #[test]
+    fn the_bound_network_is_the_active_one() {
+        let mut cfg = Config::default();
+        cfg.network.active = Some("mainnet".into());
+        bind(&mut cfg, "devnet").unwrap();
+        assert_eq!(active(&cfg).api, "https://api-dev.hanzo.ai");
+        assert!(bind(&mut cfg, "nope").is_err());
+        cfg.network.bound = Some("gone".into());
+        let n = active(&cfg);
+        assert_eq!((n.api.as_str(), n.iam), ("", None));
+    }
 }

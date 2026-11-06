@@ -1,70 +1,24 @@
-# hanzo — the CLI. Five commands matter here, and they are TWO questions asked
-# about ONE chain:
-#
-#   hanzoai/cloud@<tag> openapi.yaml   the document, pinned in .spec-lock
-#        │ genspec
-#   spec/cloud.json                    the projection
-#        │ genproduct
-#   generated.rs                       the command tree
-#        ·  spec/live.json             what the server said about all of it
-#
-# `spec` / `spec-check`  IS THE PROJECTION STILL ITS INPUT?  Re-derive, refuse a
-#                        delta. Needs the document (network, a token).
-# `live` / `live-check`  IS THE INPUT STILL TRUE OF PRODUCTION?  Ask the running
-#                        server, with a control for every probe, and write down
-#                        the raw answers. Needs the network and nothing else.
-# `verify`               RULE ON WHAT IS COMMITTED. Both directions, every link of
-#                        the chain, no network at all — which is why `cargo test`
-#                        runs it too, and why it cannot be the gate that gets
-#                        switched off for being slow or flaky.
-#
-# That split is the whole design. A gate that needs the network in CI gets
-# disabled, and a disabled gate is worse than none; a gate that never asks the
-# server can only compare derived artifacts with each other, which they satisfy
-# whether or not either is still true. So ASKING and RULING are two commands over
-# one checked-in body of evidence.
-#
-# `spec` and `spec-check` both go through scripts/generate.sh, which is also what
-# hanzoai/ci's `client:` lane calls — so a maintainer, the push gate and the
-# release all run the same derivation. A gate that runs a different generation
-# than the writer is a gate that tests something nobody ships.
-
+# Hanzo CLI checks: generate from the same public API document used by CI.
+# The lock records the API release and the digest actually used. spec-check
+# refuses changed input; make spec refreshes the projection from that input.
 SHELL := /bin/bash
-
-# THE FORGE IS CANONICAL. git.hanzo.ai holds hanzoai/cloud; the GitHub copy is a
-# mirror, and a mirror can be behind — universe's was measured 40 chat versions
-# and 51 app versions stale on the same day this changed. Verifying the command
-# tree against a mirror means a gate that passes on a document production is not
-# serving, which is worse than a gate that fails.
-#
-# The forge serves its API at /v1/, NOT /api/v1/ — asking for /api/v1 returns a
-# 404 that reads exactly like a rejected credential and costs an hour.
-SPEC_HOST ?= https://git.hanzo.ai/v1
-SPEC_REPO ?= hanzo-inc/cloud
-SPEC_PATH ?= openapi.yaml
-LOCK      := .spec-lock
+SPEC_URL ?= https://api.hanzo.ai/v1/openapi.json
+LOCK := .spec-lock
 
 .PHONY: help spec spec-check live live-check verify test build lint
 
 help: ## This.
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*## /\t/' | expand -t20
 
-# The document, BY VALUE at the ref this tree names. Fetching it — rather than
-# reading api.hanzo.ai — is what makes the check reproducible: the same ref
-# always yields the same bytes, and the digest below proves it. A live host
-# answers "what is deployed right now", which is a different question and not
-# one a committed artifact can be measured against.
 define fetch_spec
 ref=$$(sed -n 's/^ref=//p' $(LOCK)); \
 want=$$(sed -n 's/^sha256=//p' $(LOCK)); \
-[ -n "$$ref" ] || { echo "no $(LOCK) — this tree does not name a document"; exit 1; }; \
-[ -n "$${SPEC_TOKEN:-}" ] || { echo "SPEC_TOKEN (contents:read on $(SPEC_REPO)) is unset"; exit 1; }; \
-tmp=$$(mktemp); \
-curl -fsSL -H "Authorization: token $$SPEC_TOKEN" \
-  "$(SPEC_HOST)/repos/$(SPEC_REPO)/raw/$(SPEC_PATH)?ref=$$ref" -o "$$tmp"; \
+[ -n "$$ref" ] && [ -n "$$want" ] || { echo "$(LOCK) must name the API release and digest"; exit 1; }; \
+tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+curl -fsSL "$(SPEC_URL)" -o "$$tmp"; \
 got=$$(sha256sum "$$tmp" | cut -d' ' -f1); \
-[ "$$got" = "$$want" ] || { echo "$(SPEC_REPO)@$$ref:$(SPEC_PATH) hashes to $$got, but $(LOCK) says $$want — the ref moved under this capture"; exit 1; }; \
-export SPEC="$$tmp" SPEC_REF="$$ref" HANZO_SPEC_REPO="$(SPEC_REPO)"
+[ "$$got" = "$$want" ] || { echo "API document changed: refresh the lock and projection together (expected $$want, got $$got)"; exit 1; }; \
+export SPEC="$$tmp" SPEC_REF="$$ref" HANZO_SPEC_REPO="hanzo-inc/cloud"
 endef
 
 # Moving the projection forward RE-ASKS THE SERVER in the same breath. Evidence
@@ -120,6 +74,7 @@ verify: ## Refuse a tree the committed evidence contradicts. Hermetic. The drift
 # because stopping at the first failing package is how they stayed unrun: the
 # drift gate is upstream of them and fails on real drift by design.
 test: ## Everything, including the derivation gates in tests/ — `verify` among them.
+	@sh scripts/test-installer-strict.sh
 	@python3 -m unittest discover -s tests -p test_installer.py
 	@cargo build --quiet --features maintainer --bin driftgate --bin genproduct --locked
 	@cargo test --workspace --locked --no-fail-fast
@@ -129,3 +84,11 @@ build: ## The shipped binary.
 
 lint:
 	@cargo clippy --locked --all-targets -- -D warnings
+
+.PHONY: e2e e2e-installed
+e2e: ## Real login, usage, local dev and cloud sessions (requires HANZO_E2E_TOKEN).
+	@test -n "$${HANZO_E2E_TOKEN:-}" || { echo 'Set HANZO_E2E_TOKEN using hanzo auth token'; exit 1; }
+	@cargo test --locked --test production -- --ignored --nocapture --test-threads=1
+
+e2e-installed: ## Install published tools in isolation and test production end to end.
+	@sh scripts/e2e-installed.sh

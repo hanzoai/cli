@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -185,6 +186,86 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("checksum MISMATCH", result.stderr)
         self.assertFalse(self.prefix.exists())
 
+    # A stand-in gh: signed in, and its `attestation verify` answers `verdict`
+    # and records how it was asked. One that is `old` predates the command, as
+    # Ubuntu's gh 2.45.0 does: `unknown command "attestation"`, exit 1.
+    def signed_in_gh(self, verdict, old=False):
+        attest = ('echo \'unknown command "attestation" for "gh"\' >&2; exit 1' if old else
+                  f'[ "$3" = --help ] && {{ echo "  --source-ref string"; exit 0; }}; '
+                  f'echo "$@" >> "{self.root}/gh-asked"; echo "no attestation matched" >&2; exit {verdict}')
+        self.executable("gh", f"""#!/bin/sh
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "auth token") exit 1 ;;
+  "--version ") echo "gh version 2.45.0 (2024-03-04)"; exit 0 ;;
+  "attestation verify") {attest} ;;
+esac
+exit 1
+""")
+
+    def test_an_attested_tool_is_verified_against_its_workflow_and_tag(self):
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.signed_in_gh(0)
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        asked = (self.root / "gh-asked").read_text().split()
+        self.assertIn("--signer-workflow", asked)
+        self.assertEqual(asked[asked.index("--signer-workflow") + 1], "hanzoai/mcp/.github/workflows/release.yml")
+        self.assertEqual(asked[asked.index("--source-ref") + 1], "refs/tags/v1.0.0")
+        self.assertIn("provenance: hanzoai/mcp/.github/workflows/release.yml built", result.stdout)
+
+    def test_an_attestation_that_does_not_match_refuses_the_install(self):
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.signed_in_gh(1)
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to install", result.stderr)
+        self.assertIn("no attestation matched", result.stderr, "gh's own reason is shown")
+        self.assertFalse((self.prefix / "hanzo-mcp").exists())
+
+    def test_a_gh_that_cannot_verify_says_so_and_does_not_refuse(self):
+        # gh before `attestation verify --source-ref` cannot check anything: that is
+        # an unchecked install, named with its version, never a tamper verdict.
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.signed_in_gh(0, old=True)
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provenance not checked (gh version 2.45.0 (2024-03-04) cannot check an attestation's tag)", result.stdout)
+        self.assertIn("--source-ref refs/tags/v1.0.0", result.stdout)
+        self.assertFalse((self.root / "gh-asked").exists())
+
+    def test_an_attested_tool_installs_from_its_release_tags_only(self):
+        # Its release workflow runs on vX.Y.Z and its ruleset guards v*: a higher
+        # rust-v tag carrying the right asset names is no release of it.
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.tags("rust-v9.9.9", "v1.0.0")
+        self.release("rust-v9.9.9", "linux-amd64")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("v1.0.0 linux-amd64", result.stdout)
+        self.assertNotIn("rust-v9.9.9", result.stdout)
+        self.env["HANZO_VERSION"] = "rust-v9.9.9"
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rust-v9.9.9 is not a release tag of hanzoai/mcp (vX.Y.Z)", result.stderr)
+
+    def test_without_a_signed_in_gh_the_install_says_provenance_was_not_checked(self):
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provenance not checked (needs a signed-in gh)", result.stdout)
+        self.assertIn("gh attestation verify", result.stdout)
+        self.assertIn("--source-ref refs/tags/v1.0.0", result.stdout)
+
     def test_no_stable_release_with_this_build_fails(self):
         self.tags("v2.0.0", "v1.0.0-rc.1")
         self.release("v1.0.0-rc.1", "linux-amd64")
@@ -196,6 +277,123 @@ class InstallerTests(unittest.TestCase):
         result = self.install()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("could not list the tags of hanzoai/mcp", result.stderr)
+
+
+class NpmBinLauncherTests(unittest.TestCase):
+    def test_launcher_prepends_bin_dir_to_path(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            # Sibling companion tool in bin_dir (not in caller's PATH)
+            dev = bin_dir / "dev"
+            dev.write_text("#!/bin/sh\necho dev-from-sibling-bin:$*\n")
+            dev.chmod(0o755)
+
+            # Native hanzo binary that dispatches to `dev` via PATH lookup
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
+            hanzo.chmod(0o755)
+
+            node_bin = shutil.which("node") or "node"
+            env = dict(os.environ)
+            # Ensure bin_dir is NOT in PATH before launching hanzo.js
+            env["PATH"] = "/usr/bin:/bin"
+            result = subprocess.run(
+                [node_bin, str(copied_launcher), "status"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "dev-from-sibling-bin:status")
+
+    def test_launcher_preserves_case_insensitive_windows_path_key(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os\n"
+                "keys = [k for k in os.environ if k.lower() == 'path']\n"
+                "print(json.dumps({k: os.environ[k] for k in keys}))\n"
+            )
+            hanzo.chmod(0o755)
+
+            # Simulate Windows-style `Path` key via node environment setup
+            result = subprocess.run(
+                [
+                    "node",
+                    "-e",
+                    (
+                        "for (const k of Object.keys(process.env)) {"
+                        "  if (k.toLowerCase() === 'path') delete process.env[k];"
+                        "}"
+                        "process.env.Path = '/usr/bin:/bin';"
+                        f"process.argv = ['node', {json.dumps(str(copied_launcher))}];"
+                        f"require({json.dumps(str(copied_launcher))});"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads(result.stdout.strip())
+            self.assertIn("Path", data)
+            self.assertTrue(
+                data["Path"].startswith(str(bin_dir) + os.pathsep),
+                data["Path"],
+            )
+
+    def test_launcher_lazily_installs_missing_companion_on_first_use(self):
+        launcher = Path(__file__).resolve().parents[1] / "npm" / "bin" / "hanzo.js"
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg_dir = Path(tmp)
+            bin_dir = pkg_dir / "bin"
+            bin_dir.mkdir()
+            copied_launcher = bin_dir / "hanzo.js"
+            copied_launcher.write_text(launcher.read_text())
+
+            # Fake install.js that lazily creates requested binaries in bin/
+            install_js = pkg_dir / "install.js"
+            install_js.write_text(
+                "const fs = require('node:fs');\n"
+                "const path = require('node:path');\n"
+                "const binDir = path.join(__dirname, 'bin');\n"
+                "const map = { dev: 'dev', mcp: 'hanzo-mcp', engine: 'hanzo-engine', hanzo: 'hanzo' };\n"
+                "for (const arg of process.argv.slice(2)) {\n"
+                "  const name = map[arg] || arg;\n"
+                "  const p = path.join(binDir, name);\n"
+                "  fs.writeFileSync(p, `#!/bin/sh\\necho lazy-${name}:$*\\n`, { mode: 0o755 });\n"
+                "}\n"
+            )
+
+            # Pre-install only `hanzo` (lightweight postinstall state)
+            hanzo = bin_dir / "hanzo"
+            hanzo.write_text("#!/bin/sh\nexec dev \"$@\"\n")
+            hanzo.chmod(0o755)
+
+            node_bin = shutil.which("node") or "node"
+            env = dict(os.environ)
+            env["PATH"] = "/usr/bin:/bin"
+            result = subprocess.run(
+                [node_bin, str(copied_launcher), "dev", "status"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((bin_dir / "dev").exists(), "dev should be lazily installed")
+            self.assertTrue((bin_dir / "hanzo-mcp").exists(), "hanzo-mcp should be lazily installed")
+            self.assertEqual(result.stdout.strip(), "lazy-dev:dev status")
 
 
 if __name__ == "__main__":

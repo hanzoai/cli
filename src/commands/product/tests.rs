@@ -322,18 +322,15 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
 /// unset optional flag is OMITTED (the server's default stands), never sent null.
 #[test]
 fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
-    // Pick a typed op with a BODY int field (not a query param), no path params,
-    // and NO required fields — so the only flag we pass is the int, and the body
-    // holds exactly it.
+    // Pick a typed op with a top-level BODY int field (not a query param, not a
+    // nested dotted key), no path params, and NO required fields — so the only
+    // flag we pass is the int, and the body holds exactly it.
+    let top_int = |f: &&Field| matches!(f.ty, Ty::Int) && !f.query && !f.key.contains('.');
     let op = OPS
         .iter()
-        .find(|o| {
-            o.params.is_empty()
-                && o.fields.iter().any(|f| matches!(f.ty, Ty::Int) && !f.query)
-                && o.fields.iter().all(|f| !f.required)
-        })
-        .expect("a typed op with a body int field and no required fields exists");
-    let int = op.fields.iter().find(|f| matches!(f.ty, Ty::Int) && !f.query).unwrap();
+        .find(|o| o.params.is_empty() && o.fields.iter().any(|f| top_int(&f)) && o.fields.iter().all(|f| !f.required))
+        .expect("a typed op with a top-level body int field and no required fields exists");
+    let int = op.fields.iter().find(top_int).unwrap();
 
     let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
     argv.extend(op.nodes.iter().map(|n| n.to_string()));
@@ -741,7 +738,7 @@ fn argv_for(op: &'static Op) -> Vec<String> {
             Ty::Bool => a.push("true".into()),
             Ty::Int | Ty::Num => a.push("1".into()),
             Ty::Json => a.push("{}".into()),
-            Ty::Str => a.push("x".into()),
+            Ty::Str | Ty::Union => a.push("x".into()),
         }
     }
     a
@@ -1139,6 +1136,35 @@ fn a_2xx_error_envelope_is_surfaced_not_swallowed() {
     assert!(envelope_error(&json!("plain string")).is_none());
 }
 
+/// A resource whose own state is `error` or `failed` is a success to render.
+/// `agent sessions get` on a run that died at clone answered with the run's error
+/// as the CLI's, so a failed run could not be read at all.
+#[test]
+fn a_failed_resource_is_rendered_not_refused() {
+    use serde_json::json;
+
+    let run = json!({
+        "id": "sess_39509ae3f553c09110030c113eda4382",
+        "kind": "coding",
+        "status": "error",
+        "error": "coding: clone: exit 128: fatal: unable to access 'https://github.com/hanzo-inc/cloud.git/'",
+        "events": [{"kind": "message", "content": "the prompt"}],
+    });
+    assert!(envelope_error(&run).is_none());
+    assert!(envelope_error(&json!({"id": "b1", "status": "failed", "error": "exit 1"})).is_none());
+    assert!(envelope_error(&json!({"id": "d1", "error": "rollout stalled"})).is_none());
+
+    // IAM's whole envelope is still an envelope.
+    assert_eq!(
+        envelope_error(&json!({
+            "status": "error", "msg": "Unauthorized operation",
+            "sub": "", "name": "", "data": null, "data2": null,
+        }))
+        .as_deref(),
+        Some("Unauthorized operation")
+    );
+}
+
 // ---- naming: the reader is a customer, not a maintainer ---------------------
 
 /// The vendors this CLI's OWN help text may not name.
@@ -1231,4 +1257,33 @@ fn hand_written_command_names_are_not_verb_nouns() {
     let mut bad = Vec::new();
     walk(&crate::Cli::command(), "hanzo", &mut bad);
     assert!(bad.is_empty(), "verb-noun command names — name the thing, let the position say the verb:\n  {}", bad.join("\n  "));
+}
+
+/// A UNION flag says what it looks like: a JSON object or array reaches the body
+/// as that value, anything else as the text typed. The field is stated here, read
+/// through the builder every generated command uses: since cloud 8.5.640 the
+/// document types `state` on POST /v1/decisions as an untyped value, so no
+/// operation declares a `string | object | array` property to find.
+#[test]
+fn a_union_flag_sends_json_as_json_and_text_as_text() {
+    static STATE: Field = Field {
+        key: "state",
+        id: "field.state",
+        flag: "state",
+        ty: Ty::Union,
+        required: false,
+        choices: &[],
+        query: false,
+        secret: false,
+        repeat: false,
+    };
+    let send = |value: &str| {
+        let m = Command::new("t").arg(field_arg(&STATE)).try_get_matches_from(["t", "--state", value]).expect("parses");
+        m.get_one::<Value>(STATE.id).cloned().expect("a value")
+    };
+    assert_eq!(send(r#"{"message":"charged twice"}"#), serde_json::json!({"message": "charged twice"}));
+    assert_eq!(send(r#"["a","b"]"#), serde_json::json!(["a", "b"]));
+    assert_eq!(send("charged twice"), serde_json::json!("charged twice"));
+    // A scalar that happens to parse as JSON is still text: the union admits no number.
+    assert_eq!(send("42"), serde_json::json!("42"));
 }

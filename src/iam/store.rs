@@ -7,7 +7,7 @@
 //! one answer in exactly one place.
 //!
 //! HARD INVARIANT — the active identity changes ONLY by explicit user action
-//! (`hanzo auth login`, `hanzo auth use`). There is no auto-switch, no fallback and no
+//! (choosing the account at `hanzo auth login`, `hanzo auth use`). There is no auto-switch, no fallback and no
 //! cascade: if the active identity's credential is missing, the run is
 //! UNAUTHENTICATED. It never quietly becomes some other identity you happen to
 //! hold. Acting as the wrong principal is worse than not acting.
@@ -16,19 +16,21 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::config::{Config, StoredIdentity};
 
-use super::identity::{Identity, Selector};
+use super::identity::{self, Identity, Selector};
 use super::oauth;
 use super::paths::{self, brand_flag};
 use super::token::{self, TokenSet, Vault};
 
-/// Add the identity `tokens` authenticates as, and make it active.
+/// File the identity `tokens` authenticates as, and make it active only when
+/// `activate`: a sign-in adds an account the person did not choose beside the
+/// active identity, never in its place (`login::activates`).
 ///
 /// There is NO identity parameter, by design: the identity is derived from the
 /// token's own claims, so no caller — not even this crate — can file a
 /// credential under a principal of its choosing. Re-adding an identity that is
 /// already known UPDATES it in place; it never duplicates the index row.
-pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity> {
-    add_in(&*token::vault()?, cfg, brand, tokens)
+pub fn file(cfg: &mut Config, brand: &str, tokens: &TokenSet, activate: bool) -> Result<Identity> {
+    file_in(&*token::vault()?, cfg, brand, tokens, activate)
 }
 
 /// Resolve the ACTIVE identity's credential for `brand`, REFRESHED if the access
@@ -47,6 +49,7 @@ pub fn add(cfg: &mut Config, brand: &str, tokens: &TokenSet) -> Result<Identity>
 /// surfaced downstream as "X-Org-Id required" rather than "your session ended".
 /// A seam a caller can get wrong is not a seam; there is now nothing to choose.
 pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Identity, TokenSet)>> {
+    let brand: &str = &realm(cfg, brand)?;
     // The vault is dropped before the await below: `Vault` is not `Send`, and
     // holding one across it would make every caller's future un-spawnable.
     let Some((id, tok)) = active_token_in(&*token::vault()?, cfg, brand)? else {
@@ -57,7 +60,7 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     }
     // Nothing to spend, or a brand with no IAM: hand back what we hold and let the
     // SERVER refuse it. Falling back can only ever match the old behaviour.
-    let (Some(rt), Some(origin)) =
+    let (Some(_), Some(origin)) =
         (tok.refresh_token.as_deref(), paths::server_url_for_brand(brand))
     else {
         return Ok(Some((id, tok)));
@@ -71,46 +74,74 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     // Re-read AFTER taking the lock: the process that waited is very likely waiting
     // on the one that just refreshed, and the token on disk is now fresh. Spending
     // the rt we read BEFORE the lock would be the replay this exists to prevent.
+    // And refresh with what the vault holds NOW, not the credential read before it.
     let _guard = crate::config::Lock::acquire(&token::lock_subject())?;
-    let (use_rt, use_id) = if let Some((id2, tok2)) = active_token_in(&*token::vault()?, cfg, brand)? {
-        if !expiring(&tok2.access_token, now_unix()) {
-            return Ok(Some((id2, tok2)));
-        }
-        let token_rt = tok2.refresh_token.unwrap_or_else(|| rt.to_string());
-        (token_rt, id2)
-    } else {
-        (rt.to_string(), id.clone())
+    let (id, tok) = match active_token_in(&*token::vault()?, cfg, brand)? {
+        Some((id2, tok2)) if !expiring(&tok2.access_token, now_unix()) => return Ok(Some((id2, tok2))),
+        Some(held) if held.1.refresh_token.is_some() => held,
+        _ => (id, tok),
     };
-    let fresh = match oauth::refresh(origin, &use_rt).await {
+    // One more try when IAM did not answer at all: a dropped connection is the
+    // commonest reason, and the second attempt costs a second.
+    let mut answer = oauth::refresh(&origin, &tok).await;
+    if answer.as_ref().is_err_and(|e| !e.is::<oauth::Spent>()) {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        answer = oauth::refresh(&origin, &tok).await;
+    }
+    let fresh = match answer {
         Ok(fresh) => fresh,
+        // IAM refused it: the session is over, for this identity and no other.
+        Err(e) if e.is::<oauth::Spent>() => {
+            bail!("the {id} session has ended ({e}); sign in again: {}", relogin(brand, &id))
+        }
         Err(e) => {
-            // Still fall back — a caller that would have sent a spent token still
-            // sends it, and this can only improve on the previous behaviour. But say
-            // WHY. The server's refusal is the only message that names the actual
-            // cause; swallowing it leaves the command to fail somewhere downstream
-            // complaining about something else, which is the whole reason this bug
-            // took a day to find rather than a minute.
+            // IAM did not answer. Still fall back — a caller that would have sent a
+            // spent token still sends it, and this can only improve on the previous
+            // behaviour. But say WHY. The server's refusal is the only message that
+            // names the actual cause; swallowing it leaves the command to fail
+            // somewhere downstream complaining about something else, which is the
+            // whole reason this bug took a day to find rather than a minute.
             crate::warn(&format!(
-                "could not refresh the {brand} credential ({e}) — sending the expired one; \
-                 run `hanzo auth login{}` if it is refused",
-                brand_flag(brand)
+                "could not refresh the {id} credential ({e:#}) — sending the expired one; \
+                 `{}` if it is refused",
+                relogin(brand, &id)
             ));
             return Ok(Some((id, tok)));
         }
     };
-    let fresh = adopted(brand, &use_id, fresh)?;
-    if let Err(e) = token::store(&*token::vault()?, brand, &use_id, &fresh) {
+    let (id, fresh) = match adopted(brand, &id, fresh)? {
+        Adopted::Same(fresh) => (id, fresh),
+        Adopted::Moved(to, fresh) => {
+            moved_in(&*token::vault()?, cfg, brand, &id, &to, &fresh)?;
+            crate::warn(&format!(
+                "IAM moved {id} to {to}, the org this account now works in — signed in as {to}"
+            ));
+            return Ok(Some((to, fresh)));
+        }
+    };
+    if let Err(e) = token::store(&*token::vault()?, brand, &id, &fresh) {
         // NOT swallowed. IAM rotates on every grant and treats a re-presented
         // refresh token as a replay, revoking the whole family — so the token still
         // on disk is already dead, and the next run will have to sign in again. Say
         // so now, or that re-login reads as a security incident nobody caused.
         crate::warn(&format!(
-            "could not save the refreshed {brand} credential ({e}) — this run is fine, but you \
-             will have to run `hanzo auth login{}` again",
-            brand_flag(brand)
+            "could not save the refreshed {id} credential ({e}) — this run is fine, but you \
+             will have to run `{}` again",
+            relogin(brand, &id)
         ));
     }
-    Ok(Some((use_id, fresh)))
+    Ok(Some((id, fresh)))
+}
+
+/// What a refreshed credential is to the identity it was spent for.
+#[derive(Debug)]
+enum Adopted {
+    /// The same identity: file it where it was.
+    Same(TokenSet),
+    /// The same person under a new identity: IAM moved them (a founder moves into
+    /// the org they found, re-keyed from `<old>/<name>` to `<org>/<name>`), and the
+    /// credential belongs under the identity it now names.
+    Moved(Identity, TokenSet),
 }
 
 /// Accept a refreshed credential for `id`, or refuse it. PURE.
@@ -119,19 +150,130 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
 /// to put the same claims in it. `active_token_in` fails CLOSED when a slot's
 /// contents name a different principal, so filing a re-labelled token under the
 /// old key would poison that slot: every later read would bail until the user
-/// worked out that only `hanzo auth login` clears it. Refuse here instead, where
-/// the reason is still known. Re-authenticating after a rename is cheap.
-fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<TokenSet> {
+/// worked out that only `hanzo auth login` clears it.
+///
+/// One relabel is IAM's own and is followed: the same person (`sub`) under a new
+/// `owner`, which is what moving a founder into the org they found does. The
+/// identity is re-keyed, not replaced, so the active pointer follows the person
+/// rather than switching to anyone else. Never into or out of the `admin` org:
+/// SuperAdmin is an identity a person signs in to on purpose, never one a refresh
+/// hands them. Any other relabel is refused, where the reason is still known.
+fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<Adopted> {
+    issued(brand, &fresh.access_token)?;
     let claimed = Identity::from_access_token(&fresh.access_token)
         .context("identifying the refreshed credential")?;
-    if &claimed != id {
-        bail!(
-            "the refreshed {brand} credential identifies as {claimed}, not {id} — refusing to \
-             file it; run `hanzo auth login{}`",
-            brand_flag(brand)
-        );
+    if &claimed == id {
+        return Ok(Adopted::Same(fresh));
     }
-    Ok(fresh)
+    if moved(id, &claimed, &fresh) {
+        return Ok(Adopted::Moved(claimed, fresh));
+    }
+    bail!(
+        "the refreshed {brand} credential identifies as {claimed}, not {id} — refusing to \
+         file it; run `{}`",
+        relogin(brand, id)
+    )
+}
+
+/// Whether `to` is `from` re-keyed by IAM: the same name and person in a different
+/// org, neither of them the SuperAdmin org. PURE. The person is the `sub` the
+/// refreshed credential states, which IAM keeps across the move; a credential that
+/// states none is not followed.
+fn moved(from: &Identity, to: &Identity, fresh: &TokenSet) -> bool {
+    const SUPERADMIN: &str = "admin";
+    from.name == to.name
+        && from.owner != to.owner
+        && from.owner != SUPERADMIN
+        && to.owner != SUPERADMIN
+        && super::identity::subject(&fresh.access_token).is_some()
+}
+
+/// File `tokens` under `to` and retire `from`, the identity IAM moved: the new
+/// credential is stored first, then the index re-keys in one write — `to` takes
+/// `from`'s place, and the active pointer with it when it was there — and only
+/// then is `from`'s secret dropped. An interruption anywhere leaves the person
+/// signed in under one of the two keys, never neither.
+fn moved_in(
+    v: &dyn Vault,
+    cfg: &mut Config,
+    brand: &str,
+    from: &Identity,
+    to: &Identity,
+    tokens: &TokenSet,
+) -> Result<()> {
+    token::store(v, brand, to, tokens)?;
+    cfg.update(|c| {
+        c.auth
+            .identities
+            .retain(|i| !(i.brand == brand && i.owner == from.owner && i.name == from.name));
+        index(c, brand, to);
+        if c.auth.active.get(brand).map(String::as_str) == Some(from.to_string().as_str()) {
+            set_active(c, brand, to);
+        }
+        Ok(())
+    })?;
+    token::take(v, brand, from)?;
+    Ok(())
+}
+
+/// The realm `brand` is on the ACTIVE network — THE one place a network decides
+/// which credentials a command may file, find and send.
+///
+/// Every function here that takes a brand resolves it through this, so no
+/// caller can reach another network's identities, whatever it passes: on devnet
+/// `hanzo` is `hanzo@id-dev.hanzo.ai`, a credential hanzo.id signed is not in
+/// that realm, and no other brand has one. A realm passed back in (the detached
+/// account menu, a session's token helper) must be the one the active network
+/// names. A network that names no issuer is sent no credential at all.
+pub(crate) fn realm(cfg: &Config, brand: &str) -> Result<String> {
+    let network = crate::commands::network::active(cfg);
+    let Some(issuer) = network.iam.as_deref() else {
+        bail!(
+            "the network {} names no issuer, so no credential is sent to it; name the one its \
+             API trusts with `hanzo network add {} … --iam <origin>`",
+            network.name,
+            network.name
+        );
+    };
+    let want = paths::realm(paths::brand_of(brand), issuer)?;
+    if brand != paths::brand_of(brand) && brand != want {
+        bail!("{brand} is not a realm of the active network {} ({want})", network.name);
+    }
+    Ok(want)
+}
+
+/// Refuse a credential its realm's issuer did not sign, by the token's own
+/// `iss`: one filed in a realm is one sent to that realm's network, so a
+/// hanzo.id credential is never filed where devnet would receive it, nor a
+/// devnet one where mainnet would. A token that states no issuer is held to
+/// this only in a network's own realm, where every credential states one.
+fn issued(realm: &str, access_token: &str) -> Result<()> {
+    let Some(origin) = paths::server_url_for_brand(realm) else {
+        return Ok(()); // an unknown brand is refused by `oauth::server_url`
+    };
+    match identity::issuer(access_token) {
+        Some(iss) if paths::trim_server_url(&iss) == origin => Ok(()),
+        None if !realm.contains('@') => Ok(()),
+        stated => bail!(
+            "this credential was issued by {}, and {realm} signs in at {origin} — refusing to \
+             file or send it; run `hanzo auth login{}`",
+            stated.as_deref().unwrap_or("no stated issuer"),
+            brand_flag(realm)
+        ),
+    }
+}
+
+/// The command that signs `id` in again: through its own org's client, which is
+/// plain `hanzo auth login` only for the org the default client serves.
+pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
+    let org = if oauth::client(Some(&id.owner)) == oauth::client(None) {
+        String::new()
+    } else {
+        format!(" --as {}", id.owner)
+    };
+    // Named, so the sign-in comes back as this identity and not whichever
+    // account the browser holds.
+    format!("hanzo{org} auth login --account {id}{}", brand_flag(brand))
 }
 
 /// Whether this access token is spent, or close enough that spending it would
@@ -147,6 +289,17 @@ fn adopted(brand: &str, id: &Identity, fresh: TokenSet) -> Result<TokenSet> {
 fn expiring(access_token: &str, now: i64) -> bool {
     const SKEW: i64 = 60;
     jwt_exp(access_token).is_some_and(|exp| exp - SKEW <= now)
+}
+
+/// Whether this access token has already run out, by its own `exp`. PURE but
+/// for the clock. A token with no readable `exp` is not called spent: the server
+/// is the one that knows.
+pub fn spent(access_token: &str) -> bool {
+    spent_at(access_token, now_unix())
+}
+
+fn spent_at(access_token: &str, now: i64) -> bool {
+    jwt_exp(access_token).is_some_and(|exp| exp <= now)
 }
 
 /// Seconds since the epoch, without pulling in a clock abstraction for one read.
@@ -187,19 +340,20 @@ pub fn switch(cfg: &mut Config, brand: &str, sel: Option<Selector>) -> Result<Id
     switch_in(&*token::vault()?, cfg, brand, sel)
 }
 
-/// What a removal DROPPED: the identity, and the refresh token that was filed for
+/// What a removal DROPPED: the identity, and the credential that was filed for
 /// it. The store is local-only — it never talks to IAM — so it hands the
 /// credential back to the caller, who is the last thing able to tell the server
-/// to stop honouring it. A `None` is an identity that held no refresh token.
+/// to stop honouring it, as the client it was issued to. A `None` is an identity
+/// whose credential was already gone.
 #[derive(Debug)]
 pub struct Removed {
     pub id: Identity,
-    pub refresh_token: Option<String>,
+    pub held: Option<TokenSet>,
 }
 
 impl From<(Identity, Option<TokenSet>)> for Removed {
     fn from((id, held): (Identity, Option<TokenSet>)) -> Self {
-        Removed { id, refresh_token: held.and_then(|t| t.refresh_token) }
+        Removed { id, held }
     }
 }
 
@@ -215,6 +369,9 @@ pub fn remove_all(cfg: &mut Config, brand: &str) -> Result<Vec<Removed>> {
 
 /// Every identity known for `brand`, in stable display order.
 pub fn list(cfg: &Config, brand: &str) -> Vec<Identity> {
+    let Ok(brand) = realm(cfg, brand) else {
+        return Vec::new();
+    };
     let mut ids: Vec<Identity> = cfg
         .auth
         .identities
@@ -234,6 +391,7 @@ pub fn list(cfg: &Config, brand: &str) -> Vec<Identity> {
 /// The active identity for `brand`, if one is set AND still indexed. A pointer
 /// at an unknown identity resolves to `None` — it never falls through to another.
 pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
+    let brand: &str = &realm(cfg, brand).ok()?;
     let raw = cfg.auth.active.get(brand)?;
     let id = match raw.parse::<Selector>().ok()? {
         Selector::Exact(id) => id,
@@ -254,6 +412,30 @@ fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
         }
     }
     active(cfg, brand)
+}
+
+/// The identity `--as <org>` speaks as, or a refusal when the acting identity
+/// is not in that org, rather than answer for the one that would speak instead.
+/// `None` without `--as`, or with nothing signed in. Pure: the index only.
+pub fn within(cfg: &Config, brand: &str) -> Result<Option<Identity>> {
+    let brand: &str = &realm(cfg, brand)?;
+    let (Some(org), Some(id)) = (cfg.org.as_deref(), acting(cfg, brand)) else {
+        return Ok(None);
+    };
+    if id.owner == org {
+        return Ok(Some(id));
+    }
+    match list(cfg, brand).iter().filter(|i| i.owner == org).count() {
+        0 => bail!(
+            "you hold no {brand} identity in {org}; `hanzo --as {org} auth login{}` signs one in \
+             (without --as you are {id})",
+            brand_flag(brand)
+        ),
+        n => bail!(
+            "you hold {n} {brand} identities in {org} and none is active; `hanzo auth use <owner/name>` \
+             picks one (without --as you are {id})"
+        ),
+    }
 }
 
 /// The reserved org whose membership IS the SuperAdmin predicate, server-side.
@@ -316,18 +498,35 @@ pub fn render(cfg: &Config, brand: &str) -> String {
 
 // ---- the vault-parameterised core (unit-testable; see `token::Vault`) -------
 
+/// [`file_in`], activating: the shape the store's own tests sign in with.
+#[cfg(test)]
 pub(crate) fn add_in(
     v: &dyn Vault,
     cfg: &mut Config,
     brand: &str,
     tokens: &TokenSet,
 ) -> Result<Identity> {
+    file_in(v, cfg, brand, tokens, true)
+}
+
+pub(crate) fn file_in(
+    v: &dyn Vault,
+    cfg: &mut Config,
+    brand: &str,
+    tokens: &TokenSet,
+    activate: bool,
+) -> Result<Identity> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     let id = Identity::from_access_token(&tokens.access_token)?;
+    issued(brand, &tokens.access_token)?;
     token::store(v, brand, &id, tokens)?;
     cfg.update(|c| {
         index(c, brand, &id);
-        set_active(c, brand, &id); // `hanzo auth login` IS the explicit user action
+        // Choosing the account at sign-in IS the explicit user action.
+        if activate {
+            set_active(c, brand, &id);
+        }
         Ok(())
     })?;
     // An explicit login to this brand supersedes any pre-multi-identity
@@ -345,7 +544,7 @@ pub(crate) fn add_in(
 /// keyring read can block for as long as a human takes: the OS keychain
 /// auto-locks on idle, and reading it then opens a GUI prompt and waits (the
 /// `keyring` crate sets no timeout). Reading it under the lock would stall EVERY
-/// other `hanzo` process that writes config — including a `hanzo code` whose
+/// other `hanzo` process that writes config — including a `hanzo dev` whose
 /// migration calls `update` — with no explanation and the prompt in another
 /// window. Switching stays instant and never prompts while holding the lock.
 ///
@@ -362,6 +561,7 @@ pub(crate) fn switch_in(
     brand: &str,
     sel: Option<Selector>,
 ) -> Result<Identity> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching anything
     let target = match &sel {
         Some(s) => resolve_selector(cfg, brand, s)?,
@@ -410,6 +610,7 @@ pub(crate) fn active_token_in(
     cfg: &mut Config,
     brand: &str,
 ) -> Result<Option<(Identity, TokenSet)>> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     migrate_in(v, cfg, brand)?;
 
@@ -433,6 +634,7 @@ pub(crate) fn active_token_in(
             brand_flag(brand)
         );
     }
+    issued(brand, &tokens.access_token)?;
     Ok(Some((id, tokens)))
 }
 
@@ -442,6 +644,7 @@ pub(crate) fn token_for_in(
     brand: &str,
     id: &Identity,
 ) -> Result<Option<TokenSet>> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     // Only ever resolve an identity we actually INDEX — the same membership
     // `active`/`switch`/`remove` use — never an arbitrary slot a caller named.
@@ -465,6 +668,7 @@ pub(crate) fn token_for_in(
             brand_flag(brand)
         );
     }
+    issued(brand, &tokens.access_token)?;
     Ok(Some(tokens))
 }
 
@@ -518,6 +722,7 @@ pub(crate) fn remove_in(
     brand: &str,
     sel: Option<Selector>,
 ) -> Result<Removed> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     // Resolve + de-index atomically against fresh state, THEN drop the secret.
     // Index-first is the crash-safe order: the index is the only reference, so an
@@ -549,6 +754,7 @@ pub(crate) fn remove_in(
 }
 
 pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Result<Vec<Removed>> {
+    let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
     let ids = cfg.update(|c| {
         let ids = list(c, brand);
@@ -678,6 +884,107 @@ mod tests {
         c
     }
 
+    /// `cfg()` on devnet, whose issuer is its own.
+    fn devnet() -> Config {
+        let mut c = cfg();
+        c.network.active = Some("devnet".into());
+        c
+    }
+
+    /// A token as an issuer mints it: `iss` stated.
+    fn issued_jwt(iss: &str, owner: &str, name: &str) -> String {
+        claims_jwt(&format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#))
+    }
+
+    // ---- networks ------------------------------------------------------------
+
+    /// Devnet runs unreviewed code, so a credential hanzo.id signed is never
+    /// filed where devnet would be sent it — stated issuer or none.
+    #[test]
+    fn devnet_refuses_a_credential_its_issuer_did_not_sign() {
+        let (v, mut c) = (MemVault::new(), devnet());
+        for token in [issued_jwt("https://hanzo.id", "hanzo", "z"), jwt("hanzo", "z")] {
+            let err = add_in(&v, &mut c, "hanzo", &tokens(&token)).unwrap_err().to_string();
+            assert!(err.contains("signs in at https://id-dev.hanzo.ai"), "{err}");
+        }
+        assert!(list(&c, "hanzo").is_empty());
+    }
+
+    /// One network's identities are not another's: each is filed in its own
+    /// realm, found only on its own network, and presented only there.
+    #[test]
+    fn identities_never_cross_networks() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        let on = |c: &mut Config, network: &str| {
+            let network = network.to_string();
+            c.update(|x| {
+                x.network.active = Some(network);
+                Ok(())
+            })
+            .unwrap();
+        };
+        let prod = issued_jwt("https://hanzo.id", "hanzo", "z");
+        let own = issued_jwt("https://id-dev.hanzo.ai", "hanzo", "z");
+        on(&mut c, "mainnet");
+        add_in(&v, &mut c, "hanzo", &tokens(&prod)).unwrap();
+
+        // Devnet holds nothing until signed in on devnet.
+        on(&mut c, "devnet");
+        assert!(active_token_in(&v, &mut c, "hanzo").unwrap().is_none());
+        assert!(list(&c, "hanzo").is_empty());
+        add_in(&v, &mut c, "hanzo", &tokens(&own)).unwrap();
+        assert!(v.has("hanzo/hanzo/z"));
+        assert!(v.has("hanzo@id-dev.hanzo.ai/hanzo/z"));
+        let (_, t) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(t.access_token, own);
+
+        // Testnet trusts hanzo.id, so it is mainnet's realm.
+        for network in ["mainnet", "testnet"] {
+            on(&mut c, network);
+            let (_, t) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+            assert_eq!(t.access_token, prod, "{network}");
+        }
+        // Mainnet's realm refuses devnet's credential as devnet's refuses hanzo.id's.
+        assert!(add_in(&v, &mut c, "hanzo", &tokens(&own)).is_err());
+        let _ = std::fs::remove_file(c.effective_path());
+    }
+
+    /// A network that names no issuer is sent no credential; on devnet no brand
+    /// but the default has one.
+    #[test]
+    fn no_issuer_no_credential_and_no_other_brand_on_devnet() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        c.network.custom.push(crate::config::StoredNetwork {
+            name: "mine".into(),
+            label: "mine".into(),
+            network_id: 7,
+            chain_id: 7,
+            rpc: "https://rpc.example".into(),
+            api: "https://api.example".into(),
+            iam: None,
+            explorer: None,
+        });
+        c.network.bound = Some("mine".into());
+        assert!(active_token_in(&v, &mut c, "hanzo").is_err());
+        assert!(list(&c, "hanzo").is_empty());
+        c.network.bound = Some("devnet".into());
+        assert!(realm(&c, "lux").is_err());
+        assert!(active_token_in(&v, &mut c, "lux").is_err());
+        let _ = std::fs::remove_file(c.effective_path());
+    }
+
+    /// A realm handed back in must be the active network's: a command on mainnet
+    /// cannot reach devnet's identities by naming their realm.
+    #[test]
+    fn a_realm_is_only_the_active_networks() {
+        assert_eq!(realm(&devnet(), "hanzo").unwrap(), "hanzo@id-dev.hanzo.ai");
+        assert_eq!(realm(&devnet(), "hanzo@id-dev.hanzo.ai").unwrap(), "hanzo@id-dev.hanzo.ai");
+        assert_eq!(realm(&cfg(), "hanzo").unwrap(), "hanzo");
+        assert!(realm(&cfg(), "hanzo@id-dev.hanzo.ai").is_err());
+        assert!(realm(&devnet(), "hanzo@evil.example").is_err());
+    }
+
     fn sel(s: &str) -> Option<Selector> {
         Some(s.parse::<Selector>().unwrap())
     }
@@ -686,6 +993,22 @@ mod tests {
     fn both(v: &MemVault, c: &mut Config) {
         add_in(v, c, "hanzo", &tokens(&jwt("admin", "z"))).unwrap();
         add_in(v, c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+    }
+
+    /// A sign-in nobody chose files the account beside the active identity
+    /// and leaves the active one where it was; a chosen one takes its place.
+    #[test]
+    fn filing_unasked_keeps_the_active_identity() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        let other = file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "grundy")), false).unwrap();
+        assert_eq!(other.to_string(), "hanzo/grundy");
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), "hanzo/z");
+        assert!(list(&c, "hanzo").contains(&other), "the account was not filed");
+        assert!(token_for_in(&v, &c, "hanzo", &other).unwrap().is_some());
+
+        file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "grundy")), true).unwrap();
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), "hanzo/grundy");
     }
 
     // ---- the incident ------------------------------------------------------
@@ -736,7 +1059,7 @@ mod tests {
 
         for want in [ADMIN, ORG, ADMIN] {
             switch_in(&v, &mut c, "hanzo", sel(want)).unwrap();
-            // The `hanzo code` routing bearer, the wallet's cloud-custody bearer
+            // The `hanzo dev` routing bearer, the wallet's cloud-custody bearer
             // and `whoami` all call exactly this.
             let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
             assert_eq!(id.to_string(), want);
@@ -760,6 +1083,43 @@ mod tests {
         c.org = Some("lux".into());
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ORG);
+    }
+
+    /// A session is renewed through the client of the org it belongs to.
+    #[test]
+    fn signing_in_again_names_the_identitys_own_org() {
+        assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --account admin/z");
+        assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login --account hanzo/z");
+        assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --account lux/a --brand lux");
+        let err = adopted("hanzo", &ident(ADMIN), tokens(&jwt("hanzo", "z"))).unwrap_err();
+        assert!(err.to_string().contains("run `hanzo --as admin auth login --account admin/z`"), "{err}");
+    }
+
+    /// `--as` naming an org with no identity held there is refused by name,
+    /// never answered for the identity that would speak instead.
+    #[test]
+    fn as_an_org_you_hold_no_identity_in_is_refused_not_substituted() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        c.org = Some("admin".into());
+        let err = within(&c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("no hanzo identity in admin"), "{err}");
+        assert!(err.contains("hanzo --as admin auth login"), "{err}");
+        assert!(err.contains("without --as you are hanzo/z"), "{err}");
+
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "z"))).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ADMIN)));
+
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "ops"))).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        let err = within(&c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("2 hanzo identities in admin"), "{err}");
+
+        c.org = Some("hanzo".into());
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ORG)));
+        c.org = None;
+        assert_eq!(within(&c, "hanzo").unwrap(), None);
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---
@@ -1086,7 +1446,7 @@ mod tests {
     /// RED'S RACE, run for real against one config file on disk.
     ///
     /// Interleaving:
-    ///   A: `hanzo code` starts migrating the legacy credential (in flight)
+    ///   A: `hanzo dev` starts migrating the legacy credential (in flight)
     ///   B: `hanzo auth login` explicitly sets active = hanzo/z, and saves
     ///   A: migration finishes
     ///
@@ -1233,7 +1593,7 @@ mod tests {
     }
 
     /// The migration path writes the keychain too — and it is the one on the
-    /// `hanzo code` critical path, so a stall there is worst of all.
+    /// `hanzo dev` critical path, so a stall there is worst of all.
     #[test]
     fn migration_does_not_touch_the_keychain_under_the_lock() {
         let (v, mut c) = (MemVault::new(), cfg());
@@ -1497,6 +1857,9 @@ mod tests {
         assert!(!expiring(&jwt_until("hanzo", "z", NOW + 61), NOW), "just outside the skew");
         assert!(expiring(&jwt_until("hanzo", "z", NOW + 30), NOW), "would expire in flight");
         assert!(expiring(&jwt_until("hanzo", "z", NOW - 1), NOW), "already spent");
+        assert!(spent_at(&jwt_until("hanzo", "z", NOW - 1), NOW), "spent is past exp");
+        assert!(!spent_at(&jwt_until("hanzo", "z", NOW + 30), NOW), "inside the skew is not spent");
+        assert!(!spent_at("not-a-jwt", NOW), "no exp is the server's to judge");
     }
 
     /// A token we cannot read an expiry out of is LIVE. Validity is the server's
@@ -1526,7 +1889,11 @@ mod tests {
         assert!(expiring(&held.access_token, now_unix()), "the read hands back a spent token");
 
         // What the refresh half does once IAM has answered.
-        let fresh = adopted("hanzo", &id, tokens(&jwt_until("hanzo", "z", 9_999_999_999))).unwrap();
+        let Adopted::Same(fresh) =
+            adopted("hanzo", &id, tokens(&jwt_until("hanzo", "z", 9_999_999_999))).unwrap()
+        else {
+            panic!("the same identity read as a move");
+        };
         token::store(&v, "hanzo", &id, &fresh).unwrap();
 
         // A LATER PROCESS — its own config, the same vault — reads the fresh
@@ -1560,6 +1927,58 @@ mod tests {
         let (still, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(still.to_string(), ORG);
         assert_eq!(tok.access_token, jwt("hanzo", "z"));
+    }
+
+    /// IAM moves a founder into the org they found: the same person, re-keyed from
+    /// `hanzo/<name>` to `<org>/<name>`. The refresh is followed, not refused — the
+    /// credential is filed under the identity it names, the old key is retired, and
+    /// the active pointer moves with the person.
+    #[test]
+    fn a_founder_moved_into_their_org_is_followed() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "alice"))).unwrap();
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+
+        let Adopted::Moved(to, fresh) = adopted("hanzo", &id, tokens(&jwt("acme", "alice"))).unwrap()
+        else {
+            panic!("a founder's move was not followed");
+        };
+        assert_eq!(to.to_string(), "acme/alice");
+        moved_in(&v, &mut c, "hanzo", &id, &to, &fresh).unwrap();
+
+        let (now, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(now.to_string(), "acme/alice");
+        assert_eq!(tok.access_token, fresh.access_token);
+        let held: Vec<String> = list(&c, "hanzo").iter().map(|i| i.to_string()).collect();
+        assert_eq!(held, vec!["acme/alice".to_string()]);
+        assert!(token::take(&v, "hanzo", &id).unwrap().is_none(), "the old key still holds a secret");
+    }
+
+    /// A moved identity that was not the active one stays not active: the pointer
+    /// follows the person it named, and names nobody new.
+    #[test]
+    fn moving_an_inactive_identity_leaves_the_active_one_alone() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "alice"))).unwrap();
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
+        let alice = ident("hanzo/alice");
+        moved_in(&v, &mut c, "hanzo", &alice, &ident("acme/alice"), &tokens(&jwt("acme", "alice"))).unwrap();
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
+    }
+
+    /// Only the same person is followed, and never into or out of SuperAdmin.
+    #[test]
+    fn only_the_same_person_outside_superadmin_is_followed() {
+        let alice = ident("hanzo/alice");
+        let bob = tokens(&claims_jwt(r#"{"owner":"acme","name":"bob","sub":"u-1"}"#));
+        assert!(adopted("hanzo", &alice, bob).is_err(), "a different name was followed");
+        let nobody = tokens(&claims_jwt(r#"{"owner":"acme","name":"alice"}"#));
+        assert!(adopted("hanzo", &alice, nobody).is_err(), "a credential stating no person was followed");
+        assert!(adopted("hanzo", &alice, tokens(&jwt("admin", "alice"))).is_err(), "a refresh made someone a SuperAdmin");
+        assert!(
+            adopted("hanzo", &ident("admin/alice"), tokens(&jwt("acme", "alice"))).is_err(),
+            "a SuperAdmin was moved out of admin by a refresh"
+        );
     }
 
     /// There is ONE public accessor for the active credential and it is `async`,

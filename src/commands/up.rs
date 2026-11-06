@@ -25,9 +25,7 @@
 //! `hanzo up <service>` forwards there for one release.
 
 use anyhow::{anyhow, bail, Context, Result};
-use base64::Engine;
 use colored::*;
-use rand::RngCore;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -35,11 +33,13 @@ use std::time::{Duration, Instant};
 use vm_measure::{Log, Measurement};
 
 use crate::commands::vm::{self, alive, Rpc};
-use crate::commands::{host, link};
+use crate::commands::host::{self, key};
+use crate::commands::link;
 use crate::config::Config;
 use crate::image;
 
 pub mod compute;
+pub mod savings;
 pub mod tui;
 
 /// The VM's shape and what it runs — one value through every layer, so the
@@ -381,15 +381,6 @@ spec:
       nodePort: {CLOUD_NODE_PORT}
 "
     )
-}
-
-/// 32 fresh bytes, base64 — the shape the cloud reads its at-rest key in. From
-/// the OS generator, never a derivation: a key a second machine could guess is
-/// not one.
-fn key() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 // ---- the measurement ----------------------------------------------------------
@@ -856,6 +847,7 @@ pub async fn deprecated_service(argv: Vec<String>) -> Result<()> {
 mod tests {
     use super::*;
     use crate::commands::vm::wire::{launched, line, peer};
+    use base64::Engine;
     use serde_json::json;
 
     fn boot() -> Boot {

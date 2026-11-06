@@ -14,11 +14,19 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-/// A `hanzo` invocation with clean, non-interactive output.
+/// A `hanzo` invocation with clean, non-interactive output, in a home of its
+/// own: the binary keeps state under HOME (a telemetry id, at least), and a test
+/// run is nobody's home. A test that needs a particular home sets HOME after.
 fn hanzo() -> Command {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let home = HOME.get_or_init(|| tempfile::tempdir().expect("a home for the tests"));
     let mut cmd = Command::cargo_bin("hanzo").expect("hanzo binary builds");
     cmd.env("NO_COLOR", "1");
     cmd.env("HANZO_NO_ANIMATION", "1");
+    cmd.env("HOME", home.path());
+    for v in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
+        cmd.env_remove(v);
+    }
     cmd
 }
 
@@ -32,6 +40,29 @@ fn cfg_args(cfg: &tempfile::TempDir) -> [String; 2] {
 
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().expect("tempdir")
+}
+
+// ── What gen reads ───────────────────────────────────────────────────────────
+
+/// `gen` reads what this CLI has on file through `hanzo config profile` — the one
+/// reader of the config, so there is no second parser to drift — and holds it to
+/// its own `Profile`. A `code.link = false` here keeps a gen session local. The
+/// verb is for gen, so `hanzo config --help` does not offer it.
+#[test]
+fn config_profile_is_what_gen_reads() {
+    let c = tmp();
+    let read = |c: &tempfile::TempDir| -> hanzo_gen::Profile {
+        let a = hanzo().args(["config", "profile"]).args(cfg_args(c)).assert().success();
+        serde_json::from_slice(&a.get_output().stdout).expect("a Profile")
+    };
+    let fresh = read(&c);
+    assert!(fresh.link, "a session links by default");
+    assert!(fresh.api.starts_with("https://"), "{}", fresh.api);
+    assert!(fresh.identities.is_empty() && fresh.provider.is_none());
+    hanzo().args(["config", "set", "code.link", "false"]).args(cfg_args(&c)).assert().success();
+    assert!(!read(&c).link, "the opt-out reaches gen");
+    let help = hanzo().args(["config", "--help"]).assert().success();
+    assert!(!String::from_utf8_lossy(&help.get_output().stdout).contains("profile"));
 }
 
 // ── Version + surface ────────────────────────────────────────────────────────
@@ -88,6 +119,48 @@ fn status_signed_out_refuses_and_never_shows_an_empty_fleet() {
         .failure()
         .stderr(predicate::str::contains("not signed in").and(predicate::str::contains("hanzo auth login")))
         .stdout(predicate::str::contains("all clear").not());
+}
+
+/// A bare `hanzo` is the coding session, like `hanzo dev`: it reaches for the
+/// `dev` agent (here missing, so it says how to install it) instead of printing
+/// the help page, which `hanzo --help` still prints.
+#[test]
+fn a_bare_hanzo_starts_the_coding_agent() {
+    let home = tmp();
+    let empty_path = tmp();
+    let out = hanzo()
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .env("PATH", empty_path.path())
+        .write_stdin("")
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    assert!(stderr.contains("the `dev` coding agent is not installed"), "{stderr}");
+    assert!(stderr.contains("hanzo.sh"), "the error names the installer: {stderr}");
+    assert!(!stdout.contains("SYNOPSIS"), "a bare hanzo printed the help page: {stdout}");
+}
+
+/// `hanzo run` is gone: it exits 2 with one line naming `hanzo dev`, and starts
+/// nothing. `hanzo code` in its session form IS `hanzo dev`, so it answers what
+/// `hanzo dev` answers: the tool is a flag.
+#[test]
+fn the_retired_launchers_name_hanzo_dev() {
+    let out = hanzo().args(["code", "claude"]).assert().failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("hanzo dev --claude"), "`hanzo code claude` is `hanzo dev claude`: {stderr}");
+    for argv in [
+        vec!["run"],
+        vec!["run", "claude"],
+        vec!["run", "--runc", "dev"],
+        vec!["--no-route"],
+    ] {
+        let out = hanzo().args(&argv).assert().failure().code(2);
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        assert!(stderr.contains("hanzo dev") || argv == ["--no-route"], "{argv:?}: {stderr}");
+        assert!(stderr.lines().filter(|l| l.starts_with("error:")).count() == 1, "{argv:?}: {stderr}");
+    }
 }
 
 /// `--help` names every major resource the CLI ships (the resource-noun tree),
@@ -203,7 +276,87 @@ fn network_use_persists_across_invocations() {
         .args(cfg_args(&cfg))
         .assert()
         .success()
-        .stdout(predicate::str::contains("testnet").and(predicate::str::contains("36962")));
+        .stdout(
+            predicate::str::contains("testnet")
+                .and(predicate::str::contains("36962"))
+                .and(predicate::str::contains("https://api-test.hanzo.ai")),
+        );
+}
+
+/// Each built-in network names its own cloud and the issuer that cloud trusts:
+/// a sandbox network never reaches production's API, so nothing selected as
+/// testnet or devnet spends live money, and devnet signs in at its own issuer.
+#[test]
+fn network_sandboxes_name_their_own_api() {
+    for (name, api, iam) in [
+        ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai"),
+        ("testnet", "https://api-test.hanzo.ai", "https://hanzo.id"),
+        ("mainnet", "https://api.hanzo.ai", "https://hanzo.id"),
+    ] {
+        let cfg = tmp();
+        hanzo().args(["network", "use", name]).args(cfg_args(&cfg)).assert().success();
+        hanzo()
+            .args(["network", "current"])
+            .args(cfg_args(&cfg))
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!("api        {api}\n")))
+            .stdout(predicate::str::contains(format!("iam        {iam}\n")));
+    }
+}
+
+/// A token as an issuer mints it, with `iss` stated.
+fn issued(iss: &str, owner: &str, name: &str) -> String {
+    use base64::Engine;
+    let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    let claims = format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#);
+    format!("{}.{}.c2ln", b64(br#"{"alg":"RS256","typ":"JWT"}"#), b64(claims.as_bytes()))
+}
+
+/// Identities never cross networks: devnet refuses a hanzo.id credential, holds
+/// none of mainnet's, and each network's `auth token` is its own issuer's.
+#[test]
+fn identities_never_cross_networks() {
+    let (cfg, home) = (tmp(), tmp());
+    let run = |args: &[&str], stdin: Option<&str>| {
+        let mut cmd = hanzo();
+        cmd.args(args).args(cfg_args(&cfg)).env("HOME", home.path());
+        if let Some(input) = stdin {
+            cmd.write_stdin(format!("{input}\n"));
+        }
+        cmd.assert()
+    };
+    let login = ["auth", "login", "--provider", "hanzo", "--token", "-"];
+    let prod = issued("https://hanzo.id", "hanzo", "net");
+    let dev = issued("https://id-dev.hanzo.ai", "hanzo", "net");
+
+    run(&login, Some(&prod)).success();
+    run(&["network", "use", "devnet"], None).success();
+    run(&["auth", "token"], None).failure().stderr(predicate::str::contains("not signed in"));
+    run(&login, Some(&prod))
+        .failure()
+        .stderr(predicate::str::contains("issued by https://hanzo.id"));
+    run(&login, Some(&dev)).success();
+    run(&["auth", "token"], None).success().stdout(format!("{dev}\n"));
+
+    // No other brand signs in on devnet: its API trusts id-dev alone.
+    run(&["auth", "login", "--brand", "lux", "--provider", "hanzo", "--token", "-"], Some(&prod))
+        .failure()
+        .stderr(predicate::str::contains("lux does not sign in"));
+
+    run(&["network", "use", "mainnet"], None).success();
+    run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
+    run(&["network", "use", "testnet"], None).success();
+    run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
+
+    // A devnet session's token helper is bound to devnet: selecting another
+    // network meanwhile changes nothing it prints, and its realm is refused
+    // anywhere but on devnet.
+    let helper = ["auth", "token", "--brand", "hanzo@id-dev.hanzo.ai", "--network", "devnet"];
+    run(&helper, None).success().stdout(format!("{dev}\n"));
+    run(&["auth", "token", "--brand", "hanzo@id-dev.hanzo.ai"], None)
+        .failure()
+        .stderr(predicate::str::contains("not a realm of the active network"));
 }
 
 /// An unknown network is refused with a useful hint, non-zero.
@@ -337,12 +490,15 @@ fn live_login_whoami_usage_with_env_token() {
         .stdout(predicate::str::contains("/"))
         .stdout(predicate::str::contains("not signed in").not());
 
-    // `usage` fans out to api.hanzo.ai with each held account's own token. A
-    // stacked view always renders; a broke/expired account is a row state, not
-    // a crash — so success + at least one row is the honest assertion.
-    hanzo()
-        .arg("usage")
+    // Exercise the published command and verify that the response belongs to
+    // an authenticated account, rather than accepting an HTML page or empty JSON.
+    let usage = hanzo()
+        .args(["usage", "summary"])
         .args(cfg_args(&cfg))
         .assert()
         .success();
+    let summary: serde_json::Value = serde_json::from_slice(&usage.get_output().stdout)
+        .expect("usage summary returns JSON");
+    assert!(summary["scope"]["org"].as_str().is_some_and(|v| !v.is_empty()));
+    assert!(summary["scope"]["user"].as_str().is_some_and(|v| !v.is_empty()));
 }

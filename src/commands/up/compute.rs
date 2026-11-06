@@ -25,9 +25,9 @@ use ratatui::{
 };
 use serde::Deserialize;
 
-use crate::commands::code::context::{self, Machine, Metrics, Spec};
-use crate::commands::code::sample::Sampler;
-use crate::commands::code::target;
+use hanzo_gen::context::{self, Machine, Metrics, Spec};
+use hanzo_gen::sample::Sampler;
+use hanzo_gen::{target, Root};
 use crate::commands::product::Seam;
 use crate::commands::{network, status};
 use crate::config::Config;
@@ -172,9 +172,17 @@ impl Board {
                     all: held.iter().map(|i| format!("{}/{}", i.owner, i.name)).collect(),
                     api: api.clone(),
                 });
-                let _beat = active
-                    .is_some()
-                    .then(|| target::beat(&cfg, &api, &context::machine_id(), &context::hostname()));
+                let root = Root::user();
+                let _beat = root.as_ref().filter(|_| active.is_some()).map(|root| {
+                    target::beat(
+                        crate::commands::dev::Store::host(cfg.clone()),
+                        root,
+                        paths::DEFAULT_BRAND,
+                        &api,
+                        &context::machine_id(root),
+                        &context::hostname(root),
+                    )
+                });
                 for tick in 0u64.. {
                     if tick % NET_EVERY == 0 && tx.send(Update::Networks(networks(&mut cfg).await)).is_err() {
                         break;
@@ -186,7 +194,8 @@ impl Board {
                 }
             });
         }
-        Board { host: context::hostname(), rx: Some(rx), ..Default::default() }
+        let host = Root::user().map(|r| context::hostname(&r)).unwrap_or_default();
+        Board { host, rx: Some(rx), ..Default::default() }
     }
 
     /// Take everything the reader has sent since the last frame.
@@ -319,7 +328,7 @@ async fn networks(cfg: &mut Config) -> Result<Vec<Network>, String> {
 /// One list off the cloud through the one authenticated seam `hanzo status` reads by.
 async fn read(cfg: &mut Config, path: &str, key: &str) -> Result<Vec<serde_json::Value>, String> {
     let call = async {
-        let seam = Seam::open(cfg).await.map_err(|e| format!("{e:#}"))?;
+        let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await.map_err(|e| format!("{e:#}"))?;
         status::read(&seam, path, key).await
     };
     tokio::time::timeout(PATIENCE, call)
@@ -869,7 +878,7 @@ fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::code::context::Gpu;
+    use hanzo_gen::context::Gpu;
     use ratatui::{backend::TestBackend, Terminal};
 
     fn spark_machine() -> Machine {

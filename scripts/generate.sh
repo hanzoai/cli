@@ -1,34 +1,8 @@
 #!/usr/bin/env sh
-# The CLI's projection of the Hanzo Cloud API document — the same call site every
-# other client repo has, so hanzoai/ci's `client:` lane drives all eight the same
-# way.
-#
-# ONE INPUT, by value:
-#   $SPEC       the document itself, already fetched at a pinned ref and already
-#               digest-checked by the lane. Never a live host: at generation time
-#               the deploy this describes has already happened, and asking
-#               api.hanzo.ai instead would name whatever it is serving now rather
-#               than the release that handed us this file.
-#   $SPEC_REF   which ref that was. genspec stamps it, with the document's own
-#               sha256, into the spec's provenance — so `spec/cloud.json` can
-#               always answer "which release am I?".
-#
-# One optional argument: `--check` re-asks instead of rewriting (exit 1 on any
-# delta). Same binary, same derivation — which is what keeps the gate from
-# testing a different generation than the one that writes the file. It is an
-# argument and not an env var because that is the spelling every other client
-# repo's call site already uses, and one spelling of one idea is the point.
-#
-# THE SECOND INPUT IS GONE, and with it the clone and the credential. This script
-# used to fetch hanzoai/openapi and pin it in `.spec-lock` beside the document,
-# because the hand-authored master `hanzo.yaml` was the last source of
-# request-body and query SHAPE for cloud's untyped handlers. It had stopped being
-# only that: 71 operations entered `spec/cloud.json` on the master's word alone —
-# two addressing nothing at all, and sixty-six "confirmed" only by a
-# `{wildcardN}` relay door, which answers identically for a real path and an
-# invented one. A second authority over what EXISTS is how a CLI grows commands
-# no server serves. The document decides existence, prose and shape alike now, so
-# there is nothing left to clone and no SPEC_TOKEN to hold.
+# Generate from the API document supplied by value in SPEC. SPEC_REF identifies
+# the API release that supplied it. CI and make spec-check use the public
+# /v1/openapi.json document; .spec-lock records its digest.
+# --check refuses any projection change without rewriting files.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -46,13 +20,3 @@ fi
 
 cargo run --quiet --features maintainer --bin genspec --locked
 cargo run --quiet --features maintainer --bin genproduct --locked
-
-# `.spec-lock` has ONE writer — the nightly re-pin in `.hanzo/workflows/drift.yml`,
-# which reads hanzoai/cloud's newest tag, fetches the document at it, and records
-# the ref beside the digest of the bytes it actually read. It used to be named as
-# hanzoai/ci's client: lane, on the strength of a `repository_dispatch` a cloud
-# release was supposed to send; nothing was ever delivered, and on a push that lane
-# is check-only at the LOCKED ref, so for 104 runs the lock had no writer at all
-# and moved once, by hand. This script writes no half of it: it used to append a
-# second (`master=`, the hanzoai/openapi commit it generated against), and there is
-# no second half.

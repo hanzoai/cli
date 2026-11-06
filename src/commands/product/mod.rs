@@ -77,8 +77,8 @@ pub(crate) fn mounted(cmd: &Command) -> Vec<&'static str> {
 /// owns its name, and the generated operations of that name mount INSIDE it.
 ///
 /// A product no local command claims becomes a first-class top-level command. A
-/// product whose name is taken is ABSORBED — `hanzo code search` is the
-/// document's operation, `hanzo code claude` is the hand-written one, and the
+/// product whose name is taken is ABSORBED — `hanzo billing invoices` is the
+/// document's operation, `hanzo billing balance` is the hand-written one, and the
 /// same rule settles both: whoever was there first keeps the name.
 ///
 /// It used to DROP the collision, and the cost was measured before this was
@@ -292,6 +292,7 @@ fn field_arg(f: &'static Field) -> Arg {
         Ty::Bool if !f.repeat => a = a.action(ArgAction::SetTrue),
         Ty::Bool => a = a.value_parser(clap::value_parser!(bool)).value_name("BOOL"),
         Ty::Json => a = a.value_parser(parse_json).value_name("JSON"),
+        Ty::Union => a = a.value_parser(parse_union).value_name("TEXT|JSON"),
         Ty::Str => a = a.value_name("STRING"),
     }
     if !f.choices.is_empty() {
@@ -336,6 +337,7 @@ fn field_help(f: &Field) -> String {
             Ty::Bool if f.repeat => "boolean",
             Ty::Bool => "flag",
             Ty::Json => "JSON value",
+            Ty::Union => "text, or a JSON object or array",
         }
         .to_string()
     } else {
@@ -355,6 +357,16 @@ fn field_help(f: &Field) -> String {
 /// field is a named parse error, not a silent malformed request.
 fn parse_json(s: &str) -> std::result::Result<Value, String> {
     serde_json::from_str(s).map_err(|e| format!("not valid JSON: {e}"))
+}
+
+/// Parse a `Union`-typed flag: a JSON object or array is sent as that value, and
+/// anything else as the text typed — so `--state 'charged twice'` and `--state
+/// '{"message":"charged twice"}'` both say what they look like.
+fn parse_union(s: &str) -> std::result::Result<Value, String> {
+    match serde_json::from_str::<Value>(s) {
+        Ok(v @ (Value::Object(_) | Value::Array(_))) => Ok(v),
+        _ => Ok(Value::String(s.to_string())),
+    }
 }
 
 fn data_arg() -> Arg {
@@ -462,7 +474,7 @@ fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
             Ty::Int => m.get_many::<i64>(f.id)?.map(|v| json!(v)).collect(),
             Ty::Num => m.get_many::<f64>(f.id)?.map(|v| json!(v)).collect(),
             Ty::Bool => m.get_many::<bool>(f.id)?.map(|v| json!(v)).collect(),
-            Ty::Json => m.get_many::<Value>(f.id)?.cloned().collect(),
+            Ty::Json | Ty::Union => m.get_many::<Value>(f.id)?.cloned().collect(),
         };
         return Some(Value::Array(vs));
     }
@@ -473,7 +485,7 @@ fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
         // A scalar bool is a presence flag: absent means "unset", so it is
         // omitted rather than sent as `false` over the server's own default.
         Ty::Bool => m.get_flag(f.id).then_some(json!(true)),
-        Ty::Json => m.get_one::<Value>(f.id).cloned(),
+        Ty::Json | Ty::Union => m.get_one::<Value>(f.id).cloned(),
     }
 }
 
@@ -679,7 +691,7 @@ async fn call(
     query: Vec<String>,
     raw: bool,
 ) -> Result<()> {
-    let seam = Seam::open(cfg).await?;
+    let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await?;
     let Reply { status, body: resp } = seam.send(method, &path, &query, body).await?;
 
     if (200..300).contains(&status) {
@@ -737,7 +749,9 @@ pub(crate) struct Seam {
 }
 
 impl Seam {
-    pub(crate) async fn open(cfg: &mut Config) -> Result<Self> {
+    /// The seam as `brand`'s active identity: the CLI's own commands speak as
+    /// the default brand, and a session's meter as the brand the session runs as.
+    pub(crate) async fn open(cfg: &mut Config, brand: &str) -> Result<Self> {
         // WHERE, and over WHICH WIRE. A LOCAL origin also gets a host started (or
         // reused) behind it, so the same command tree runs against a checkout with
         // no server up — over ZAP, the native transport, because the CLI is first
@@ -748,11 +762,11 @@ impl Seam {
         // is NOT refused here — the call goes out unauthenticated and the server
         // decides. That is the same rule this module already follows for a 403:
         // the refusal is always the server's, never a client-side guess.
-        let identity = store::active_token(cfg, paths::DEFAULT_BRAND).await?;
+        let identity = store::active_token(cfg, brand).await?;
         if identity.is_none() && matches!(origin, Origin::Http(_)) {
             bail!("not signed in — run `hanzo auth login`");
         }
-        let held = store::list(cfg, paths::DEFAULT_BRAND);
+        let held = store::list(cfg, brand);
         let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
         Ok(Self { origin, token, hint, org: cfg.org.clone(), wire: Http::default() })
@@ -850,6 +864,10 @@ fn target(path: &str, query: &[String]) -> Result<String> {
     })
 }
 
+/// The keys a `/v1` envelope carries: `{status,msg,data}`, IAM's `sub`, `name` and
+/// `data2`, and the bare `error`/`code` form.
+const ENVELOPE: &[&str] = &["status", "msg", "data", "data2", "sub", "name", "error", "code"];
+
 /// Read the cloud `/v1` envelope (`{status,msg,data}`) for an error the HTTP status
 /// did not carry. Some planes (IAM) answer a refusal with HTTP 200 and
 /// `{"status":"error","msg":"…"}`, so a 2xx is not proof of success. Returns the
@@ -858,8 +876,15 @@ fn target(path: &str, query: &[String]) -> Result<String> {
 /// a genuine success (a success envelope, or a raw non-enveloped body) renders
 /// unchanged. It never invents a message and never fires on a success that merely
 /// has a `msg` with null `data`: an explicit non-error `status` wins.
+///
+/// Only a body made of envelope keys is an envelope. A body with any other key is a
+/// resource, and its `status`/`error` are its own state: a failed coding run is
+/// `{"id":…,"status":"error","error":…}`, a success to render, not a refusal.
 pub(crate) fn envelope_error(body: &Value) -> Option<String> {
     let obj = body.as_object()?;
+    if !obj.keys().all(|k| ENVELOPE.contains(&k.as_str())) {
+        return None;
+    }
     let message = || {
         obj.get("msg")
             .or_else(|| obj.get("error"))

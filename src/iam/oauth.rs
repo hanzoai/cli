@@ -1,6 +1,7 @@
 //! The OIDC Authorization-Code-with-PKCE flow against Hanzo IAM (HIP-0111).
 //!
-//! `hanzo-cli` is a PUBLIC client (no secret): PKCE S256 is the proof. We bind
+//! The client is `<org>-cli` ([`client`]), a PUBLIC client (no secret): PKCE
+//! S256 is the proof. We bind
 //! an ephemeral loopback port, send the browser to the brand's
 //! `/v1/iam/oauth/authorize`, capture the redirect on `127.0.0.1`, then
 //! exchange the code at `/v1/iam/oauth/token`. Only the explicit HIP-0111 paths
@@ -29,15 +30,100 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use super::device::DEVICE_GRANT_TYPE;
 use super::identity::{self, Identity};
-use super::paths::{self, AUTHORIZE, REVOKE, TOKEN, USERINFO};
+use super::paths::{self, APPLICATION, AUTHORIZE, LOGOUT, REVOKE, TOKEN, USERINFO};
 use super::pkce;
 use super::token::TokenSet;
 
-/// The CLI's registered IAM client id (`<org>-<app>`). Public client.
-pub const CLIENT_ID: &str = "hanzo-cli";
 /// OIDC scopes — identity only.
 pub const SCOPE: &str = "openid profile email";
+
+/// The IAM client a sign-in runs through: `<org>-cli` (HIP-0111) for the org
+/// `--as` names, else `hanzo-cli`. IAM signs a person in to the client's own
+/// org, so this decides whose identity comes back.
+pub fn client(org: Option<&str>) -> String {
+    format!("{}-cli", org.unwrap_or("hanzo"))
+}
+
+/// Read the sign-in client's public descriptor before any browser opens, and
+/// refuse when IAM has no such client or, under `--as <org>`, when it signs in
+/// to another org. Returns whether the client permits the device grant.
+pub async fn served(origin: &str, org: Option<&str>) -> Result<bool> {
+    #[derive(Deserialize)]
+    struct Descriptor {
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        msg: String,
+        data: Option<App>,
+    }
+    #[derive(Deserialize)]
+    struct App {
+        #[serde(default)]
+        organization: String,
+        #[serde(default, rename = "grantTypes")]
+        grants: Vec<String>,
+    }
+    let id = client(org);
+    let resp = reqwest::Client::new()
+        .get(paths::iam_url(origin, APPLICATION))
+        .query(&[("clientId", id.as_str()), ("responseType", "code")])
+        .send()
+        .await
+        .context("calling IAM application descriptor")?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let found: Descriptor = serde_json::from_str(&body)
+        .map_err(|_| anyhow!("IAM's descriptor for `{id}` is unreadable ({status})"))?;
+    let app = match found {
+        Descriptor { status, data: Some(app), .. } if status == "ok" => app,
+        Descriptor { msg, .. } => match org {
+            Some(org) => bail!("IAM has no `{id}` application, so `--as {org}` has no {org} sign-in to open ({msg})"),
+            None => bail!("IAM has no `{id}` application ({msg})"),
+        },
+    };
+    if let Some(org) = org.filter(|org| *org != app.organization) {
+        bail!("IAM's `{id}` application signs in to org `{}`, not `{org}`", app.organization);
+    }
+    Ok(app.grants.iter().any(|grant| grant == DEVICE_GRANT_TYPE))
+}
+
+/// A refresh IAM refused, or one no client can be named for: the session is
+/// over, and only a new sign-in replaces it.
+#[derive(Debug)]
+pub struct Spent(String);
+
+impl std::fmt::Display for Spent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Spent {}
+
+/// Refuse a token outside the org `--as` named. IAM stamps `owner` with the
+/// signing application's org, so another owner means another org's sign-in.
+/// A refusal only: nothing is granted on this unverified read.
+pub fn owned(tokens: &TokenSet, org: Option<&str>) -> Result<()> {
+    let Some(org) = org else { return Ok(()) };
+    let id = Identity::from_access_token(&tokens.access_token)?;
+    if id.owner != org {
+        bail!(
+            "`--as {org}` signed in through `{}` and IAM returned {id}, which is not in {org}; nothing was stored",
+            client(Some(org))
+        );
+    }
+    Ok(())
+}
+
+/// The client `held` was issued to, which is the only one IAM accepts it from:
+/// a refresh token presented by another client is refused, and a revocation
+/// ends only the calling client's grants.
+fn issued(held: &TokenSet) -> Result<String> {
+    identity::party(&held.access_token)
+        .ok_or_else(|| anyhow!("the stored credential names no client (no `azp`, no single `aud`)"))
+}
 
 /// The subset of OIDC UserInfo (§5.3) the CLI displays.
 #[derive(Debug, Deserialize)]
@@ -51,8 +137,8 @@ pub struct UserInfo {
     pub preferred_username: Option<String>,
 }
 
-/// Resolve a brand to its IAM origin, or error with the known set.
-pub fn server_url(brand: &str) -> Result<&'static str> {
+/// Resolve a realm to its IAM origin, or error with the known set.
+pub fn server_url(brand: &str) -> Result<String> {
     paths::server_url_for_brand(brand).ok_or_else(|| {
         anyhow!("unknown brand '{brand}' (expected one of: hanzo, lux, zoo, pars, bootnode)")
     })
@@ -66,14 +152,12 @@ pub(crate) struct Shown {
     pub id: String,
 }
 
-/// The loopback, still listening, after the signed-in page has been written.
-/// Login keeps answering retries on it while the identity is saved, then hands
-/// it to a short-lived process for the account menu.
+/// The loopback after the exchange, still listening, with the tab's
+/// connections waiting for the page. [`finish`] writes it and closes the port.
 pub(crate) struct Held {
     listener: TcpListener,
     origin: String,
-    brand: String,
-    page: String,
+    waiting: Vec<TcpStream>,
 }
 
 pub(crate) enum Done {
@@ -81,13 +165,28 @@ pub(crate) enum Done {
     Browser(TokenSet, Held),
 }
 
+/// What a sign-in asks hanzo.id for: the account it is for (`login_hint`), and
+/// whether the person chooses among the accounts signed in on that browser
+/// (`prompt=select_account`) rather than continuing as the latest one.
+#[derive(Debug, Default)]
+pub struct Ask {
+    pub hint: Option<String>,
+    pub choose: bool,
+}
+
 /// Run the full interactive login flow for `brand` and return the tokens.
-/// `choose` asks IAM to let the person pick among the accounts signed in on
-/// this browser, or sign in to another, rather than reusing the latest one.
-/// `others` are identities already on this machine; the signed-in page lists
-/// them so a person can see which account this one is.
-pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> {
-    let origin = server_url(brand)?;
+/// `org` (`--as`) signs in through that org's own client and refuses a token
+/// from any other org. `ask` names the account and whether to show the chooser.
+/// `open` opens a browser here; without one the code arrives by paste alone.
+pub async fn login(brand: &str, org: Option<&str>, open: bool, ask: &Ask) -> Result<Done> {
+    if !open && !std::io::stdin().is_terminal() {
+        bail!(
+            "no browser opens here and `{}` permits no device grant, so the sign-in needs its \
+             callback URL pasted: run this at a terminal",
+            client(org)
+        );
+    }
+    let origin = &server_url(brand)?;
     let pkce = pkce::generate_pkce();
     let state = pkce::generate_state();
 
@@ -98,22 +197,27 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
     let port = listener.local_addr()?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
-    let authorize_url =
-        build_authorize_url(origin, &redirect_uri, &pkce.challenge, &state, choose)?;
+    let authorize_url = build_authorize_url(origin, org, &redirect_uri, &pkce.challenge, &state, ask)?;
 
     // Print the link BEFORE asking the OS to open it. `open` on this machine
     // can sit there until a browser answers, and that wait used to be the
     // whole of `hanzo login`: no line, no URL, nothing to paste.
-    println!("Opening your browser to sign in to {brand}...");
-    println!("If it does not open, visit:\n  {authorize_url}\n");
+    if open {
+        println!("Opening your browser to sign in to {brand}...");
+        println!("If it does not open, visit:\n  {authorize_url}\n");
+    } else {
+        println!("Sign in to {brand} in a browser on any machine:\n  {authorize_url}\n");
+    }
     if std::io::stdin().is_terminal() {
         println!("Signed in on another machine? Paste the URL it lands on here.");
     }
     let _ = std::io::Write::flush(&mut std::io::stdout());
-    let url_for_open = authorize_url.to_string();
-    std::thread::spawn(move || {
-        let _ = webbrowser::open(&url_for_open);
-    });
+    if open {
+        let url_for_open = authorize_url.to_string();
+        std::thread::spawn(move || {
+            let _ = webbrowser::open(&url_for_open);
+        });
+    }
 
     // Whichever leg answers first. The socket wins on a desktop, where it
     // returns before a person could paste anything; the keyboard wins where the
@@ -131,7 +235,7 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
                 .code
                 .ok_or_else(|| anyhow!("no authorization code in callback"))?;
             return Ok(Done::Pasted(
-                exchange_code(origin, &code, &redirect_uri, &pkce.verifier).await?,
+                exchange_code(origin, org, &code, &redirect_uri, &pkce.verifier).await?,
             ));
         }
         Arrival::Browser((cb, stream)) => {
@@ -148,7 +252,7 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
     // the first one and then closing the port is the "Can't connect to the
     // server" page.
     let mut waiting = vec![stream];
-    let mut exchange = std::pin::pin!(exchange_code(origin, &code, &redirect_uri, &verifier));
+    let mut exchange = std::pin::pin!(exchange_code(origin, org, &code, &redirect_uri, &verifier));
     let tokens = loop {
         tokio::select! {
             result = &mut exchange => {
@@ -172,44 +276,47 @@ pub async fn login(brand: &str, choose: bool, others: &[Shown]) -> Result<Done> 
             }
         }
     };
-    // Claims only. Userinfo is another round trip, and holding the document
-    // for it is what made Safari abandon the tab before any byte arrived.
-    let who = shown_account(&tokens);
-    let page = html_ok(&signed_in_page(origin, who.as_ref(), others, None, true));
-    for stream in &mut waiting {
-        reply(stream, &page).await;
-    }
     Ok(Done::Browser(
         tokens,
         Held {
             listener,
             origin: origin.to_string(),
-            brand: brand.to_string(),
-            page,
+            waiting,
         },
     ))
 }
 
-/// Answer reloads of the signed-in page while `work` runs (saving the
-/// identity), then hand the port to the menu process. `biased` so a finished
-/// save is not stuck behind a browser that keeps connecting.
-pub(crate) async fn cover_then_detach<T>(
+/// Finish a browser sign-in: write the page on every connection the tab is
+/// waiting on, keep answering its reloads while `work` (filing the identity)
+/// runs, then close the port. `active` is the identity the terminal goes on
+/// as, when that is not the one just signed in. Nothing listens once this
+/// returns: the loopback lives exactly as long as the command that opened it.
+pub(crate) async fn finish<T>(
     held: Held,
+    tokens: &TokenSet,
+    active: Option<&Identity>,
     work: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
+    // Claims only. Userinfo is another round trip, and holding the document
+    // for it is what made Safari abandon the tab before any byte arrived.
+    let who = shown_account(tokens);
+    let kept = active.map(Identity::to_string);
+    let page = html_ok(&signed_in_page(&held.origin, who.as_ref(), kept.as_deref()));
+    let Held { listener, mut waiting, .. } = held;
+    for stream in &mut waiting {
+        reply(stream, &page).await;
+    }
     let mut work = std::pin::pin!(work);
-    let out = loop {
+    loop {
         tokio::select! {
             biased;
-            result = &mut work => break result?,
-            incoming = held.listener.accept() => {
+            result = &mut work => return result,
+            incoming = listener.accept() => {
                 let Ok((mut stream, _)) = incoming else { continue };
-                answer_held(&mut stream, &held.page).await;
+                answer_held(&mut stream, &page).await;
             }
         }
-    };
-    detach_menu(held.listener, &held.origin, &held.brand);
-    Ok(out)
+    }
 }
 
 async fn answer_held(stream: &mut TcpStream, page: &str) {
@@ -225,31 +332,11 @@ async fn answer_held(stream: &mut TcpStream, page: &str) {
             return;
         }
     };
-    let target = request_target(&request).unwrap_or("");
-    if target.starts_with("/callback") || target.starts_with("/switch") {
+    if request_target(&request).unwrap_or("").starts_with("/callback") {
         reply(stream, page).await;
     } else {
         reply(stream, EMPTY_OK).await;
     }
-}
-
-/// Identities already on this machine, labeled from each token's own email
-/// claim. No network: the login page has to paint without another round trip.
-pub(crate) fn known_accounts(cfg: &crate::config::Config, brand: &str) -> Vec<Shown> {
-    super::store::list(cfg, brand)
-        .into_iter()
-        .map(|id| {
-            let label = super::store::token_for(cfg, brand, &id)
-                .ok()
-                .flatten()
-                .map(|tokens| account_label(&tokens, &id))
-                .unwrap_or_else(|| id.to_string());
-            Shown {
-                label,
-                id: id.to_string(),
-            }
-        })
-        .collect()
 }
 
 enum Arrival {
@@ -297,43 +384,9 @@ async fn hold_for_page(stream: &mut TcpStream) -> bool {
     false
 }
 
-/// Keep answering the loopback until `for_how_long` has passed, measured from
-/// the call. A `/callback` gets the signed-in page again. Anything else is an
-/// empty 204. New connections do not extend the clock.
-#[cfg(test)]
-async fn serve_signed_in(listener: &TcpListener, page: &str, for_how_long: std::time::Duration) {
-    let deadline = tokio::time::Instant::now() + for_how_long;
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        let accepted = tokio::time::timeout(remaining, listener.accept()).await;
-        let Ok(Ok((mut stream, _))) = accepted else { break };
-        let request = match tokio::time::timeout(
-            std::time::Duration::from_millis(400),
-            read_request(&mut stream),
-        )
-        .await
-        {
-            Ok(Ok(body)) => body,
-            _ => {
-                let _ = stream.shutdown().await;
-                continue;
-            }
-        };
-        let target = request_target(&request).unwrap_or("");
-        if target.starts_with("/callback") {
-            reply(&mut stream, page).await;
-        } else {
-            reply(&mut stream, EMPTY_OK).await;
-        }
-    }
-}
-
 /// Fetch the userinfo profile for an access token.
 pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
-    let origin = server_url(brand)?;
+    let origin = &server_url(brand)?;
     let resp = reqwest::Client::new()
         .get(paths::iam_url(origin, USERINFO))
         .bearer_auth(access_token)
@@ -355,29 +408,36 @@ pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
 /// Split out from [`login`] so the URL shape is unit-testable without I/O.
 fn build_authorize_url(
     origin: &str,
+    org: Option<&str>,
     redirect_uri: &str,
     challenge: &str,
     state: &str,
-    choose: bool,
+    ask: &Ask,
 ) -> Result<Url> {
+    let client = client(org);
     let mut q = vec![
         ("response_type", "code"),
-        ("client_id", CLIENT_ID),
+        ("client_id", client.as_str()),
         ("redirect_uri", redirect_uri),
         ("scope", SCOPE),
         ("state", state),
         ("code_challenge", challenge),
         ("code_challenge_method", "S256"),
     ];
-    if choose {
+    if ask.choose {
         q.push(("prompt", "select_account"));
+    }
+    if let Some(hint) = ask.hint.as_deref() {
+        q.push(("login_hint", hint));
     }
     Url::parse_with_params(&paths::iam_url(origin, AUTHORIZE), &q).context("building authorize URL")
 }
 
-/// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5).
+/// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5),
+/// through `org`'s client, refusing tokens from any other org.
 async fn exchange_code(
     origin: &str,
+    org: Option<&str>,
     code: &str,
     redirect_uri: &str,
     verifier: &str,
@@ -388,7 +448,7 @@ async fn exchange_code(
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", redirect_uri),
-            ("client_id", CLIENT_ID),
+            ("client_id", client(org).as_str()),
             ("code_verifier", verifier),
         ])
         .send()
@@ -399,32 +459,46 @@ async fn exchange_code(
     if !status.is_success() {
         bail!("token exchange failed ({status}): {body}");
     }
-    serde_json::from_str::<TokenSet>(&body).context("parsing token response")
+    let tokens = serde_json::from_str::<TokenSet>(&body).context("parsing token response")?;
+    owned(&tokens, org)?;
+    Ok(tokens)
 }
 
-/// Exchange a refresh token for a fresh access token (RFC 6749 §6).
+/// How long one refresh may take. A connection that stalls fails here, with its
+/// cause, rather than holding every command that needs a credential.
+const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Exchange a refresh token for a fresh access token (RFC 6749 §6), as the
+/// client the credential was issued to.
 ///
 /// The access token IAM mints lives one hour. Without this the CLI holds a
 /// refresh token it never spends, so every command an hour after login fails —
 /// and fails CONFUSINGLY, because a stale token reads downstream as "X-Org-Id
 /// required" or "a validated principal is required" rather than "log in again".
-pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
+    let refresh_token = held
+        .refresh_token
+        .as_deref()
+        .context("the stored credential holds no refresh token")?;
+    let client = issued(held).map_err(|e| Spent(e.to_string()))?;
+    let resp = reqwest::Client::builder()
+        .timeout(REFRESH_TIMEOUT)
         .build()
-        .unwrap_or_default();
-    let resp = client
+        .context("building the IAM client")?
         .post(paths::iam_url(origin, TOKEN))
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
-            ("client_id", CLIENT_ID),
+            ("client_id", client.as_str()),
         ])
         .send()
         .await
         .context("calling IAM token endpoint")?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
+    if matches!(status.as_u16(), 400 | 401 | 403) {
+        return Err(Spent(format!("token refresh refused ({status}): {body}")).into());
+    }
     if !status.is_success() {
         bail!("token refresh failed ({status}): {body}");
     }
@@ -439,14 +513,20 @@ pub async fn refresh(origin: &str, refresh_token: &str) -> Result<TokenSet> {
 /// lives 30 days (provision `refreshExpireInHours: 720`), so a logout that only
 /// forgets leaves a month of spendable access behind on a machine you signed out
 /// of. Public client: `client_id` and the token are the whole request, which is
-/// exactly what a client with no secret has to offer (RFC 6749 §3.2.1).
-pub async fn revoke(origin: &str, refresh_token: &str) -> Result<()> {
+/// exactly what a client with no secret has to offer (RFC 6749 §3.2.1). The
+/// client is the one the credential was issued to; a credential with no refresh
+/// token holds no session at IAM, and sends nothing.
+pub async fn revoke(origin: &str, held: &TokenSet) -> Result<()> {
+    let Some(refresh_token) = held.refresh_token.as_deref() else {
+        return Ok(());
+    };
+    let client = issued(held)?;
     let resp = reqwest::Client::new()
         .post(paths::iam_url(origin, REVOKE))
         .form(&[
             ("token", refresh_token),
             ("token_type_hint", "refresh_token"),
-            ("client_id", CLIENT_ID),
+            ("client_id", client.as_str()),
         ])
         .send()
         .await
@@ -731,7 +811,7 @@ fn conclusion(origin: &str, failure: Option<&str>) -> String {
     let host = escape(origin_trim.split("://").nth(1).unwrap_or(origin_trim));
     match failure {
         None => {
-            let body = signed_in_page(origin, None, &[] as &[Shown], None, false);
+            let body = signed_in_page(origin, None, None);
             html_ok(&body)
         }
         Some(why) => {
@@ -778,23 +858,11 @@ fn id_label(host: &str) -> String {
     }
 }
 
-/// The page a finished `hanzo login` leaves in the browser. Same placement as
-/// hanzo.id: a name absolute at the top left, the message in the middle, the
-/// block-H centered at the bottom. On this loopback the name is "Hanzo AI" and
-/// it opens https://hanzo.ai — this page is not the ID product. The account
-/// sits only in the top right. Clicking it opens the other identities on
-/// this machine; choosing one is `/switch`. The center message does not
-/// repeat the name. Self-contained; the loopback has no stylesheet.
-fn signed_in_page(
-    origin: &str,
-    who: Option<&Shown>,
-    others: &[Shown],
-    confirm_remove: Option<&str>,
-    manage: bool,
-) -> String {
-    let origin = origin.trim_end_matches('/');
-    let host = escape(origin.split("://").nth(1).unwrap_or(origin));
-    let (corner, mark) = if host == "hanzo.id" {
+/// The corner name and footer mark of a loopback page, as hanzo.id places
+/// them: on hanzo.id the name is "Hanzo AI" and both open https://hanzo.ai;
+/// another issuer gets its own "<Name> ID" and no mark.
+fn chrome(host: &str) -> (String, String) {
+    if host == "hanzo.id" {
         (
             "<a href=\"https://hanzo.ai\" style=\"position:absolute;top:24px;left:24px;margin:0;\
              font-size:19px;font-weight:600;letter-spacing:-0.4px;line-height:1;color:#f4f4f5;\
@@ -809,30 +877,24 @@ fn signed_in_page(
             format!(
                 "<p style=\"position:absolute;top:24px;left:24px;margin:0;font-size:19px;font-weight:600;\
                  letter-spacing:-0.4px;line-height:1\">{}</p>",
-                id_label(&host)
+                id_label(host)
             ),
             String::new(),
         )
-    };
-    let account = match who {
-        Some(who) => account_menu(who, others, confirm_remove),
-        None if manage => add_account_button(),
-        None => String::new(),
-    };
-    let (heading, detail) = if who.is_none() && manage {
-        ("Signed out", "Add an account to keep going.")
-    } else {
-        (
-            "You're signed in",
-            "Return to the terminal.<br>You can close this tab.",
-        )
-    };
+    }
+}
+
+/// One loopback page: the corner, an optional account face at the top right,
+/// and a message in the middle. Self-contained; the loopback has no stylesheet.
+fn page(origin: &str, title: &str, account: &str, heading: &str, detail: &str) -> String {
+    let origin = origin.trim_end_matches('/');
+    let host = escape(origin.split("://").nth(1).unwrap_or(origin));
+    let (corner, mark) = chrome(&host);
     format!(
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=color-scheme content=dark>\
-         <meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Signed in — {host}</title>\
+         <meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — {host}</title>\
          <body style=\"margin:0;min-height:100vh;min-height:100dvh;background:#070709;color:#f4f4f5;position:relative;\
          display:flex;flex-direction:column;font-family:Zen,Inter,ui-sans-serif,system-ui,-apple-system,sans-serif\">\
-         <style>summary::-webkit-details-marker,summary::marker{{display:none}}summary{{list-style:none}}.hz summary:hover .pill{{background:#18181b}}.row:hover{{background:#1c1c21}}</style>\
          {corner}{account}\
          <main style=\"flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;\
          text-align:center;padding:5.5rem 1.5rem 1.5rem\">\
@@ -844,403 +906,144 @@ fn signed_in_page(
     )
 }
 
-const CHEVRON: &str = r##"<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="#a1a1aa" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+/// The page a finished `hanzo login` leaves in the browser. It names the
+/// identity that signed in, and the one the terminal goes on as: the same one,
+/// or `kept` when hanzo.id answered with an account nobody chose and the active
+/// identity stays as it was. Nothing on it changes anything; the port closes
+/// when the command returns, and `hanzo auth use` is the one way to switch.
+fn signed_in_page(origin: &str, who: Option<&Shown>, kept: Option<&str>) -> String {
+    let account = who.map(account_face).unwrap_or_default();
+    let detail = match (who, kept) {
+        (Some(who), Some(kept)) => format!(
+            "Added {}. The terminal still uses {}.<br><code>hanzo auth use {}</code> switches.",
+            escape(&who.id),
+            escape(kept),
+            escape(&who.id)
+        ),
+        (Some(who), None) => format!(
+            "The terminal continues as {}.<br>You can close this tab.",
+            escape(&who.id)
+        ),
+        (None, _) => "Return to the terminal.<br>You can close this tab.".to_string(),
+    };
+    page(origin, "Signed in", &account, "You're signed in", &detail)
+}
 
-/// Top-right account control. Closed, it is the account in use. Open, it lists
-/// every identity on this machine, grouped by the owner claim on that identity
-/// when more than one owner is present, and offers add and remove. Choosing a
-/// row switches. Nothing in the center repeats it.
-fn account_menu(who: &Shown, others: &[Shown], confirm_remove: Option<&str>) -> String {
-    let mut rows: Vec<&Shown> = vec![who];
-    for other in others {
-        if other.id != who.id {
-            rows.push(other);
-        }
-    }
-    let summary = account_face(who, true);
-    let mut owners: Vec<&str> = Vec::new();
-    for account in &rows {
-        let owner = owner_of(&account.id);
-        if !owners.contains(&owner) {
-            owners.push(owner);
-        }
-    }
-    let mut body = String::new();
-    for owner in &owners {
-        let mut group = String::new();
-        for account in &rows {
-            if owner_of(&account.id) == *owner {
-                group.push_str(&account_row(
-                    account,
-                    account.id == who.id,
-                    confirm_remove,
-                    owners.len() == 1,
-                ));
-            }
-        }
-        if owners.len() > 1 {
-            body.push_str(&section(&escape(owner), &group));
-        } else {
-            body.push_str(&group);
-        }
-    }
-    format!(
-        "<details class=\"hz\" style=\"position:absolute;top:16px;right:16px\">\
-         <summary style=\"list-style:none;cursor:pointer\">{summary}</summary>\
-         <div style=\"position:absolute;right:0;margin-top:8px;min-width:280px;background:#111113;\
-         border:1px solid #2e2e33;border-radius:14px;padding:6px 6px 4px;text-align:left;\
-         box-shadow:0 16px 40px rgba(0,0,0,.45)\">{body}\
-         <a href=\"/add\" style=\"display:block;margin-top:6px;padding:10px;border-top:1px solid #2a2a2e;\
-         color:#f4f4f5;text-decoration:none;font-size:13px;font-weight:600\">Add account</a>\
-         </div></details>"
+/// The page `hanzo auth logout` leaves in the browser once hanzo.id has ended
+/// that browser's sessions.
+fn signed_out_page(origin: &str) -> String {
+    page(
+        origin,
+        "Signed out",
+        "",
+        "You're signed out",
+        "This browser is signed out too, so the next sign-in asks which account.<br>You can close this tab.",
     )
 }
 
-/// The owner half of `owner/name`. An identity that is not in that shape is
-/// shown under itself.
-fn owner_of(id: &str) -> &str {
-    id.split_once('/').map(|(owner, _)| owner).unwrap_or(id)
-}
-
-fn section(title: &str, rows: &str) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    format!(
-        "<div style=\"padding:8px 10px 2px;font-size:11px;font-weight:600;color:#71717a\">{title}</div>{rows}"
-    )
-}
-
-fn account_row(who: &Shown, current: bool, confirm_remove: Option<&str>, show_owner: bool) -> String {
-    let face = account_lines(who, show_owner);
-    let enc = url_encode(&who.id);
-    let confirm = confirm_remove == Some(who.id.as_str());
-    let mark = if current {
-        "<span style=\"margin-left:8px;color:#f4f4f5\">✓</span>"
-    } else {
-        ""
-    };
-    let switch = if current {
-        format!("<div style=\"display:flex;align-items:center;gap:10px;flex:1\">{face}{mark}</div>")
-    } else {
-        format!(
-            "<a href=\"/switch?id={enc}\" style=\"display:flex;align-items:center;gap:10px;flex:1;color:#f4f4f5;text-decoration:none\">{face}</a>"
-        )
-    };
-    let action = if confirm {
-        format!(
-            "<span style=\"display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none\">\
-             <a href=\"/remove?id={enc}&amp;yes=1\" style=\"color:#fca5a5;font-size:12px;font-weight:600;text-decoration:none\">Yes, remove</a>\
-             <a href=\"/callback\" style=\"color:#a1a1aa;font-size:12px;text-decoration:none\">Cancel</a></span>"
-        )
-    } else {
-        format!(
-            "<a href=\"/remove?id={enc}\" style=\"color:#71717a;font-size:12px;text-decoration:none;flex:none\">Remove</a>"
-        )
-    };
-    let bg = if current { "background:#1c1c21;" } else { "" };
-    format!(
-        "<div class=\"row\" style=\"display:flex;align-items:center;gap:8px;margin-top:2px;padding:8px 10px;border-radius:8px;{bg}\">{switch}{action}</div>"
-    )
-}
-
-fn add_account_button() -> String {
-    "<a href=\"/add\" style=\"position:absolute;top:16px;right:16px;padding:8px 14px;\
-      border:1px solid #2a2a2e;border-radius:999px;background:#101012;color:#f4f4f5;\
-      text-decoration:none;font-size:13px;font-weight:600\">Add account</a>"
-        .to_string()
-}
-
-fn account_face(who: &Shown, openable: bool) -> String {
-    let chevron = if openable {
-        format!("<span style=\"display:inline-flex;margin-left:2px\">{CHEVRON}</span>")
-    } else {
-        String::new()
-    };
-    format!(
-        "<span class=\"pill\" style=\"display:inline-flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;\
-         border:1px solid #2a2a2e;border-radius:999px;background:#101012\">{lines}{chevron}</span>",
-        lines = account_lines(who, true)
-    )
-}
-
-fn account_lines(who: &Shown, show_owner: bool) -> String {
+/// The account a page names, top right: initial, name, and owner.
+fn account_face(who: &Shown) -> String {
     let letter = who
         .label
         .chars()
         .find(|c| c.is_alphanumeric())
         .map(|c| c.to_uppercase().to_string())
         .unwrap_or_else(|| "?".to_string());
-    let letter = escape(&letter);
-    let avatar = format!(
-        "<span style=\"width:28px;height:28px;border-radius:999px;background:#27272a;display:inline-flex;\
-         align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none\">{letter}</span>"
-    );
     let name = who.id.split_once('/').map(|(_, name)| name).unwrap_or(who.id.as_str());
     let title = if who.label == who.id { name } else { who.label.as_str() };
-    let sub = owner_of(&who.id);
-    let text = if show_owner {
-        format!(
-            "<span style=\"display:flex;flex-direction:column;line-height:1.2;text-align:left\">\
-             <span style=\"font-size:13px;font-weight:600\">{}</span>\
-             <span style=\"margin-top:2px;font-size:11px;color:#a1a1aa\">{}</span></span>",
-            escape(title),
-            escape(sub)
-        )
-    } else {
-        format!(
-            "<span style=\"font-size:13px;font-weight:600;line-height:1.2;text-align:left\">{}</span>",
-            escape(title)
-        )
-    };
-    format!("{avatar}{text}")
+    let owner = who.id.split_once('/').map(|(owner, _)| owner).unwrap_or(who.id.as_str());
+    format!(
+        "<span style=\"position:absolute;top:16px;right:16px;display:inline-flex;align-items:center;gap:8px;\
+         padding:4px 10px 4px 4px;border:1px solid #2a2a2e;border-radius:999px;background:#101012\">\
+         <span style=\"width:28px;height:28px;border-radius:999px;background:#27272a;display:inline-flex;\
+         align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none\">{}</span>\
+         <span style=\"display:flex;flex-direction:column;line-height:1.2;text-align:left\">\
+         <span style=\"font-size:13px;font-weight:600\">{}</span>\
+         <span style=\"margin-top:2px;font-size:11px;color:#a1a1aa\">{}</span></span></span>",
+        escape(&letter),
+        escape(title),
+        escape(owner)
+    )
 }
 
-fn url_encode(text: &str) -> String {
-    let mut out = String::new();
-    for b in text.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
+/// The end-session URL (OIDC RP-Initiated Logout 1.0 §2) for `client`. With
+/// `back`, the loopback IAM returns the browser to and the state it carries.
+///
+/// It names the client by `client_id` and sends no `id_token_hint`: IAM accepts
+/// either to name the application, ends every session that browser holds
+/// whichever it gets, and the CLI's own grant is already revoked (RFC 7009). A
+/// hint would add nothing here but a signed identity assertion written into the
+/// browser's history and whatever syncs it.
+fn end_session_url(origin: &str, client: &str, back: Option<(&str, &str)>) -> Result<Url> {
+    let mut q = vec![("client_id", client)];
+    if let Some((redirect, state)) = back {
+        q.push(("post_logout_redirect_uri", redirect));
+        q.push(("state", state));
     }
-    out
+    Url::parse_with_params(&paths::iam_url(origin, LOGOUT), &q).context("building end-session URL")
 }
 
-/// Hand the loopback to a short-lived copy of this binary and return. The
-/// child answers a reload and a click on another account. This process does
-/// not wait for that click.
-fn detach_menu(listener: TcpListener, origin: &str, brand: &str) {
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        let fd = listener.as_raw_fd();
-        unsafe {
-            let flags = libc::fcntl(fd, libc::F_GETFD);
-            if flags >= 0 {
-                libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
-            }
-        }
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = std::process::Command::new(exe)
-                .env("HANZO_LOGIN_FD", fd.to_string())
-                .env("HANZO_LOGIN_ORIGIN", origin)
-                .env("HANZO_LOGIN_BRAND", brand)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
+/// How long `hanzo auth logout` waits for the browser to come back.
+const SIGN_OUT_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// End the browser's session at the issuer, so the next `hanzo auth login`
+/// asks which account rather than continuing as the one that signed out.
+///
+/// The session lives in a cookie only the browser holds, so only a browser
+/// navigation can end it. With a browser here the CLI opens the end-session
+/// URL and waits on a loopback for IAM to return the tab (the client's
+/// registered `http://127.0.0.1/callback`, any port, RFC 8252 §7.3), then
+/// closes the port. Without one it prints the URL. Returns whether the
+/// browser confirmed.
+pub async fn end_session(origin: &str, client: &str, open: bool) -> Result<bool> {
+    let host = origin.trim_end_matches('/').split("://").nth(1).unwrap_or(origin).to_string();
+    if !open {
+        let url = end_session_url(origin, client, None)?;
+        println!("To sign out of {host} in a browser too, open:\n  {url}");
+        return Ok(false);
     }
-    #[cfg(not(unix))]
-    let _ = (origin, brand);
-    drop(listener);
-}
-
-/// The loopback after `hanzo login` has returned to the shell. A fixed three
-/// minutes, then the port closes. Clicks switch, remove, or start another
-/// sign-in. A new connection does not extend the clock; starting an add
-/// gives a fresh three minutes for that browser round trip.
-pub async fn serve_detached_menu() -> Result<()> {
-    let fd: i32 = std::env::var("HANZO_LOGIN_FD")
-        .context("HANZO_LOGIN_FD")?
-        .parse()
-        .context("HANZO_LOGIN_FD")?;
-    let origin = std::env::var("HANZO_LOGIN_ORIGIN").context("HANZO_LOGIN_ORIGIN")?;
-    let brand = std::env::var("HANZO_LOGIN_BRAND").context("HANZO_LOGIN_BRAND")?;
-    let std_listener = inherited_listener(fd)?;
-    std_listener
-        .set_nonblocking(true)
-        .context("loopback nonblocking")?;
-    let listener = TcpListener::from_std(std_listener).context("loopback listener")?;
-    let mut deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
-    let mut pending: Option<PendingAdd> = None;
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        let accepted = tokio::time::timeout(remaining, listener.accept()).await;
-        let Ok(Ok((mut stream, _))) = accepted else { break };
-        let request = match tokio::time::timeout(
-            std::time::Duration::from_millis(400),
-            read_request(&mut stream),
-        )
+    let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        {
+        .context("binding loopback sign-out server")?;
+    let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr()?.port());
+    let state = pkce::generate_state();
+    let url = end_session_url(origin, client, Some((redirect.as_str(), state.as_str())))?;
+    println!("Signing out of {host} in your browser...");
+    println!("If it does not open, visit:\n  {url}");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let to_open = url.to_string();
+    std::thread::spawn(move || {
+        let _ = webbrowser::open(&to_open);
+    });
+    Ok(matches!(
+        tokio::time::timeout(SIGN_OUT_WAIT, signed_out(&listener, &state, origin)).await,
+        Ok(true)
+    ))
+}
+
+/// Accept loopback requests until IAM returns the tab with our state, answer it
+/// with the signed-out page, and return. Anything else gets an empty answer:
+/// a redirect with another state is some other tab, and this one may still come.
+/// False only when the listener itself fails.
+async fn signed_out(listener: &TcpListener, state: &str, origin: &str) -> bool {
+    loop {
+        let Ok((mut stream, _)) = listener.accept().await else { return false };
+        let request = match tokio::time::timeout(std::time::Duration::from_secs(3), read_request(&mut stream)).await {
             Ok(Ok(body)) => body,
             _ => {
                 let _ = stream.shutdown().await;
                 continue;
             }
         };
-        let target = request_target(&request).unwrap_or("").to_string();
-        if target == "/add" || target.starts_with("/add?") {
-            let pkce = pkce::generate_pkce();
-            let state = pkce::generate_state();
-            let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-            let redirect = format!("http://127.0.0.1:{port}/callback");
-            if let Ok(url) = build_authorize_url(&origin, &redirect, &pkce.challenge, &state, true) {
-                pending = Some(PendingAdd { verifier: pkce.verifier, state });
-                deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
-                reply(&mut stream, &see_other(url.as_str())).await;
-                continue;
-            }
+        let target = request_target(&request).unwrap_or("");
+        let ours = target.starts_with("/callback")
+            && parse_callback(target).is_ok_and(|cb| cb.state.as_deref() == Some(state));
+        if ours {
+            reply(&mut stream, &html_ok(&signed_out_page(origin))).await;
+            return true;
         }
-        if target.starts_with("/callback") {
-            if let Some(add) = pending.as_ref() {
-                if let Ok(cb) = parse_callback(&target) {
-                    if cb.state.as_deref() == Some(add.state.as_str()) {
-                        if let Some(code) = cb.code.clone() {
-                            let verifier = add.verifier.clone();
-                            pending = None;
-                            let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-                            let redirect = format!("http://127.0.0.1:{port}/callback");
-                            if let Ok(tokens) = exchange_code(&origin, &code, &redirect, &verifier).await {
-                                if let Ok(mut cfg) = crate::config::Config::load(None) {
-                                    let _ = super::store::add(&mut cfg, &brand, &tokens);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(query) = target.strip_prefix("/remove?") {
-            let id = query_id(query);
-            let yes = query.split('&').any(|p| p == "yes=1");
-            if yes {
-                if let Some(id) = id {
-                    drop_account(&origin, &brand, &id).await;
-                }
-                reply(&mut stream, &menu_page(&origin, &brand, None)).await;
-                continue;
-            }
-            if let Some(id) = id {
-                reply(&mut stream, &menu_page(&origin, &brand, Some(&id))).await;
-                continue;
-            }
-        }
-        if let Some(id) = target.strip_prefix("/switch?").and_then(query_id) {
-            if let Ok(mut cfg) = crate::config::Config::load(None) {
-                if let Ok(sel) = id.parse::<super::identity::Selector>() {
-                    let _ = super::store::switch(&mut cfg, &brand, Some(sel));
-                }
-            }
-        }
-        if target.starts_with("/callback") || target.starts_with("/switch") {
-            reply(&mut stream, &menu_page(&origin, &brand, None)).await;
-        } else {
-            reply(&mut stream, EMPTY_OK).await;
-        }
+        reply(&mut stream, EMPTY_OK).await;
     }
-    Ok(())
-}
-
-/// The loopback the parent kept open. On Unix the child is given the listening
-/// socket; this OS is the one `detach_menu` actually hands off.
-fn inherited_listener(fd: i32) -> Result<std::net::TcpListener> {
-    #[cfg(unix)]
-    {
-        Ok(unsafe { <std::net::TcpListener as std::os::fd::FromRawFd>::from_raw_fd(fd) })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-        bail!("the signed-in account menu is handed off through a file descriptor")
-    }
-}
-
-struct PendingAdd {
-    verifier: String,
-    state: String,
-}
-
-fn see_other(url: &str) -> String {
-    format!(
-        "HTTP/1.1 303 See Other\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    )
-}
-
-fn menu_page(origin: &str, brand: &str, confirm_remove: Option<&str>) -> String {
-    let (who, others) = menu_accounts(brand);
-    html_ok(&signed_in_page(origin, who.as_ref(), &others, confirm_remove, true))
-}
-
-/// Remove one stored identity and tell IAM to drop its refresh token.
-/// If that identity was the one in use, the next one on this machine becomes
-/// current so the menu still has someone to show.
-async fn drop_account(origin: &str, brand: &str, id: &str) {
-    let Ok(sel) = id.parse::<super::identity::Selector>() else {
-        return;
-    };
-    let Ok(mut cfg) = crate::config::Config::load(None) else {
-        return;
-    };
-    let was_active = super::store::active(&cfg, brand).map(|i| i.to_string()).as_deref() == Some(id);
-    let Ok(removed) = super::store::remove(&mut cfg, brand, Some(sel)) else {
-        return;
-    };
-    if let Some(rt) = removed.refresh_token.as_deref() {
-        let _ = revoke(origin, rt).await;
-    }
-    if !was_active {
-        return;
-    }
-    let Ok(mut cfg) = crate::config::Config::load(None) else {
-        return;
-    };
-    if super::store::active(&cfg, brand).is_some() {
-        return;
-    }
-    if let Some(next) = super::store::list(&cfg, brand).into_iter().next() {
-        let _ = super::store::switch(&mut cfg, brand, Some(super::identity::Selector::Exact(next)));
-    }
-}
-
-fn menu_accounts(brand: &str) -> (Option<Shown>, Vec<Shown>) {
-    let Ok(cfg) = crate::config::Config::load(None) else {
-        return (None, Vec::new());
-    };
-    let accounts = known_accounts(&cfg, brand);
-    let who = super::store::active(&cfg, brand).and_then(|id| {
-        let id = id.to_string();
-        accounts.iter().find(|account| account.id == id).cloned()
-    });
-    (who, accounts)
-}
-
-fn query_id(query: &str) -> Option<String> {
-    for pair in query.split('&') {
-        let (key, value) = pair.split_once('=')?;
-        if key == "id" {
-            return Some(percent_decode(value));
-        }
-    }
-    None
-}
-
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
-                out.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Text into HTML. The provider's `error` rides in on the query string, so it
@@ -1256,7 +1059,275 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::iam::identity::testjwt::{claims_jwt, jwt};
     use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// A credential `client` was issued, holding `refresh_token`.
+    fn issued_to(client: &str, refresh_token: &str) -> TokenSet {
+        TokenSet {
+            access_token: claims_jwt(&format!(r#"{{"owner":"admin","name":"z","azp":"{client}"}}"#)),
+            token_type: "Bearer".into(),
+            refresh_token: Some(refresh_token.into()),
+            id_token: None,
+            expires_in: None,
+            scope: None,
+        }
+    }
+
+    /// A stand-in IAM that records every request and answers from `answer`.
+    async fn stand(
+        answer: fn(&str) -> (&'static str, String),
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let req = read_http(&mut stream).await;
+                record.lock().unwrap().push(req.clone());
+                let (status, body) = answer(&req);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        (origin, seen)
+    }
+
+    /// A descriptor as IAM serves it: the client's org and its grants.
+    fn described(org: &str, device: bool) -> String {
+        let device = if device { r#","urn:ietf:params:oauth:grant-type:device_code""# } else { "" };
+        format!(
+            r#"{{"status":"ok","msg":"","data":{{"organization":"{org}","grantTypes":["authorization_code","refresh_token"{device}]}}}}"#
+        )
+    }
+
+    /// `--as <org>` is refused before any browser opens when IAM has no
+    /// `<org>-cli`, or when that client signs in to another org; otherwise the
+    /// descriptor says whether the client permits the device grant.
+    #[tokio::test]
+    async fn wire_an_org_without_its_own_cli_is_refused_before_sign_in() {
+        let (origin, seen) = stand(|req| {
+            if req.contains("clientId=admin-cli") {
+                ("400 Bad Request", r#"{"status":"error","msg":"the application does not exist","data":null}"#.into())
+            } else if req.contains("clientId=lux-cli") {
+                ("200 OK", described("lux", false))
+            } else if req.contains("clientId=hanzo-cli") || req.contains("clientId=odd-cli") {
+                ("200 OK", described("hanzo", true))
+            } else {
+                ("200 OK", "<!doctype html>".into())
+            }
+        })
+        .await;
+
+        let err = served(&origin, Some("admin")).await.unwrap_err().to_string();
+        assert!(err.contains("IAM has no `admin-cli` application"), "{err}");
+        assert!(err.contains("`--as admin` has no admin sign-in"), "{err}");
+        assert!(!served(&origin, Some("lux")).await.unwrap(), "lux-cli grants no device code");
+        assert!(served(&origin, None).await.unwrap(), "hanzo-cli grants the device code");
+        let err = served(&origin, Some("odd")).await.unwrap_err().to_string();
+        assert!(err.contains("`odd-cli` application signs in to org `hanzo`, not `odd`"), "{err}");
+        let err = served(&origin, Some("html")).await.unwrap_err().to_string();
+        assert!(err.contains("unreadable"), "{err}");
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].starts_with("GET /v1/iam/auth/application?"), "{}", seen[0]);
+        assert!(seen[0].contains("clientId=admin-cli") && seen[0].contains("responseType=code"));
+        assert!(seen[1].contains("clientId=lux-cli"), "admin fell back to another client: {}", seen[1]);
+    }
+
+    /// The code is exchanged through `--as`'s client, and a token for another
+    /// org is refused rather than returned for filing.
+    #[tokio::test]
+    async fn wire_the_exchange_runs_as_the_orgs_client_and_checks_the_owner() {
+        let (origin, seen) = stand(|req| {
+            let owner = if req.contains("code=wrong") { "hanzo" } else { "admin" };
+            let token = jwt(owner, "z");
+            ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-1"}}"#))
+        })
+        .await;
+        let redirect = "http://127.0.0.1:1/callback";
+
+        let tokens = exchange_code(&origin, Some("admin"), "right", redirect, "v").await.unwrap();
+        assert_eq!(Identity::from_access_token(&tokens.access_token).unwrap().to_string(), "admin/z");
+        let err = exchange_code(&origin, Some("admin"), "wrong", redirect, "v")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("IAM returned hanzo/z, which is not in admin"), "{err}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen.iter().all(|req| req.contains("client_id=admin-cli")), "{seen:?}");
+    }
+
+    /// Refresh and revocation present the client the credential was issued to,
+    /// read off its own `azp` (else its one `aud`), never a constant; a
+    /// credential naming no client sends nothing.
+    #[tokio::test]
+    async fn wire_refresh_and_revoke_present_the_credentials_own_client() {
+        let (origin, seen) = stand(|req| {
+            if req.contains("/v1/iam/oauth/revoke") {
+                return ("200 OK", String::new());
+            }
+            let token = jwt("admin", "z");
+            ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-2"}}"#))
+        })
+        .await;
+
+        refresh(&origin, &issued_to("admin-cli", "rt-1")).await.unwrap();
+        revoke(&origin, &issued_to("admin-cli", "rt-1")).await.unwrap();
+        let aud = TokenSet {
+            access_token: claims_jwt(r#"{"owner":"lux","name":"z","aud":["lux-cli"]}"#),
+            ..issued_to("", "rt-lux")
+        };
+        refresh(&origin, &aud).await.unwrap();
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 3);
+            assert!(seen[0].contains("grant_type=refresh_token") && seen[0].contains("client_id=admin-cli"));
+            assert!(seen[1].contains("/v1/iam/oauth/revoke") && seen[1].contains("client_id=admin-cli"));
+            assert!(seen[2].contains("refresh_token=rt-lux") && seen[2].contains("client_id=lux-cli"));
+            assert!(seen.iter().all(|req| !req.contains("hanzo-cli")), "{seen:?}");
+        }
+
+        let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
+        let err = refresh(&origin, &nameless).await.unwrap_err().to_string();
+        assert!(err.contains("names no client"), "{err}");
+        let err = revoke(&origin, &nameless).await.unwrap_err().to_string();
+        assert!(err.contains("names no client"), "{err}");
+        revoke(&origin, &TokenSet { refresh_token: None, ..nameless }).await.unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 3, "a credential naming no client was sent anyway");
+    }
+
+    /// A refresh IAM refuses is `Spent` (sign in again); one it never answered,
+    /// or answered with its own failure, is not.
+    #[tokio::test]
+    async fn wire_a_refused_refresh_is_spent_and_an_unanswered_one_is_not() {
+        let (origin, _) = stand(|req| {
+            if req.contains("refresh_token=rt-down") {
+                ("503 Service Unavailable", String::new())
+            } else if req.contains("refresh_token=rt-busy") {
+                ("429 Too Many Requests", String::new())
+            } else if req.contains("refresh_token=rt-slow") {
+                ("408 Request Timeout", String::new())
+            } else if req.contains("refresh_token=rt-denied") {
+                ("403 Forbidden", String::new())
+            } else {
+                ("400 Bad Request", r#"{"error":"invalid_grant","error_description":"refresh token expired"}"#.into())
+            }
+        })
+        .await;
+        let refused = refresh(&origin, &issued_to("admin-cli", "rt-old")).await.unwrap_err();
+        assert!(refused.is::<Spent>(), "{refused}");
+        assert!(refused.to_string().contains("refresh token expired"), "{refused}");
+        let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
+        assert!(refresh(&origin, &nameless).await.unwrap_err().is::<Spent>());
+        let denied = refresh(&origin, &issued_to("admin-cli", "rt-denied")).await.unwrap_err();
+        assert!(denied.is::<Spent>(), "{denied}");
+        for transient in ["rt-down", "rt-busy", "rt-slow"] {
+            let err = refresh(&origin, &issued_to("admin-cli", transient)).await.unwrap_err();
+            assert!(!err.is::<Spent>(), "{transient}: {err}");
+        }
+        let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gone = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        assert!(!refresh(&gone, &issued_to("admin-cli", "rt")).await.unwrap_err().is::<Spent>());
+    }
+
+    fn admin(req: &str) -> (&'static str, String) {
+        let token = claims_jwt(r#"{"owner":"admin","name":"z","sub":"u-1","azp":"admin-cli","aud":["admin-cli"]}"#);
+        if req.starts_with("GET /v1/iam/auth/application") {
+            return ("200 OK", described("admin", false));
+        }
+        if req.contains("/v1/iam/oauth/revoke") {
+            return ("200 OK", String::new());
+        }
+        ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-admin"}}"#))
+    }
+
+    /// `hanzo --as admin auth login` end to end over the wire, as it runs where
+    /// no browser opens: the descriptor grants `admin-cli` no device code, so
+    /// the sign-in is the browser flow's (authorize URL, pasted code, exchange),
+    /// then the owner check, a refresh and a revocation. Every request names
+    /// `admin-cli`, none `hanzo-cli`, and nothing reaches the device endpoint.
+    /// (Filing it beside the default is the shipped binary's test in
+    /// `tests/menu.rs`; picking the leg is `login::by_device`.)
+    #[tokio::test]
+    async fn wire_as_admin_signs_in_by_paste_and_renews_through_admin_cli() {
+        let (origin, seen) = stand(admin).await;
+        let org = Some("admin");
+
+        assert!(!served(&origin, org).await.unwrap(), "admin-cli must not grant the device code");
+        let ask = Ask { choose: true, hint: None };
+        let url = build_authorize_url(&origin, org, "http://127.0.0.1:1/callback", "C", "S", &ask).unwrap();
+        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["client_id"], "admin-cli");
+        let tokens = exchange_code(&origin, org, "pasted", "http://127.0.0.1:1/callback", "V").await.unwrap();
+        let fresh = refresh(&origin, &tokens).await.unwrap();
+        revoke(&origin, &fresh).await.unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 4, "{seen:?}");
+        assert!(seen[0].contains("clientId=admin-cli"), "{}", seen[0]);
+        assert!(seen[1].contains("grant_type=authorization_code") && seen[1].contains("code=pasted"));
+        assert!(seen[2].contains("grant_type=refresh_token") && seen[2].contains("refresh_token=rt-admin"));
+        assert!(seen[3].contains("/v1/iam/oauth/revoke"));
+        assert!(seen[1..].iter().all(|req| req.contains("client_id=admin-cli")), "{seen:?}");
+        assert!(seen.iter().all(|req| !req.contains("hanzo-cli") && !req.contains("oauth/device")), "{seen:?}");
+    }
+
+    fn lux(req: &str) -> (&'static str, String) {
+        if req.starts_with("GET /v1/iam/auth/application") {
+            return ("200 OK", described("lux", true));
+        }
+        if req.contains("/v1/iam/oauth/device") {
+            return (
+                "200 OK",
+                r#"{"device_code":"dc-1","user_code":"ABCD-EFGH","verification_uri":"http://127.0.0.1/device","expires_in":60,"interval":1}"#.into(),
+            );
+        }
+        let token = claims_jwt(r#"{"owner":"lux","name":"z","sub":"u-1","azp":"lux-cli"}"#);
+        ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-lux"}}"#))
+    }
+
+    /// A client whose descriptor grants the device code signs in by it where no
+    /// browser opens, and the grant and its poll both name that org's client.
+    #[tokio::test]
+    async fn wire_a_client_granted_the_device_code_signs_in_by_it_as_itself() {
+        let (origin, seen) = stand(lux).await;
+        assert!(served(&origin, Some("lux")).await.unwrap());
+        let tokens = crate::iam::device::login(&origin, "hanzo", Some("lux")).await.unwrap();
+        owned(&tokens, Some("lux")).unwrap();
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert!(seen[1].contains("/v1/iam/oauth/device") && seen[1].contains("client_id=lux-cli"));
+        assert!(seen[2].contains("device_code=dc-1") && seen[2].contains("client_id=lux-cli"));
+        assert!(seen.iter().all(|req| !req.contains("hanzo-cli")), "{seen:?}");
+    }
+
+    /// Where no browser opens and stdin is not a terminal, nothing can paste
+    /// the callback, so the paste leg refuses at once instead of waiting forever.
+    #[tokio::test]
+    async fn a_paste_leg_with_no_terminal_refuses_at_once() {
+        if std::io::stdin().is_terminal() {
+            return;
+        }
+        let err = match login("hanzo", Some("admin"), false, &Ask::default()).await {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("a sign-in with nothing to paste into started"),
+        };
+        assert!(err.contains("`admin-cli` permits no device grant"), "{err}");
+        assert!(err.contains("run this at a terminal"), "{err}");
+    }
 
     #[test]
     fn server_url_known_and_unknown() {
@@ -1270,17 +1341,18 @@ mod tests {
     fn authorize_url_is_hip0111_pkce_s256() {
         let url = build_authorize_url(
             "https://hanzo.id",
+            None,
             "http://127.0.0.1:54321/callback",
             "CHALLENGE",
             "STATE",
-            false,
+            &Ask::default(),
         )
         .unwrap();
         // Exact HIP-0111 path — never /api/, never legacy /oauth/authorize.
         assert_eq!(url.path(), "/v1/iam/oauth/authorize");
         let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["response_type"], "code");
-        assert_eq!(q["client_id"], CLIENT_ID);
+        assert_eq!(q["client_id"], "hanzo-cli");
         assert_eq!(q["code_challenge_method"], "S256");
         assert_eq!(q["code_challenge"], "CHALLENGE");
         assert_eq!(q["state"], "STATE");
@@ -1290,17 +1362,58 @@ mod tests {
             !q.contains_key("prompt"),
             "a plain login reuses the browser's session"
         );
+        assert!(!q.contains_key("login_hint"));
 
         let chosen = build_authorize_url(
             "https://hanzo.id",
+            Some("admin"),
             "http://127.0.0.1:1/callback",
             "C",
             "S",
-            true,
+            &Ask { choose: true, hint: None },
         )
         .unwrap();
         let q: HashMap<_, _> = chosen.query_pairs().into_owned().collect();
         assert_eq!(q["prompt"], "select_account");
+        assert_eq!(q["client_id"], "admin-cli", "--as admin signs in through admin's own client");
+
+        // `--account`: the hint, and no chooser, since the account is named.
+        let named = build_authorize_url(
+            "https://hanzo.id",
+            None,
+            "http://127.0.0.1:1/callback",
+            "C",
+            "S",
+            &Ask { choose: false, hint: Some("z@hanzo.ai".into()) },
+        )
+        .unwrap();
+        let q: HashMap<_, _> = named.query_pairs().into_owned().collect();
+        assert_eq!(q["login_hint"], "z@hanzo.ai");
+        assert!(!q.contains_key("prompt"));
+    }
+
+    #[test]
+    fn the_client_is_the_orgs_own_cli() {
+        assert_eq!(client(None), "hanzo-cli");
+        assert_eq!(client(Some("admin")), "admin-cli");
+        assert_eq!(client(Some("lux")), "lux-cli");
+    }
+
+    #[test]
+    fn a_token_outside_the_named_org_is_refused() {
+        let held = |owner: &str| TokenSet {
+            access_token: jwt(owner, "z"),
+            token_type: "Bearer".into(),
+            refresh_token: None,
+            id_token: None,
+            expires_in: None,
+            scope: None,
+        };
+        owned(&held("hanzo"), None).unwrap();
+        owned(&held("admin"), Some("admin")).unwrap();
+        let err = owned(&held("hanzo"), Some("admin")).unwrap_err().to_string();
+        assert!(err.contains("hanzo/z") && err.contains("admin-cli"), "{err}");
+        assert!(err.contains("not in admin") && err.contains("nothing was stored"), "{err}");
     }
 
     #[test]
@@ -1370,90 +1483,143 @@ mod tests {
         assert!(response.contains("background:#070709"), "got: {response}");
     }
 
+    /// The page names who signed in and who the terminal goes on as, and
+    /// offers nothing to click: switching is `hanzo auth use`, in the terminal.
     #[test]
-    fn signed_in_page_names_the_account_and_offers_a_switch() {
+    fn signed_in_page_names_the_account_and_the_one_the_terminal_uses() {
         let who = Shown {
             label: "z@hanzo.ai".into(),
             id: "hanzo/z".into(),
         };
-        let page = signed_in_page(
-            "https://hanzo.id",
-            Some(&who),
-            &[
-                Shown {
-                    label: "a@lux.id".into(),
-                    id: "lux/a".into(),
-                },
-                Shown {
-                    label: "hanzo/Zach Kelling".into(),
-                    id: "hanzo/Zach Kelling".into(),
-                },
-                Shown {
-                    label: "hanzo".into(),
-                    id: "hanzo/hanzo".into(),
-                },
-                who.clone(),
-            ],
-            None,
-            true,
-        );
-        let main = page.split("<main").nth(1).unwrap_or("");
-        assert!(!main.contains("z@hanzo.ai"), "{page}");
-        assert!(!main.contains("lux/a"), "{page}");
+        let page = signed_in_page("https://hanzo.id", Some(&who), None);
+        assert!(page.contains("The terminal continues as hanzo/z."), "{page}");
         assert!(page.contains("z@hanzo.ai"), "{page}");
-        assert!(page.contains("Zach Kelling"), "{page}");
-        assert!(!page.contains("Personal"), "{page}");
-        assert!(!page.contains("Organizations"), "{page}");
-        assert!(!page.contains("Organization"), "{page}");
-        assert!(page.contains(">hanzo</div>"), "{page}");
-        assert!(page.contains(">lux</div>"), "{page}");
-        assert!(page.contains(">Add account<"), "{page}");
-        assert!(page.contains("/remove?id=hanzo%2Fz"), "{page}");
         assert!(page.contains("top:16px;right:16px"), "{page}");
-        assert!(page.contains("a@lux.id"), "{page}");
-        assert!(page.contains("/switch?id=lux%2Fa"), "{page}");
-        assert!(page.contains("/switch?id=hanzo%2FZach%20Kelling"), "{page}");
-        assert!(page.contains("<details"), "{page}");
-        assert!(page.contains('✓'), "{page}");
-        assert!(!page.contains("Also on this machine"), "{page}");
-        assert!(!page.contains("hanzo auth use"), "{page}");
         assert_eq!(page.matches("href=\"https://hanzo.ai\"").count(), 2, "{page}");
-        let confirming = signed_in_page("https://hanzo.id", Some(&who), &[who.clone()], Some("hanzo/z"), true);
-        assert!(confirming.contains("Yes, remove"), "{confirming}");
-        assert!(confirming.contains("/remove?id=hanzo%2Fz&amp;yes=1"), "{confirming}");
+        for gone in ["/switch", "/remove", "/add", "<details", "Add account"] {
+            assert!(!page.contains(gone), "{gone}: {page}");
+        }
+
+        let kept = signed_in_page("https://hanzo.id", Some(&who), Some("hanzo/grundy"));
+        assert!(kept.contains("Added hanzo/z. The terminal still uses hanzo/grundy."), "{kept}");
+        assert!(kept.contains("<code>hanzo auth use hanzo/z</code>"), "{kept}");
+
+        let hostile = Shown {
+            label: "<b>x</b>".into(),
+            id: "hanzo/<i>".into(),
+        };
+        let page = signed_in_page("https://hanzo.id", Some(&hostile), Some("hanzo/<s>"));
+        assert!(!page.contains("<b>x") && !page.contains("<i>") && !page.contains("<s>"), "{page}");
     }
 
     // The first write is not the tab's only try. Safari retries the redirect,
-    // and the process has to be there for it, then gone — a listener that
-    // stays up is the hang.
+    // and the process has to be there for it while the identity is filed,
+    // then gone: nothing listens once the command has returned.
     #[tokio::test]
-    async fn the_signed_in_page_answers_a_retry_then_the_port_closes() {
-        use std::time::Duration;
+    async fn finish_answers_the_tab_and_its_retry_then_closes_the_port() {
         use tokio::net::TcpStream;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let page = html_ok("<html>You're signed in</html>");
-        let server = tokio::spawn(async move {
-            serve_signed_in(&listener, &page, Duration::from_millis(600)).await;
+        let mut tab = TcpStream::connect(addr).await.unwrap();
+        let (held_stream, _) = listener.accept().await.unwrap();
+        let held = Held {
+            listener,
+            origin: "https://hanzo.id".into(),
+            waiting: vec![held_stream],
+        };
+        let tokens = TokenSet {
+            access_token: jwt("hanzo", "z"),
+            token_type: "Bearer".into(),
+            refresh_token: None,
+            id_token: None,
+            expires_in: None,
+            scope: None,
+        };
+        let (go, wait) = tokio::sync::oneshot::channel::<()>();
+        let finished = tokio::spawn(async move {
+            finish(held, &tokens, None, async {
+                let _ = wait.await;
+                Ok(7)
+            })
+            .await
         });
 
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        client
+        let mut page = Vec::new();
+        tab.read_to_end(&mut page).await.unwrap();
+        let page = String::from_utf8_lossy(&page);
+        assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+        assert!(page.contains("The terminal continues as hanzo/z."), "{page}");
+
+        let mut retry = TcpStream::connect(addr).await.unwrap();
+        retry
             .write_all(b"GET /callback?code=abc&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .await
             .unwrap();
-        let mut response = Vec::new();
-        client.read_to_end(&mut response).await.unwrap();
-        let response = String::from_utf8_lossy(&response);
-        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-        assert!(response.contains("You're signed in"), "{response}");
+        let mut again = Vec::new();
+        retry.read_to_end(&mut again).await.unwrap();
+        assert!(String::from_utf8_lossy(&again).contains("You're signed in"));
 
-        server.await.unwrap();
-        assert!(
-            TcpStream::connect(addr).await.is_err(),
-            "the port stayed open after the fixed window"
-        );
+        go.send(()).unwrap();
+        assert_eq!(finished.await.unwrap().unwrap(), 7);
+        assert!(TcpStream::connect(addr).await.is_err(), "the port stayed open");
+    }
+
+    /// RP-Initiated Logout through the CLI's own client: the loopback and state
+    /// when a browser comes back here, neither when it cannot, and never an id
+    /// token in a URL.
+    #[test]
+    fn the_end_session_url_names_the_client_and_its_loopback() {
+        let url = end_session_url(
+            "https://hanzo.id",
+            "hanzo-cli",
+            Some(("http://127.0.0.1:5123/callback", "S-1")),
+        )
+        .unwrap();
+        assert_eq!(url.path(), "/v1/iam/oauth/logout");
+        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["client_id"], "hanzo-cli");
+        assert_eq!(q["post_logout_redirect_uri"], "http://127.0.0.1:5123/callback");
+        assert_eq!(q["state"], "S-1");
+        assert!(!q.contains_key("id_token_hint"));
+
+        let bare = end_session_url("https://hanzo.id", "hanzo-cli", None).unwrap();
+        let q: HashMap<_, _> = bare.query_pairs().into_owned().collect();
+        assert_eq!(q.len(), 1, "{bare}");
+    }
+
+    /// The sign-out loopback answers only IAM's return with our state. Another
+    /// tab's return is not it and the wait goes on.
+    #[tokio::test]
+    async fn the_sign_out_loopback_waits_for_its_own_state() {
+        use tokio::net::TcpStream;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { signed_out(&listener, "mine", "https://hanzo.id").await });
+
+        for target in ["/favicon.ico", "/callback?state=other", "/callback"] {
+            let mut stray = TcpStream::connect(addr).await.unwrap();
+            stray
+                .write_all(format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
+            let mut answer = Vec::new();
+            stray.read_to_end(&mut answer).await.unwrap();
+            assert!(String::from_utf8_lossy(&answer).starts_with("HTTP/1.1 204"), "{target}");
+        }
+        assert!(!server.is_finished());
+
+        let mut tab = TcpStream::connect(addr).await.unwrap();
+        tab.write_all(b"GET /callback?state=mine HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut page = Vec::new();
+        tab.read_to_end(&mut page).await.unwrap();
+        let page = String::from_utf8_lossy(&page);
+        assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+        assert!(page.contains("You're signed out"), "{page}");
+        assert!(server.await.unwrap());
     }
 
     // A browser sends back what we sent it, so on THIS leg an absent state is
@@ -1543,33 +1709,6 @@ mod tests {
         assert!(denied.code.is_none());
     }
 
-    /// Nobody on the machine: the page offers one way forward, an add, and
-    /// does not invent a person in the center.
-    #[test]
-    fn wire_a_menu_with_nobody_signed_in_offers_only_add() {
-        let page = signed_in_page("https://hanzo.id", None, &[], None, true);
-        assert!(page.contains("Signed out"), "{page}");
-        assert!(page.contains("Add an account to keep going."), "{page}");
-        assert!(page.contains("href=\"/add\""), "{page}");
-        assert!(!page.contains("<details"), "{page}");
-        assert!(!page.contains("You're signed in"), "{page}");
-    }
-
-    /// The ids the page puts in its links come back as the identities they
-    /// named, spaces included. A broken percent sequence stays text.
-    #[test]
-    fn wire_a_query_keeps_the_identity_the_page_encoded() {
-        assert_eq!(
-            query_id("id=hanzo%2FZach%20Kelling").as_deref(),
-            Some("hanzo/Zach Kelling")
-        );
-        assert_eq!(query_id("yes=1&id=hanzo%2Fz").as_deref(), Some("hanzo/z"));
-        assert_eq!(query_id("yes=1"), None);
-        assert_eq!(query_id("id=a+b").as_deref(), Some("a b"));
-        assert_eq!(query_id("id=%ZZ").as_deref(), Some("%ZZ"));
-        assert_eq!(query_id("id=%2").as_deref(), Some("%2"));
-    }
-
     /// The paste leg shares the runtime with the loopback. When the keyboard
     /// is not a terminal it must not take a blocking read, or `hanzo login`
     /// never returns after the browser already won.
@@ -1605,35 +1744,35 @@ mod tests {
             }
         });
 
-        let denied = exchange_code(&origin, "nope", "http://127.0.0.1/callback", "ver")
+        let denied = exchange_code(&origin, None, "nope", "http://127.0.0.1/callback", "ver")
             .await
             .unwrap_err()
             .to_string();
         assert!(denied.contains("token exchange failed"), "{denied}");
         assert!(denied.contains("invalid_grant"), "{denied}");
 
-        let garbled = exchange_code(&origin, "garbled", "http://127.0.0.1/callback", "ver")
+        let garbled = exchange_code(&origin, None, "garbled", "http://127.0.0.1/callback", "ver")
             .await
             .unwrap_err()
             .to_string();
         assert!(garbled.contains("parsing token response"), "{garbled}");
 
-        let tokens = exchange_code(&origin, "the-code", "http://127.0.0.1/callback", "the-verifier")
+        let tokens = exchange_code(&origin, None, "the-code", "http://127.0.0.1/callback", "the-verifier")
             .await
             .unwrap();
         assert!(tokens.access_token.contains('.'), "{}", tokens.access_token);
         assert_eq!(tokens.refresh_token.as_deref(), Some("rt-next"));
 
-        let spent = refresh(&origin, "nope").await.unwrap_err().to_string();
-        assert!(spent.contains("token refresh failed"), "{spent}");
+        let spent = refresh(&origin, &issued_to("hanzo-cli", "nope")).await.unwrap_err().to_string();
+        assert!(spent.contains("token refresh refused"), "{spent}");
 
-        let fresh = refresh(&origin, "rt-1").await.unwrap();
+        let fresh = refresh(&origin, &issued_to("hanzo-cli", "rt-1")).await.unwrap();
         assert_eq!(fresh.refresh_token.as_deref(), Some("rt-2"));
         assert!(!fresh.access_token.is_empty());
 
-        let revoked = revoke(&origin, "nope").await.unwrap_err().to_string();
+        let revoked = revoke(&origin, &issued_to("hanzo-cli", "nope")).await.unwrap_err().to_string();
         assert!(revoked.contains("revocation failed"), "{revoked}");
-        revoke(&origin, "rt-1").await.unwrap();
+        revoke(&origin, &issued_to("hanzo-cli", "rt-1")).await.unwrap();
     }
 
     /// Nothing is listening: each call fails as a transport error, before it
@@ -1645,12 +1784,13 @@ mod tests {
         drop(listener);
 
         for err in [
-            exchange_code(&origin, "c", "http://127.0.0.1/callback", "v")
+            exchange_code(&origin, None, "c", "http://127.0.0.1/callback", "v")
                 .await
                 .unwrap_err()
                 .to_string(),
-            refresh(&origin, "rt").await.unwrap_err().to_string(),
-            revoke(&origin, "rt").await.unwrap_err().to_string(),
+            refresh(&origin, &issued_to("hanzo-cli", "rt")).await.unwrap_err().to_string(),
+            revoke(&origin, &issued_to("hanzo-cli", "rt")).await.unwrap_err().to_string(),
+            served(&origin, Some("admin")).await.unwrap_err().to_string(),
         ] {
             assert!(err.contains("calling IAM"), "{err}");
         }

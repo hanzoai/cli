@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "hanzo-cli"
-version = "8.5.170"
+version = "8.5.910"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -901,6 +901,7 @@ dependencies = [
  "flate2",
  "hanzo-client",
  "hanzo-event",
+ "hanzo-gen",
  "k256",
  "libc",
  "predicates",
@@ -913,6 +914,7 @@ dependencies = [
  "serde_norway",
  "sha2",
  "sha3",
+ "strsim",
  "tar",
  "tempfile",
  "tiny-bip39",
@@ -946,6 +948,30 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "hanzo-gen"
+version = "0.1.0"
+source = "git+https://github.com/hanzoai/gen?rev=7846eed181a15047e5b1b3ec1a092a9a4d8ad82b#7846eed181a15047e5b1b3ec1a092a9a4d8ad82b"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "clap",
+ "colored",
+ "hanzo-client",
+ "libc",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "which",
 ]
 
 [[package]]

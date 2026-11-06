@@ -109,9 +109,10 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   Hanzo AI cloud. Each GROUP below is one product; its subcommands are the\n\
          \x20   product's operations, generated from the same contract the API, SDKs and\n\
          \x20   MCP tools serve.\n\n\
-         \x20   `hanzo \"fix the failing test\"` starts an AI coding session on the task\n\
-         \x20   (`hanzo code` for the interactive form). Sign in with `hanzo auth\n\
-         \x20   login`; see your money with `hanzo billing balance` and `hanzo usage`.\n\n\
+         \x20   `hanzo` on its own starts an AI coding session, and `hanzo \"fix the\n\
+         \x20   failing test\"` starts one on that task (`hanzo dev` is the same). Sign\n\
+         \x20   in with `hanzo auth login`; see your money with `hanzo billing balance`\n\
+         \x20   and `hanzo usage`.\n\n\
          \x20   `hanzo console` (or `hanzo dashboard`) launches the interactive fleet\n\
          \x20   operations console over agent sandboxes, compute nodes, and local model mesh.\n\
          \x20   `hanzo sandbox` (or `sbx`) manages isolated agent workspaces and environments.\n\
@@ -120,6 +121,10 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   `hanzo status` shows cloud health and local inference cluster status.\n\n",
     );
 
+    o.push_str("    `hanzo --cloud \"task\"` runs in a cloud sandbox; `--watch` follows it.\n\
+        \x20   `hanzo --cloud` lists runs; `--cloud --resume ID --watch` follows one.\n\
+        \x20   `hanzo --teleport ID` fetches its branch into a clean checkout.\n\
+        \x20   `--metered` selects Hanzo models for a local session.\n\n");
     o.push_str(&format!("{}\n", b("GLOBAL FLAGS")));
     for (f, d) in [
         ("--config=FILE", "Use a custom CLI config file for this invocation."),

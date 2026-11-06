@@ -6,7 +6,7 @@
 //! (IAM tokens, local wallet keys) live in the OS keychain via `keyring`, never
 //! here. See `iam::token` and `commands::wallet`.
 
-use crate::private;
+use hanzo_gen::private;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -109,7 +109,7 @@ pub struct Config {
     #[serde(default)]
     pub wallet: WalletState,
 
-    /// `hanzo code` defaults (the cloud-link setting; on by default).
+    /// `hanzo dev` defaults (the cloud-link setting; on by default).
     #[serde(default)]
     pub code: CodeState,
 
@@ -153,7 +153,7 @@ pub struct AuthState {
     /// Every identity signed in on this machine (metadata only — never secrets).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub identities: Vec<StoredIdentity>,
-    /// The active MODEL provider for `hanzo code` routing — "hanzo" (the gateway),
+    /// The active MODEL provider for `hanzo dev` routing — "hanzo" (the gateway),
     /// "openai", or "anthropic". NON-SECRET: it only NAMES which credential to
     /// use; the credential itself is filed in the Vault (`iam::provider`). Set by
     /// the login picker / `hanzo auth login --provider`. `None` ⇒ the gateway default.
@@ -176,14 +176,14 @@ pub struct StoredIdentity {
     pub name: String,
 }
 
-/// Persisted defaults for `hanzo code`. NON-SECRET.
+/// Persisted defaults for `hanzo dev`. NON-SECRET.
 ///
 /// `link` streams a coding session to the user's OWN Hanzo cloud — the org is
 /// derived server-side from the JWT `owner` claim, the CLI never sends one. It
-/// is ON by default: a signed-in `hanzo code` links unless the user opts out.
+/// is ON by default: a signed-in `hanzo dev` links unless the user opts out.
 /// Opt out per-invocation with `--no-link`, or persist the opt-out here with
 /// `link = false`. The default only affects SIGNED-IN users: the privacy gate
-/// in `commands::code::run` is structural and unchanged — an UNAUTHENTICATED run
+/// in `hanzo_gen::run` is structural and unchanged — an UNAUTHENTICATED run
 /// holds no cloud client and streams nothing regardless of this default.
 ///
 /// `#[serde(default)]` on the container fills a missing `link` from this
@@ -194,7 +194,7 @@ pub struct StoredIdentity {
 #[serde(default)]
 pub struct CodeState {
     pub link: bool,
-    /// The Claude theme `hanzo code claude` applies by default. "auto" honors the
+    /// The Claude theme `hanzo dev --claude` applies by default. "auto" honors the
     /// user's light/dark preference — Alucard (light Dracula) for a light theme,
     /// Dracula (dark) otherwise. Or name one ("dracula"/"alucard"); "none" disables.
     /// Overridden per-invocation with `--theme`. The user's own theme is restored
@@ -235,6 +235,12 @@ pub struct NetworkState {
     /// Custom networks added via `hanzo network add`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom: Vec<StoredNetwork>,
+    /// The network THIS invocation is on, never written: the one active when it
+    /// started, or the one `auth token --network` names. A long-running command
+    /// keeps it through every reload, so selecting another network in another
+    /// shell never changes where this one's credentials go.
+    #[serde(skip)]
+    pub bound: Option<String>,
 }
 
 /// A network descriptor. For a sovereign L1, `network_id == chain_id`.
@@ -252,6 +258,11 @@ pub struct StoredNetwork {
     pub rpc: String,
     /// Hanzo cloud/control API endpoint.
     pub api: String,
+    /// The issuer this network's API trusts: where `hanzo auth login` signs in
+    /// and whose credentials go to `api`. `None` (a network added before this
+    /// field) is the brand's own, hanzo.id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iam: Option<String>,
     /// Block explorer, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explorer: Option<String>,
@@ -322,7 +333,7 @@ impl Config {
     /// it — there is deliberately no bare `save`.
     ///
     /// The config file is a shared mutable PLACE: several `hanzo` processes write
-    /// it at once (a `hanzo code` migrating a legacy credential in one terminal
+    /// it at once (a `hanzo dev` migrating a legacy credential in one terminal
     /// while you run `hanzo auth login` in another). A load-mutate-save against a
     /// stale in-memory snapshot silently reverts the other process's write, and
     /// for the auth index that means landing on a principal you did not choose —
@@ -333,7 +344,9 @@ impl Config {
     /// against the CURRENT on-disk state, never the caller's snapshot, so it must
     /// be a function of its inputs rather than of `self`'s prior contents — any
     /// un-persisted in-memory edit is intentionally discarded. `f` may fail, in
-    /// which case nothing is written. On success `self` IS the persisted state.
+    /// which case nothing is written. On success `self` IS the persisted state,
+    /// plus `org` and the bound network, which belong to this invocation and are
+    /// never written.
     pub fn update<T>(&mut self, f: impl FnOnce(&mut Config) -> Result<T>) -> Result<T> {
         let path = self.effective_path();
         if let Some(dir) = path.parent() {
@@ -343,13 +356,15 @@ impl Config {
 
         let _lock = Lock::acquire(&path)?;
         let mut fresh = Self::load(Some(path.clone()))?;
+        fresh.org = self.org.clone();
+        fresh.network.bound = self.network.bound.clone();
         let out = f(&mut fresh)?;
         fresh.write_atomic(&path)?;
         *self = fresh;
         Ok(out)
     }
 
-    /// Write the whole config atomically, owner-only. See [`crate::private`] —
+    /// Write the whole config atomically, owner-only. See [`hanzo_gen::private`] —
     /// the ONE way anything in this CLI writes a file it does not want torn or
     /// world-readable.
     fn write_atomic(&self, path: &Path) -> Result<()> {
@@ -399,11 +414,52 @@ impl Default for SdkPaths {
 mod tests {
     use super::*;
 
-    /// Link-by-default: a fresh config links a signed-in `hanzo code`.
+    /// Link-by-default: a fresh config links a signed-in `hanzo dev`.
     #[test]
     fn code_link_defaults_on() {
         assert!(CodeState::default().link);
         assert!(Config::default().code.link);
+    }
+
+    /// The bound network belongs to the invocation: a write keeps it in memory,
+    /// whatever the file says, and never puts it in the file.
+    #[test]
+    fn the_bound_network_survives_a_write_and_is_never_written() {
+        let mut cfg = tmp_cfg("bound");
+        let path = cfg.effective_path();
+        cfg.network.bound = Some("devnet".into());
+        cfg.update(|c| {
+            c.network.active = Some("mainnet".into());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cfg.network.bound.as_deref(), Some("devnet"));
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("bound"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A network added before networks named their issuer still parses — as one
+    /// that names none, and so is sent no credential — and writing it back adds
+    /// nothing.
+    #[test]
+    fn a_network_without_an_issuer_still_parses() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [network]
+            active = "my-l1"
+
+            [[network.custom]]
+            name = "my-l1"
+            label = "My L1"
+            network_id = 424242
+            chain_id = 424242
+            rpc = "https://rpc.example"
+            api = "https://api.example"
+            "#,
+        )
+        .expect("a config written before `iam` parses");
+        assert_eq!(cfg.network.custom[0].iam, None);
+        assert!(!toml::to_string(&cfg).unwrap().contains("iam"));
     }
 
     /// An existing config with no `[code]` table still links by default — the
@@ -550,6 +606,26 @@ mod tests {
             Some("lux/z")
         );
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `--as` belongs to the invocation: a write keeps it in memory and never
+    /// puts it in the file.
+    #[test]
+    fn an_update_keeps_the_invocations_org_and_never_writes_it() {
+        let mut cfg = tmp_cfg("org");
+        let path = cfg.effective_path();
+        cfg.org = Some("admin".into());
+        cfg.update(|c| {
+            c.auth
+                .active
+                .insert("hanzo".to_string(), "hanzo/z".to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(cfg.org.as_deref(), Some("admin"));
+        assert!(Config::load(Some(path.clone())).unwrap().org.is_none());
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("admin"));
         let _ = std::fs::remove_file(&path);
     }
 

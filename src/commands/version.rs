@@ -2,17 +2,17 @@
 //! installed under agree with it. THE one implementation behind `hanzo version`,
 //! `hanzo --version` and `hanzo -V` (see `main`).
 //!
-//! This CLI ships under two names. `hanzo` is what a person types; `hanzo-node`
+//! This CLI ships under two names. `hanzo` is what a person types; `hanzo-cli`
 //! is what cloud's Go control binary delegates to (`cloud/cli/link.go`
-//! `fabricCLI()` resolves `hanzo-node` on PATH first, then `hanzo`). Same build,
+//! `fabricCLI()` resolves `hanzo-cli` on PATH first, then `hanzo`). Same build,
 //! two names — by design.
 //!
 //! The failure that design allows is INVISIBLE, and it has TWO directions:
 //!
-//! * a stale `hanzo-node` BEHIND us — install one name and not the other, or
+//! * a stale `hanzo-cli` BEHIND us — install one name and not the other, or
 //!   upgrade one and not the other, and a user types `hanzo`, gets delegated,
 //!   and runs a different build with no version anywhere on screen. A v1.7.2
-//!   `hanzo-node` sitting behind a current `hanzo` is what served ~150 commands
+//!   `hanzo-cli` sitting behind a current `hanzo` is what served ~150 commands
 //!   that no longer exist.
 //! * a different file AHEAD of us holding the name `hanzo` — an earlier PATH
 //!   entry wins every bare `hanzo`, so the build a user upgraded is not the
@@ -30,14 +30,14 @@ use colored::Colorize;
 use std::path::{Path, PathBuf};
 
 /// The name cloud's control binary delegates to.
-const DELEGATE: &str = "hanzo-node";
+const DELEGATE: &str = "hanzo-cli";
 
 /// The name a person types — the one an earlier PATH entry can steal.
 const NAME: &str = "hanzo";
 
 /// What we found at the other name.
 enum Twin {
-    /// No `hanzo-node` on PATH. Nothing delegates here, nothing to skew.
+    /// No `hanzo-cli` on PATH. Nothing delegates here, nothing to skew.
     Absent,
     /// The same file as us — a link or a copy of this build. The healthy install.
     Same,
@@ -92,7 +92,7 @@ pub fn run() {
     }
 }
 
-/// Locate `hanzo-node` on PATH and decide what it is relative to us.
+/// Locate `hanzo-cli` on PATH and decide what it is relative to us.
 fn twin() -> Twin {
     let Some(path) = which(DELEGATE) else { return Twin::Absent };
 
@@ -138,7 +138,11 @@ fn real(p: &Path) -> PathBuf {
 /// shelling out, so this answers the same way in a bare environment.
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|dir| dir.join(name)).find(|p| is_executable(p))
+    which_in(name, &path)
+}
+
+fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|dir| dir.join(name)).find(|p| is_executable(p))
 }
 
 #[cfg(unix)]
@@ -258,13 +262,7 @@ mod tests {
         stub(&late, DELEGATE, "hanzo 2.0.0");
 
         let joined = std::env::join_paths([&early, &late]).unwrap();
-        // SAFETY: single-threaded test; restored before returning.
-        let prev = std::env::var_os("PATH");
-        std::env::set_var("PATH", &joined);
-        let found = which(DELEGATE).expect("finds the delegate");
-        if let Some(prev) = prev {
-            std::env::set_var("PATH", prev);
-        }
+        let found = which_in(DELEGATE, &joined).expect("finds the delegate");
 
         assert_eq!(version_of(&found).as_deref(), Some("1.0.0"), "the earlier PATH entry wins");
     }

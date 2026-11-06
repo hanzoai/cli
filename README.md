@@ -14,12 +14,26 @@ hanzo "add pagination to the /v1/orders endpoint and write the tests"
 
 ```bash
 curl -fsSL https://hanzo.sh | sh
+npm i -g hanzo
 ```
 
-One install line, and it is the same one every Hanzo surface prints. It resolves the
+One install line on Unix (`curl -fsSL https://hanzo.sh | sh`) or cross-platform via npm (`npm i -g hanzo`, including Windows). It resolves the
 release asset for your platform (linux · macOS on amd64 · arm64, Windows on amd64),
-verifies its sha256, and puts `hanzo` in `~/.local/bin` — along with `hanzo-mcp` (the
-MCP server) and `dev` (the coding agent `hanzo code` runs). Re-run to upgrade.
+verifies its sha256, and puts `hanzo` in `~/.local/bin` (or `@hanzo/cli/bin`) — and lazily fetches companion tools (`hanzo-dev`, `hanzo-mcp`, `hanzo-engine`, `hanzo-node`, `hanzo-vm`, `hanzo-zet`, `hanzo-gen`) on demand. The short names `dev`,
+`gen`, `mcp`, and `zt` remain available. Re-run to upgrade.
+
+These are prebuilt native binaries; the installer does not compile crates. Node and
+Bot have public source but no downloadable native releases yet, so they are not
+included. `hanzo-node` is reserved for the network node, not an alias for the CLI.
+
+A provenance warning means the tool installed but its provenance was not verified.
+Use `curl -fsSL https://hanzo.sh | sh -s -- --strict` to require provenance verification
+before installation (requires a current, authenticated GitHub CLI and release
+attestations). Checksums are required in either mode.
+
+Run `hanzo doctor` to check executable paths, versions, authentication and GPU
+runtimes. `--offline` skips network checks; `--verify` downloads current releases
+and compares installed bytes against checksummed, provenance-verified artifacts.
 
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
 "fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh | sh -s -- hanzo`.
@@ -57,26 +71,41 @@ subcommands and stop. A first word the CLI does not recognise is read as the tas
 under the name people type first. Builds before it (npm 8.5.156, brew 1.9.57) read
 `hanzo login` as a task, so `hanzo auth login` is the form every channel answers.
 
-## Coding — bare `hanzo`
+## Coding — `hanzo dev`
 
-`hanzo` wraps a local coding agent as a session-aware, resumable, portable object: the
-Hanzo MCP toolset is attached, model calls route through your metered Hanzo cloud, and a
-signed-in session streams live to mission-control. Auto-approve is on by default; the
-repo's own `.mcp.json` is trust-gated off unless you opt in.
+`hanzo dev` is the one launcher. It wraps a local coding agent as a session-aware,
+resumable, portable object: the Hanzo MCP toolset is attached and a signed-in session
+streams live to mission-control. Auto-approve is on by default; the repo's own
+`.mcp.json` is trust-gated off unless you opt in.
 
-The default backend is `dev`, our own agent — `curl -fsSL https://hanzo.sh | sh` installs
-it. `--backend claude` and `--backend codex` drive other agents you already have.
+Plain `hanzo dev` runs our own Hanzo Dev agent — `curl -fsSL https://hanzo.sh | sh`
+installs it. Another tool is a flag: `--claude`, `--codex`, `--cursor` (`--agent`) or
+`--agy`. A third-party tool talks straight to the account it is already signed in to;
+`--metered` runs it on Hanzo's metered models instead. Hanzo Dev's account is Hanzo's, so
+it uses the cloud when you are signed in.
 
 ```bash
-hanzo --model enso-ultra "refactor the auth middleware"
-hanzo --backend dev "port this module to async"
-hanzo --resume <session-id>          # continue a prior session
-hanzo --ask "…"                      # confirm each action (alias: --safe)
-hanzo --no-link "…"                  # keep it local, don't stream to cloud
-hanzo --no-route "…"                 # use the backend's own model account
+hanzo dev "port this module to async"       # our own agent, headless on that task
+hanzo dev --claude "fix the failing test"   # Claude Code, on your own Claude account
+hanzo dev --claude -- -c                    # args after `--` go to the tool
+hanzo dev --codex --metered "…"             # Codex on Hanzo's metered models
+hanzo dev --model enso-ultra "refactor the auth middleware"
+hanzo dev --resume <session-id>             # continue a prior session
+hanzo dev --ask "…"                         # confirm each action (alias: --safe)
+hanzo dev --no-link "…"                     # keep it local, don't stream to cloud
 ```
 
-Zen models (`enso`, `enso-ultra`, `enso-flash`, `zen5-coder`, …) are Hanzo's own
+`hanzo --cloud "task"` executes remotely in a Hanzo sandbox and returns a session
+ID. Add `--watch` to follow progress; closing the terminal leaves the cloud run
+working. `hanzo --cloud` lists runs, and `hanzo --teleport SESSION_ID` fetches a
+finished run's branch. See [Cloud coding sessions](CLOUD-SESSIONS.md) for setup,
+follow-ups, and the supported workflow.
+
+`hanzo code` also serves the code index (`search`, `index`, `context`, `file`,
+`tree`, `ask`). Its task form forwards to `hanzo dev`; `hanzo code --cloud` uses
+the same remote execution path.
+
+Enso and Zen models (`enso`, `enso-flash`, `enso-pro`, `enso-ultra`, `zen6`, …) are Hanzo's own
 family; the gateway is the sole authority on the model catalog.
 
 ## Commands
@@ -93,7 +122,7 @@ Multi-identity, like `gh auth switch` — hold many principals at once and switc
 between them; a second login never clobbers the first.
 
 ```bash
-hanzo auth login [--provider hanzo|openai|anthropic] [--token -]
+hanzo auth login [--provider hanzo|openai|anthropic] [--token -] [--account owner/name|email] [--choose]
 hanzo auth show                 # the active identity
 hanzo auth list                 # every identity, active one marked
 hanzo auth use [owner/name]     # switch active identity
@@ -102,9 +131,19 @@ hanzo auth link list            # AI provider accounts signed in on your machine
 hanzo auth logout [identity] [--all]
 hanzo usage summary             # your own footprint over a window
 hanzo usage samples             # per-provider: one linked account's own plan
-hanzo billing balance | deposit
-hanzo connector add|list|verify|rm --provider cloudflare
+hanzo billing balance | topup
+hanzo provider connect|verify|disconnect <provider>  # add / re-check / drop a connector (e.g. cloudflare)
+hanzo connection list|rm [id]                        # your connectors across providers, and forget one
 ```
+
+Holding more than one identity, `auth login` asks hanzo.id for its account chooser
+(the accounts signed in on that browser, and "Use another account") instead of
+continuing as the browser's latest session; `--account` names the account and
+`--choose` shows the chooser regardless. The account you choose becomes active;
+one hanzo.id answered with on its own is added beside the active identity, and
+the output says which identity the terminal uses. `auth logout` revokes the
+session at IAM and signs the browser out of hanzo.id too, so the next sign-in
+asks again.
 
 Secrets arrive on **stdin only**, never argv (`--token -`) — nothing lands in
 shell history, `ps`, or CI logs. Credentials live in the OS keychain (macOS /
@@ -113,9 +152,10 @@ Windows) or an owner-only `0600` file otherwise.
 ### Cloud
 
 ```bash
-hanzo agents run <agent>                 # run one of your org's agents, keep the run
-hanzo clusters create|list|pools|rm      # the compute you rent, and BYO clusters
-hanzo cloud list|accounts                # bring your own DigitalOcean / AWS / GCP
+hanzo agent run <ref>                    # run one of your org's agents, keep the run
+hanzo compute clusters create|list|rm    # the compute you rent, and BYO clusters
+hanzo compute clusters pools create|rm|scale   # node pools on a cluster
+hanzo compute fleet get                  # everything you bring: BYO machines + clusters (DO / AWS / GCP)
 hanzo engine serve <model>               # serve a model locally on an OpenAI-compatible endpoint
 hanzo up [--link <cluster>]     # local k3s in a microVM; writes ~/.kube/hanzo.yaml
 hanzo host serve [service]      # the Hanzo Cloud API from this machine (was `hanzo up`)
@@ -128,7 +168,7 @@ part of this install and the command says so when it is missing.
 
 Your org's statements with their sources and two times: `--as-of` is when a thing was
 so, `--as-known` is how much the graph had heard. The model is at
-[docs.hanzo.ai/docs/services/graph](https://docs.hanzo.ai/docs/services/graph).
+[docs.hanzo.ai/docs/openapi/graph](https://docs.hanzo.ai/docs/openapi/graph).
 
 ```bash
 hanzo graph create --assertions '{"entity":"acme/svc/api","relation":"owner","value":"acme/team/core","names":true,"at":"2026-09-01T00:00:00Z","source":"wiki/api"}'
@@ -164,7 +204,7 @@ hanzo link dial <service> <port> [--install]   # a local port onto a service on 
 hanzo link status | rm <name>   # what is up here; unpublish
 ```
 
-`hanzo-node` is not a second program: the installer writes it as a symlink to this same
+`hanzo-cli` is not a second program: the installer writes it as a symlink to this same
 binary, because cloud's Go control binary resolves that name first and delegates to it.
 One build, two names, so the two can never be different versions.
 

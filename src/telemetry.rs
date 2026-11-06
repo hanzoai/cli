@@ -45,10 +45,11 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Auth { .. } => "auth",
         // `hanzo login` and `hanzo auth login` are one command reached two ways,
         // so they report as one label — a split here would read as two products.
-        Commands::Login { .. } => "auth",
-        // Every spelling of the coding session reports as one command, because
-        // it IS one command — `hanzo dev` is not a distinct thing to measure.
-        Commands::Code(..) | Commands::Dev(..) => "code",
+        Commands::Login { .. } | Commands::Whoami { .. } => "auth",
+        // The coding session reports as `dev` (a bare `hanzo` too, because it IS
+        // that command); `code` is the code index.
+        Commands::Code => "code",
+        Commands::Dev(..) => "dev",
         Commands::Desktop(..) => "desktop",
         Commands::Config { .. } => "config",
         Commands::Engine { .. } => "engine",
@@ -62,6 +63,8 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Status { .. } => "status",
         Commands::Monitor(..) => "monitor",
         Commands::Version => "version",
+        Commands::Doctor { .. } => "doctor",
+        Commands::Upgrade { .. } => "upgrade",
         Commands::Console => "console",
         Commands::Beat => "beat",
         Commands::Sandbox { .. } | Commands::Ls => "sandbox",
@@ -72,6 +75,5 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Wallet { .. } => "wallet",
         Commands::Share { .. } => "share",
         Commands::Init { .. } => "init",
-        Commands::Pull { .. } => "pull",
     }
 }

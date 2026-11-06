@@ -19,7 +19,7 @@ use std::io::IsTerminal;
 
 use crate::config::Config;
 
-use super::native::{self, NativeAgent};
+use hanzo_gen::native::{self, NativeAgent};
 use super::provider::{self, Provider};
 use super::secret::{read_trimmed, secret_source, SecretSource};
 use super::{login, oauth};
@@ -206,11 +206,12 @@ fn mark_provider(cfg: &mut Config, provider: Provider) -> Result<()> {
 /// that session through the gateway — the session it just created is the
 /// account the next `hanzo` should use.
 fn mark_native(cfg: &mut Config, backend: &str) -> Result<()> {
-    crate::commands::code::settings::Settings::remember_agent(backend)?;
-    crate::commands::code::settings::Settings::pin_account(backend)?;
+    let root = hanzo_gen::Root::need()?;
+    hanzo_gen::settings::Settings::remember_agent(&root, backend)?;
+    hanzo_gen::settings::Settings::pin_account(&root, backend)?;
     // Joins the set of connected accounts. A later sign-in adds; it does not
     // replace, so the harness can still use any of them.
-    crate::commands::code::harness::connect_home(backend)?;
+    hanzo_gen::harness::connect_home(&root, backend)?;
     cfg.update(|c| {
         c.auth.provider = None;
         c.code.own_account = true;
@@ -233,19 +234,19 @@ fn confirm_provider(provider: Provider) {
 
 /// Sign in as a Hanzo IDENTITY (the OIDC browser flow, or a supplied token), and
 /// record `hanzo` as the active provider so model routing uses the gateway.
-async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>) -> Result<()> {
+async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>, account: Option<&str>, choose: bool) -> Result<()> {
     oauth::server_url(brand)?; // reject an unknown brand before any I/O
     match token {
         Some(t) => {
             let raw = read_identity_token(t)?;
             login::login_with_token(cfg, brand, &raw).await?;
         }
-        None => login::login(cfg, brand).await?,
+        None => login::login(cfg, brand, account, choose).await?,
     }
     mark_provider(cfg, Provider::Hanzo)?;
     // The harness's shared login. A native pin from an earlier sign-in must
     // not keep launching that agent once the gateway is the account in use.
-    crate::commands::code::settings::Settings::pin_account("hanzo")
+    hanzo_gen::settings::Settings::pin_account(&hanzo_gen::Root::need()?, "hanzo")
 }
 
 /// Sign in with a provider's OWN key (OpenAI / Anthropic): read it off stdin or a
@@ -268,7 +269,7 @@ async fn provider_key_login(
 /// Refuse filing `key` under `provider` when the key's OWN prefix names a
 /// DIFFERENT vendor — fail CLOSED, never warn-and-store.
 ///
-/// A key is filed under the provider it authenticates, and `code::route_plan`
+/// A key is filed under the provider it authenticates, and `hanzo_gen`'s route plan
 /// routes by that provider label: a coding session sends the stored key, in an
 /// auth header, to THAT vendor's API. So filing an OpenAI `sk-` key under
 /// `--provider anthropic` would later transmit it to api.anthropic.com — leaking a
@@ -312,7 +313,7 @@ async fn paste_key_login(cfg: &mut Config, token: Option<String>) -> Result<()> 
 
 async fn dispatch_choice(cfg: &mut Config, brand: &str, choice: Choice) -> Result<()> {
     match choice {
-        Choice::Hanzo => hanzo_login(cfg, brand, None).await,
+        Choice::Hanzo => hanzo_login(cfg, brand, None, None, false).await,
         Choice::Native(agent) => native_login(cfg, agent).await,
         Choice::Paste => paste_key_login(cfg, None).await,
     }
@@ -373,7 +374,7 @@ fn login_invocation(agent: &NativeAgent) -> Result<(String, Vec<String>)> {
     let args = match agent.login {
         native::Login::Args(argv) => argv.iter().map(|s| (*s).to_string()).collect(),
         native::Login::Antigravity => {
-            let help = std::process::Command::new(&program).arg("help").output();
+            let help = std::process::Command::new(program).arg("help").output();
             let text = help
                 .ok()
                 .map(|out| {
@@ -402,14 +403,24 @@ pub async fn run_login(
     brand: &str,
     provider: Option<String>,
     token: Option<String>,
+    account: Option<String>,
+    choose: bool,
 ) -> Result<()> {
+    // Naming the account, or asking for the chooser, is a Hanzo sign-in.
+    let hanzo = account.is_some() || choose;
     if let Some(p) = provider {
         if let Some(agent) = native::find(&p) {
+            if hanzo {
+                bail!("--account and --choose pick a Hanzo account; `--provider {p}` signs in to {}", agent.title);
+            }
             return native_login(cfg, agent).await;
         }
         let provider = Provider::parse(&p)?;
         return match provider {
-            Provider::Hanzo => hanzo_login(cfg, brand, token).await,
+            Provider::Hanzo => hanzo_login(cfg, brand, token, account.as_deref(), choose).await,
+            Provider::OpenAI | Provider::Anthropic if hanzo => {
+                bail!("--account and --choose pick a Hanzo account; `--provider {p}` stores a {} key", provider.label())
+            }
             Provider::OpenAI | Provider::Anthropic => {
                 provider_key_login(cfg, provider, token).await
             }
@@ -417,9 +428,9 @@ pub async fn run_login(
     }
 
     // No explicit provider.
-    if let Some(t) = token {
-        // Back-compat: `hanzo auth login --token -` files a Hanzo identity.
-        return hanzo_login(cfg, brand, Some(t)).await;
+    if token.is_some() || hanzo {
+        // `--token -` files a Hanzo identity; `--account`/`--choose` sign one in.
+        return hanzo_login(cfg, brand, token, account.as_deref(), choose).await;
     }
 
     if interactive() {
@@ -436,7 +447,7 @@ pub async fn run_login(
     }
 
     // Non-interactive, nothing specified: the browser OIDC default (unchanged).
-    hanzo_login(cfg, brand, None).await
+    hanzo_login(cfg, brand, None, None, false).await
 }
 
 /// The bare-`hanzo` FRESH greeting: on an interactive terminal with no

@@ -36,7 +36,7 @@
       white: '#e6e6e6', brightWhite: '#ffffff',
     },
     fontFamily:
-      'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+      '"Geist Mono", "Zen Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
     fontSize: 13,
     lineHeight: 1.2,
     cursorBlink: true,

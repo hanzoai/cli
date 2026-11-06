@@ -9,6 +9,11 @@ use serde::Deserialize;
 use std::fmt;
 use std::str::FromStr;
 
+// `owner` and `name` are held to the ONE check of a claimed part: the slot
+// `{brand}/{owner}/{name}` this store files under is the same `owner/name` the
+// harness labels its records with.
+use hanzo_gen::host::claim;
+
 /// Who a token authenticates as. Derived from the token's OWN claims, so a
 /// stored credential can never be mislabeled into another principal's slot.
 /// IAM names a principal `owner/name`; `owner` is ALSO the org the gateway
@@ -66,6 +71,45 @@ pub fn subject(access_token: &str) -> Option<String> {
     (!claims.sub.trim().is_empty()).then_some(claims.sub)
 }
 
+/// The issuer (`iss`) a token claims, or `None`. A label for matching a
+/// credential to the realm it is filed under, never a decision about the token.
+pub fn issuer(access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Iss {
+        #[serde(default)]
+        iss: String,
+    }
+    let claims: Iss = serde_json::from_slice(&payload(access_token)?).ok()?;
+    (!claims.iss.trim().is_empty()).then_some(claims.iss)
+}
+
+/// The client a token was issued to: its `azp`, else its one `aud`, or `None`.
+/// Which client to present when refreshing or revoking it; IAM checks it.
+pub fn party(access_token: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Aud {
+        One(String),
+        Many(Vec<String>),
+    }
+    #[derive(Deserialize)]
+    struct Party {
+        #[serde(default)]
+        azp: String,
+        aud: Option<Aud>,
+    }
+    let claims: Party = serde_json::from_slice(&payload(access_token)?).ok()?;
+    let one = match claims.aud {
+        Some(Aud::One(aud)) => Some(aud),
+        Some(Aud::Many(auds)) if auds.len() == 1 => auds.into_iter().next(),
+        _ => None,
+    };
+    Some(claims.azp)
+        .filter(|azp| !azp.trim().is_empty())
+        .or(one)
+        .filter(|client| !client.trim().is_empty())
+}
+
 /// A JWT's claims segment, decoded. `None` for anything that is not one.
 ///
 /// JWT payloads are base64url WITHOUT padding (RFC 7515 §2); a padded encoder is
@@ -91,8 +135,8 @@ impl Identity {
     /// choosing — see `iam::store::add`, which takes no identity argument.
     fn new(owner: impl Into<String>, name: impl Into<String>) -> Result<Self> {
         let (owner, name) = (owner.into(), name.into());
-        check_component("owner", &owner)?;
-        check_component("name", &name)?;
+        claim("owner", &owner)?;
+        claim("name", &name)?;
         Ok(Self { owner, name })
     }
 
@@ -131,35 +175,6 @@ impl Identity {
     }
 }
 
-/// Reject anything that could break out of its slot in the keychain key
-/// (`{brand}/{owner}/{name}`) or the `owner/name` index string. A claim is
-/// attacker-influenced data: an `owner` of `../hanzo` or `a/b` would let a
-/// forged token address ANOTHER identity's storage slot. Structure over trust
-/// — and ONLY structure: IAM mints usernames like "Grace Hopper" or "José",
-/// so the rule is a deny-list of what actually escapes a slot (separators,
-/// control bytes, non-space whitespace), never an allowlist of blessed ASCII.
-fn check_component(field: &str, v: &str) -> Result<()> {
-    if v.is_empty() {
-        bail!("token claim `{field}` is empty");
-    }
-    if v.len() > 128 {
-        bail!("token claim `{field}` is too long ({} > 128)", v.len());
-    }
-    if !v.starts_with(|c: char| c.is_alphanumeric()) {
-        bail!("token claim `{field}` must start with a letter or digit: {v:?}");
-    }
-    if v.ends_with(' ') {
-        bail!("token claim `{field}` ends with a space: {v:?}");
-    }
-    if let Some(bad) = v
-        .chars()
-        .find(|&c| c == '/' || c == '\\' || c.is_control() || (c.is_whitespace() && c != ' '))
-    {
-        bail!("token claim `{field}` contains an unsupported character {bad:?}: {v:?}");
-    }
-    Ok(())
-}
-
 impl fmt::Display for Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.owner, self.name)
@@ -182,7 +197,7 @@ impl FromStr for Selector {
         match s.split_once('/') {
             Some((owner, name)) => Ok(Selector::Exact(Identity::new(owner, name)?)),
             None => {
-                check_component("owner", s)?;
+                claim("owner", s)?;
                 Ok(Selector::Owner(s.to_string()))
             }
         }
@@ -244,6 +259,20 @@ mod tests {
         // A gateway key is not a token and claims nothing.
         assert_eq!(email("hk-abc123"), None);
         assert_eq!(email(""), None);
+    }
+
+    #[test]
+    fn the_issuing_client_is_azp_else_the_one_aud() {
+        let party = |claims: &str| party(&claims_jwt(claims));
+        let azp = r#"{"owner":"admin","name":"z","azp":"admin-cli","aud":["hanzo-cli"]}"#;
+        assert_eq!(party(azp).as_deref(), Some("admin-cli"));
+        assert_eq!(party(r#"{"aud":["lux-cli"]}"#).as_deref(), Some("lux-cli"));
+        assert_eq!(party(r#"{"aud":"lux-cli"}"#).as_deref(), Some("lux-cli"));
+        assert_eq!(party(r#"{"azp":"","aud":"lux-cli"}"#).as_deref(), Some("lux-cli"));
+        for none in [r#"{"aud":["a","b"]}"#, r#"{"aud":[]}"#, r#"{"azp":" "}"#, r#"{"owner":"hanzo"}"#] {
+            assert_eq!(party(none), None, "{none}");
+        }
+        assert_eq!(super::party("hk-abc"), None);
     }
 
     #[test]

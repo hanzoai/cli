@@ -5,8 +5,8 @@
 //! verification link as text AND a scannable terminal QR, and polls the token
 //! endpoint until the user approves in any signed-in browser. No password ever
 //! touches this terminal. Endpoints come from [`super::paths`] (brand-aware via
-//! `server_url_for_brand`); the device grant runs as the `<brand>-app` client —
-//! the one IAM seeds with the `device_code` grant enabled.
+//! `server_url_for_brand`); the device grant runs as the same client the browser
+//! flow does, [`oauth::client`]: one registration per org, whichever flow runs.
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -18,14 +18,6 @@ use super::token::TokenSet;
 
 /// The RFC 8628 device-grant type sent on the token poll.
 pub const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
-
-/// The device-flow client. It is `hanzo-cli` — the SAME registration the browser
-/// flow uses, because IAM enables both grants on it and measuring said so:
-/// `hanzo-cli` mints a device_code, and `hanzo-app` answers `invalid_client`.
-/// One client for one CLI; the flow it happens to be running is not an identity.
-fn device_client_id(_brand: &str) -> &'static str {
-    oauth::CLIENT_ID
-}
 
 /// The RFC 8628 device authorization response.
 #[derive(Debug, Default, Deserialize)]
@@ -208,11 +200,11 @@ async fn poll_device_token(origin: &str, client_id: &str, da: &DeviceAuthResp) -
     poll_loop(origin, client_id, &da.device_code, interval, deadline).await
 }
 
-/// Run the full interactive device sign-in for `brand` and return the tokens.
-pub async fn login(brand: &str) -> Result<TokenSet> {
-    let origin = oauth::server_url(brand)?;
-    let client_id = device_client_id(brand);
-    let da = device_auth(origin, client_id, SCOPE).await?;
+/// Run the full interactive device sign-in to `brand` at its IAM `origin`,
+/// through `org`'s client (`--as`), and return the tokens.
+pub async fn login(origin: &str, brand: &str, org: Option<&str>) -> Result<TokenSet> {
+    let client = oauth::client(org);
+    let da = device_auth(origin, &client, SCOPE).await?;
 
     let link = if da.verification_uri_complete.is_empty() {
         &da.verification_uri
@@ -229,7 +221,7 @@ pub async fn login(brand: &str) -> Result<TokenSet> {
         );
     }
     println!("\nWaiting for approval…");
-    poll_device_token(origin, client_id, &da).await
+    poll_device_token(origin, &client, &da).await
 }
 
 /// Render a scannable QR of the verification link; skip silently if it cannot
@@ -273,16 +265,6 @@ mod tests {
             }
         });
         url
-    }
-
-    #[test]
-    fn the_device_client_is_the_cli_itself() {
-        // Measured against the live endpoint, not assumed: `hanzo-cli` mints a
-        // device_code and `hanzo-app` answers invalid_client. One CLI, one
-        // registration, whichever flow it is running.
-        assert_eq!(device_client_id("hanzo"), oauth::CLIENT_ID);
-        assert_eq!(device_client_id("lux"), oauth::CLIENT_ID);
-        assert_eq!(device_client_id("zoo"), oauth::CLIENT_ID);
     }
 
     #[test]

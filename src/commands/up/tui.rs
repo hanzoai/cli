@@ -4,6 +4,7 @@
 //! - [3] Local Models & Zen Engine (Qwen 3+ series, VRAM, context, inference)
 //! - [4] Cloud App Services (IAM, KMS, Gateway, Storage, PubSub, Router, MicroVM)
 //! - [5] Usage & Quota (Tokens, Request Meters, Throughput, Latencies)
+//! - [6] Savings (spend, cache and Kai, measured apart from estimated; `savings.rs`)
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -35,16 +36,18 @@ pub enum DashboardView {
     LocalModels,
     CloudServices,
     Usage,
+    Savings,
 }
 
 impl DashboardView {
-    pub fn all() -> [DashboardView; 5] {
+    pub fn all() -> [DashboardView; 6] {
         [
             DashboardView::Compute,
             DashboardView::Sandboxes,
             DashboardView::LocalModels,
             DashboardView::CloudServices,
             DashboardView::Usage,
+            DashboardView::Savings,
         ]
     }
 
@@ -55,6 +58,7 @@ impl DashboardView {
             DashboardView::LocalModels => "3: Local Models",
             DashboardView::CloudServices => "4: Cloud Services",
             DashboardView::Usage => "5: Usage & Quota",
+            DashboardView::Savings => "6: Savings",
         }
     }
 
@@ -65,6 +69,7 @@ impl DashboardView {
             DashboardView::LocalModels => "Local LLMs, Zen engines & accelerated model runtimes",
             DashboardView::CloudServices => "Unified cloud subsystems, microVMs & zero-trust transport",
             DashboardView::Usage => "Resource consumption, inference tokens & quota limits",
+            DashboardView::Savings => "Usage and savings, measured vs estimated",
         }
     }
 }
@@ -196,6 +201,9 @@ pub struct App {
     // [1] Compute
     pub compute: super::compute::Board,
 
+    // [6] Savings
+    pub savings: super::savings::Board,
+
     // [3] Local Models
     pub local_models: Vec<LocalModel>,
     pub selected_model_row: usize,
@@ -219,16 +227,25 @@ pub struct App {
     pub next_id: usize,
     pub cluster_telemetry: Option<crate::commands::monitor::ClusterTelemetry>,
     pub telemetry_rx: Option<std::sync::mpsc::Receiver<crate::commands::monitor::ClusterTelemetry>>,
+    /// Where the sandbox list is kept (`~/.hanzo/sandboxes.json`), or nowhere:
+    /// an App built to print from, or in a test, persists nothing.
+    store: Option<PathBuf>,
 }
 
 impl Default for App {
+    /// An App that persists nothing.
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl App {
-    pub fn new() -> Self {
+    /// This user's sandbox list, under the one root the harness resolves.
+    pub fn store() -> Option<PathBuf> {
+        hanzo_gen::Root::user().map(|r| r.hanzo().join("sandboxes.json"))
+    }
+
+    pub fn new(store: Option<PathBuf>) -> Self {
         let (spark_live, evo_live, router_live, coderouter_live) = Self::probe_network_services();
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -256,6 +273,7 @@ impl App {
             global_rules: Self::default_global_rules(),
 
             compute: super::compute::Board::default(),
+            savings: super::savings::Board::default(),
 
             local_models: Self::seed_local_models(spark_live, evo_live, router_live),
             selected_model_row: 0,
@@ -276,6 +294,7 @@ impl App {
             next_id: 1,
             cluster_telemetry: None,
             telemetry_rx: Some(rx),
+            store,
         };
 
         let live_agents = Self::discover_host_agents();
@@ -410,7 +429,7 @@ impl App {
             let is_claude = (cmd.contains("claude -c") || cmd.contains("claude --dangerously") || cmd.contains("/claude/versions/"))
                 && !cmd.contains("/opt/homebrew/bin/zsh");
             let is_codex = cmd.contains("codex -c") || cmd.contains("features.code_mode_host");
-            let is_hanzo = (cmd.contains("hanzo code") || cmd.contains("hanzo run") || cmd.contains("hanzo dev"))
+            let is_hanzo = cmd.contains("hanzo dev")
                 && !cmd.contains("hanzo sbx") && !cmd.contains("grep");
 
             if (is_claude || is_codex || is_hanzo) && !cmd.contains("python3") && !cmd.contains("node scripts/serve.mjs") {
@@ -1093,30 +1112,25 @@ impl App {
     // ── Persistence ─────────────────────────────────────────────────────────
 
     #[allow(dead_code)]
-    fn load_persisted() -> Result<Vec<Sandbox>> {
-        let path = Self::storage_path()?;
+    fn load_persisted(&self) -> Result<Vec<Sandbox>> {
+        let Some(path) = &self.store else { return Ok(Vec::new()) };
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let data = std::fs::read_to_string(&path)
+        let data = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
         let list: Vec<Sandbox> = serde_json::from_str(&data)?;
         Ok(list)
     }
 
     pub fn save_persisted(&self) -> Result<()> {
-        let path = Self::storage_path()?;
+        let Some(path) = &self.store else { return Ok(()) };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let data = serde_json::to_string_pretty(&self.sandboxes)?;
-        std::fs::write(&path, data)?;
+        std::fs::write(path, data)?;
         Ok(())
-    }
-
-    fn storage_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("no home directory")?;
-        Ok(home.join(".hanzo").join("sandboxes.json"))
     }
 
     // ── Navigation & Interactions ───────────────────────────────────────────
@@ -1159,6 +1173,7 @@ impl App {
                 FocusedPane::Detail => self.previous_detail_row(),
             },
             DashboardView::Compute => self.compute.previous(),
+            DashboardView::Savings => {}
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
                     if self.selected_model_row == 0 {
@@ -1196,6 +1211,7 @@ impl App {
                 FocusedPane::Detail => self.next_detail_row(),
             },
             DashboardView::Compute => self.compute.next(),
+            DashboardView::Savings => {}
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
                     self.selected_model_row = (self.selected_model_row + 1) % self.local_models.len();
@@ -1496,6 +1512,7 @@ impl App {
     }
 
     pub fn refresh_all(&mut self) {
+        self.savings.refresh();
         let live = Self::discover_host_agents();
         if !live.is_empty() {
             self.sandboxes = live;
@@ -1521,10 +1538,11 @@ pub fn run_dashboard() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("failed to create ratatui terminal")?;
 
-    let mut app = App::new();
+    let mut app = App::new(App::store());
     // Only the interactive console reads the machine and beats; `sbx ls` and
     // friends build an App to print from and must not.
     app.compute = super::compute::Board::start();
+    app.savings = super::savings::Board::start();
     let res = run_app_loop(&mut terminal, &mut app);
 
     disable_raw_mode().ok();
@@ -1541,6 +1559,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
     loop {
         app.poll_telemetry();
         app.compute.poll();
+        app.savings.poll();
         terminal.draw(|f| ui(f, app))?;
 
         let timeout = tick_rate
@@ -1556,12 +1575,13 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                         | (_, KeyCode::Esc) => {
                             app.should_quit = true;
                         }
-                        // View shortcuts (1-5)
+                        // View shortcuts (1-6)
                         (_, KeyCode::Char('1')) => app.set_view(DashboardView::Compute),
                         (_, KeyCode::Char('2')) => app.set_view(DashboardView::Sandboxes),
                         (_, KeyCode::Char('3')) => app.set_view(DashboardView::LocalModels),
                         (_, KeyCode::Char('4')) => app.set_view(DashboardView::CloudServices),
                         (_, KeyCode::Char('5')) => app.set_view(DashboardView::Usage),
+                        (_, KeyCode::Char('6')) => app.set_view(DashboardView::Savings),
 
                         // View cycling
                         (_, KeyCode::Char('[')) | (_, KeyCode::Char('h')) => app.previous_view(),
@@ -1602,11 +1622,11 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                             }
                             _ => {}
                         },
-                        (_, KeyCode::Char('t')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.toggle_active_tab();
-                            }
-                        }
+                        (_, KeyCode::Char('t')) => match app.current_view {
+                            DashboardView::Sandboxes => app.toggle_active_tab(),
+                            DashboardView::Savings => app.savings.cycle(),
+                            _ => {}
+                        },
                         (_, KeyCode::Char('d')) => {
                             if app.current_view == DashboardView::LocalModels {
                                 app.download_selected_model();
@@ -1667,7 +1687,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
                                 DashboardView::LocalModels => {
                                     app.launch_selected_model();
                                 }
-                                DashboardView::Compute => {}
+                                DashboardView::Compute | DashboardView::Savings => {}
                                 DashboardView::CloudServices => {
                                     if let Some(svc) = app.cloud_services.get(app.selected_service_row) {
                                         app.set_status(format!("→ Service details: {} ({})", svc.name, svc.subsystem));
@@ -1722,6 +1742,7 @@ pub fn ui(f: &mut Frame, app: &App) {
         DashboardView::LocalModels => render_local_models_view(f, chunks[2], app),
         DashboardView::CloudServices => render_cloud_services_view(f, chunks[2], app),
         DashboardView::Usage => render_usage_view(f, chunks[2], app),
+        DashboardView::Savings => super::savings::render(f, chunks[2], &app.savings),
     }
 
     render_footer(f, chunks[3], app);
@@ -2711,7 +2732,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         DashboardView::LocalModels => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("1-5", Style::default().fg(Color::Cyan)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
             Span::styled("[/]", Style::default().fg(Color::Cyan)),
             Span::styled(" tab  ", Style::default().fg(Color::DarkGray)),
@@ -2733,17 +2754,29 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         DashboardView::Compute => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("1-5", Style::default().fg(Color::Cyan)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
             Span::styled(" machine  ", Style::default().fg(Color::DarkGray)),
             Span::styled("hanzo link", Style::default().fg(Color::Cyan)),
             Span::styled(" adds one", Style::default().fg(Color::DarkGray)),
         ],
+        DashboardView::Savings => vec![
+            Span::styled("^c/q", Style::default().fg(Color::Cyan)),
+            Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
+            Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[/]", Style::default().fg(Color::Cyan)),
+            Span::styled(" prev/next  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("t", Style::default().fg(Color::Cyan)),
+            Span::styled(" range  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("r", Style::default().fg(Color::Cyan)),
+            Span::styled(" refresh", Style::default().fg(Color::DarkGray)),
+        ],
         _ => vec![
             Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("1-5", Style::default().fg(Color::Cyan)),
+            Span::styled("1-6", Style::default().fg(Color::Cyan)),
             Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
             Span::styled("[/]", Style::default().fg(Color::Cyan)),
             Span::styled(" prev/next  ", Style::default().fg(Color::DarkGray)),
@@ -2781,7 +2814,7 @@ mod tests {
 
     #[test]
     fn test_app_initialization() {
-        let app = App::new();
+        let app = App::new(None);
         assert!(!app.sandboxes.is_empty(), "seed sandboxes should be present");
         assert!(!app.local_models.is_empty(), "local models should be present");
         assert!(!app.cloud_services.is_empty(), "cloud services should be present");
@@ -2794,7 +2827,7 @@ mod tests {
 
     #[test]
     fn test_dashboard_view_switching() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         assert_eq!(app.current_view, DashboardView::Compute);
 
         app.set_view(DashboardView::Sandboxes);
@@ -2810,15 +2843,39 @@ mod tests {
         assert_eq!(app.current_view, DashboardView::Usage);
 
         app.next_view();
+        assert_eq!(app.current_view, DashboardView::Savings);
+
+        app.next_view();
         assert_eq!(app.current_view, DashboardView::Compute);
+
+        app.previous_view();
+        assert_eq!(app.current_view, DashboardView::Savings);
 
         app.previous_view();
         assert_eq!(app.current_view, DashboardView::Usage);
     }
 
     #[test]
+    fn test_savings_page_is_view_six_and_t_steps_its_range() {
+        use ratatui::backend::TestBackend;
+        assert_eq!(DashboardView::all().len(), 6);
+        assert_eq!(DashboardView::Savings.title(), "6: Savings");
+        let mut app = App::new(None);
+        app.set_view(DashboardView::Savings);
+        let mut terminal = Terminal::new(TestBackend::new(136, 36)).unwrap();
+        terminal.draw(|f| ui(f, &app)).unwrap();
+        let text: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        for want in ["6: Savings", "hanzo cloud · 24h", "local kai-gateway", " range ", " refresh"] {
+            assert!(text.contains(want), "missing {want:?}");
+        }
+        assert_eq!(app.savings.range, 0);
+        app.savings.cycle();
+        assert_eq!(crate::commands::up::savings::RANGES[app.savings.range], "7d");
+    }
+
+    #[test]
     fn test_navigation_across_views() {
-        let mut app = App::new();
+        let mut app = App::new(None);
 
         // LocalModels navigation
         app.set_view(DashboardView::LocalModels);
@@ -2847,7 +2904,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_navigation() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let total = app.sandboxes.len();
         assert!(total >= 2);
 
@@ -2863,7 +2920,7 @@ mod tests {
 
     #[test]
     fn test_pane_and_tab_switching() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         assert_eq!(app.focused_pane, FocusedPane::Sandboxes);
         app.switch_pane();
         assert_eq!(app.focused_pane, FocusedPane::Detail);
@@ -2879,7 +2936,7 @@ mod tests {
 
     #[test]
     fn test_toggle_start_stop() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_status = app.sandboxes[0].status.clone();
 
         app.toggle_start_stop();
@@ -2891,7 +2948,7 @@ mod tests {
 
     #[test]
     fn test_toggle_network_block() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_status = app.sandboxes[0].network_logs[0].status;
 
         app.toggle_block();
@@ -2903,7 +2960,7 @@ mod tests {
 
     #[test]
     fn test_create_and_remove_sandbox() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_count = app.sandboxes.len();
 
         app.create_sandbox();
@@ -2916,7 +2973,7 @@ mod tests {
 
     #[test]
     fn test_network_metrics_calculation() {
-        let app = App::new();
+        let app = App::new(None);
         let (total, allowed, blocked) = app.network_metrics();
         assert_eq!(total, allowed + blocked);
         assert!(total > 0);
@@ -2924,7 +2981,7 @@ mod tests {
 
     #[test]
     fn test_refresh_all() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.refresh_all();
         assert!(!app.local_models.is_empty());
         assert!(!app.cloud_services.is_empty());
@@ -2932,7 +2989,7 @@ mod tests {
 
     #[test]
     fn test_all_agents_running() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.start_all_agents();
         assert!(app.sandboxes.iter().all(|s| s.status == SandboxStatus::Running));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Claude Code"));
@@ -2943,7 +3000,7 @@ mod tests {
 
     #[test]
     fn test_model_and_container_actions() {
-        let mut app = App::new();
+        let mut app = App::new(None);
         let initial_node = app.target_node.clone();
         app.toggle_target_node();
         assert_ne!(app.target_node, initial_node);
@@ -2972,7 +3029,7 @@ mod tests {
         let height = 36u16;
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = App::new();
+        let mut app = App::new(None);
         app.set_view(DashboardView::Sandboxes);
         app.focused_pane = FocusedPane::Detail;
         app.selected_network_row = 2; // api.github.com
@@ -3026,8 +3083,11 @@ mod tests {
             lines.push(row);
         }
 
+        // The dumps land in a directory of this test's own: a fixed /tmp name is
+        // shared by every user and every concurrent run on the machine.
+        let out = tempfile::tempdir().unwrap();
         let json_data = serde_json::to_string(&lines).unwrap();
-        let _ = std::fs::write("/tmp/sbx_tui_dump.json", json_data);
+        std::fs::write(out.path().join("sbx_tui_dump.json"), json_data).unwrap();
 
         // Also dump LocalModels view
         app.set_view(DashboardView::LocalModels);
@@ -3055,6 +3115,11 @@ mod tests {
             model_lines.push(row);
         }
         let model_json = serde_json::to_string(&model_lines).unwrap();
-        let _ = std::fs::write("/tmp/sbx_models_dump.json", model_json);
+        std::fs::write(out.path().join("sbx_models_dump.json"), model_json).unwrap();
+        for dump in ["sbx_tui_dump.json", "sbx_models_dump.json"] {
+            let rows: Vec<Vec<serde_json::Value>> =
+                serde_json::from_str(&std::fs::read_to_string(out.path().join(dump)).unwrap()).unwrap();
+            assert_eq!(rows.len(), height as usize, "{dump} is the whole screen");
+        }
     }
 }

@@ -68,8 +68,25 @@ client:
 # gate that cannot run is worse than no gate whichever way it lands: red, it
 # teaches people the build lies; green, it teaches them nothing at all. It asks
 # for the component first now, which is idempotent and costs a cached download.
+#
+# THE SUITE NEVER TOUCHES A HOME, and the gate says so the way hanzoai/gen's
+# does: it runs against an empty HOME it cannot write, then against an empty one
+# it can, which must still be empty after. A runner can be a person's machine,
+# and a test that wrote there once rewrote that person's agent configs. Cargo
+# and rustup keep their own homes, named before HOME moves.
 test:
   - name: cargo-test
-    run: make test
+    run: |
+      set -euo pipefail
+      export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTC_WRAPPER=
+      export PATH="$CARGO_HOME/bin:$PATH"
+      unset XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_STATE_HOME
+      ro=$(mktemp -d); tmp=$(mktemp -d)
+      trap 'chmod u+w "$ro"; rm -rf "$ro" "$tmp"' EXIT
+      chmod 0555 "$ro"
+      HOME="$ro" make test
+      HOME="$tmp" make test
+      left=$(find "$tmp" -mindepth 1 | head -20)
+      [ -z "$left" ] || { echo "::error::the test suite wrote into HOME:"; echo "$left"; exit 1; }
   - name: clippy
     run: rustup component add clippy && cargo clippy --locked --all-targets -- -D warnings

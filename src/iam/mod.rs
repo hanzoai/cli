@@ -21,7 +21,6 @@
 pub mod device;
 pub mod identity;
 pub mod login;
-pub mod native;
 pub mod oauth;
 pub mod onboarding;
 pub mod paths;
