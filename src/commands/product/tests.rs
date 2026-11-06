@@ -1136,6 +1136,35 @@ fn a_2xx_error_envelope_is_surfaced_not_swallowed() {
     assert!(envelope_error(&json!("plain string")).is_none());
 }
 
+/// A resource whose own state is `error` or `failed` is a success to render.
+/// `agent sessions get` on a run that died at clone answered with the run's error
+/// as the CLI's, so a failed run could not be read at all.
+#[test]
+fn a_failed_resource_is_rendered_not_refused() {
+    use serde_json::json;
+
+    let run = json!({
+        "id": "sess_39509ae3f553c09110030c113eda4382",
+        "kind": "coding",
+        "status": "error",
+        "error": "coding: clone: exit 128: fatal: unable to access 'https://github.com/hanzo-inc/cloud.git/'",
+        "events": [{"kind": "message", "content": "the prompt"}],
+    });
+    assert!(envelope_error(&run).is_none());
+    assert!(envelope_error(&json!({"id": "b1", "status": "failed", "error": "exit 1"})).is_none());
+    assert!(envelope_error(&json!({"id": "d1", "error": "rollout stalled"})).is_none());
+
+    // IAM's whole envelope is still an envelope.
+    assert_eq!(
+        envelope_error(&json!({
+            "status": "error", "msg": "Unauthorized operation",
+            "sub": "", "name": "", "data": null, "data2": null,
+        }))
+        .as_deref(),
+        Some("Unauthorized operation")
+    );
+}
+
 // ---- naming: the reader is a customer, not a maintainer ---------------------
 
 /// The vendors this CLI's OWN help text may not name.
