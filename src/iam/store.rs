@@ -617,6 +617,11 @@ pub(crate) fn active_token_in(
     let Some(id) = acting(cfg, brand) else {
         return Ok(None);
     };
+    // `--as <org>` holding identities, none of them acting: refuse by name, as
+    // `within` does, never speak as the active identity of another org instead.
+    if cfg.org.as_deref().is_some_and(|org| id.owner != org && list(cfg, brand).iter().any(|i| i.owner == org)) {
+        within(cfg, brand)?;
+    }
     // NO FALLBACK, NO CASCADE. A missing credential for the active identity
     // means unauthenticated — we never reach for another identity's token.
     let Some(tokens) = token::load(v, brand, &id)? else {
@@ -1120,6 +1125,25 @@ mod tests {
         assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ORG)));
         c.org = None;
         assert_eq!(within(&c, "hanzo").unwrap(), None);
+    }
+
+    /// The token every command sends obeys the same rule: `--as` an org holding
+    /// several identities, none of them active, refuses, and never sends the
+    /// active identity's token (a SuperAdmin's) with that org's header.
+    #[test]
+    fn as_an_org_with_no_active_identity_sends_no_token() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        for (owner, name) in [("hanzo", "z"), ("hanzo", "a"), ("admin", "z")] {
+            add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
+        }
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
+        c.org = Some("hanzo".into());
+        let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("2 hanzo identities in hanzo"), "{err}");
+
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), ORG);
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---
