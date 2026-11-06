@@ -864,6 +864,10 @@ fn target(path: &str, query: &[String]) -> Result<String> {
     })
 }
 
+/// The keys a `/v1` envelope carries: `{status,msg,data}`, IAM's `sub`, `name` and
+/// `data2`, and the bare `error`/`code` form.
+const ENVELOPE: &[&str] = &["status", "msg", "data", "data2", "sub", "name", "error", "code"];
+
 /// Read the cloud `/v1` envelope (`{status,msg,data}`) for an error the HTTP status
 /// did not carry. Some planes (IAM) answer a refusal with HTTP 200 and
 /// `{"status":"error","msg":"…"}`, so a 2xx is not proof of success. Returns the
@@ -872,8 +876,15 @@ fn target(path: &str, query: &[String]) -> Result<String> {
 /// a genuine success (a success envelope, or a raw non-enveloped body) renders
 /// unchanged. It never invents a message and never fires on a success that merely
 /// has a `msg` with null `data`: an explicit non-error `status` wins.
+///
+/// Only a body made of envelope keys is an envelope. A body with any other key is a
+/// resource, and its `status`/`error` are its own state: a failed coding run is
+/// `{"id":…,"status":"error","error":…}`, a success to render, not a refusal.
 pub(crate) fn envelope_error(body: &Value) -> Option<String> {
     let obj = body.as_object()?;
+    if !obj.keys().all(|k| ENVELOPE.contains(&k.as_str())) {
+        return None;
+    }
     let message = || {
         obj.get("msg")
             .or_else(|| obj.get("error"))
