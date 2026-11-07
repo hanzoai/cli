@@ -7,7 +7,7 @@
 //! method). `state` is an independent 256-bit value for CSRF protection.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::{rngs::OsRng, RngCore};
+use rand::TryRng;
 use sha2::{Digest, Sha256};
 
 /// 256 bits of entropy for both the verifier and the state.
@@ -22,7 +22,7 @@ pub struct Pkce {
 
 fn random_base64url(byte_len: usize) -> String {
     let mut bytes = vec![0u8; byte_len];
-    OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng.try_fill_bytes(&mut bytes).expect("OS RNG");
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

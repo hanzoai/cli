@@ -67,12 +67,12 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_norway = { version = "0.9", optional = true }        # genspec only — reads hanzoai/openapi's YAML master
-toml = "0.8"
-dirs = "5.0"
-colored = "2.1"
-dialoguer = "0.11"
-reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "rustls-tls", "http2", "charset"] }
-which = "6.0"
+toml = "1.1"
+dirs = "7.0"
+colored = "3.1"
+dialoguer = "0.12"
+reqwest = { version = "0.13", default-features = false, features = ["json", "gzip", "http2", "charset", "query", "form"] }
+which = "8.0"
 flate2 = "1.1"                                             # vm bootstrap: gunzip the release tarball
 tar = "0.4"                                                # vm bootstrap: extract hanzo-vm from it
 libc = "0.2"                                               # SIGTERM/liveness for the local cloud host daemon
@@ -85,9 +85,9 @@ ratatui = "0.29"
 crossterm = "0.28"
 
 # Cloud auth (HIP-0111 OIDC PKCE S256).
-sha2 = "0.10"                                              # PKCE S256 challenge
-base64 = "0.22"                                            # base64url (no pad)
-rand = "0.8"                                               # OsRng for PKCE verifier + state + local wallet entropy
+sha2 = "0.11"                                              # PKCE S256 challenge
+base64 = "0.23"                                            # base64url (no pad)
+rand = "0.10"                                              # OsRng for PKCE verifier + state + local wallet entropy
 # A scannable link, so signing a headless box in is a phone camera rather than
 # 40 characters typed by hand. Terminal half-blocks, no image, no C.
 qr2term = "0.3"
@@ -96,10 +96,10 @@ webbrowser = "1"                                           # open the IAM author
 # Local / imported wallets — HD derivation + EVM address. Cloud-custody (KMS/MPC)
 # wallets need NONE of this; these are only for offline `wallet create --local`
 # and `wallet import`. Pure-Rust RustCrypto; secrets live in `iam::token`'s store.
-bip39 = { package = "tiny-bip39", version = "1" }             # BIP-39 mnemonic (all word counts) -> seed
-bip32 = "0.5"                                             # secp256k1 BIP-32 HD derivation from a seed
-k256 = "0.13"                                             # secp256k1 (matches bip32) — public key -> EVM address
-sha3 = "0.10"                                             # Keccak-256 for EVM address
+bip39 = { package = "tiny-bip39", version = "2" }         # BIP-39 mnemonic (all word counts) -> seed
+bip32 = { version = "0.6", features = ["alloc"] }         # secp256k1 BIP-32 HD derivation from a seed
+k256 = "0.14"                                            # secp256k1 (matches bip32) — public key -> EVM address
+sha3 = "0.12"                                            # Keccak-256 for EVM address
 
 [dev-dependencies]
 assert_cmd = "2.0"
