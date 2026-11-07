@@ -686,8 +686,22 @@ enum WalletCommands {
     List,
 }
 
+/// A failed command says what failed and exits 1. Returning the error from
+/// `main` printed it with `{:?}`, which carries a stack backtrace whenever
+/// `RUST_BACKTRACE` is set — a person asked to sign in got thirty lines of
+/// frames under one sentence.
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {err:#}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     // The lazy MCP proxy a coding agent is handed in place of hanzo-mcp
     // (`hanzo_gen::mcp`). It runs before the command tree is built: the agent
     // waits on it, and the tree is not needed to forward a pipe.
