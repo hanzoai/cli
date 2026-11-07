@@ -1098,7 +1098,8 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
     so an unset slot 400s every subagent.
   - The slots are Enso's paid tiers, one each: Haiku `enso-flash`, Sonnet `enso-pro`,
     Opus `enso-max`, Fable `enso-ultra`; the main model is `enso-auto` unless
-    `--model` names another.
+    `--model` names another. No session `effortLevel` is seeded: each tier thinks at
+    its own depth (low, medium, high, max) and `enso-auto` leaves depth to its router.
   - **Key a slot on its TIER, never on its zen id.** Were two slots to share an id,
     an id lookup would be ambiguous between them; it once gave the "max effort"
     slot the opus carrier.
