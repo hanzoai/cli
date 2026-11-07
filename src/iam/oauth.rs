@@ -225,26 +225,14 @@ pub async fn login(brand: &str, org: Option<&str>, open: bool, ask: &Ask) -> Res
     // The browser's document request is held until the token names the account:
     // answering before that is how the tab could only say "signed in" with no
     // one attached to it.
-    let first = tokio::select! {
-        r = capture_callback(&listener, &state, origin) => Arrival::Browser(r?),
-        r = paste_callback(&state) => Arrival::Pasted(r?),
+    let mut keyboard = Keyboard::open();
+    let arrived = arrive(&listener, &state, origin, org, &redirect_uri, &pkce.verifier, &mut keyboard).await?;
+    drop(keyboard);
+    let (stream, code) = match arrived {
+        Arrived::Pasted(tokens) => return Ok(Done::Pasted(tokens)),
+        Arrived::Browser(stream, code) => (stream, code),
     };
-    let (stream, code, verifier) = match first {
-        Arrival::Pasted(cb) => {
-            let code = cb
-                .code
-                .ok_or_else(|| anyhow!("no authorization code in callback"))?;
-            return Ok(Done::Pasted(
-                exchange_code(origin, org, &code, &redirect_uri, &pkce.verifier).await?,
-            ));
-        }
-        Arrival::Browser((cb, stream)) => {
-            let code = cb
-                .code
-                .ok_or_else(|| anyhow!("no authorization code in callback"))?;
-            (stream, code, pkce.verifier)
-        }
-    };
+    let verifier = pkce.verifier;
 
     // The token exchange takes a network round trip. Safari does not sit on the
     // first socket for that long: it retries the redirect, and the page has to
@@ -339,10 +327,6 @@ async fn answer_held(stream: &mut TcpStream, page: &str) {
     }
 }
 
-enum Arrival {
-    Browser((Callback, TcpStream)),
-    Pasted(Callback),
-}
 
 /// The account a token belongs to, from the token's own claims. No network:
 /// the browser tab is waiting on the socket this returns for.
@@ -566,58 +550,122 @@ fn parse_callback(target: &str) -> Result<Callback> {
     Ok(cb)
 }
 
-/// The authorization code, off the keyboard.
+/// Which leg answered: a pasted code already exchanged, or the browser's
+/// redirect with its connection held for the page.
+enum Arrived {
+    Pasted(TokenSet),
+    Browser(TcpStream, String),
+}
+
+/// Race the loopback against the keyboard until one yields a code.
+///
+/// A pasted code IAM refuses ends nothing. The terminal is shared with whatever
+/// the person pastes next, and a sign-in that ended on the first refused line
+/// closed the port the browser was about to return to — Safari's "Can't connect
+/// to the server" while the real code sat in its address bar. No refusal spends
+/// the verifier, so the race simply goes on.
+async fn arrive(
+    listener: &TcpListener,
+    state: &str,
+    origin: &str,
+    org: Option<&str>,
+    redirect_uri: &str,
+    verifier: &str,
+    keyboard: &mut Keyboard,
+) -> Result<Arrived> {
+    let mut browser = std::pin::pin!(capture_callback(listener, state, origin));
+    loop {
+        tokio::select! {
+            r = &mut browser => {
+                let (cb, stream) = r?;
+                let code = cb
+                    .code
+                    .ok_or_else(|| anyhow!("no authorization code in callback"))?;
+                return Ok(Arrived::Browser(stream, code));
+            }
+            r = keyboard.next(state) => {
+                let code = r?
+                    .code
+                    .ok_or_else(|| anyhow!("no authorization code in callback"))?;
+                match exchange_code(origin, org, &code, redirect_uri, verifier).await {
+                    Ok(tokens) => return Ok(Arrived::Pasted(tokens)),
+                    Err(err) => println!(
+                        "That code was refused ({err:#}). Paste the URL the browser \
+                         lands on, or finish signing in there."
+                    ),
+                }
+            }
+        }
+    }
+}
+
+/// The authorization code, off the keyboard: lines typed at the terminal, for
+/// as long as the sign-in lasts.
 ///
 /// It accepts either shape a person can copy: the WHOLE redirect URL out of the
 /// address bar (which is where it already is when the loopback fails), or the
 /// bare `code` value. A malformed line is answered and the read continues —
 /// bailing would end a login the socket might still complete, and the paste is
 /// the leg that was already having a bad time.
-async fn paste_callback(state: &str) -> Result<Callback> {
-    // A pipe is not a person. Its EOF arrives at once, and resolving this side
-    // of the race on it would end the login before the browser could answer, so
-    // a non-terminal stdin simply never returns and the socket decides.
-    if !std::io::stdin().is_terminal() {
-        return std::future::pending().await;
+struct Keyboard {
+    lines: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    _stop: Stop,
+}
+
+impl Keyboard {
+    fn open() -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let _stop = Stop(Arc::clone(&stop));
+        // A pipe is not a person. Its EOF arrives at once, and resolving this
+        // side of the race on it would end the login before the browser could
+        // answer, so a non-terminal stdin is never read and the socket decides.
+        if !std::io::stdin().is_terminal() {
+            return Keyboard { lines: None, _stop };
+        }
+        // THE READ ENDS WITH THE LOGIN. On a desktop the socket wins and this
+        // side is dropped mid-read; `tokio::io::stdin()` left that read parked
+        // on the runtime's blocking pool, and the runtime waits for its blocking
+        // threads before the process can exit — so `hanzo login` printed "Signed
+        // in" and then sat there until someone pressed Enter, and that Enter was
+        // swallowed. `typed` reads only a line that is already waiting, on its
+        // own thread, and `_stop` ends it the moment this is dropped.
+        let (tx, lines) = tokio::sync::mpsc::unbounded_channel();
+        std::thread::spawn(move || typed(&stop, &tx));
+        Keyboard { lines: Some(lines), _stop }
     }
 
-    // THE READ ENDS WITH THE LOGIN. On a desktop the socket wins and this side
-    // is dropped mid-read; `tokio::io::stdin()` left that read parked on the
-    // runtime's blocking pool, and the runtime waits for its blocking threads
-    // before the process can exit — so `hanzo login` printed "Signed in" and
-    // then sat there until someone pressed Enter, and that Enter was swallowed.
-    // `typed` reads only a line that is already waiting, on its own thread, and
-    // `_stop` ends it the moment this future is dropped.
-    let (tx, mut lines) = tokio::sync::mpsc::unbounded_channel();
-    let stop = Arc::new(AtomicBool::new(false));
-    let _stop = Stop(Arc::clone(&stop));
-    std::thread::spawn(move || typed(&stop, &tx));
-    while let Some(line) = lines.recv().await {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let cb = parse_pasted(line);
-        if let Some(err) = cb.error {
-            bail!("authorization denied: {err}");
-        }
-        // State rides along only when the whole URL did. Present, it MUST match
-        // — that is the bind to this attempt. Absent, the person typed a code
-        // into this process by hand and PKCE is what binds the exchange: the
-        // verifier never left here, so a code lifted from someone else's login
-        // cannot be spent by us and ours cannot be spent by them.
-        match (&cb.state, &cb.code) {
-            (Some(got), _) if got != state => {
-                bail!("state mismatch — that code belongs to a different sign-in; aborting")
+    /// The next pasted callback that carries a code for this sign-in.
+    async fn next(&mut self, state: &str) -> Result<Callback> {
+        let Some(lines) = self.lines.as_mut() else {
+            return std::future::pending().await;
+        };
+        while let Some(line) = lines.recv().await {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
             }
-            (_, Some(_)) => return Ok(cb),
-            _ => {
-                println!("No code in that. Paste the whole URL from the browser, or just the code.")
+            let cb = parse_pasted(line);
+            // State rides along only when the whole URL did. Present, it MUST
+            // match — that is the bind to this attempt, and a URL from another
+            // sign-in is answered, not spent. Absent, the person typed a code
+            // into this process by hand and PKCE is what binds the exchange: the
+            // verifier never left here, so a code lifted from someone else's
+            // login cannot be spent by us and ours cannot be spent by them.
+            if cb.state.as_deref().is_some_and(|got| got != state) {
+                println!("That URL belongs to a different sign-in. Paste the one this browser lands on.");
+                continue;
             }
+            if let Some(err) = cb.error {
+                bail!("authorization denied: {err}");
+            }
+            if cb.code.is_some() {
+                return Ok(cb);
+            }
+            println!("No code in that. Paste the whole URL from the browser, or just the code.");
         }
+        // stdin closed under us; leave the socket to it.
+        std::future::pending().await
     }
-    // stdin closed under us; leave the socket to it.
-    std::future::pending().await
 }
 
 /// Sets its flag when dropped: the paste leg is over, whoever won.
@@ -675,8 +723,11 @@ fn parse_pasted(input: &str) -> Callback {
     let query = match s.find('?') {
         Some(i) => &s[i + 1..],
         // No `?` at all: a bare query string still has `code=`, anything else is
-        // the code itself.
+        // the code itself — unless it is a command or another address. A code
+        // carries no space and no scheme, and a line pasted in after the login
+        // command (`curl … \`) was sent to IAM as one.
         None if s.contains('=') => s,
+        None if s.contains(char::is_whitespace) || s.contains("://") => return Callback::default(),
         None => {
             return Callback {
                 code: Some(s.to_string()),
@@ -1696,6 +1747,87 @@ mod tests {
         assert!(bare.state.is_none());
     }
 
+    /// A keyboard fed by the test instead of a terminal.
+    fn keys(lines: &[&str]) -> Keyboard {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        for line in lines {
+            tx.send(format!("{line}\n")).unwrap();
+        }
+        // The sender lives on, as a terminal does: an ended keyboard would
+        // leave the race to the socket alone.
+        std::mem::forget(tx);
+        Keyboard { lines: Some(rx), _stop: Stop(Arc::new(AtomicBool::new(false))) }
+    }
+
+    fn refuses_nope(req: &str) -> (&'static str, String) {
+        if req.contains("code=nope") {
+            return ("400 Bad Request", r#"{"error":"invalid_grant","error_description":"invalid authorization code"}"#.into());
+        }
+        ("200 OK", r#"{"access_token":"header.payload.sig","token_type":"Bearer","refresh_token":"rt"}"#.into())
+    }
+
+    /// The sign-in that ended on a pasted `curl` line: what follows the login
+    /// command in a pasted block reaches the keyboard. The command never
+    /// reaches IAM, the code IAM refuses ends nothing, and the next code signs in.
+    #[tokio::test]
+    async fn wire_a_refused_paste_leaves_the_sign_in_waiting() {
+        let (origin, seen) = stand(refuses_nope).await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut keyboard = keys(&[
+            "  curl -s -X POST https://api.hanzo.ai/v1/provider/github/claim \\",
+            "nope",
+            "good",
+        ]);
+        let arrived = arrive(&listener, "S", &origin, None, "http://127.0.0.1:1/callback", "V", &mut keyboard)
+            .await
+            .unwrap();
+        assert!(matches!(arrived, Arrived::Pasted(_)));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[0].contains("code=nope") && seen[1].contains("code=good"), "{seen:?}");
+    }
+
+    /// After a refused paste the browser can still come home: the port stays open.
+    #[tokio::test]
+    async fn wire_after_a_refused_paste_the_browser_still_lands() {
+        let (origin, _) = stand(refuses_nope).await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut keyboard = keys(&["nope"]);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let mut tab = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            tab.write_all(b"GET /callback?code=from-browser&state=S HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut sink = Vec::new();
+            let _ = tab.read_to_end(&mut sink).await;
+        });
+        let arrived = arrive(&listener, "S", &origin, None, "http://127.0.0.1:1/callback", "V", &mut keyboard)
+            .await
+            .unwrap();
+        match arrived {
+            Arrived::Browser(_, code) => assert_eq!(code, "from-browser"),
+            Arrived::Pasted(_) => panic!("the refused paste signed in"),
+        }
+    }
+
+    // What follows the login command in a pasted block reaches this leg too.
+    // None of it is a code, so none of it may be spent at the token endpoint.
+    #[test]
+    fn a_pasted_command_or_address_is_not_a_code() {
+        for line in [
+            "curl -s -X POST https://api.hanzo.ai/v1/provider/github/claim \\",
+            "-H \"X-Org-Id: hanzo\" \\",
+            "-d '{\"accounts\":[\"hanzo-java\",\"hanzo-csharp\"]}'",
+            "https://api.hanzo.ai/v1/provider/github/claim",
+        ] {
+            let cb = parse_pasted(line);
+            assert!(cb.code.is_none(), "{line:?} was read as a code");
+            assert!(cb.error.is_none() && cb.state.is_none(), "{line:?}");
+        }
+    }
+
     #[test]
     fn a_paste_decodes_and_survives_copy_noise() {
         // Quotes ride along out of terminals and chat clients.
@@ -1717,7 +1849,8 @@ mod tests {
         if std::io::stdin().is_terminal() {
             return;
         }
-        let pending = paste_callback("state");
+        let mut keyboard = Keyboard::open();
+        let pending = keyboard.next("state");
         tokio::pin!(pending);
         let waited = tokio::time::timeout(std::time::Duration::from_millis(80), pending).await;
         assert!(waited.is_err(), "paste completed with nothing to read");
