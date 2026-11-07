@@ -105,8 +105,9 @@ follow-ups, and the supported workflow.
 `tree`, `ask`). Its task form forwards to `hanzo dev`; `hanzo code --cloud` uses
 the same remote execution path.
 
-Enso and Zen models (`enso`, `enso-flash`, `enso-pro`, `enso-ultra`, `zen6`, …) are Hanzo's own
-family; the gateway is the sole authority on the model catalog.
+Enso and Zen models (`enso-auto`, the default, then `enso-flash`, `enso-pro`, `enso-max`,
+`enso-ultra`, and `zen6`, …) are Hanzo's own family; the gateway is the sole authority on
+the model catalog.
 
 ## Commands
 

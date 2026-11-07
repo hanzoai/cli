@@ -311,8 +311,8 @@ disclosed — headless runs only (Claude `result`, dev `turn.completed`); an int
 run is the tool's own screen and reports nothing. *Listed price* is those tokens at
 `GET {api}/v1/models` (`pricing.prompt`, `pricing.completion`,
 `pricing.rates.input_cache_read|write`; same candidate-id rules as kai-gateway's
-`prices.ts`): an estimate, `$0.00` for a model the list marks `free` (`enso-auto`,
-the default), no dollars for a model it does not name. Claude counts cache tokens
+`prices.ts`): an estimate, `$0.00` for a model the list marks `free`, no dollars for a
+model it does not name. Claude counts cache tokens
 apart from input and dev/codex inside it (`Tally`, `Ended.apart`). *Metered* is
 `GET /v1/usage/summary?range=custom&start&end` for the session window, asked only
 for a routed run that reported nothing, and labelled org-wide (it includes other
@@ -1096,9 +1096,12 @@ both are pure functions of the resolved ROUTE, so every reader agrees without co
     branding: Claude resolves subagents, `/compact` and its background work through
     those slots, and their built-ins are `claude-*` ids the gateway does not serve,
     so an unset slot 400s every subagent.
-  - **Key a slot on its TIER, never on its zen id.** `zen5-pro` fills two slots (opus
-    and fable); an id lookup is ambiguous between them and silently gave the
-    "max effort" slot the opus carrier.
+  - The slots are Enso's paid tiers, one each: Haiku `enso-flash`, Sonnet `enso-pro`,
+    Opus `enso-max`, Fable `enso-ultra`; the main model is `enso-auto` unless
+    `--model` names another.
+  - **Key a slot on its TIER, never on its zen id.** Were two slots to share an id,
+    an id lookup would be ambiguous between them; it once gave the "max effort"
+    slot the opus carrier.
   - A model absent from the table passes through untouched — the table is a lookup,
     never an allowlist. The gateway stays the sole authority on which ids are valid.
   - A CARRIED model also gets `--append-system-prompt` naming its real tier, because
