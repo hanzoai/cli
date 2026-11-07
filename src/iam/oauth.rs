@@ -1613,7 +1613,25 @@ mod tests {
 
         go.send(()).unwrap();
         assert_eq!(finished.await.unwrap().unwrap(), 7);
-        assert!(TcpStream::connect(addr).await.is_err(), "the port stayed open");
+        // Closed means nothing here answers any more. The freed port is the
+        // kernel's to hand out again, and the other tests of this binary bind
+        // loopback ports in parallel, so a connection that opens is asked
+        // rather than counted: one of theirs never serves this page.
+        if let Ok(mut late) = TcpStream::connect(addr).await {
+            let _ = late
+                .write_all(b"GET /callback?code=abc&state=xyz HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await;
+            let mut answer = Vec::new();
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                late.read_to_end(&mut answer),
+            )
+            .await;
+            assert!(
+                !String::from_utf8_lossy(&answer).contains("You're signed in"),
+                "the port stayed open"
+            );
+        }
     }
 
     /// RP-Initiated Logout through the CLI's own client: the loopback and state
