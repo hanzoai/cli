@@ -758,6 +758,18 @@ impl Seam {
         // party.
         let origin = host::origin(cfg).await?;
 
+        // A MACHINE CALLER'S KEY, read at the point of use. An API key names no
+        // principal, so it is never filed as an identity (Identity::from_access_token
+        // refuses one); a caller that holds only a key — a bot in a sandbox, a CI
+        // step — sets HANZO_API_KEY and every cloud command speaks as that key. It
+        // wins over a stored login for the reason `hanzo dev`'s provider tries it
+        // first: the variable is chosen for this process, the login is the machine's
+        // default. Without it a box answered `not signed in`, and a box signed in as a
+        // person read none of the sessions its key had opened (404).
+        if let Some(token) = machine_key(std::env::var_os("HANZO_API_KEY")) {
+            return Ok(Self { origin, token, hint: None, org: cfg.org.clone(), wire: Http::default() });
+        }
+
         // WHO. A local host may have no IAM to sign in to, so a missing credential
         // is NOT refused here — the call goes out unauthenticated and the server
         // decides. That is the same rule this module already follows for a 403:
@@ -804,6 +816,14 @@ impl Seam {
         }
         Ok(self.wire.send(request).await?)
     }
+}
+
+/// The bearer a machine caller set in `HANZO_API_KEY`, or `None` when it is unset,
+/// blank or not text. Surrounding whitespace is a paste, not part of the key.
+fn machine_key(var: Option<std::ffi::OsString>) -> Option<String> {
+    let key = var?.into_string().ok()?;
+    let key = key.trim();
+    (!key.is_empty()).then(|| key.to_string())
 }
 
 /// Map an op's method string to a `reqwest::Method`.
