@@ -287,17 +287,25 @@ pub fn predicate_label(code: &str) -> &str {
         "PS23" => "phone",
         "PS24" => "handle",
         "PS33" => "name",
+        "PS37" => "birthday components",
         "PS45" => "member of",
         "PS48" => "relationship to me",
         "PS51" => "attendee",
         "PS59" => "located in",
+        "PS72" => "external identifier",
         "PS92" => "bundle identifier",
+        "PS102" => "contact source",
         "PS112" => "start date",
         "PS113" => "end date",
         "PS204" => "has residence",
+        "PS225" => "address",
         "PS311" => "role title",
+        "PS312" => "given name",
+        "PS441" => "family name",
         "PS500" => "employer",
         "PS501" => "school",
+        "PS520" => "handle",
+        "PS546" => "middle name",
         _ => code,
     }
 }
@@ -581,7 +589,12 @@ pub fn read_local_apple_store(
         if g.target.is_empty() {
             continue;
         }
-        let target_name = names_lookup.get(&g.target).cloned().unwrap_or_default();
+        let clean_target = g.target.strip_prefix("md:").unwrap_or(&g.target);
+        let target_name = names_lookup
+            .get(&g.target)
+            .or_else(|| names_lookup.get(clean_target))
+            .cloned()
+            .unwrap_or_default();
         if let Some(ent) = entities_map.get_mut(&g.subject) {
             ent.edges.push(LocalEdgeView {
                 predicate_id: g.predicate.clone(),
