@@ -53,6 +53,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Desktop(..) => "desktop",
         Commands::Config { .. } => "config",
         Commands::Engine { .. } => "engine",
+        Commands::Graph { .. } => "graph",
         Commands::Link { .. } => "link",
         Commands::Runner { .. } => "runner",
         Commands::Scan { .. } => "scan",

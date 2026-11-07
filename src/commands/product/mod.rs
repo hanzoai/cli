@@ -683,7 +683,7 @@ fn enc(s: &str) -> String {
 /// it in the PATH, the caller has already addressed it (its own `owner`), and the
 /// server re-checks it against the JWT it verifies. `path` is the FINAL
 /// template-filled `/v1/…` — never a fetched spec, never a user-supplied host.
-async fn call(
+pub(crate) async fn call(
     cfg: &mut Config,
     method: Method,
     path: String,

@@ -12,6 +12,7 @@ pub mod build;
 pub mod config;
 pub mod chain;
 pub mod engine;
+pub mod graph;
 pub mod runner;
 pub mod savings;
 pub mod scan;

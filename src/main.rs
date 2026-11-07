@@ -204,6 +204,12 @@ enum Commands {
         command: EngineCommands,
     },
 
+    /// Personal & organization knowledge graph — local Apple PKG (`local`, `sync`) and cloud `/v1/graph`
+    Graph {
+        #[command(subcommand)]
+        command: commands::graph::GraphCommands,
+    },
+
     /// Provide this machine as a CI runner
     Runner {
         #[command(subcommand)]
@@ -1119,6 +1125,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         },
         Commands::Share { target, backend_mode, name } => {
             commands::share::run(&mut config, target, backend_mode, name).await?
+        }
+        Commands::Graph { command } => {
+            commands::graph::run(command, &mut config).await?
         }
         Commands::Init { template, name } => commands::init::run(template, name).await?,
     }

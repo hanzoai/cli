@@ -197,11 +197,12 @@ fn graph_asks_at_both_times() {
     let listed = |verb: &str| top.lines().any(|l| l.split_whitespace().next() == Some(verb));
     for verb in [
         "create", "get", "search", "resolve", "neighbors", "path", "diff", "communities", "answer",
-        "vocabulary", "extract", "ingest", "erase",
+        "vocabulary", "extract", "ingest", "erase", "ontology", "entity", "apple", "convo",
+        "local", "sync",
     ] {
         assert!(listed(verb), "`hanzo graph` does not list `{verb}`:\n{top}");
     }
-    for verb in ["get", "search", "resolve", "neighbors", "path", "communities", "answer"] {
+    for verb in ["get", "search", "resolve", "neighbors", "path", "communities", "answer", "entity"] {
         let h = help(&["graph", verb]);
         assert!(h.contains("--as-of") && h.contains("--as-known"), "`hanzo graph {verb}` lacks a time:\n{h}");
     }
