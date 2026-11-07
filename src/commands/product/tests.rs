@@ -1287,3 +1287,23 @@ fn a_union_flag_sends_json_as_json_and_text_as_text() {
     // A scalar that happens to parse as JSON is still text: the union admits no number.
     assert_eq!(send("42"), serde_json::json!("42"));
 }
+
+// ---- a machine caller's key --------------------------------------------------
+
+/// HANZO_API_KEY is the bearer of a caller that holds only a key — a bot in a
+/// sandbox, a CI step. Blank or unset is no key at all, so the stored login (or the
+/// `not signed in` refusal) still decides; a pasted key's whitespace is dropped.
+#[test]
+fn a_machine_key_is_the_variable_trimmed_and_nothing_when_blank() {
+    use std::ffi::OsString;
+    assert_eq!(machine_key(None), None);
+    assert_eq!(machine_key(Some(OsString::from(""))), None);
+    assert_eq!(machine_key(Some(OsString::from("  \n"))), None);
+    assert_eq!(machine_key(Some(OsString::from("sk-live-x"))), Some("sk-live-x".into()));
+    assert_eq!(machine_key(Some(OsString::from(" sk-live-x\n"))), Some("sk-live-x".into()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        assert_eq!(machine_key(Some(OsString::from_vec(vec![0xff, 0xfe]))), None, "not text is no key");
+    }
+}

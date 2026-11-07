@@ -1354,6 +1354,7 @@ a projection that repairs its source hides the defect at the one place it can be
 
 - With no `--as`, the org is `default_org` from the config file, then `HANZO_ORG` (`main.rs`).
 - `active_token` (`src/iam/store.rs`) refreshes with the credential the vault holds after taking the lock, not the one read before it: a process that waited may hold a refresh token another one already spent.
+- `HANZO_API_KEY`, when set, is the bearer of every cloud command (`Seam::open`), ahead of a stored login, as `hanzo dev`'s provider already reads it. A key is still never filed as an identity. Why: a sandbox leased with an API key gets no CLI session (cloud apps/sandbox `sessionFor`), so its `hanzo` said `not signed in`; signed in as a person it read none of the sessions the key had opened, since a session belongs to its actor (`hanzo/hanzo/z` for the org key `hanzo/grok-bot-iam`) and answered 404.
 
 ## `hanzo dev` startup, measured (2026-10-12)
 
