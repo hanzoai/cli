@@ -1343,8 +1343,12 @@ a projection that repairs its source hides the defect at the one place it can be
 - **A catch-all positional is named `wildcard1` where one exists.**
   `openapi.translate` names an unnamed fiber `*` `{wildcardN}`, so `hanzo kms
   secrets get <WILDCARD1>` is what a person saw where it used to read `<REST>` —
-  that spelling came from the hand-authored master and went with it. Today's
-  document carries no `{wildcardN}` at all, so no command shows one. The name is
+  that spelling came from the hand-authored master and went with it. Since cloud
+  v8.5.1036 the public document carries the TYPED tail ops (hanzo-inc/cloud#559:
+  only an untyped wildcard is a relay), so `kms secrets get|rm <wildcard1>`,
+  `s3 buckets objects get|rm`, `space drives files get|set|rm` and `sbom get` show
+  one; `kms secrets get` reads one value and `list` lists. genspec counts
+  `/v1/sbom/{wildcard1}` as a door because it sits at product depth. The name is
   honest where it appears (the router really has a nameless catch-all there) and the
   fix is upstream in zip's translate, which should give the artifact a conventional
   name. The CLI must not rename it locally: a projection that improves its source's
