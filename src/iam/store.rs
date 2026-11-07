@@ -74,12 +74,13 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     // Re-read AFTER taking the lock: the process that waited is very likely waiting
     // on the one that just refreshed, and the token on disk is now fresh. Spending
     // the rt we read BEFORE the lock would be the replay this exists to prevent.
+    // And refresh with what the vault holds NOW, not the credential read before it.
     let _guard = crate::config::Lock::acquire(&token::lock_subject())?;
-    if let Some((id2, tok2)) = active_token_in(&*token::vault()?, cfg, brand)? {
-        if !expiring(&tok2.access_token, now_unix()) {
-            return Ok(Some((id2, tok2)));
-        }
-    }
+    let (id, tok) = match active_token_in(&*token::vault()?, cfg, brand)? {
+        Some((id2, tok2)) if !expiring(&tok2.access_token, now_unix()) => return Ok(Some((id2, tok2))),
+        Some(held) if held.1.refresh_token.is_some() => held,
+        _ => (id, tok),
+    };
     // One more try when IAM did not answer at all: a dropped connection is the
     // commonest reason, and the second attempt costs a second.
     let mut answer = oauth::refresh(&origin, &tok).await;
@@ -616,6 +617,11 @@ pub(crate) fn active_token_in(
     let Some(id) = acting(cfg, brand) else {
         return Ok(None);
     };
+    // `--as <org>` holding identities, none of them acting: refuse by name, as
+    // `within` does, never speak as the active identity of another org instead.
+    if cfg.org.as_deref().is_some_and(|org| id.owner != org && list(cfg, brand).iter().any(|i| i.owner == org)) {
+        within(cfg, brand)?;
+    }
     // NO FALLBACK, NO CASCADE. A missing credential for the active identity
     // means unauthenticated — we never reach for another identity's token.
     let Some(tokens) = token::load(v, brand, &id)? else {
@@ -1119,6 +1125,25 @@ mod tests {
         assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ORG)));
         c.org = None;
         assert_eq!(within(&c, "hanzo").unwrap(), None);
+    }
+
+    /// The token every command sends obeys the same rule: `--as` an org holding
+    /// several identities, none of them active, refuses, and never sends the
+    /// active identity's token (a SuperAdmin's) with that org's header.
+    #[test]
+    fn as_an_org_with_no_active_identity_sends_no_token() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        for (owner, name) in [("hanzo", "z"), ("hanzo", "a"), ("admin", "z")] {
+            add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
+        }
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
+        c.org = Some("hanzo".into());
+        let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("2 hanzo identities in hanzo"), "{err}");
+
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), ORG);
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---
