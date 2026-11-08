@@ -870,6 +870,12 @@ mod tests {
 
     #[test]
     fn reads_synthetic_apple_pkg_sqlite_store() {
+        // The reader and this fixture both drive the `sqlite3` binary; a runner
+        // without one has nothing to read or write the store with.
+        if Command::new("sqlite3").arg("-version").output().is_err() {
+            eprintln!("skipped: no sqlite3 on PATH");
+            return;
+        }
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
         let graph_db = dir.join("graph.db");
