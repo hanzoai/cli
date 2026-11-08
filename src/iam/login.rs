@@ -77,7 +77,8 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>, choose:
                 let kept = before
                     .clone()
                     .filter(|prev| !activates(Some(prev), &id, chosen, cfg.org.is_some()));
-                oauth::finish(held, &tokens, kept.as_ref(), async {
+                let again = store::choose(brand, &id);
+                oauth::finish(held, &tokens, kept.as_ref(), &again, async {
                     file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), &ask, want.as_ref())
                 })
                 .await?
@@ -166,11 +167,12 @@ fn chooser(choose: bool, named: bool, under_as: bool, held: usize) -> bool {
     choose || (!named && (under_as || held > 1))
 }
 
-/// Whether a sign-in that returned `id` makes it the active identity. It does
+/// Whether a sign-in that returned `id` makes it the default identity. It does
 /// when nothing was active, when it IS the active one, or when the person chose
 /// it. An account nobody chose — the session the browser already held — is
-/// added beside the active identity. Under `--as` the default stays as it was:
-/// that identity speaks when `--as` names it.
+/// added beside the active identity. Under `--as` the default stays as it was.
+/// Every sign-in is the active identity of its own org (`store::file`), so
+/// `--as <org>` speaks as the identity just signed in.
 fn activates(before: Option<&Identity>, id: &Identity, chosen: bool, under_as: bool) -> bool {
     match before {
         None => true,
@@ -276,7 +278,7 @@ async fn report(cfg: &Config, brand: &str, filed: &Filed, want: Option<&Wanted>)
             want.raw, want.raw
         ));
     }
-    println!("{}", standing(id, filed.active.as_ref(), cfg.org.is_some()));
+    println!("{}", standing(id, filed.active.as_ref()));
     let held = store::list(cfg, brand).len();
     if held > 1 {
         println!(
@@ -287,21 +289,21 @@ async fn report(cfg: &Config, brand: &str, filed: &Filed, want: Option<&Wanted>)
     }
 }
 
-/// The line under "Signed in as": which identity the terminal goes on as.
-fn standing(id: &Identity, active: Option<&Identity>, under_as: bool) -> String {
+/// The line under "Signed in as": which identity the terminal goes on as. The
+/// identity just signed in is always the one `--as <its org>` speaks as.
+fn standing(id: &Identity, active: Option<&Identity>) -> String {
     match active {
         Some(active) if active == id => format!("  {} {}", "active:".dimmed(), active.to_string().bold()),
-        Some(active) if under_as => {
-            format!("  {active} stays the default; `hanzo --as {} …` speaks as {id}", id.owner)
-                .dimmed()
-                .to_string()
-        }
         Some(active) => format!(
             "  {} {} {}\n{}",
             "active:".dimmed(),
             active.to_string().bold(),
             "(unchanged)".dimmed(),
-            format!("  `hanzo auth use {id}` makes {id} active").dimmed()
+            format!(
+                "  `hanzo --as {} …` speaks as {id}; `hanzo auth use {id}` makes {id} the default",
+                id.owner
+            )
+            .dimmed()
         ),
         None => format!("  no active identity — `hanzo auth use {id}`").dimmed().to_string(),
     }
@@ -320,7 +322,10 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
             bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
         }
         println!("{}", listing(cfg, brand));
-        println!("{}", "  (* = active; owner is the billing org)".dimmed());
+        println!(
+            "{}",
+            "  (* = active; + = what `--as <org>` speaks as; owner is the billing org)".dimmed()
+        );
         return Ok(());
     }
 
@@ -353,7 +358,13 @@ fn listing(cfg: &Config, brand: &str) -> String {
     store::list(cfg, brand)
         .iter()
         .map(|id| {
-            let mark = if Some(id) == active.as_ref() { "*" } else { " " };
+            let mark = if Some(id) == active.as_ref() {
+                "*"
+            } else if store::active_in(cfg, brand, &id.owner).as_ref() == Some(id) {
+                "+"
+            } else {
+                " "
+            };
             let email = store::token_for(cfg, brand, id)
                 .ok()
                 .flatten()
@@ -639,12 +650,12 @@ mod tests {
     #[test]
     fn the_report_says_which_identity_is_active() {
         let (z, grundy) = (id("hanzo/z"), id("hanzo/grundy"));
-        assert_eq!(plain(&standing(&z, Some(&z), false)), "  active: hanzo/z");
-        let kept = plain(&standing(&grundy, Some(&z), false));
+        assert_eq!(plain(&standing(&z, Some(&z))), "  active: hanzo/z");
+        let kept = plain(&standing(&grundy, Some(&z)));
         assert!(kept.contains("active: hanzo/z (unchanged)"), "{kept}");
-        assert!(kept.contains("`hanzo auth use hanzo/grundy` makes hanzo/grundy active"), "{kept}");
-        assert!(plain(&standing(&id("admin/z"), Some(&z), true)).contains("hanzo/z stays the default"));
-        assert!(plain(&standing(&z, None, false)).contains("no active identity"));
+        assert!(kept.contains("`hanzo --as hanzo …` speaks as hanzo/grundy"), "{kept}");
+        assert!(kept.contains("`hanzo auth use hanzo/grundy` makes hanzo/grundy the default"), "{kept}");
+        assert!(plain(&standing(&z, None)).contains("no active identity"));
     }
 
     /// A client without the device grant (`admin-cli`) signs in by the paste

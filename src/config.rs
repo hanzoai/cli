@@ -150,6 +150,12 @@ pub struct AuthState {
     /// fallback. See `iam::store`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub active: BTreeMap<String, String>,
+    /// The ACTIVE identity within each org: brand -> org -> name. What
+    /// `hanzo --as <org>` speaks as. Set by a sign-in (the identity just filed)
+    /// and by `hanzo auth use` (which also sets the default above); moving one
+    /// org's choice leaves every other org's alone.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub active_in: BTreeMap<String, BTreeMap<String, String>>,
     /// Every identity signed in on this machine (metadata only — never secrets).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub identities: Vec<StoredIdentity>,
@@ -506,6 +512,7 @@ mod tests {
             toml::from_str("[code]\nlink = true\n").expect("config predating [auth] loads");
         assert!(cfg.auth.identities.is_empty());
         assert!(cfg.auth.active.is_empty());
+        assert!(cfg.auth.active_in.is_empty());
     }
 
     /// A sparse `[auth]` table — present but empty, or carrying only one of its
@@ -548,11 +555,17 @@ mod tests {
         cfg.auth
             .active
             .insert("hanzo".to_string(), "admin/z".to_string());
+        cfg.auth
+            .active_in
+            .entry("hanzo".to_string())
+            .or_default()
+            .insert("hanzo".to_string(), "z".to_string());
 
         let back: Config =
             toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).expect("roundtrips");
         assert_eq!(back.auth.identities, cfg.auth.identities);
         assert_eq!(back.auth.active, cfg.auth.active);
+        assert_eq!(back.auth.active_in, cfg.auth.active_in);
     }
 
     fn tmp_cfg(tag: &str) -> Config {

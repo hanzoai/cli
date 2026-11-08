@@ -207,8 +207,13 @@ fn moved_in(
             .identities
             .retain(|i| !(i.brand == brand && i.owner == from.owner && i.name == from.name));
         index(c, brand, to);
-        if c.auth.active.get(brand).map(String::as_str) == Some(from.to_string().as_str()) {
+        let was_default = c.auth.active.get(brand).map(String::as_str) == Some(from.to_string().as_str());
+        let was_chosen = chosen_in(c, brand, from);
+        unset_active(c, brand, from);
+        if was_default {
             set_active(c, brand, to);
+        } else if was_chosen {
+            set_active_in(c, brand, to);
         }
         Ok(())
     })?;
@@ -263,17 +268,27 @@ fn issued(realm: &str, access_token: &str) -> Result<()> {
     }
 }
 
-/// The command that signs `id` in again: through its own org's client, which is
+/// `hanzo auth login` for `id`'s org: through that org's own client, which is
 /// plain `hanzo auth login` only for the org the default client serves.
-pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
+fn sign_in(brand: &str, id: &Identity, tail: &str) -> String {
     let org = if oauth::client(Some(&id.owner)) == oauth::client(None) {
         String::new()
     } else {
         format!(" --as {}", id.owner)
     };
-    // Named, so the sign-in comes back as this identity and not whichever
-    // account the browser holds.
-    format!("hanzo{org} auth login --account {id}{}", brand_flag(brand))
+    format!("hanzo{org} auth login{tail}{}", brand_flag(brand))
+}
+
+/// The command that signs `id` in again. Named, so the sign-in comes back as
+/// this identity and not whichever account the browser holds.
+pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
+    sign_in(brand, id, &format!(" --account {id}"))
+}
+
+/// The command that signs in as a different account than `id`: hanzo.id asks
+/// which, through the same client `id` came from.
+pub(crate) fn choose(brand: &str, id: &Identity) -> String {
+    sign_in(brand, id, " --choose")
 }
 
 /// Whether this access token is spent, or close enough that spending it would
@@ -400,18 +415,37 @@ pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
     list(cfg, brand).contains(&id).then_some(id)
 }
 
-/// The identity a command speaks as: the one held in the org `--as` names, when
-/// exactly one is held there, else the active identity. So `--as admin` runs one
-/// command as `admin/z` beside a default of `hanzo/z`, with no switch to undo.
-/// It is the person's own flag choosing among their own credentials; the server
-/// still decides what that identity may do.
-fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
-    if let Some(org) = cfg.org.as_deref() {
-        if let [one] = list(cfg, brand).into_iter().filter(|i| i.owner == org).collect::<Vec<_>>().as_slice() {
-            return Some(one.clone());
-        }
-    }
-    active(cfg, brand)
+/// The identity active within `org`: that org's own choice when it names an
+/// identity held there, else the default when it lives there, else the only one
+/// held there. `None` when several are held and none was chosen.
+pub fn active_in(cfg: &Config, brand: &str, org: &str) -> Option<Identity> {
+    let brand: &str = &realm(cfg, brand).ok()?;
+    let held: Vec<Identity> = list(cfg, brand).into_iter().filter(|i| i.owner == org).collect();
+    let chosen = cfg
+        .auth
+        .active_in
+        .get(brand)
+        .and_then(|orgs| orgs.get(org))
+        .map(|name| Identity { owner: org.to_string(), name: name.clone() })
+        .filter(|id| held.contains(id));
+    chosen
+        .or_else(|| active(cfg, brand).filter(|a| a.owner == org))
+        .or_else(|| match held.as_slice() {
+            [one] => Some(one.clone()),
+            _ => None,
+        })
+}
+
+/// The identity a command speaks as: under `--as <org>`, the one active in that
+/// org, else the default. So `--as admin` runs one command as `admin/z` beside
+/// a default of `hanzo/z`, with no switch to undo. It is the person's own flag
+/// choosing among their own credentials; the server still decides what that
+/// identity may do.
+pub fn acting(cfg: &Config, brand: &str) -> Option<Identity> {
+    cfg.org
+        .as_deref()
+        .and_then(|org| active_in(cfg, brand, org))
+        .or_else(|| active(cfg, brand))
 }
 
 /// The identity `--as <org>` speaks as, or a refusal when the acting identity
@@ -523,7 +557,9 @@ pub(crate) fn file_in(
     token::store(v, brand, &id, tokens)?;
     cfg.update(|c| {
         index(c, brand, &id);
-        // Choosing the account at sign-in IS the explicit user action.
+        // Signing in IS the explicit user action: the identity is its org's active
+        // one, and the default too when the person chose it (`login::activates`).
+        set_active_in(c, brand, &id);
         if activate {
             set_active(c, brand, &id);
         }
@@ -749,9 +785,7 @@ pub(crate) fn remove_in(
         // The pointer must never dangle at a removed identity — and must never
         // slide onto a surviving one either. Signing out of the active identity
         // leaves you signed out, not silently signed in as somebody else.
-        if c.auth.active.get(brand).map(String::as_str) == Some(target.to_string().as_str()) {
-            c.auth.active.remove(brand);
-        }
+        unset_active(c, brand, &target);
         Ok(target)
     })?;
     let held = token::take(v, brand, &target)?;
@@ -765,6 +799,7 @@ pub(crate) fn remove_all_in(v: &dyn Vault, cfg: &mut Config, brand: &str) -> Res
         let ids = list(c, brand);
         c.auth.identities.retain(|i| i.brand != brand);
         c.auth.active.remove(brand);
+        c.auth.active_in.remove(brand);
         Ok(ids)
     })?;
     let mut removed = Vec::with_capacity(ids.len());
@@ -791,8 +826,39 @@ fn index(cfg: &mut Config, brand: &str, id: &Identity) {
     }
 }
 
+/// Make `id` the default identity and the active one in its org.
 fn set_active(cfg: &mut Config, brand: &str, id: &Identity) {
     cfg.auth.active.insert(brand.to_string(), id.to_string());
+    set_active_in(cfg, brand, id);
+}
+
+/// Make `id` the active identity in its org, leaving the default and every other
+/// org's choice as they were.
+fn set_active_in(cfg: &mut Config, brand: &str, id: &Identity) {
+    cfg.auth
+        .active_in
+        .entry(brand.to_string())
+        .or_default()
+        .insert(id.owner.clone(), id.name.clone());
+}
+
+/// Whether `id` is the identity its org's choice names.
+fn chosen_in(cfg: &Config, brand: &str, id: &Identity) -> bool {
+    cfg.auth.active_in.get(brand).and_then(|orgs| orgs.get(&id.owner)) == Some(&id.name)
+}
+
+/// Drop every pointer at `id`: a pointer never dangles at a removed identity,
+/// and never slides onto a surviving one either.
+fn unset_active(cfg: &mut Config, brand: &str, id: &Identity) {
+    if cfg.auth.active.get(brand).map(String::as_str) == Some(id.to_string().as_str()) {
+        cfg.auth.active.remove(brand);
+    }
+    if chosen_in(cfg, brand, id) {
+        if let Some(orgs) = cfg.auth.active_in.get_mut(brand) {
+            orgs.remove(&id.owner);
+        }
+        cfg.auth.active_in.retain(|_, orgs| !orgs.is_empty());
+    }
 }
 
 /// Resolve a user-supplied selector against the identities that ALREADY exist.
@@ -1095,6 +1161,8 @@ mod tests {
     fn signing_in_again_names_the_identitys_own_org() {
         assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --account admin/z");
         assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login --account hanzo/z");
+        assert_eq!(choose("hanzo", &ident(ORG)), "hanzo auth login --choose");
+        assert_eq!(choose("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --choose");
         assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --account lux/a --brand lux");
         let err = adopted("hanzo", &ident(ADMIN), tokens(&jwt("hanzo", "z"))).unwrap_err();
         assert!(err.to_string().contains("run `hanzo --as admin auth login --account admin/z`"), "{err}");
@@ -1118,6 +1186,9 @@ mod tests {
 
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "ops"))).unwrap();
         switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident("admin/ops")), "the latest sign-in in admin");
+        // An index written before orgs had a choice of their own names none.
+        c.auth.active_in.clear();
         let err = within(&c, "hanzo").unwrap_err().to_string();
         assert!(err.contains("2 hanzo identities in admin"), "{err}");
 
@@ -1129,7 +1200,8 @@ mod tests {
 
     /// The token every command sends obeys the same rule: `--as` an org holding
     /// several identities, none of them active, refuses, and never sends the
-    /// active identity's token (a SuperAdmin's) with that org's header.
+    /// active identity's token (a SuperAdmin's) with that org's header. Only an
+    /// index written before orgs had a choice of their own is in that state.
     #[test]
     fn as_an_org_with_no_active_identity_sends_no_token() {
         let (v, mut c) = (MemVault::new(), cfg());
@@ -1137,6 +1209,7 @@ mod tests {
             add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
         }
         switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
+        c.auth.active_in.clear();
         c.org = Some("hanzo".into());
         let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
         assert!(err.contains("2 hanzo identities in hanzo"), "{err}");
@@ -1144,6 +1217,95 @@ mod tests {
         switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ORG);
+    }
+
+    /// The incident: `hanzo --as hanzo auth login` filed hanzo/z, said
+    /// `--as hanzo` speaks as hanzo/z, and the next `--as hanzo` command refused
+    /// because four identities were held there and none was active. A sign-in is
+    /// its org's active identity whether or not it moves the default.
+    #[test]
+    fn a_sign_in_is_its_orgs_active_identity() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "z"))).unwrap();
+        for name in ["a", "b", "c"] {
+            file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", name)), false).unwrap();
+        }
+        c.org = Some("hanzo".into());
+        file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z")), false).unwrap();
+
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ADMIN, "the default stays");
+        let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), ORG);
+        assert_eq!(tok.access_token, jwt("hanzo", "z"));
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ORG)));
+
+        // Signing in as another identity of that org moves that org's choice.
+        file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "b")), false).unwrap();
+        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/b")));
+    }
+
+    /// `use` sets the default and its org's choice, and leaves every other org's
+    /// choice alone: it used to clear org A's the moment org B was selected.
+    #[test]
+    fn use_moves_one_orgs_choice_and_no_other() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        for (owner, name) in [("hanzo", "z"), ("hanzo", "a"), ("admin", "z"), ("admin", "ops")] {
+            add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
+        }
+        switch_in(&v, &mut c, "hanzo", sel("hanzo/z")).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel("admin/ops")).unwrap();
+        assert_eq!(active(&c, "hanzo"), Some(ident("admin/ops")));
+        assert_eq!(active_in(&c, "hanzo", "admin"), Some(ident("admin/ops")));
+        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/z")), "hanzo's choice survived");
+
+        c.org = Some("hanzo".into());
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), "hanzo/z");
+
+        // Restoring the default (`use admin/z`) is the report's case.
+        switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
+        let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!(id.to_string(), "hanzo/z", "--as hanzo still speaks as hanzo/z");
+        c.org = Some("admin".into());
+        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ADMIN)));
+
+        // Selecting in org A moves the default and A, and B stays.
+        switch_in(&v, &mut c, "hanzo", sel("hanzo/a")).unwrap();
+        assert_eq!(active(&c, "hanzo"), Some(ident("hanzo/a")));
+        assert_eq!(active_in(&c, "hanzo", "admin"), Some(ident(ADMIN)));
+        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/a")));
+    }
+
+    /// Signing out of an org's active identity leaves that org with none
+    /// (several held), and every other org as it was: no sliding onto a survivor.
+    #[test]
+    fn logout_clears_only_its_orgs_choice() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        for (owner, name) in [("hanzo", "z"), ("hanzo", "a"), ("hanzo", "b"), ("admin", "z")] {
+            add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
+        }
+        switch_in(&v, &mut c, "hanzo", sel("hanzo/z")).unwrap();
+        remove_in(&v, &mut c, "hanzo", sel("hanzo/z")).unwrap();
+        assert_eq!(active_in(&c, "hanzo", "hanzo"), None);
+        assert_eq!(active_in(&c, "hanzo", "admin"), Some(ident(ADMIN)));
+        c.org = Some("hanzo".into());
+        assert!(active_token_in(&v, &mut c, "hanzo").unwrap().is_none(), "no survivor speaks for hanzo");
+
+        remove_all_in(&v, &mut c, "hanzo").unwrap();
+        assert!(c.auth.active_in.is_empty());
+    }
+
+    /// An org whose identity IAM moved keeps its choice on the moved identity.
+    #[test]
+    fn a_moved_identity_keeps_its_orgs_choice() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "x"))).unwrap();
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "y"))).unwrap();
+        file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "x")), false).unwrap();
+        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/x")));
+        moved_in(&v, &mut c, "hanzo", &ident("hanzo/x"), &ident("lux/x"), &tokens(&jwt("lux", "x"))).unwrap();
+        assert_eq!(active_in(&c, "hanzo", "lux"), Some(ident("lux/x")));
+        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/y")), "the lone survivor");
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---

@@ -173,8 +173,8 @@ fn logout_without_a_browser_prints_the_end_session_link() {
     assert!(!stdout.contains("id_token_hint"), "{stdout}");
 }
 
-/// `--as admin` files the admin identity beside the default, which stays the
-/// default, and `--as admin` then speaks as it. A token from another org is
+/// `--as admin` files the admin identity as admin's active one, beside the
+/// default, which stays the default, and `--as admin` then speaks as it. A token from another org is
 /// refused and filed nowhere, and `auth show` under an org with no identity
 /// held says so instead of naming the default.
 #[test]
@@ -200,9 +200,10 @@ fn as_an_org_files_its_identity_beside_the_default_and_speaks_as_it() {
 
     let added = as_admin(jwt("admin", "z", Some("z@hanzo.ai"))).success();
     let out = String::from_utf8_lossy(&added.get_output().stdout).into_owned();
-    assert!(out.contains("hanzo/z stays the default; `hanzo --as admin …` speaks as admin/z"), "{out}");
+    assert!(out.contains("active: hanzo/z (unchanged)"), "{out}");
+    assert!(out.contains("`hanzo --as admin …` speaks as admin/z"), "{out}");
     let list = listed(&home);
-    assert!(list.contains("* hanzo/z") && list.contains("  admin/z"), "{list}");
+    assert!(list.contains("* hanzo/z") && list.contains("+ admin/z"), "{list}");
 
     // `auth show` reads userinfo after naming the identity; the stand-in token is
     // refused there, so only the identity line is asserted.
@@ -243,4 +244,50 @@ fn as_an_org_signs_out_and_hands_out_only_its_own_identity() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("Signed out of hanzo as admin/z"));
     let list = listed(&home);
     assert!(list.contains("* hanzo/z") && !list.contains("admin/z"), "{list}");
+}
+
+/// Each org has its own active identity. `hanzo --as hanzo auth login` among
+/// four hanzo identities and a default in admin made `--as hanzo` refuse ("none
+/// is active"), and `auth use admin/z` cleared hanzo's choice the same way.
+#[test]
+fn each_org_keeps_its_own_active_identity() {
+    let home = Home::new();
+    for name in ["a", "b", "c"] {
+        sign_in(&home, &jwt("hanzo", name, None));
+    }
+    sign_in(&home, &jwt("admin", "z", None));
+    let run = |args: &[&str]| hanzo(&home).args(args).output().unwrap();
+    let token = |args: &[&str]| {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+
+    // A fresh `--as hanzo` sign-in is hanzo's active identity at once.
+    let z = jwt("hanzo", "z", None);
+    let added = hanzo(&home)
+        .args(["--as", "hanzo", "auth", "login", "--provider", "hanzo", "--token", "-"])
+        .write_stdin(format!("{z}\n"))
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&added.get_output().stdout).into_owned();
+    assert!(out.contains("`hanzo --as hanzo …` speaks as hanzo/z"), "{out}");
+    assert_eq!(token(&["--as", "hanzo", "auth", "token"]), z);
+    assert_eq!(token(&["auth", "token"]), jwt("admin", "z", None), "the default stayed");
+    let list = listed(&home);
+    assert!(list.contains("* admin/z") && list.contains("+ hanzo/z"), "{list}");
+
+    // `use` in one org moves the default and that org's choice, and no other's.
+    hanzo(&home).args(["auth", "use", "hanzo/b"]).assert().success();
+    assert_eq!(token(&["auth", "token"]), jwt("hanzo", "b", None));
+    hanzo(&home).args(["auth", "use", "admin/z"]).assert().success();
+    assert_eq!(token(&["auth", "token"]), jwt("admin", "z", None));
+    assert_eq!(token(&["--as", "hanzo", "auth", "token"]), jwt("hanzo", "b", None), "hanzo kept its choice");
+    assert_eq!(token(&["--as", "admin", "auth", "token"]), jwt("admin", "z", None));
+
+    // Signing out hanzo's active identity leaves hanzo with none, not a survivor.
+    assert!(run(&["--as", "hanzo", "auth", "logout"]).status.success());
+    let refused = run(&["--as", "hanzo", "auth", "token"]);
+    assert!(!refused.status.success() && refused.stdout.is_empty());
+    assert_eq!(token(&["auth", "token"]), jwt("admin", "z", None));
 }
