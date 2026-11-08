@@ -555,7 +555,7 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 /// are `call`'s to resolve.
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
     let Resolved::Leaf { op, values, body, query } = resolved;
-    let owner = store::active(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
+    let owner = store::acting(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
     let path = fill_path(op.path, op.rest, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
     let body = match body {

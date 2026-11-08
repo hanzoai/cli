@@ -277,19 +277,22 @@ pub async fn login(brand: &str, org: Option<&str>, open: bool, ask: &Ask) -> Res
 /// Finish a browser sign-in: write the page on every connection the tab is
 /// waiting on, keep answering its reloads while `work` (filing the identity)
 /// runs, then close the port. `active` is the identity the terminal goes on
-/// as, when that is not the one just signed in. Nothing listens once this
-/// returns: the loopback lives exactly as long as the command that opened it.
+/// as, when that is not the one just signed in. `again` is the command that
+/// signs in as a different account, which the page offers to copy. Nothing
+/// listens once this returns: the loopback lives exactly as long as the
+/// command that opened it.
 pub(crate) async fn finish<T>(
     held: Held,
     tokens: &TokenSet,
     active: Option<&Identity>,
+    again: &str,
     work: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     // Claims only. Userinfo is another round trip, and holding the document
     // for it is what made Safari abandon the tab before any byte arrived.
     let who = shown_account(tokens);
     let kept = active.map(Identity::to_string);
-    let page = html_ok(&signed_in_page(&held.origin, who.as_ref(), kept.as_deref()));
+    let page = html_ok(&signed_in_page(&held.origin, who.as_ref(), kept.as_deref(), again));
     let Held { listener, mut waiting, .. } = held;
     for stream in &mut waiting {
         reply(stream, &page).await;
@@ -862,7 +865,7 @@ fn conclusion(origin: &str, failure: Option<&str>) -> String {
     let host = escape(origin_trim.split("://").nth(1).unwrap_or(origin_trim));
     match failure {
         None => {
-            let body = signed_in_page(origin, None, None);
+            let body = signed_in_page(origin, None, None, "");
             html_ok(&body)
         }
         Some(why) => {
@@ -944,6 +947,8 @@ fn page(origin: &str, title: &str, account: &str, heading: &str, detail: &str) -
     format!(
         "<!doctype html><html lang=en><meta charset=utf-8><meta name=color-scheme content=dark>\
          <meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} — {host}</title>\
+         <style>summary{{list-style:none;cursor:pointer}}summary::-webkit-details-marker{{display:none}}\
+         summary:focus-visible,button:focus-visible{{outline:2px solid #a1a1aa;outline-offset:2px}}</style>\
          <body style=\"margin:0;min-height:100vh;min-height:100dvh;background:#070709;color:#f4f4f5;position:relative;\
          display:flex;flex-direction:column;font-family:Zen,Inter,ui-sans-serif,system-ui,-apple-system,sans-serif\">\
          {corner}{account}\
@@ -959,11 +964,14 @@ fn page(origin: &str, title: &str, account: &str, heading: &str, detail: &str) -
 
 /// The page a finished `hanzo login` leaves in the browser. It names the
 /// identity that signed in, and the one the terminal goes on as: the same one,
-/// or `kept` when hanzo.id answered with an account nobody chose and the active
-/// identity stays as it was. Nothing on it changes anything; the port closes
-/// when the command returns, and `hanzo auth use` is the one way to switch.
-fn signed_in_page(origin: &str, who: Option<&Shown>, kept: Option<&str>) -> String {
-    let account = who.map(account_face).unwrap_or_default();
+/// or `kept` when hanzo.id answered with an account nobody chose, or `--as`
+/// signed in another org, and the active identity stays as it was. The account
+/// chip at the top right opens a panel that says the same plainly and offers
+/// `again`, the command that asks which account, to copy. Nothing on it
+/// changes anything and it calls nothing: the port closes when the command
+/// returns, and `hanzo auth use` is the one way to switch.
+fn signed_in_page(origin: &str, who: Option<&Shown>, kept: Option<&str>, again: &str) -> String {
+    let account = who.map(|who| account_face(who, kept, again)).unwrap_or_default();
     let detail = match (who, kept) {
         (Some(who), Some(kept)) => format!(
             "Added {}. The terminal still uses {}.<br><code>hanzo auth use {}</code> switches.",
@@ -992,8 +1000,12 @@ fn signed_out_page(origin: &str) -> String {
     )
 }
 
-/// The account a page names, top right: initial, name, and owner.
-fn account_face(who: &Shown) -> String {
+/// The account a page names, top right: initial, name, and owner. It opens a
+/// panel (a `<details>`, so it needs no script to open) that says which
+/// account signed in, which identity the terminal uses, and how to sign in as
+/// a different account: `again` is shown and copied, since only the terminal
+/// that holds the sign-in can ask hanzo.id which account to continue as.
+fn account_face(who: &Shown, kept: Option<&str>, again: &str) -> String {
     let letter = who
         .label
         .chars()
@@ -1003,17 +1015,49 @@ fn account_face(who: &Shown) -> String {
     let name = who.id.split_once('/').map(|(_, name)| name).unwrap_or(who.id.as_str());
     let title = if who.label == who.id { name } else { who.label.as_str() };
     let owner = who.id.split_once('/').map(|(owner, _)| owner).unwrap_or(who.id.as_str());
+    let uses = match kept {
+        Some(kept) => format!(
+            "<b>{}</b><br><span style=\"color:#a1a1aa\"><code>hanzo --as {} …</code> uses {}</span>",
+            escape(kept),
+            escape(owner),
+            escape(&who.id)
+        ),
+        None => format!("<b>{}</b>", escape(&who.id)),
+    };
+    let different = if again.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<div style=\"margin-top:12px;padding-top:12px;border-top:1px solid #2a2a2e\">\
+             <button type=button data-c=\"{cmd}\" \
+             onclick=\"try{{navigator.clipboard.writeText(this.dataset.c);this.textContent='Copied'}}catch(e){{}}\" \
+             style=\"font:inherit;font-size:13px;font-weight:600;color:#f4f4f5;background:#27272a;\
+             border:1px solid #3f3f46;border-radius:8px;padding:6px 12px;cursor:pointer\">Use a different account</button>\
+             <div style=\"margin-top:8px;color:#a1a1aa\">Run <code style=\"color:#f4f4f5\">{cmd}</code> in the terminal \
+             and hanzo.id asks which account.</div></div>",
+            cmd = escape(again)
+        )
+    };
     format!(
-        "<span style=\"position:absolute;top:16px;right:16px;display:inline-flex;align-items:center;gap:8px;\
-         padding:4px 10px 4px 4px;border:1px solid #2a2a2e;border-radius:999px;background:#101012\">\
+        "<details style=\"position:absolute;top:16px;right:16px;z-index:1\">\
+         <summary style=\"display:flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;\
+         border:1px solid #2a2a2e;border-radius:999px;background:#101012\">\
          <span style=\"width:28px;height:28px;border-radius:999px;background:#27272a;display:inline-flex;\
-         align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none\">{}</span>\
+         align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none\">{letter}</span>\
          <span style=\"display:flex;flex-direction:column;line-height:1.2;text-align:left\">\
-         <span style=\"font-size:13px;font-weight:600\">{}</span>\
-         <span style=\"margin-top:2px;font-size:11px;color:#a1a1aa\">{}</span></span></span>",
-        escape(&letter),
-        escape(title),
-        escape(owner)
+         <span style=\"font-size:13px;font-weight:600\">{title}</span>\
+         <span style=\"margin-top:2px;font-size:11px;color:#a1a1aa\">{owner}</span></span>\
+         <span aria-hidden=true style=\"color:#a1a1aa;font-size:11px\">▾</span></summary>\
+         <div style=\"position:absolute;right:0;top:calc(100% + 8px);width:19rem;max-width:calc(100vw - 32px);\
+         box-sizing:border-box;padding:14px;border:1px solid #2a2a2e;border-radius:12px;background:#101012;\
+         font-size:13px;line-height:1.5;text-align:left;box-shadow:0 12px 32px rgba(0,0,0,.5)\">\
+         <div style=\"color:#a1a1aa\">Signed in</div><div><b>{title}</b><br>\
+         <span style=\"color:#a1a1aa\">{id}</span></div>\
+         <div style=\"margin-top:12px;color:#a1a1aa\">The terminal uses</div><div>{uses}</div>{different}</div></details>",
+        letter = escape(&letter),
+        title = escape(title),
+        owner = escape(owner),
+        id = escape(&who.id),
     )
 }
 
@@ -1542,25 +1586,36 @@ mod tests {
             label: "z@hanzo.ai".into(),
             id: "hanzo/z".into(),
         };
-        let page = signed_in_page("https://hanzo.id", Some(&who), None);
+        let page = signed_in_page("https://hanzo.id", Some(&who), None, "hanzo auth login --choose");
         assert!(page.contains("The terminal continues as hanzo/z."), "{page}");
         assert!(page.contains("z@hanzo.ai"), "{page}");
         assert!(page.contains("top:16px;right:16px"), "{page}");
         assert_eq!(page.matches("href=\"https://hanzo.ai\"").count(), 2, "{page}");
-        for gone in ["/switch", "/remove", "/add", "<details", "Add account"] {
+        // The chip opens a panel: who signed in, who the terminal uses, and the
+        // command that asks which account. It calls nothing and switches nothing.
+        assert!(page.contains("<details") && page.contains("<summary"), "{page}");
+        assert!(page.contains("The terminal uses</div><div><b>hanzo/z</b>"), "{page}");
+        assert!(page.contains("Use a different account"), "{page}");
+        assert!(page.contains("data-c=\"hanzo auth login --choose\""), "{page}");
+        for gone in ["/switch", "/remove", "/add", "Add account", "fetch(", "XMLHttpRequest", "<form", "<script"] {
             assert!(!page.contains(gone), "{gone}: {page}");
         }
 
-        let kept = signed_in_page("https://hanzo.id", Some(&who), Some("hanzo/grundy"));
+        let kept = signed_in_page("https://hanzo.id", Some(&who), Some("hanzo/grundy"), "hanzo auth login --choose");
         assert!(kept.contains("Added hanzo/z. The terminal still uses hanzo/grundy."), "{kept}");
         assert!(kept.contains("<code>hanzo auth use hanzo/z</code>"), "{kept}");
+        assert!(kept.contains("The terminal uses</div><div><b>hanzo/grundy</b>"), "{kept}");
+        assert!(kept.contains("<code>hanzo --as hanzo …</code> uses hanzo/z"), "{kept}");
+
+        let bare = signed_in_page("https://hanzo.id", None, None, "");
+        assert!(!bare.contains("<details") && !bare.contains("Use a different account"), "{bare}");
 
         let hostile = Shown {
             label: "<b>x</b>".into(),
             id: "hanzo/<i>".into(),
         };
-        let page = signed_in_page("https://hanzo.id", Some(&hostile), Some("hanzo/<s>"));
-        assert!(!page.contains("<b>x") && !page.contains("<i>") && !page.contains("<s>"), "{page}");
+        let page = signed_in_page("https://hanzo.id", Some(&hostile), Some("hanzo/<s>"), "hanzo \"<u>\"");
+        assert!(!page.contains("<b>x") && !page.contains("<i>") && !page.contains("<s>") && !page.contains("<u>"), "{page}");
     }
 
     // The first write is not the tab's only try. Safari retries the redirect,
@@ -1589,7 +1644,7 @@ mod tests {
         };
         let (go, wait) = tokio::sync::oneshot::channel::<()>();
         let finished = tokio::spawn(async move {
-            finish(held, &tokens, None, async {
+            finish(held, &tokens, None, "hanzo auth login --choose", async {
                 let _ = wait.await;
                 Ok(7)
             })

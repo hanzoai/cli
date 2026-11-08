@@ -1124,14 +1124,27 @@ after the exchange a token whose `owner` is not `<org>` is refused and nothing i
 stored. With no browser here the device grant runs only when the descriptor's
 `grantTypes` lists it; otherwise the person signs in anywhere and pastes the
 callback URL (`admin-cli` has no device grant: a device code approvable by a
-session cookie is one click from a SuperAdmin token). The identity is filed
-beside the default, which stays the default. Refresh and revoke present the
+session cookie is one click from a SuperAdmin token). The identity is filed as
+its org's active identity (below); the default stays the default. Refresh and revoke present the
 client the credential was issued to — its `azp`, else its one `aud` — never a
 constant: IAM refuses a refresh token from any other client and revokes only the
 caller's grants. A refresh IAM refuses ends that identity's session with its own
 command (`sign in again: hanzo --as admin auth login`), never another identity.
 `auth show` under `--as <org>` with no identity held there refuses rather than
 name the default.
+
+**Each org has its own active identity** (`auth.active_in`, brand → org → name, in
+`config.toml`; `store::active_in`). `--as <org>` speaks as the identity active in
+that org: its own choice, else the default when that lives there, else the only
+one held there; several held and none chosen refuses by name (only an index
+written before this existed). `auth.active` is the default identity, what a
+command with no `--as` speaks as. A sign-in always makes its identity its org's
+active one (`store::file`), whether or not it moves the default. `auth use
+<owner/name>` sets the default and that org's choice and leaves every other
+org's alone; `auth logout` drops the pointers at the identity it removes and
+never slides onto a survivor. `auth list` marks `*` the default and `+` what
+`--as <org>` speaks as. Generated commands fill their `{org}` path param from the
+same acting identity (`store::acting`), not the default.
 
 **Which account a sign-in continues as** (`src/iam/login.rs`). hanzo.id answers an
 authorize request from the browser's latest session unless asked otherwise, so a
@@ -1143,11 +1156,15 @@ identity is held (or under `--as`, or with `--choose`); `--account` sends
 `owner/name` in an org with its own client signs in through that client.
 `activates` decides the active identity: a chosen account (chooser, `--account`,
 `--token -`) or the first one becomes active; an account nobody chose is filed
-beside the active identity (`store::file(.., activate: false)`), and `report`
-prints `active:` either way. The loopback page is static (who signed in, who the
-terminal uses) and `oauth::finish` closes the port when the command returns;
-there is no detached menu process and no browser-side switch, `hanzo auth use` is
-the one way. `relogin` names the identity (`--account <owner/name>`).
+beside the active identity (`store::file(.., activate: false)`, still its org's
+active one), and `report` prints `active:` either way. The loopback page is static
+and `oauth::finish` closes the port when the command returns; there is no detached
+menu process and no browser-side switch, `hanzo auth use` is the one way. Its
+top-right chip is a `<details>` that opens a panel: who signed in, which identity
+the terminal uses (and what `--as <org>` uses when that differs), and "Use a
+different account", which copies `hanzo [--as org] auth login --choose`
+(`store::choose`) — only the terminal holding the PKCE verifier can ask hanzo.id
+which account, so the page names the command rather than call anything. `relogin` names the identity (`--account <owner/name>`).
 `auth logout` ends the browser's issuer session too (`oauth::end_session`, OIDC
 RP-Initiated Logout at `/v1/iam/oauth/logout`): through `hanzo-cli`, whose
 registered `http://127.0.0.1/callback` brings the tab back on any port with its
