@@ -1159,20 +1159,23 @@ global to every tool on the machine.
 **Which account a sign-in continues as** (`src/iam/login.rs`). hanzo.id answers an
 authorize request from the browser's latest session unless asked otherwise, so a
 person holding several identities used to land on whichever account the browser
-signed in last. `chooser` sends `prompt=select_account` when more than one
-identity is held (or under `--as`, or with `--choose`); `--account` sends
-`login_hint` instead: an address as given, a held `owner/name` by its token's
+signed in last, and one holding none or one could not pick at all (owner,
+2026-11-08: "it auto-logged me in, I couldn't select accounts"). Every sign-in
+now sends `prompt=select_account` (`oauth::Ask` with no hint), so hanzo.ai's
+chooser lists the browser's accounts and "Use another account"; `--account`
+sends `login_hint` instead: an address as given, a held `owner/name` by its token's
 `sub` (unique where an address is not), an unheld one by its name, and an
 `owner/name` in an org with its own client signs in through that client.
 `activates` decides the active identity: a chosen account (chooser, `--account`,
-`--token -`) or the first one becomes active; an account nobody chose is filed
+`--token -`) or the first one becomes active; an account other than the one
+`--account` named is filed
 beside the active identity (`store::file(.., activate: false)`, still its org's
 active one), and `report` prints `active:` either way. The loopback page is static
 and `oauth::finish` closes the port when the command returns; there is no detached
 menu process and no browser-side switch, `hanzo auth use` is the one way. Its
 top-right chip is a `<details>` that opens a panel: who signed in, which identity
 the terminal uses (and what `--as <org>` uses when that differs), and "Use a
-different account", which copies `hanzo [--as org] auth login --choose`
+different account", which copies `hanzo [--as org] auth login`
 (`store::choose`) — only the terminal holding the PKCE verifier can ask hanzo.id
 which account, so the page names the command rather than call anything. `relogin` names the identity (`--account <owner/name>`).
 `auth logout` ends the browser's issuer session too (`oauth::end_session`, OIDC

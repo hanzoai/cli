@@ -127,14 +127,13 @@ fn the_listing_names_each_identity_by_owner_name_and_address() {
     assert!(list.contains("* hanzo/z  z@hanzo.ai"), "{list}");
 }
 
-/// `--account` and `--choose` pick a Hanzo account in the browser; a token
-/// handed over already is one, so the two never combine with `--token`.
+/// `--account` picks a Hanzo account in the browser; a token handed over
+/// already is one, so the two never combine.
 #[test]
-fn an_account_or_the_chooser_never_rides_a_handed_token() {
+fn an_account_never_rides_a_handed_token() {
     let home = Home::new();
     for args in [
         vec!["auth", "login", "--token", "-", "--account", "hanzo/z"],
-        vec!["auth", "login", "--token", "-", "--choose"],
         vec!["login", "--token", "-", "--account", "z@hanzo.ai"],
     ] {
         let out = hanzo(&home).args(&args).write_stdin("x\n").output().unwrap();

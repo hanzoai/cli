@@ -165,18 +165,19 @@ pub(crate) enum Done {
     Browser(TokenSet, Held),
 }
 
-/// What a sign-in asks hanzo.id for: the account it is for (`login_hint`), and
-/// whether the person chooses among the accounts signed in on that browser
-/// (`prompt=select_account`) rather than continuing as the latest one.
+/// What a sign-in asks hanzo.id for: the account it is for (`login_hint`), or,
+/// with none named, the person's choice among the accounts signed in on that
+/// browser (`prompt=select_account`). It never continues as whichever account
+/// the browser signed in last: that is a guess, and a wrong one files the
+/// wrong identity.
 #[derive(Debug, Default)]
 pub struct Ask {
     pub hint: Option<String>,
-    pub choose: bool,
 }
 
 /// Run the full interactive login flow for `brand` and return the tokens.
 /// `org` (`--as`) signs in through that org's own client and refuses a token
-/// from any other org. `ask` names the account and whether to show the chooser.
+/// from any other org. `ask` names the account, or the chooser is shown.
 /// `open` opens a browser here; without one the code arrives by paste alone.
 pub async fn login(brand: &str, org: Option<&str>, open: bool, ask: &Ask) -> Result<Done> {
     if !open && !std::io::stdin().is_terminal() {
@@ -411,11 +412,9 @@ fn build_authorize_url(
         ("code_challenge", challenge),
         ("code_challenge_method", "S256"),
     ];
-    if ask.choose {
-        q.push(("prompt", "select_account"));
-    }
-    if let Some(hint) = ask.hint.as_deref() {
-        q.push(("login_hint", hint));
+    match ask.hint.as_deref() {
+        Some(hint) => q.push(("login_hint", hint)),
+        None => q.push(("prompt", "select_account")),
     }
     Url::parse_with_params(&paths::iam_url(origin, AUTHORIZE), &q).context("building authorize URL")
 }
@@ -1361,8 +1360,7 @@ mod tests {
         let org = Some("admin");
 
         assert!(!served(&origin, org).await.unwrap(), "admin-cli must not grant the device code");
-        let ask = Ask { choose: true, hint: None };
-        let url = build_authorize_url(&origin, org, "http://127.0.0.1:1/callback", "C", "S", &ask).unwrap();
+        let url = build_authorize_url(&origin, org, "http://127.0.0.1:1/callback", "C", "S", &Ask::default()).unwrap();
         let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "admin-cli");
         let tokens = exchange_code(&origin, org, "pasted", "http://127.0.0.1:1/callback", "V").await.unwrap();
@@ -1453,10 +1451,7 @@ mod tests {
         assert_eq!(q["state"], "STATE");
         assert_eq!(q["scope"], SCOPE);
         assert_eq!(q["redirect_uri"], "http://127.0.0.1:54321/callback");
-        assert!(
-            !q.contains_key("prompt"),
-            "a plain login reuses the browser's session"
-        );
+        assert_eq!(q["prompt"], "select_account", "a plain login asks which account");
         assert!(!q.contains_key("login_hint"));
 
         let chosen = build_authorize_url(
@@ -1465,7 +1460,7 @@ mod tests {
             "http://127.0.0.1:1/callback",
             "C",
             "S",
-            &Ask { choose: true, hint: None },
+            &Ask::default(),
         )
         .unwrap();
         let q: HashMap<_, _> = chosen.query_pairs().into_owned().collect();
@@ -1479,7 +1474,7 @@ mod tests {
             "http://127.0.0.1:1/callback",
             "C",
             "S",
-            &Ask { choose: false, hint: Some("z@hanzo.ai".into()) },
+            &Ask { hint: Some("z@hanzo.ai".into()) },
         )
         .unwrap();
         let q: HashMap<_, _> = named.query_pairs().into_owned().collect();
@@ -1586,7 +1581,7 @@ mod tests {
             label: "z@hanzo.ai".into(),
             id: "hanzo/z".into(),
         };
-        let page = signed_in_page("https://hanzo.id", Some(&who), None, "hanzo auth login --choose");
+        let page = signed_in_page("https://hanzo.id", Some(&who), None, "hanzo auth login");
         assert!(page.contains("The terminal continues as hanzo/z."), "{page}");
         assert!(page.contains("z@hanzo.ai"), "{page}");
         assert!(page.contains("top:16px;right:16px"), "{page}");
@@ -1596,12 +1591,12 @@ mod tests {
         assert!(page.contains("<details") && page.contains("<summary"), "{page}");
         assert!(page.contains("The terminal uses</div><div><b>hanzo/z</b>"), "{page}");
         assert!(page.contains("Use a different account"), "{page}");
-        assert!(page.contains("data-c=\"hanzo auth login --choose\""), "{page}");
+        assert!(page.contains("data-c=\"hanzo auth login\""), "{page}");
         for gone in ["/switch", "/remove", "/add", "Add account", "fetch(", "XMLHttpRequest", "<form", "<script"] {
             assert!(!page.contains(gone), "{gone}: {page}");
         }
 
-        let kept = signed_in_page("https://hanzo.id", Some(&who), Some("hanzo/grundy"), "hanzo auth login --choose");
+        let kept = signed_in_page("https://hanzo.id", Some(&who), Some("hanzo/grundy"), "hanzo auth login");
         assert!(kept.contains("Added hanzo/z. The terminal still uses hanzo/grundy."), "{kept}");
         assert!(kept.contains("<code>hanzo auth use hanzo/z</code>"), "{kept}");
         assert!(kept.contains("The terminal uses</div><div><b>hanzo/grundy</b>"), "{kept}");
@@ -1644,7 +1639,7 @@ mod tests {
         };
         let (go, wait) = tokio::sync::oneshot::channel::<()>();
         let finished = tokio::spawn(async move {
-            finish(held, &tokens, None, "hanzo auth login --choose", async {
+            finish(held, &tokens, None, "hanzo auth login", async {
                 let _ = wait.await;
                 Ok(7)
             })

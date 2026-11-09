@@ -146,9 +146,6 @@ enum Commands {
         /// The account to continue as: `owner/name` or an email address
         #[arg(long, value_name = "ACCOUNT", conflicts_with = "token")]
         account: Option<String>,
-        /// Show the account chooser even when one account is held
-        #[arg(long, conflicts_with = "token")]
-        choose: bool,
     },
 
     /// Show who you are signed in as and in which org — `hanzo auth show` at the top level.
@@ -407,9 +404,6 @@ enum AuthCommands {
         /// The account to continue as: `owner/name` or an email address
         #[arg(long, value_name = "ACCOUNT", conflicts_with = "token")]
         account: Option<String>,
-        /// Show the account chooser even when one account is held
-        #[arg(long, conflicts_with = "token")]
-        choose: bool,
     },
     /// Sign out one identity (or `--all`) and remove the credential
     Logout {
@@ -964,13 +958,13 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
 
         // `hanzo dev` IS the launcher.
         Commands::Dev(args) => commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?,
-        Commands::Login { brand, provider, token, account, choose } => {
-            commands::auth::login(&mut config, &brand, provider, token, account, choose).await?
+        Commands::Login { brand, provider, token, account } => {
+            commands::auth::login(&mut config, &brand, provider, token, account).await?
         }
         Commands::Whoami { brand } => commands::auth::show(&mut config, &brand).await?,
         Commands::Auth { command } => match command {
-            AuthCommands::Login { brand, provider, token, account, choose } => {
-                commands::auth::login(&mut config, &brand, provider, token, account, choose).await?
+            AuthCommands::Login { brand, provider, token, account } => {
+                commands::auth::login(&mut config, &brand, provider, token, account).await?
             }
             AuthCommands::Logout { identity, brand, all } => {
                 commands::auth::logout(&mut config, &brand, identity, all).await?

@@ -22,16 +22,16 @@ use super::provider::{self, Provider};
 use super::token::TokenSet;
 use super::{device, oauth, store};
 
-/// `hanzo auth login [--brand] [--account A] [--choose]`: interactive OIDC
-/// sign-in. ADDS an identity (never clobbers another). It becomes the active
-/// identity when the person chose it — in the chooser, or by `--account` — or
-/// when nothing else was active; an account hanzo.id answered with on its own
-/// is added beside the active identity, never in its place.
+/// `hanzo auth login [--brand] [--account A]`: interactive OIDC sign-in. ADDS an
+/// identity (never clobbers another). It becomes the active identity when the
+/// person chose it — in the chooser, or by `--account` — or when nothing else
+/// was active; an account other than the one `--account` named is added beside
+/// the active identity, never in its place.
 ///
-/// Holding more than one identity, the sign-in asks hanzo.id for its account
-/// chooser (`prompt=select_account`) rather than continuing as whichever
-/// account the browser signed in last. `--account` names the account instead
-/// (`login_hint`) and `--choose` asks for the chooser regardless.
+/// The sign-in asks hanzo.id for its account chooser (`prompt=select_account`)
+/// every time, rather than continuing as whichever account the browser signed
+/// in last: the person picks one, or signs in as another. `--account` names
+/// the account instead (`login_hint`).
 ///
 /// THE MACHINE PICKS THE FLOW, and there is no flag, because which one works is
 /// a fact about the machine rather than a preference. A browser HERE takes the
@@ -45,7 +45,7 @@ use super::{device, oauth, store};
 /// grants it to (`admin-cli` is not: a device code approvable by a session
 /// cookie alone is one click from a SuperAdmin token); otherwise the person
 /// signs in anywhere and pastes the callback URL back here.
-pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>, choose: bool) -> Result<()> {
+pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Result<()> {
     let brand: &str = &store::realm(cfg, brand)?;
     let origin = &oauth::server_url(brand)?; // reject unknown brands before opening a browser
     let want = account.map(|a| wanted(cfg, brand, a)).transpose()?;
@@ -56,30 +56,27 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>, choose:
     let org = client_org(cfg.org.as_deref(), want.as_ref())?;
     let device = oauth::served(origin, org.as_deref()).await?;
     let before = store::active(cfg, brand);
-    let ask = oauth::Ask {
-        choose: chooser(choose, want.is_some(), org.is_some(), store::list(cfg, brand).len()),
-        hint: want.as_ref().map(|w| w.hint.clone()),
-    };
+    let ask = oauth::Ask { hint: want.as_ref().map(|w| w.hint.clone()) };
     let browser = browser_here();
     let filed = if by_device(browser, device) {
         let tokens = device::login(origin, brand, org.as_deref()).await?;
-        file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), &ask, want.as_ref())?
+        file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())?
     } else {
         match oauth::login(brand, org.as_deref(), browser, &ask).await? {
             oauth::Done::Pasted(tokens) => {
-                file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), &ask, want.as_ref())?
+                file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())?
             }
             oauth::Done::Browser(tokens, held) => {
                 // The page says who the terminal goes on as, so that is decided
                 // first; the tab is answered while the keychain write runs.
                 let id = Identity::from_access_token(&tokens.access_token)?;
-                let chosen = ask.choose || want.as_ref().is_some_and(|w| w.names(&id, &tokens));
+                let chosen = want.as_ref().is_none_or(|w| w.names(&id, &tokens));
                 let kept = before
                     .clone()
                     .filter(|prev| !activates(Some(prev), &id, chosen, cfg.org.is_some()));
                 let again = store::choose(brand, &id);
                 oauth::finish(held, &tokens, kept.as_ref(), &again, async {
-                    file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), &ask, want.as_ref())
+                    file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())
                 })
                 .await?
             }
@@ -159,18 +156,11 @@ fn client_org(as_org: Option<&str>, want: Option<&Wanted>) -> Result<Option<Stri
     }
 }
 
-/// Whether hanzo.id shows its account chooser. Asked for, it does. A named
-/// account needs none. Otherwise it does when the sign-in could land on the
-/// wrong account: under `--as`, or holding more than one identity, where the
-/// browser's latest session is a guess at which.
-fn chooser(choose: bool, named: bool, under_as: bool, held: usize) -> bool {
-    choose || (!named && (under_as || held > 1))
-}
-
 /// Whether a sign-in that returned `id` makes it the default identity. It does
 /// when nothing was active, when it IS the active one, or when the person chose
-/// it. An account nobody chose — the session the browser already held — is
-/// added beside the active identity. Under `--as` the default stays as it was.
+/// it (in the chooser, or as the account `--account` named). Another account
+/// than the one named is added beside the active identity. Under `--as` the
+/// default stays as it was.
 /// Every sign-in is the active identity of its own org (`store::file`), so
 /// `--as <org>` speaks as the identity just signed in.
 fn activates(before: Option<&Identity>, id: &Identity, chosen: bool, under_as: bool) -> bool {
@@ -196,12 +186,11 @@ fn file(
     tokens: &TokenSet,
     org: Option<&str>,
     before: Option<&Identity>,
-    ask: &oauth::Ask,
     want: Option<&Wanted>,
 ) -> Result<Filed> {
     oauth::owned(tokens, org)?;
     let id = Identity::from_access_token(&tokens.access_token)?;
-    let chosen = ask.choose || want.is_some_and(|w| w.names(&id, tokens));
+    let chosen = want.is_none_or(|w| w.names(&id, tokens));
     let activate = activates(before, &id, chosen, cfg.org.is_some());
     let id = store::file(cfg, brand, tokens, activate)?;
     Ok(Filed { id, active: store::active(cfg, brand) })
@@ -240,9 +229,8 @@ pub async fn login_with_token(cfg: &mut Config, brand: &str, access_token: &str)
         scope: None,
     };
     // A token handed over is the account the person chose to hand over.
-    let ask = oauth::Ask { choose: true, hint: None };
     let org = cfg.org.clone();
-    let filed = file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), &ask, None)?;
+    let filed = file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), None)?;
     report(cfg, brand, &filed, None).await;
     Ok(())
 }
@@ -510,7 +498,7 @@ async fn end_browser(brand: &str, removed: &[store::Removed]) {
         Ok(true) => println!("{} Signed out of {} in this browser", "✓".green(), host.cyan()),
         Ok(false) if open => crate::warn(&format!(
             "the browser did not come back from {host}, so it may still be signed in there; \
-             `hanzo auth login --choose` asks which account next time"
+             `hanzo auth login` asks which account next time"
         )),
         Ok(false) => {}
         Err(e) => crate::warn(&format!("could not sign this browser out of {host}: {e}")),
@@ -562,19 +550,6 @@ mod tests {
             expires_in: None,
             scope: None,
         }
-    }
-
-    /// Holding several identities, the browser's latest session is a guess,
-    /// so the chooser shows; a named account needs none; one identity, or
-    /// none, signs in as before.
-    #[test]
-    fn the_chooser_shows_when_the_latest_session_would_be_a_guess() {
-        assert!(chooser(false, false, false, 6), "six identities held");
-        assert!(!chooser(false, false, false, 1), "one held: unchanged");
-        assert!(!chooser(false, false, false, 0), "a first sign-in: unchanged");
-        assert!(chooser(false, false, true, 1), "--as asks, as it always did");
-        assert!(!chooser(false, true, false, 6), "--account names it");
-        assert!(chooser(true, true, false, 0), "--choose always shows it");
     }
 
     /// The case that stranded hanzo/z: a second sign-in that hanzo.id answered

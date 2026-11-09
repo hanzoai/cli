@@ -234,14 +234,14 @@ fn confirm_provider(provider: Provider) {
 
 /// Sign in as a Hanzo IDENTITY (the OIDC browser flow, or a supplied token), and
 /// record `hanzo` as the active provider so model routing uses the gateway.
-async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>, account: Option<&str>, choose: bool) -> Result<()> {
+async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>, account: Option<&str>) -> Result<()> {
     oauth::server_url(brand)?; // reject an unknown brand before any I/O
     match token {
         Some(t) => {
             let raw = read_identity_token(t)?;
             login::login_with_token(cfg, brand, &raw).await?;
         }
-        None => login::login(cfg, brand, account, choose).await?,
+        None => login::login(cfg, brand, account).await?,
     }
     mark_provider(cfg, Provider::Hanzo)?;
     // The harness's shared login. A native pin from an earlier sign-in must
@@ -404,22 +404,21 @@ pub async fn run_login(
     provider: Option<String>,
     token: Option<String>,
     account: Option<String>,
-    choose: bool,
 ) -> Result<()> {
-    // Naming the account, or asking for the chooser, is a Hanzo sign-in.
-    let hanzo = account.is_some() || choose;
+    // Naming the account is a Hanzo sign-in.
+    let hanzo = account.is_some();
     if let Some(p) = provider {
         if let Some(agent) = native::find(&p) {
             if hanzo {
-                bail!("--account and --choose pick a Hanzo account; `--provider {p}` signs in to {}", agent.title);
+                bail!("--account picks a Hanzo account; `--provider {p}` signs in to {}", agent.title);
             }
             return native_login(cfg, agent).await;
         }
         let provider = Provider::parse(&p)?;
         return match provider {
-            Provider::Hanzo => hanzo_login(cfg, brand, token, account.as_deref(), choose).await,
+            Provider::Hanzo => hanzo_login(cfg, brand, token, account.as_deref()).await,
             Provider::OpenAI | Provider::Anthropic if hanzo => {
-                bail!("--account and --choose pick a Hanzo account; `--provider {p}` stores a {} key", provider.label())
+                bail!("--account picks a Hanzo account; `--provider {p}` stores a {} key", provider.label())
             }
             Provider::OpenAI | Provider::Anthropic => {
                 provider_key_login(cfg, provider, token).await
@@ -429,8 +428,8 @@ pub async fn run_login(
 
     // No explicit provider.
     if token.is_some() || hanzo {
-        // `--token -` files a Hanzo identity; `--account`/`--choose` sign one in.
-        return hanzo_login(cfg, brand, token, account.as_deref(), choose).await;
+        // `--token -` files a Hanzo identity; `--account` signs one in.
+        return hanzo_login(cfg, brand, token, account.as_deref()).await;
     }
 
     if interactive() {

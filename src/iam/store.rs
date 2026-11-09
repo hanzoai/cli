@@ -288,7 +288,7 @@ pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
 /// The command that signs in as a different account than `id`: hanzo.id asks
 /// which, through the same client `id` came from.
 pub(crate) fn choose(brand: &str, id: &Identity) -> String {
-    sign_in(brand, id, " --choose")
+    sign_in(brand, id, "")
 }
 
 /// Whether this access token is spent, or close enough that spending it would
@@ -1262,8 +1262,8 @@ mod tests {
     fn signing_in_again_names_the_identitys_own_org() {
         assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --account admin/z");
         assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login --account hanzo/z");
-        assert_eq!(choose("hanzo", &ident(ORG)), "hanzo auth login --choose");
-        assert_eq!(choose("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --choose");
+        assert_eq!(choose("hanzo", &ident(ORG)), "hanzo auth login");
+        assert_eq!(choose("hanzo", &ident(ADMIN)), "hanzo --as admin auth login");
         assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --account lux/a --brand lux");
         let err = adopted("hanzo", &ident(ADMIN), tokens(&jwt("hanzo", "z"))).unwrap_err();
         assert!(err.to_string().contains("run `hanzo --as admin auth login --account admin/z`"), "{err}");
