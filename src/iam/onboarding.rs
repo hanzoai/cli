@@ -313,7 +313,7 @@ async fn paste_key_login(cfg: &mut Config, token: Option<String>) -> Result<()> 
 
 async fn dispatch_choice(cfg: &mut Config, brand: &str, choice: Choice) -> Result<()> {
     match choice {
-        Choice::Hanzo => hanzo_login(cfg, brand, None, None, false).await,
+        Choice::Hanzo => hanzo_login(cfg, brand, None, None).await,
         Choice::Native(agent) => native_login(cfg, agent).await,
         Choice::Paste => paste_key_login(cfg, None).await,
     }
@@ -446,7 +446,7 @@ pub async fn run_login(
     }
 
     // Non-interactive, nothing specified: the browser OIDC default (unchanged).
-    hanzo_login(cfg, brand, None, None, false).await
+    hanzo_login(cfg, brand, None, None).await
 }
 
 /// The bare-`hanzo` FRESH greeting: on an interactive terminal with no
