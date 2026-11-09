@@ -412,8 +412,13 @@ jobs:
           test -f "$f"
 
           sed -i "s/^  version \".*\"$/  version \"$v\"/" "$f"
+          # A release's download URLs answer 504 for a few minutes after it leaves
+          # draft (v8.5.919: published 08:11:04, 504 until ~08:14:30), and this job
+          # starts the moment it does. Retrying through that window is the fix;
+          # failing on the first 504 left the formula a release behind.
           for t in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
-            sha="$(curl -fsSL "https://github.com/$REPO/releases/download/$TAG/hanzo-$t.tar.gz.sha256" | cut -d' ' -f1)"
+            sha="$(curl -fsSL --retry 40 --retry-delay 15 --retry-all-errors \
+              "https://github.com/$REPO/releases/download/$TAG/hanzo-$t.tar.gz.sha256" | cut -d' ' -f1)"
             [ ${#sha} -eq 64 ] || { echo "::error::no sha256 sidecar for hanzo-$t at $TAG"; exit 1; }
             # Anchored on the asset name, so each checksum lands under its own url.
             perl -0pi -e "s{(hanzo-$t\.tar\.gz\"\s+sha256 \")[0-9a-f]{64}}{\${1}$sha}" "$f"
