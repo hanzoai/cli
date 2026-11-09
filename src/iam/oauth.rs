@@ -1397,7 +1397,7 @@ mod tests {
     async fn wire_a_client_granted_the_device_code_signs_in_by_it_as_itself() {
         let (origin, seen) = stand(lux).await;
         assert!(served(&origin, Some("lux")).await.unwrap());
-        let tokens = crate::iam::device::login(&origin, "hanzo", Some("lux")).await.unwrap();
+        let tokens = crate::iam::device::login(&origin, "hanzo", Some("lux"), None).await.unwrap();
         owned(&tokens, Some("lux")).unwrap();
 
         let seen = seen.lock().unwrap();

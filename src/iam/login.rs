@@ -33,6 +33,12 @@ use super::{device, oauth, store};
 /// in last: the person picks one, or signs in as another. `--account` names
 /// the account instead (`login_hint`).
 ///
+/// With no browser here the account is whichever one the approving page is
+/// signed in as, and nothing this end sends can choose it. So a terminal holding
+/// identities asks first which one this sign-in is for ([`pick`]): the answer is
+/// an `--account`, so the screen names it and an approval as anyone else is
+/// reported and added beside, never made the active identity.
+///
 /// THE MACHINE PICKS THE FLOW, and there is no flag, because which one works is
 /// a fact about the machine rather than a preference. A browser HERE takes the
 /// authorization code back over loopback, which is instant and asks nothing. No
@@ -48,7 +54,12 @@ use super::{device, oauth, store};
 pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Result<()> {
     let brand: &str = &store::realm(cfg, brand)?;
     let origin = &oauth::server_url(brand)?; // reject unknown brands before opening a browser
-    let want = account.map(|a| wanted(cfg, brand, a)).transpose()?;
+    let browser = browser_here();
+    let picked = match account {
+        None if !browser && cfg.org.is_none() => pick(&store::list(cfg, brand), store::active(cfg, brand).as_ref())?,
+        _ => None,
+    };
+    let want = account.or(picked.as_deref()).map(|a| wanted(cfg, brand, a)).transpose()?;
     // `--as <org>` signs in to hold another identity — `admin/z` beside
     // `hanzo/z` — through that org's own client, so IAM signs the person in to
     // that org. An `--account` in another org names that org the same way. A
@@ -57,9 +68,8 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Resu
     let device = oauth::served(origin, org.as_deref()).await?;
     let before = store::active(cfg, brand);
     let ask = oauth::Ask { hint: want.as_ref().map(|w| w.hint.clone()) };
-    let browser = browser_here();
     let filed = if by_device(browser, device) {
-        let tokens = device::login(origin, brand, org.as_deref()).await?;
+        let tokens = device::login(origin, brand, org.as_deref(), want.as_ref().map(|w| w.raw.as_str())).await?;
         file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())?
     } else {
         match oauth::login(brand, org.as_deref(), browser, &ask).await? {
@@ -154,6 +164,34 @@ fn client_org(as_org: Option<&str>, want: Option<&Wanted>) -> Result<Option<Stri
         (None, Some(owner)) if oauth::client(Some(owner)) != oauth::client(None) => Ok(Some(owner.to_string())),
         (None, _) => Ok(None),
     }
+}
+
+/// Which held identity a sign-in with no browser here is for, asked on a
+/// terminal: `Some("owner/name")`, or `None` for another account. Nothing is
+/// asked holding none, or off a terminal, which signs in as before; Esc cancels.
+fn pick(held: &[Identity], active: Option<&Identity>) -> Result<Option<String>> {
+    if held.is_empty() || !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Ok(None);
+    }
+    use dialoguer::{theme::SimpleTheme, Select};
+    let at = active.and_then(|a| held.iter().position(|id| id == a)).unwrap_or(0);
+    let Some(i) = Select::with_theme(&SimpleTheme)
+        .with_prompt("Sign in as")
+        .items(&accounts(held, active))
+        .default(at)
+        .interact_opt()?
+    else {
+        bail!("sign-in cancelled");
+    };
+    Ok(held.get(i).map(|id| id.to_string()))
+}
+
+/// The picker's lines: every held identity, the active one marked, then another account.
+fn accounts(held: &[Identity], active: Option<&Identity>) -> Vec<String> {
+    held.iter()
+        .map(|id| if Some(id) == active { format!("{id} (active)") } else { id.to_string() })
+        .chain(std::iter::once("Another account".to_string()))
+        .collect()
 }
 
 /// Whether a sign-in that returned `id` makes it the default identity. It does
@@ -642,5 +680,24 @@ mod tests {
         assert!(by_device(false, true), "hanzo-cli, no browser: device code");
         assert!(!by_device(true, true));
         assert!(!by_device(true, false));
+    }
+
+    #[test]
+    fn the_picker_lists_held_identities_then_another_account() {
+        let id = |s: &str| match s.parse::<Selector>().unwrap() {
+            Selector::Exact(id) => id,
+            Selector::Owner(_) => unreachable!(),
+        };
+        let (z, a) = (id("hanzo/z"), id("hanzo/a"));
+        assert_eq!(
+            accounts(&[a.clone(), z.clone()], Some(&z)),
+            vec!["hanzo/a".to_string(), "hanzo/z (active)".to_string(), "Another account".to_string()]
+        );
+        assert_eq!(accounts(&[a], None).last().map(String::as_str), Some("Another account"));
+    }
+
+    #[test]
+    fn nothing_held_asks_nothing() {
+        assert_eq!(pick(&[], None).unwrap(), None);
     }
 }

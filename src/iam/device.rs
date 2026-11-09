@@ -201,8 +201,10 @@ async fn poll_device_token(origin: &str, client_id: &str, da: &DeviceAuthResp) -
 }
 
 /// Run the full interactive device sign-in to `brand` at its IAM `origin`,
-/// through `org`'s client (`--as`), and return the tokens.
-pub async fn login(origin: &str, brand: &str, org: Option<&str>) -> Result<TokenSet> {
+/// through `org`'s client (`--as`), and return the tokens. `want` is the account
+/// it is for, named on the screen: the approving page signs the device in as
+/// whoever that page is signed in as.
+pub async fn login(origin: &str, brand: &str, org: Option<&str>, want: Option<&str>) -> Result<TokenSet> {
     let client = oauth::client(org);
     let da = device_auth(origin, &client, SCOPE).await?;
 
@@ -219,6 +221,9 @@ pub async fn login(origin: &str, brand: &str, org: Option<&str>) -> Result<Token
             "  or open {} and enter code {}",
             da.verification_uri, da.user_code
         );
+    }
+    if let Some(want) = want {
+        println!("\nApprove as {want}. If the page names another account, sign out there first.");
     }
     println!("\nWaiting for approval…");
     poll_device_token(origin, &client, &da).await
