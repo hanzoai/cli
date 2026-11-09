@@ -12,8 +12,8 @@
 //! | `logout` | sign out one identity (or `--all`)               |
 //! | `show`   | the active identity + its org                    |
 //! | `list`   | every identity, the active one marked            |
-//! | `use`    | select the active identity                       |
-//! | `token`  | print the active short-lived access token        |
+//! | `use`    | select the active identity (also `switch`)       |
+//! | `token`  | print the active (or `--as`) short-lived token   |
 
 use anyhow::{anyhow, bail, Result};
 
@@ -46,9 +46,17 @@ pub async fn show(cfg: &mut Config, brand: &str) -> Result<()> {
     iam::whoami(cfg, brand, false).await
 }
 
-/// `hanzo auth list` — every identity, the active one marked (the ONE listing).
-pub async fn list(cfg: &mut Config, brand: &str) -> Result<()> {
-    iam::whoami(cfg, brand, true).await
+/// `hanzo auth list [-o json]` — every identity, the active one marked (the ONE
+/// listing). `-o json` is the same list as data, for a tool that reads it.
+pub async fn list(cfg: &mut Config, brand: &str, output: Option<String>) -> Result<()> {
+    match output.as_deref() {
+        None | Some("table") => iam::whoami(cfg, brand, true).await,
+        Some("json") => {
+            println!("{}", store::identities_json(cfg, brand)?);
+            Ok(())
+        }
+        Some(other) => bail!("-o {other}: the formats are table and json"),
+    }
 }
 
 /// `hanzo auth use [IDENTITY]` — select the active identity (bare toggles when
@@ -57,10 +65,13 @@ pub fn use_identity(cfg: &mut Config, brand: &str, identity: Option<String>) -> 
     iam::switch(cfg, brand, identity)
 }
 
-/// `hanzo auth token` — print the active identity's short-lived access token, so
-/// it can seed another tool (`Authorization: Bearer …`). Nothing else is printed,
-/// so it pipes byte-exactly; it is never written to disk or the config.
+/// `hanzo auth token [--as owner|owner/name]` — print the active identity's
+/// short-lived access token, so it can seed another tool (`Authorization: Bearer
+/// …`). `--as` names another held identity (an org's active one, or exactly
+/// `owner/name`) and speaks for it without making it active. Nothing else is
+/// printed, so it pipes byte-exactly; it is never written to disk or the config.
 pub async fn token(cfg: &mut Config, brand: &str) -> Result<()> {
+    store::pin(cfg, brand)?;
     store::within(cfg, brand)?;
     let (id, tok) = store::active_token(cfg, brand).await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;

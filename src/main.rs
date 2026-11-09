@@ -432,15 +432,22 @@ enum AuthCommands {
     List {
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
+        /// `json` prints the list as data: key, owner, subject, expiry, active
+        #[arg(short = 'o', long = "output", value_name = "FORMAT")]
+        output: Option<String>,
     },
-    /// Select the active identity (bare toggles when exactly two are held)
+    /// Select the active identity for every tool on this machine (bare toggles
+    /// when exactly two are held)
+    #[command(alias = "switch")]
     Use {
         #[arg(value_name = "IDENTITY")]
         identity: Option<String>,
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
     },
-    /// Print the active short-lived access token
+    /// Print the active short-lived access token; `--as owner/name` prints that
+    /// identity's, `--as owner` the one active in that org, and neither moves the
+    /// active identity
     Token {
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
@@ -969,7 +976,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::auth::logout(&mut config, &brand, identity, all).await?
             }
             AuthCommands::Show { brand } => commands::auth::show(&mut config, &brand).await?,
-            AuthCommands::List { brand } => commands::auth::list(&mut config, &brand).await?,
+            AuthCommands::List { brand, output } => commands::auth::list(&mut config, &brand, output).await?,
             AuthCommands::Use { identity, brand } => {
                 commands::auth::use_identity(&mut config, &brand, identity)?
             }
@@ -1668,6 +1675,21 @@ mod tests {
         let cli = Cli::try_parse_from(["hanzo", "vm", "--help"]).expect("--help passes through");
         let Some(Commands::Vm { args }) = cli.command else { panic!("expected vm") };
         assert_eq!(args, ["--help"]);
+    }
+
+    #[test]
+    fn auth_switch_list_json_and_token_as_parse() {
+        // Other tools read the login through these: `switch` is `use`, the list is data,
+        // and the token can be another identity's.
+        let cli = Cli::try_parse_from(["hanzo", "auth", "switch", "hanzo/z"]).expect("switch parses");
+        let Some(Commands::Auth { command: AuthCommands::Use { identity: Some(who), .. } }) = cli.command else { panic!("expected auth use") };
+        assert_eq!(who, "hanzo/z");
+        let cli = Cli::try_parse_from(["hanzo", "auth", "list", "-o", "json"]).expect("list -o json parses");
+        let Some(Commands::Auth { command: AuthCommands::List { output: Some(format), .. } }) = cli.command else { panic!("expected auth list") };
+        assert_eq!(format, "json");
+        let cli = Cli::try_parse_from(["hanzo", "auth", "token", "--as", "hanzo/z"]).expect("token --as parses");
+        assert!(matches!(cli.command, Some(Commands::Auth { command: AuthCommands::Token { .. } })));
+        assert_eq!(cli.org.as_deref(), Some("hanzo/z"));
     }
 
     /// `hanzo up` is the local k3s running the cloud now: bare boots it,

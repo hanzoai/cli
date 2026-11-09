@@ -1146,6 +1146,16 @@ never slides onto a survivor. `auth list` marks `*` the default and `+` what
 `--as <org>` speaks as. Generated commands fill their `{org}` path param from the
 same acting identity (`store::acting`), not the default.
 
+**Other tools take their login from here** (hanzo-mcp, Python tools, Dev). The
+contract they rely on, which the Go control CLI in `hanzo-inc/cloud` (`cli/auth.go`)
+implements identically: `hanzo auth token` prints the active identity's live token;
+`hanzo auth token --as <owner|owner/name>` prints another held identity's without
+moving the active one (`--as owner/name` is exactly that identity, `store::pin`, in
+memory only; `--as owner` is the org's active one as everywhere); `hanzo auth list
+-o json` prints `[{key, owner, subject, expiry, active}]` (`store::identities_json`, no
+network); `hanzo auth switch <identity>` is `auth use`, the one change that is
+global to every tool on the machine.
+
 **Which account a sign-in continues as** (`src/iam/login.rs`). hanzo.id answers an
 authorize request from the browser's latest session unless asked otherwise, so a
 person holding several identities used to land on whichever account the browser

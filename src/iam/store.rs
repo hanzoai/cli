@@ -403,6 +403,37 @@ pub fn list(cfg: &Config, brand: &str) -> Vec<Identity> {
     ids
 }
 
+/// Every identity for `brand` as JSON, the active one marked: `key`, `owner`,
+/// `subject` (the address its stored token claims), `expiry` (that token's, unix
+/// seconds) and `active`. The data behind `hanzo auth list -o json`; no token is
+/// in it and no network is asked.
+pub fn identities_json(cfg: &Config, brand: &str) -> Result<String> {
+    identities_json_in(&*token::vault()?, cfg, brand)
+}
+
+fn identities_json_in(v: &dyn Vault, cfg: &Config, brand: &str) -> Result<String> {
+    let brand: &str = &realm(cfg, brand)?;
+    oauth::server_url(brand)?; // reject unknown brands before touching the keychain
+    let default = active(cfg, brand);
+    let rows: Vec<serde_json::Value> = list(cfg, brand)
+        .iter()
+        .map(|id| {
+            let held = token_for_in(v, cfg, brand, id).ok().flatten();
+            let mut row = serde_json::json!({
+                "key": id.to_string(),
+                "owner": id.owner,
+                "subject": held.as_ref().and_then(|t| identity::email(&t.access_token)).unwrap_or_default(),
+                "active": Some(id) == default.as_ref(),
+            });
+            if let Some(exp) = held.as_ref().and_then(|t| jwt_exp(&t.access_token)) {
+                row["expiry"] = exp.into();
+            }
+            row
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&rows)?)
+}
+
 /// The active identity for `brand`, if one is set AND still indexed. A pointer
 /// at an unknown identity resolves to `None` — it never falls through to another.
 pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
@@ -470,6 +501,27 @@ pub fn within(cfg: &Config, brand: &str) -> Result<Option<Identity>> {
              picks one (without --as you are {id})"
         ),
     }
+}
+
+/// `--as owner/name` names one held identity exactly, where `--as owner` names an
+/// org. For this invocation the org becomes `owner` and that org's choice becomes
+/// `name`, in memory only: `acting` then resolves to the named identity, and the
+/// file never hears of it. Refused when the identity is not held, never answered
+/// for another. A bare `--as owner`, or none, is left alone.
+pub fn pin(cfg: &mut Config, brand: &str) -> Result<()> {
+    let Some(raw) = cfg.org.as_deref().filter(|org| org.contains('/')) else {
+        return Ok(());
+    };
+    let Selector::Exact(id) = raw.parse::<Selector>()? else {
+        return Ok(());
+    };
+    let brand: &str = &realm(cfg, brand)?;
+    if !list(cfg, brand).contains(&id) {
+        bail!("you hold no {brand} identity {id}; `hanzo auth list` lists them");
+    }
+    cfg.org = Some(id.owner.clone());
+    set_active_in(cfg, brand, &id);
+    Ok(())
 }
 
 /// The reserved org whose membership IS the SuperAdmin predicate, server-side.
@@ -1154,6 +1206,55 @@ mod tests {
         c.org = Some("lux".into());
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ORG);
+    }
+
+    /// `--as owner/name` speaks as exactly that identity, among several in one org,
+    /// and moves nothing; one that is not held is refused, not substituted.
+    #[test]
+    fn as_owner_slash_name_speaks_as_that_identity_exactly() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        both(&v, &mut c);
+        add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "ops"))).unwrap();
+        switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
+
+        c.org = Some("hanzo/ops".into());
+        pin(&mut c, "hanzo").unwrap();
+        assert_eq!(c.org.as_deref(), Some("hanzo"), "the org is what rides as X-Org-Id");
+        let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+        assert_eq!((id.to_string().as_str(), tok.access_token), ("hanzo/ops", jwt("hanzo", "ops")));
+
+        // Nothing moved: the default is the same.
+        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
+
+        c.org = Some("hanzo/nobody".into());
+        let err = pin(&mut c, "hanzo").unwrap_err().to_string();
+        assert!(err.contains("you hold no hanzo identity hanzo/nobody"), "{err}");
+
+        // A bare org, or none, is `--as` as it was.
+        c.org = Some("admin".into());
+        pin(&mut c, "hanzo").unwrap();
+        assert_eq!(c.org.as_deref(), Some("admin"));
+    }
+
+    /// `auth list -o json` is the held identities as data: key, owner, the address
+    /// and expiry their tokens claim, and which is the default. No token in it.
+    #[test]
+    fn the_list_as_json_names_every_identity_and_marks_the_default() {
+        let (v, mut cfg) = (MemVault::new(), cfg());
+        for who in [r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai","exp":2000000000}"#, r#"{"owner":"hanzo","name":"z","email":"z@hanzo.ai"}"#] {
+            add_in(&v, &mut cfg, "hanzo", &tokens(&claims_jwt(who))).unwrap();
+        }
+        let out = identities_json_in(&v, &cfg, "hanzo").unwrap();
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            rows,
+            serde_json::json!([
+                {"key": "hanzo/a", "owner": "hanzo", "subject": "a@hanzo.ai", "expiry": 2000000000, "active": false},
+                {"key": "hanzo/z", "owner": "hanzo", "subject": "z@hanzo.ai", "active": true},
+            ])
+        );
+        assert!(!out.contains("eyJ"), "no token in the list");
     }
 
     /// A session is renewed through the client of the org it belongs to.
