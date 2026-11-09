@@ -145,7 +145,7 @@ fn an_account_never_rides_a_handed_token() {
         .output()
         .unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("pick a Hanzo account"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("picks a Hanzo account"));
 }
 
 /// With no browser to open, `logout` still ends the session at the server and
