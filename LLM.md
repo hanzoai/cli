@@ -148,6 +148,7 @@ The remaining gaps are elsewhere:
 product subcommands `hanzo <product> …` (derived from the spec, below — the ONE
 interface to cloud; no `hanzo api` verb, no raw-path escape). Bare `hanzo [flags] [task]`
 is an AI coding session (Hanzo MCP attached, routed + streamed to cloud when signed in).
+Creative media & Hyperframe composite graphics sit under `hanzo frame generations` (`POST /v1/frame/generations`, `aiFrameGenerate`) and `hanzo frame edits` (`POST /v1/frame/edits`, `aiFrameEdit`), alongside `hanzo images generations` (`iro`, `qwen-image`, `qwen-image-edit`, `z-image-turbo`, `flux-3`) and `hanzo videos generations` (`koma`).
 
 **THE ROOT PAGE IS A PROJECTION OF THE PARSER, and it may not keep a list.**
 `commands/man.rs` held two hand-written tables of commands beside the generated

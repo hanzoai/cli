@@ -164,6 +164,17 @@ hanzo host serve [service]      # the Hanzo Cloud API from this machine (was `ha
 `engine serve` needs the Hanzo engine binary on PATH (or `HANZO_ENGINE_BIN`); it is not
 part of this install and the command says so when it is missing.
 
+### Creative media & Hyperframe graphics
+
+`hanzo frame` drives the Hyperframe graphic compositor (`POST /v1/frame/generations` and `POST /v1/frame/edits`): it strips copy/diff instructions from the diffusion prompt so `iro` (`qwen-image`, `qwen-image-edit`, `z-image-turbo`, `flux-3`) renders a strictly text-free background, detects the terminal/panel surface, and composites crisp `@hanzo/font` (`Zen` + `Zen Mono`) typography and interactive UI layers on top.
+
+```bash
+hanzo frame generations --model iro --prompt 'A white canvas with a soft dot-grid, one dark rounded terminal showing a small diff, thin black contour lines flowing out of it, monochrome, with open space on the left for "Describe the change. Dev ships it."'
+hanzo frame edits --background-b64 "$BG_B64" --layout split-right --theme glass --headline "Ship it." --accent "Zero drift."
+hanzo images generations --data '{"model":"iro","prompt":"minimal monochrome architectural contours on a white dot-grid"}'
+hanzo videos generations --data '{"model":"koma","prompt":"slow camera push across monochrome contour lines"}'
+```
+
 ### Graph
 
 Your org's statements with their sources and two times: `--as-of` is when a thing was
