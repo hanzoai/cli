@@ -204,9 +204,16 @@ hanzo network list|current|use <name>|add <name> …   # sovereign L1: network_i
 hanzo wallet show|address|create [--local]|import|use|list   # PQ cloud custody (KMS/MPC) or local keychain
 ```
 
-### Fabric & fleet — hanzo.network
+### Fabric, Zero-Trust & Kubernetes — `hanzo link` & `hanzo k8s`
 
 ```bash
+hanzo k8s                       # ZT tunnel status (:26443 + :5433), nodes & workloads in -n hanzo
+hanzo k8s get pods -n hanzo     # any kubectl command over the native Zero-Trust tunnel (alias: hanzo kubectl)
+hanzo k8s logs cloud --tail=50  # tail deployment logs in -n hanzo
+hanzo k8s restart cloud         # rollout restart + status in -n hanzo
+hanzo k8s helm list             # run helm against the ZT-tunneled cluster (defaults to -n hanzo)
+hanzo k8s tunnel                # ensure k8s.hanzo (:26443) and hanzo-sql (:5433) tunnels are up
+hanzo k8s zt                    # inspect Hanzo ZT identity, published services, and active tunnels
 hanzo chain …                   # run/join the L1 chain node (hanzod); `fabric` is a deprecated alias
 hanzo runner …                  # provide this machine as a CI runner
 hanzo link                      # link this machine: org network, fleet, a shell the console drives

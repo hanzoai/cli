@@ -30,6 +30,7 @@ pub mod cloud_sessions;
 // Kept resources reachable in the additive model (money, network, provider
 // connectors, local dev helpers, and the TS SDK proxies).
 pub mod init;
+pub mod k8s;
 pub mod network;
 pub mod share;
 pub mod vm;

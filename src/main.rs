@@ -236,6 +236,14 @@ enum Commands {
         args: Vec<String>,
     },
 
+    /// Manage the Hanzo Kubernetes cluster over Zero-Trust (`k8s.hanzo` on :26443) or pass kubectl args through
+    #[command(disable_help_flag = true, visible_alias = "kubectl", alias = "kube")]
+    K8s {
+        /// Arguments handed to kubectl (or `status` / `tunnel`)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// A local Kubernetes running the cloud — k3s in a Hanzo microVM
     ///
     /// Bare `hanzo up` boots k3s inside a hanzo-vm microVM, deploys the Hanzo
@@ -302,6 +310,17 @@ enum Commands {
         /// Skip network and authentication checks
         #[arg(long)]
         offline: bool,
+        /// Share diagnostics, Kai decision trace, and recent coding session report with Hanzo
+        #[arg(long, visible_alias = "report", visible_alias = "upload")]
+        share: bool,
+    },
+
+    /// Collect and share a redacted coding session & diagnostic report with Hanzo
+    #[command(visible_alias = "bug", visible_alias = "feedback")]
+    Report {
+        /// Optional note or flags forwarded to `dev report`
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 
     /// Upgrade every Hanzo tool (hanzo, mcp, dev, zt) to its current release, and
@@ -994,6 +1013,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Scan { path } => commands::scan::scan(path).await?,
         Commands::Build(args) => commands::build::run(args).await?,
         Commands::Vm { args } => commands::vm::run(args).await?,
+        Commands::K8s { args } => commands::k8s::run(args).await?,
         Commands::Link { command, shell, read_only, title } => match command {
             None => commands::link::run(&mut config, shell, read_only, title).await?,
             Some(LinkCommands::Host { name, target, signer, install }) => {
@@ -1051,7 +1071,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
-        Commands::Doctor { verify, offline } => commands::doctor::run(&mut config, verify, offline).await?,
+        Commands::Doctor { verify, offline, share } => {
+            commands::doctor::run(&mut config, verify, offline, share).await?
+        }
+        Commands::Report { args } => commands::doctor::share_report(&args).await?,
         Commands::Upgrade { tools } => commands::upgrade::run(tools).await?,
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {

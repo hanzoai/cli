@@ -279,7 +279,7 @@ supervise`. Three things are worth knowing:
   hanzoai/vm) owns the fold — the CLI does not have a second copy of it.
 - identity/money: `hanzo auth login|logout|show|list|use|token` (multi-identity, like `gh auth switch`), `hanzo usage`
 - cloud: `hanzo up` (+ `--attest`); network/wallet: `hanzo network`, `hanzo wallet` (PQ cloud custody KMS/MPC or local)
-- fabric/fleet: `hanzo link` (below), `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`, `hanzo doctor` (paths, versions, auth, GPU runtime; `--verify` re-downloads current releases and checks provenance, `--offline` skips the network)
+- fabric/fleet: `hanzo link` (below), `hanzo k8s` (`kubectl` / `kube`, below), `hanzo fabric|runner`; ship: `hanzo init|share`, `hanzo scan`; tooling: `hanzo config`, `hanzo version`, `hanzo doctor` (paths, versions, auth, GPU runtime; `--verify` re-downloads current releases and checks provenance, `--offline` skips the network)
 - local cloud: `hanzo host start|status|stop` (see "Where cloud RUNS")
 - the whole cloud, one screen: `hanzo status` (see below)
 
@@ -411,6 +411,16 @@ hanzo link rm NAME                           unpublish
   `args_conflicts_with_subcommands` only on a local command with arguments of its
   own: clap counts a global as an argument, so `hanzo --as X network routers` and
   `hanzo --as X engine status` were refused before this.
+
+**`hanzo k8s` (`hanzo kubectl` / `hanzo kube`) drives Kubernetes and Helm over the
+Zero-Trust fabric** (`commands/k8s.rs`). Ensures `127.0.0.1:26443` (`k8s.hanzo` via
+`hanzo-link-dial-k8s.hanzo.service`, installing the unit via `hanzo link dial
+k8s.hanzo 26443 --install` if absent) before running `kubectl` or `helm` with
+`KUBECONFIG` defaulting to `~/.kube/hanzo-aws.yaml` and namespace defaulting to
+`hanzo`. Built-in verbs: `status` (default: ZT tunnel `:26443`, SQL forward `:5433`,
+nodes, and `-n hanzo` workloads), `tunnel`/`connect`, `zt` (delegates to `hanzo
+link`), `helm [args...]`, `logs <workload> [args...]`, `restart <deploy>`, and full
+`kubectl` passthrough for every other invocation.
 
 **Fleet presence outlives the session** (`hanzo beat`, `gen:src/target.rs::present`).
 A target is live only while something beats, and the beat was held ONLY inside
