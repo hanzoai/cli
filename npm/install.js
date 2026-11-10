@@ -63,6 +63,25 @@ async function get(url) {
   return res;
 }
 
+function resolveTarExecutable(platform = process.platform, systemRoot = process.env.SystemRoot) {
+  if (platform !== "win32") return "tar";
+  if (!systemRoot) {
+    throw new Error("SystemRoot is not set; cannot locate Windows system tar");
+  }
+  const systemTar = join(systemRoot, "System32", "tar.exe");
+  if (!existsSync(systemTar)) {
+    throw new Error(`Windows system tar not found at ${systemTar}`);
+  }
+  return systemTar;
+}
+
+function extractArchive(archive, dest, options) {
+  mkdirSync(dest, { recursive: true });
+  execFileSync(resolveTarExecutable(options?.platform, options?.systemRoot), [
+    "-xzf", archive, "-C", dest,
+  ]);
+}
+
 function linkAlias(dest, binName, aliasName, ext) {
   if (!aliasName) return;
   const src = join(dest, `${binName}${ext}`);
@@ -97,8 +116,7 @@ async function downloadAndExtract({ assetUrl, sha256Url, assetName, dest }) {
     throw new Error(`checksum mismatch for ${assetName}\n  expected ${want}\n  got      ${got}`);
   }
 
-  mkdirSync(dest, { recursive: true });
-  execFileSync("tar", ["-xzf", tmp, "-C", dest]);
+  extractArchive(tmp, dest);
   await rm(tmp, { force: true });
 }
 
@@ -290,7 +308,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`@hanzo/cli: ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`@hanzo/cli: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { extractArchive, resolveTarExecutable };
