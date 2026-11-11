@@ -234,6 +234,16 @@ enum Commands {
         command: RunnerCommands,
     },
 
+    /// List and manage connected social & messaging channels (`/v1/channel`)
+    Channels(commands::channels::ChannelsArgs),
+
+    /// Connect a social or messaging channel via OAuth (`/v1/channel/connect`)
+    Connect(commands::channels::ConnectArgs),
+
+    /// Create, schedule, publish, and inspect social posts & RSS autoposts (`/v1/post`)
+    #[command(visible_alias = "posts")]
+    Post(commands::channels::PostArgs),
+
     /// Scan local files for exposed secrets (exits non-zero on a find)
     Scan { path: PathBuf },
 
@@ -1138,6 +1148,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::bot::status(engine_url, port).await?
             }
         },
+        Commands::Channels(args) => commands::channels::run_channels(&mut config, args).await?,
+        Commands::Connect(args) => commands::channels::run_connect(&mut config, args).await?,
+        Commands::Post(args) => commands::channels::run_post(&mut config, args).await?,
         Commands::Scan { path } => commands::scan::scan(path).await?,
         Commands::Serve(args) => commands::serve::run(args, &config).await?,
         Commands::Build(args) => commands::build::run(&mut config, args).await?,
@@ -2114,6 +2127,39 @@ mod tests {
             let cli = Cli::from_arg_matches(&m).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
             assert!(matches!(cli.command, Some(Commands::Dev(_))), "{argv:?} must be `dev`");
         }
+    }
+
+    #[test]
+    fn channels_and_connect_parse_cleanly() {
+        let cli = Cli::try_parse_from(["hanzo", "channels"]).expect("bare channels parses");
+        let Some(Commands::Channels(args)) = cli.command else { panic!("expected channels") };
+        assert!(args.command.is_none());
+
+        let cli = Cli::try_parse_from(["hanzo", "channels", "--group", "Antje Worring", "--json"])
+            .expect("channels --group --json parses");
+        let Some(Commands::Channels(args)) = cli.command else { panic!("expected channels") };
+        assert_eq!(args.group.as_deref(), Some("Antje Worring"));
+        assert!(args.json);
+
+        assert!(Cli::try_parse_from(["hanzo", "channels", "groups"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "channels", "providers"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "channels", "group", "ch_1", "Hanzo AI"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "channels", "set-group", "ch_1", "Hanzo AI"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "channels", "analytics", "ch_1", "--days", "30"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "channels", "disconnect", "ch_1"]).is_ok());
+
+        let cli = Cli::try_parse_from(["hanzo", "connect", "x", "--group", "Antje Worring", "--open"])
+            .expect("connect parses");
+        let Some(Commands::Connect(args)) = cli.command else { panic!("expected connect") };
+        assert_eq!(args.provider, "x");
+        assert_eq!(args.group.as_deref(), Some("Antje Worring"));
+        assert!(args.open);
+
+        assert!(Cli::try_parse_from(["hanzo", "post"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "post", "list", "--status", "scheduled"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "post", "create", "Hello Hanzo", "--channel", "x", "--channel", "bluesky", "--group", "Hanzo AI"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "post", "now", "Ship it", "--account", "ch_1"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "post", "autopost", "list"]).is_ok());
     }
 
     /// A GLOBAL flag stays global under an absorbed command. `--config` is

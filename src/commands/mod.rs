@@ -10,6 +10,7 @@ pub mod man;
 pub mod auth;
 pub mod bot;
 pub mod build;
+pub mod channels;
 pub mod config;
 pub mod chain;
 pub mod engine;

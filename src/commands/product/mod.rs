@@ -784,6 +784,26 @@ impl Seam {
         Ok(Self { origin, token, hint, org: cfg.org.clone(), wire: Http::default() })
     }
 
+    pub(crate) fn is_http_origin(&self) -> bool {
+        matches!(self.origin, Origin::Http(_))
+    }
+
+    /// Send one request to an explicit HTTP origin (e.g. `https://post.hanzo.ai`
+    /// fallback while `/v1/channel` & `/v1/post` finish rolling onto `api.hanzo.ai`)
+    /// carrying the exact same IAM bearer and `X-Org-Id` selection.
+    pub(crate) async fn send_at(
+        &self,
+        base_url: &str,
+        method: Method,
+        path: &str,
+        query: &[String],
+        body: Option<Value>,
+    ) -> Result<Reply> {
+        let target = target(path, query)?;
+        let base = base_url.trim_end_matches('/');
+        self.over_http(&format!("{base}{target}"), method, body).await
+    }
+
     /// Send one request over whichever wire the origin named. The STATUS is
     /// handed back, never flattened: a refusal is a value the caller must read,
     /// and only a transport fault is an `Err`.
