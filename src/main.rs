@@ -207,6 +207,15 @@ enum Commands {
         command: EngineCommands,
     },
 
+    /// Pull local AI model weights into the shared Hugging Face cache (`hanzo engine pull <model>`)
+    Pull {
+        /// Model ID (e.g. `zenlm/zen-nano-0.6b`, `Qwen/Qwen3-8B`, or alias `zen-nano`)
+        model: String,
+        /// Target node (`local` by default, or a fleet node)
+        #[arg(long, default_value = "local")]
+        node: String,
+    },
+
     /// Personal & organization knowledge graph — local Apple PKG (`local`, `sync`) and cloud `/v1/graph`
     Graph {
         #[command(subcommand)]
@@ -492,6 +501,17 @@ enum ConfigCommands {
 
 #[derive(Subcommand)]
 enum EngineCommands {
+    /// Pull model weights into the local Hugging Face Hub cache (`hanzo pull <model>`)
+    Pull {
+        /// Model ID (e.g. `zenlm/zen-nano-0.6b`, `Qwen/Qwen3-8B`, or alias `zen-nano`)
+        model: String,
+        /// Target node (`local` by default, or a fleet node)
+        #[arg(long, default_value = "local")]
+        node: String,
+    },
+    /// List locally cached AI models on this machine
+    #[command(visible_alias = "ls")]
+    List,
     /// Serve a model from this machine on a local /v1 chat-completions endpoint
     Serve {
         model: String,
@@ -1006,7 +1026,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 commands::auth::token(&mut config, &brand).await?
             }
         },
+        Commands::Pull { model, node } => commands::engine::pull(&model, &node).await?,
         Commands::Engine { command } => match command {
+            EngineCommands::Pull { model, node } => commands::engine::pull(&model, &node).await?,
+            EngineCommands::List => commands::engine::list()?,
             EngineCommands::Serve {
                 model,
                 overlay,
@@ -1094,7 +1117,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 println!("  Attach to shell: `hanzo link` or press Enter in `hanzo console`.");
             }
             Some(SandboxCommands::Models) => list_models(),
-            Some(SandboxCommands::Pull { model, node }) => pull_model(&model, &node).await?,
+            Some(SandboxCommands::Pull { model, node }) => commands::engine::pull(&model, &node).await?,
             Some(SandboxCommands::Load { node, model }) => load_cluster_fleet(&node, model.as_deref()).await?,
             Some(SandboxCommands::Ui) | None => commands::up::dashboard()?,
         },
@@ -1204,35 +1227,8 @@ fn explore_models() {
     println!("  {:<36} {:<10} {:<14} {:<12} hanzoai/zen5-coder-32b", "zen5-coder-32b", "32B", "128k RoPE", "21.4 GB");
     println!("  {:<36} {:<10} {:<14} {:<12} deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "DeepSeek-R1-Distill-Qwen-32B", "32B", "128k RoPE", "20.1 GB");
     println!("  {:<36} {:<10} {:<14} {:<12} nomic-ai/nomic-embed-text-v1.5", "nomic-embed-text-v1.5", "137M", "8,192", "0.6 GB");
-    println!("\nPull to any node with: `hanzo sandbox pull <MODEL> [--node <NODE>]`");
-    println!("(Uses `hf` Hugging Face CLI for parallel accelerated download)");
-}
-
-async fn pull_model(model: &str, node: &str) -> Result<()> {
-    println!("→ Pulling model `{model}` targeting node `{node}`...");
-    if node.contains("spark.local") || node.contains("10.0.0.19") || node.contains("dgx") {
-        println!("  Target: Cluster GPU Node (DGX Spark @ 10.0.0.19 / 192.168.77.2)");
-        println!("  Dispatching download over Hanzo zero-trust mesh via `hf download {model}`...");
-    } else {
-        println!("  Target: Local Dev Host ({})", std::env::consts::ARCH);
-        println!("  Running `hf download {model}`...");
-    }
-    let hf_status = std::process::Command::new("hf")
-        .args(["download", model])
-        .status();
-    match hf_status {
-        Ok(status) if status.success() => {
-            println!("✓ Successfully downloaded `{model}` to node `{node}`.");
-        }
-        Ok(status) => {
-            println!("! `hf download` exited with status {status}. Model cache ready.");
-        }
-        Err(_) => {
-            println!("! `hf` CLI not found in PATH; simulated remote model pull to `{node}`.");
-            println!("  To pull directly: install `hf` CLI and run `hf download {model}`.");
-        }
-    }
-    Ok(())
+    println!("\nPull to this machine with: `hanzo pull <MODEL>` (or `hanzo sandbox pull <MODEL> --node <NODE>`)");
+    println!("(Uses `hf` CLI when installed, or native Hugging Face Hub download)");
 }
 
 async fn load_cluster_fleet(target_node: &str, model_override: Option<&str>) -> Result<()> {

@@ -107,6 +107,41 @@ fn status_is_a_command_not_a_coding_session() {
         .stdout(predicate::str::contains("unhealthy").and(predicate::str::contains("Usage: hanzo status")));
 }
 
+/// `hanzo pull <model>` and `hanzo engine pull <model>` are real commands (never
+/// swallowed as coding-session tasks), and `hanzo engine list` reads `HF_HUB_CACHE`.
+#[test]
+fn pull_is_a_command_and_engine_lists_cached_models() {
+    hanzo()
+        .args(["pull", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: hanzo pull"));
+
+    hanzo()
+        .args(["engine", "pull", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Usage: hanzo engine pull"));
+
+    let hub = tmp();
+    let model_dir = hub.path().join("models--zenlm--zen-nano-0.6b");
+    let snap = model_dir.join("snapshots").join("deadbeef1234");
+    std::fs::create_dir_all(&snap).unwrap();
+    std::fs::create_dir_all(model_dir.join("refs")).unwrap();
+    std::fs::write(model_dir.join("refs").join("main"), "deadbeef1234\n").unwrap();
+    std::fs::write(snap.join("model.safetensors"), vec![0u8; 2048]).unwrap();
+
+    hanzo()
+        .args(["engine", "list"])
+        .env("HF_HUB_CACHE", hub.path())
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("zenlm/zen-nano-0.6b")
+                .and(predicate::str::contains("deadbeef")),
+        );
+}
+
 /// Signed out, `status` REFUSES and names the way in — it never renders an empty
 /// cloud as though that were the truth.
 #[test]
