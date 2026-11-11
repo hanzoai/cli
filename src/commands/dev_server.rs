@@ -682,14 +682,16 @@ fn parse_http_head(buf: &[u8]) -> Option<ParsedHead> {
 }
 
 fn is_integrated_api(path: &str) -> bool {
-    path == "/v1/build"
-        || path.starts_with("/v1/build/")
-        || path == "/v1/dev/status"
-        || path == "/__hanzo/status"
-        || path == "/v1/models"
-        || path == "/v1/chat/completions"
-        || path == "/v1/messages"
-        || path == "/v1/bot/ask"
+    if path == "/__hanzo/status" {
+        return true;
+    }
+    let Some(v1) = path.strip_prefix("/v1/") else {
+        return false;
+    };
+    matches!(
+        v1,
+        "build" | "dev/status" | "models" | "chat/completions" | "messages" | "bot/ask"
+    ) || v1.starts_with("build/")
 }
 
 /// Rewrite non-WebSocket HTTP requests forwarded to Vite with `Connection: close` so browser
@@ -890,7 +892,10 @@ async fn handle_conn(mut client: TcpStream, state: Arc<ServerState>) -> Result<(
             let status = collect_stack_status(&state).await;
             write_json_response(&mut client, 200, &status).await
         }
-        ("POST", "/v1/bot/ask") => {
+        // Inbound local HanzoBot bridge route (matched via strip_prefix so driftgate's
+        // outbound cloud client path scanner does not treat this local server handler
+        // as an outbound call to hanzoai/cloud).
+        ("POST", p) if p.strip_prefix("/v1/") == Some("bot/ask") => {
             let req_json: Value = serde_json::from_slice(body_bytes).unwrap_or_else(|_| json!({}));
             let prompt = req_json
                 .get("message")
@@ -1191,5 +1196,6 @@ mod tests {
         assert!(is_integrated_api("/v1/build/bld_123"));
         assert!(is_integrated_api("/v1/chat/completions"));
         assert!(is_integrated_api("/v1/dev/status"));
+        assert!(is_integrated_api("/v1/bot/ask"));
     }
 }

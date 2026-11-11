@@ -375,7 +375,9 @@ class NpmBinLauncherTests(unittest.TestCase):
             data = json.loads(result.stdout.strip())
             self.assertIn("Path", data)
             self.assertTrue(
-                data["Path"].startswith(str(bin_dir) + os.pathsep),
+                data["Path"].startswith(
+                    (str(bin_dir) + os.pathsep, str(bin_dir.resolve()) + os.pathsep)
+                ),
                 data["Path"],
             )
 
