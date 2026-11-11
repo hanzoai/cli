@@ -47,13 +47,20 @@ case "$STRICT" in 0|1) ;; *) die "HANZO_INSTALL_STRICT must be 0 or 1" ;; esac
 # Check the verifier before downloading. Strict mode requires repository- and
 # tag-bound provenance for every tool, including those without a pinned workflow.
 unchecked=""
+has_source_ref=0
 if [ -n "$SIGNER" ] || [ "$STRICT" = 1 ]; then
   if ! command -v gh >/dev/null 2>&1; then
     unchecked="needs gh"
   elif ! gh auth status >/dev/null 2>&1; then
     unchecked="needs a signed-in gh"
-  elif ! gh attestation verify --help 2>/dev/null | grep -q -- '--source-ref'; then
-    unchecked="$(gh --version 2>/dev/null | head -1 || true) cannot check an attestation's tag"
+  else
+    gh_help="$(gh attestation verify --help 2>/dev/null || true)"
+    if printf '%s' "$gh_help" | grep -q -- '--source-ref'; then
+      has_source_ref=1
+    fi
+    if [ "$has_source_ref" = 0 ] && { [ "$STRICT" = 1 ] || [ -z "$SIGNER" ] || ! printf '%s' "$gh_help" | grep -q -- '--signer-workflow'; }; then
+      unchecked="$(gh --version 2>/dev/null | head -1 || true) cannot check an attestation's tag"
+    fi
   fi
   if [ "$STRICT" = 1 ] && [ -n "$unchecked" ]; then
     die "strict verification unavailable ($unchecked). Install or upgrade GitHub CLI: https://cli.github.com/ and run gh auth login. Nothing was installed."
@@ -229,13 +236,16 @@ fetch "$asset.sha256" "$tmp/$asset.sha256" \
 # line says why and how to check it — never a silent pass.
 if [ -n "$SIGNER" ] || [ "$STRICT" = 1 ]; then
   if [ -z "$unchecked" ]; then
-    set -- gh attestation verify "$tmp/$asset" --repo "$REPO" --source-ref "refs/tags/$TAG"
+    set -- gh attestation verify "$tmp/$asset" --repo "$REPO"
+    if [ "$has_source_ref" = 1 ]; then set -- "$@" --source-ref "refs/tags/$TAG"; fi
     if [ -n "$SIGNER" ]; then set -- "$@" --signer-workflow "$REPO/$SIGNER"; fi
     "$@" > "$tmp/provenance" 2>&1 \
       || { sed 's/^/  /' "$tmp/provenance" >&2
            die "$asset has no matching provenance for $REPO at $TAG — refusing to install"; }
-    if [ -n "$SIGNER" ]; then
+    if [ -n "$SIGNER" ] && [ "$has_source_ref" = 1 ]; then
         printf '%s: provenance: %s/%s built %s at %s\n' "$BIN" "$REPO" "$SIGNER" "$asset" "$TAG"
+    elif [ -n "$SIGNER" ]; then
+        printf '%s: provenance: %s/%s built %s\n' "$BIN" "$REPO" "$SIGNER" "$asset"
     else
         printf '%s: provenance: verified %s from %s at %s\n' "$BIN" "$asset" "$REPO" "$TAG"
     fi

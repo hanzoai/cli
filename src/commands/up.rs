@@ -71,9 +71,11 @@ const LOCAL_PORT: u16 = 3690;
 ///
 /// `cloud-oss:main` is the public multi-arch (`linux/amd64` + `linux/arm64`)
 /// OCI index published from `github.com/hanzoai/cloud`, pullable anonymously by
-/// containerd inside the local k3s microVM. Either way the tag is resolved to a
-/// digest before it reaches the cluster, so what floats here is only which bytes
-/// a fresh `up` picks.
+/// containerd inside the local k3s microVM (`oci.hanzo.ai`, `pkg.hanzo.ai`,
+/// `forge.hanzo.ai`, `git.hanzo.ai` and private `ghcr.io` images are supported
+/// via `--cloud` using the caller's CLI / Docker credentials). Either way the
+/// tag is resolved to a digest before it reaches the cluster, so what floats
+/// here is only which bytes a fresh `up` picks.
 pub const CLOUD: &str = "ghcr.io/hanzoai/cloud-oss:main";
 /// Where the cluster keeps everything it owns, and where it writes the
 /// credential for reaching it. k3s defaults both to paths named after the
@@ -225,10 +227,14 @@ metadata:
     .to_string()
 }
 
-/// Where the key is handed to kubectl. A tmpfs path, so the bytes never reach
-/// the node's disk, and it is unlinked as soon as the Secret exists.
+/// Where transient secrets are handed to kubectl. A tmpfs path, so the bytes
+/// never reach the node's disk, and each file is unlinked as soon as its Secret
+/// exists.
 const KEYFILE: &str = "/dev/shm/.hanzo-cloud-master";
 const KEYFILE_FALLBACK: &str = "/run/.hanzo-cloud-master";
+const PULLFILE: &str = "/dev/shm/.hanzo-registry-pull";
+const PULLFILE_FALLBACK: &str = "/run/.hanzo-registry-pull";
+const PULL_SECRET: &str = "registry-pull";
 
 /// Create the cloud's at-rest key as a Secret, without the key touching disk
 /// or a command line.
@@ -269,6 +275,95 @@ fn plant_key(rpc: &mut Rpc) -> Result<()> {
         Ok(_) => Ok(()),
         Err(e) => Err(e),
     }
+}
+
+/// Plant the registry pull credential in `-n hanzo` via tmpfs and attach it to
+/// the namespace's default ServiceAccount, without writing credentials to disk,
+/// manifests, argv, or the workload measurement.
+fn plant_pull_secret(rpc: &mut Rpc, dockerconfigjson: &str) -> Result<()> {
+    let path = match rpc.write_file(PULLFILE, dockerconfigjson) {
+        Ok(()) => PULLFILE,
+        Err(_) => {
+            rpc.write_file(PULLFILE_FALLBACK, dockerconfigjson)?;
+            PULLFILE_FALLBACK
+        }
+    };
+    let _ = rpc.exec(&["chmod", "600", path]);
+    let _ = rpc.exec(&[
+        "k3s",
+        "kubectl",
+        "delete",
+        "secret",
+        PULL_SECRET,
+        "-n",
+        "hanzo",
+        "--ignore-not-found",
+    ]);
+    let made = rpc.exec(&[
+        "k3s",
+        "kubectl",
+        "create",
+        "secret",
+        "generic",
+        PULL_SECRET,
+        "-n",
+        "hanzo",
+        "--type=kubernetes.io/dockerconfigjson",
+        &format!("--from-file=.dockerconfigjson={path}"),
+    ]);
+    let _ = rpc.exec(&["rm", "-f", path]);
+    match made {
+        Ok((_, err, code)) if code != 0 => {
+            bail!("creating the registry pull secret: {}", err.trim())
+        }
+        Ok(_) => {}
+        Err(e) => return Err(e),
+    }
+
+    // `serviceaccount_controller` creates `default` in `hanzo` asynchronously
+    // right after the namespace appears; wait briefly if it is still landing.
+    let patch = format!(r#"{{"imagePullSecrets":[{{"name":"{PULL_SECRET}"}}]}}"#);
+    let sa_deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        match rpc.exec(&[
+            "k3s",
+            "kubectl",
+            "patch",
+            "serviceaccount",
+            "default",
+            "-n",
+            "hanzo",
+            "-p",
+            &patch,
+        ]) {
+            Ok((_, _, 0)) => break,
+            Ok((_, err, _))
+                if Instant::now() < sa_deadline
+                    && (err.contains("NotFound") || err.contains("not found")) =>
+            {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Ok((_, err, _)) => bail!("attaching registry pull secret: {}", err.trim()),
+            Err(e) => return Err(e),
+        }
+    }
+
+    // Any pod created before `default` carried `imagePullSecrets` missed the
+    // admission mutation; deleting it lets the Deployment immediately recreate
+    // one with both `registry-pull` and `cloud` available.
+    let _ = rpc.exec(&[
+        "k3s",
+        "kubectl",
+        "delete",
+        "pod",
+        "-n",
+        "hanzo",
+        "-l",
+        "app=cloud",
+        "--ignore-not-found",
+        "--wait=false",
+    ]);
+    Ok(())
 }
 
 /// The workload: one cloud, its API published on a node port the host forwards.
@@ -526,13 +621,15 @@ fn write_kubeconfig(path: &Path, yaml: &str) -> Result<()> {
 /// `hanzo up supervise` (hidden): the daemon `hanzo up` leaves behind. Owns the
 /// vm for its whole life; this process dying — `up down`, a crash, a logout —
 /// closes the vm's stdin, and EOF is how the guest stops.
-pub async fn supervise(boot: Boot) -> Result<()> {
+pub async fn supervise(cfg: &mut Config, boot: Boot) -> Result<()> {
     let dir = up_dir()?;
     write_pid(&dir, SUPERVISOR, std::process::id())?;
     // The same one resolver `hanzo up` used — by now the binary exists, but a
     // supervisor started by hand on a bare box bootstraps identically.
     let bin = vm::resolve_or_install().await?;
-    let out = drive(&dir, &boot, &bin);
+    let pull_secret =
+        image::pull_secret_for(&reqwest::Client::new(), &boot.cloud, cfg).await;
+    let out = drive(&dir, &boot, &bin, pull_secret.as_deref());
     if let Err(e) = &out {
         write_state(&dir, &format!("error: {e:#}"));
     }
@@ -546,7 +643,7 @@ pub async fn supervise(boot: Boot) -> Result<()> {
 
 /// Boot → workload → k3s → Ready → kubeconfig → hold. Every phase lands in the
 /// state file so the foreground (and `up status`) reads facts, not hope.
-fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
+fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Result<()> {
     write_state(dir, "boot");
     let log = dir.join("supervisor.log");
     let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
@@ -584,12 +681,12 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_secs(3));
     }
 
-    // The cluster answers, so the key can be handed to it without ever being
-    // written to the node's disk. This is why the workload may spend its first
-    // moments unable to start: it mounts a Secret that does not exist yet, and
-    // the kubelet retries until it does. That is the trade — a brief retry
-    // instead of the cloud's at-rest key sitting in cleartext under the data
-    // directory for the life of the machine.
+    // The cluster answers, so any registry pull credential and the at-rest key
+    // can be handed to it via tmpfs without ever being written to the node's
+    // disk or entering the workload measurement.
+    if let Some(secret) = pull_secret {
+        plant_pull_secret(&mut rpc, secret)?;
+    }
     plant_key(&mut rpc)?;
 
     let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
@@ -642,14 +739,20 @@ pub async fn up(
     // as an argument, so the cluster and the measurement cannot end up naming
     // different bytes, and a tag that moves mid-boot cannot change what runs.
     let boot = Boot {
-        cloud: image::pin(&reqwest::Client::new(), &boot.cloud, image::architecture()).await?,
+        cloud: image::pin_with_config(
+            &reqwest::Client::new(),
+            &boot.cloud,
+            image::architecture(),
+            cfg,
+        )
+        .await?,
         ..boot
     };
     let bin = vm::resolve_or_install().await?;
     vm::ensure_checkpoint(&bin, &checkpoint(), &install_cmd())?;
 
     write_state(&dir, "starting");
-    spawn_supervisor(&dir, &boot)?;
+    spawn_supervisor(&dir, &boot, cfg.org.as_deref())?;
     wait_ready_state(&dir)?;
     println!("{} k3s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
     endpoints()?;
@@ -681,7 +784,7 @@ fn endpoints() -> Result<()> {
 /// Leave the supervisor behind: our own binary, re-run as the hidden
 /// `up supervise`, detached into its own process group with its stdio on the
 /// log — so it survives this command and Ctrl-C never reaches it.
-fn spawn_supervisor(dir: &Path, boot: &Boot) -> Result<u32> {
+fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>) -> Result<u32> {
     let exe = std::env::current_exe().context("resolving our own binary")?;
     // Emptied here, then APPENDED to. The supervisor and the vm it holds both
     // write to this file from separate processes; an offset of their own would
@@ -697,6 +800,9 @@ fn spawn_supervisor(dir: &Path, boot: &Boot) -> Result<u32> {
         .and_then(|f| f.set_len(0).map(|()| f))
         .with_context(|| format!("creating {}", path.display()))?;
     let mut cmd = Command::new(exe);
+    if let Some(org) = org {
+        cmd.args(["--as", org]);
+    }
     cmd.args([
         "up",
         "--cpus",
@@ -957,9 +1063,12 @@ mod tests {
         // The workload names it by reference, which is the only way it should
         // ever learn it.
         assert!(w.contains("secretKeyRef"), "{w}");
-        // And the file it is handed through is RAM, not disk.
+        // And the files secrets are handed through are RAM, not disk.
         assert!(KEYFILE.starts_with("/dev/shm/"), "{KEYFILE}");
         assert!(KEYFILE_FALLBACK.starts_with("/run/"), "{KEYFILE_FALLBACK}");
+        assert!(PULLFILE.starts_with("/dev/shm/"), "{PULLFILE}");
+        assert!(PULLFILE_FALLBACK.starts_with("/run/"), "{PULLFILE_FALLBACK}");
+        assert_eq!(CLOUD, "ghcr.io/hanzoai/cloud-oss:main");
     }
 
     /// The workload register moves with the image AND with the manifest text:

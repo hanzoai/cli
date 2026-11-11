@@ -240,6 +240,32 @@ exit 1
         self.assertIn("--source-ref refs/tags/v1.0.0", result.stdout)
         self.assertFalse((self.root / "gh-asked").exists())
 
+    def test_gh_with_signer_workflow_without_source_ref_verifies_workflow(self):
+        # gh 2.49..2.66 (e.g. 2.65.0) supports `attestation verify --signer-workflow`
+        # without `--source-ref`; non-strict installs verify the workflow cleanly.
+        self.env["HANZO_INSTALL_SIGNER"] = ".github/workflows/release.yml"
+        self.executable("gh", f"""#!/bin/sh
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "auth token") exit 1 ;;
+  "--version ") echo "gh version 2.65.0 (2025-01-06)"; exit 0 ;;
+  "attestation verify")
+    [ "$3" = --help ] && {{ echo "  --signer-workflow string"; exit 0; }}
+    echo "$@" >> "{self.root}/gh-asked"
+    exit 0 ;;
+esac
+exit 1
+""")
+        self.tags("v1.0.0")
+        self.release("v1.0.0", "linux-amd64")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        asked = (self.root / "gh-asked").read_text().split()
+        self.assertIn("--signer-workflow", asked)
+        self.assertNotIn("--source-ref", asked)
+        self.assertNotIn("provenance not checked", result.stdout)
+        self.assertIn("provenance: hanzoai/mcp/.github/workflows/release.yml built", result.stdout)
+
     def test_an_attested_tool_installs_from_its_release_tags_only(self):
         # Its release workflow runs on vX.Y.Z and its ruleset guards v*: a higher
         # rust-v tag carrying the right asset names is no release of it.

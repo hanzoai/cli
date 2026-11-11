@@ -1092,7 +1092,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 Some(UpCommands::Console) => commands::up::dashboard()?,
                 Some(UpCommands::Status) => commands::up::status().await?,
                 Some(UpCommands::Down) => commands::up::down()?,
-                Some(UpCommands::Supervise) => commands::up::supervise(boot).await?,
+                Some(UpCommands::Supervise) => commands::up::supervise(&mut config, boot).await?,
                 Some(UpCommands::Service(argv)) => {
                     commands::up::deprecated_service(argv).await?
                 }
