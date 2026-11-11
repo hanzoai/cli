@@ -231,6 +231,9 @@ enum Commands {
     /// Scan local files for exposed secrets (exits non-zero on a find)
     Scan { path: PathBuf },
 
+    /// Serve, bundle, and preview local web SPAs, Go hanzo.ai/zip services, and static sites
+    Serve(commands::serve::Args),
+
     /// Build a container image with BuildKit, inside a hanzo-vm microVM
     ///
     /// Each build boots its own microVM from a BuildKit checkpoint and drives
@@ -1040,6 +1043,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             EngineCommands::Status => commands::engine::status().await?,
         },
         Commands::Scan { path } => commands::scan::scan(path).await?,
+        Commands::Serve(args) => commands::serve::run(args, &config).await?,
         Commands::Build(args) => commands::build::run(args).await?,
         Commands::Vm { args } => commands::vm::run(args).await?,
         Commands::K8s { args } => commands::k8s::run(args).await?,

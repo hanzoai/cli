@@ -16,6 +16,7 @@ pub mod graph;
 pub mod runner;
 pub mod savings;
 pub mod scan;
+pub mod serve;
 pub mod status;
 pub mod monitor;
 pub mod version;
