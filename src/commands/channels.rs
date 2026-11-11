@@ -694,7 +694,107 @@ async fn create_post(
     media: &[String],
     as_json: bool,
 ) -> Result<()> {
+    let (resolved_ts, resolved_date) = if let Some(raw_at) = schedule_at.map(str::trim).filter(|s| !s.is_empty()) {
+        let ts = parse_schedule(raw_at)?;
+        let iso = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+        (Some(ts), iso)
+    } else {
+        (None, chrono::Utc::now().to_rfc3339())
+    };
+    let post_type = match status.trim().to_lowercase().as_str() {
+        "now" | "publish" | "published" => "now",
+        "draft" => "draft",
+        _ => "schedule",
+    };
+
+    // Resolve target channel IDs (supporting integration IDs, provider slugs, or group names)
+    let mut target_ids: Vec<String> = Vec::new();
+    for a in accounts {
+        let trimmed = a.trim();
+        if !trimmed.is_empty() && !target_ids.iter().any(|x| x == trimmed) {
+            target_ids.push(trimmed.to_string());
+        }
+    }
+    let needs_lookup = channels.iter().any(|c| {
+        let t = c.trim();
+        !t.starts_with("cm") && !t.starts_with("int-")
+    }) || (channels.is_empty() && accounts.is_empty() && group.is_some());
+
+    if needs_lookup {
+        if let Ok(list_val) = request(cfg, Method::GET, "/v1/channel", &[], None).await {
+            let rows = list_val
+                .as_array()
+                .or_else(|| list_val.get("channels").and_then(Value::as_array))
+                .cloned()
+                .unwrap_or_default();
+            for c in channels {
+                let want = c.trim().to_lowercase();
+                for r in &rows {
+                    let id = str_field(r, &["id"]);
+                    let prov = str_field(r, &["identifier", "provider"]).to_lowercase();
+                    if id.to_lowercase() == want || prov == want {
+                        if !target_ids.iter().any(|x| x == &id) {
+                            target_ids.push(id);
+                        }
+                    }
+                }
+            }
+            if let Some(g) = group.map(str::trim).filter(|s| !s.is_empty()) {
+                let want_g = g.to_lowercase();
+                for r in &rows {
+                    let id = str_field(r, &["id"]);
+                    let grp = r
+                        .get("customer")
+                        .and_then(|v| v.as_str().or_else(|| v.get("name").and_then(Value::as_str)))
+                        .unwrap_or_default()
+                        .to_lowercase();
+                    let disabled = r.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+                    let refresh = r.get("refreshNeeded").and_then(Value::as_bool).unwrap_or(false);
+                    if grp == want_g && !disabled && !refresh && !target_ids.iter().any(|x| x == &id) {
+                        target_ids.push(id);
+                    }
+                }
+            }
+        }
+    } else {
+        for c in channels {
+            let trimmed = c.trim();
+            if !trimmed.is_empty() && !target_ids.iter().any(|x| x == trimmed) {
+                target_ids.push(trimmed.to_string());
+            }
+        }
+    }
+
+    let images: Vec<Value> = media
+        .iter()
+        .map(|m| m.trim())
+        .filter(|m| !m.is_empty())
+        .map(|u| json!({ "id": u, "path": u }))
+        .collect();
+
+    let posts_items: Vec<Value> = target_ids
+        .iter()
+        .map(|id| {
+            json!({
+                "integration": { "id": id },
+                "value": [{ "content": content, "image": images }],
+                "settings": {
+                    "who_can_reply_post": "everyone",
+                    "channel": "announcements",
+                    "title": content.lines().next().unwrap_or("Hanzo AI Update").chars().take(80).collect::<String>()
+                }
+            })
+        })
+        .collect();
+
     let mut body = json!({
+        "type": post_type,
+        "date": resolved_date,
+        "shortLink": false,
+        "tags": [],
+        "posts": posts_items,
         "content": content,
         "status": status,
         "creationMethod": "CLI",
@@ -712,8 +812,7 @@ async fn create_post(
     if let Some(g) = group.map(str::trim).filter(|s| !s.is_empty()) {
         body["group"] = json!(g);
     }
-    if let Some(raw_at) = schedule_at.map(str::trim).filter(|s| !s.is_empty()) {
-        let ts = parse_schedule(raw_at)?;
+    if let Some(ts) = resolved_ts {
         body["scheduleAt"] = json!(ts);
     }
     if !media.is_empty() {
@@ -726,7 +825,11 @@ async fn create_post(
         return Ok(());
     }
     let id = if let Some(arr) = data.as_array() {
-        arr.first().map(|r| str_field(r, &["id", "postId"])).unwrap_or_else(|| "ok".to_string())
+        arr.iter()
+            .map(|r| str_field(r, &["id", "postId"]))
+            .filter(|s| !s.is_empty() && s != "—")
+            .collect::<Vec<_>>()
+            .join(", ")
     } else {
         str_field(&data, &["id", "postId"])
     };
