@@ -63,6 +63,21 @@ pub struct CloudArgs {
     /// Fetch a cloud run's branch into this clean repository.
     #[arg(long, value_name = "SESSION_ID", conflicts_with_all = ["cloud_execution", "resume", "positional", "tail"])]
     pub teleport: Option<String>,
+    /// Run a local hot-reloading Vite web dev server with integrated `/v1/build` and local LLM proxy.
+    #[arg(long, visible_alias = "vite", alias = "hot", alias = "web", conflicts_with_all = ["cloud_execution", "teleport", "resume", "positional", "tail"])]
+    pub serve: bool,
+    /// Port for the `hanzo dev --serve` hot-reload server & `/v1/build` gateway.
+    #[arg(long, default_value_t = 5173, requires = "serve")]
+    pub port: u16,
+    /// Local Hanzo Engine URL proxied at `/v1/chat/completions` and `/v1/models`.
+    #[arg(long, default_value = "http://127.0.0.1:1234", requires = "serve")]
+    pub engine_url: String,
+    /// Automatically run `/v1/build` verification whenever `src/` files change.
+    #[arg(long, requires = "serve")]
+    pub build_on_change: bool,
+    /// Project directory to serve (`hanzo dev --serve --dir <PATH>`).
+    #[arg(long, default_value = ".", requires = "serve")]
+    pub dir: std::path::PathBuf,
 }
 
 pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> Result<()> {

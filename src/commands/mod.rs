@@ -8,6 +8,7 @@ pub mod product;
 // Resource-noun commands — the primary `hanzo <resource> <verb>` tree.
 pub mod man;
 pub mod auth;
+pub mod bot;
 pub mod build;
 pub mod config;
 pub mod chain;
@@ -26,6 +27,7 @@ pub mod up;
 
 // The one coding/agent orchestrator, behind `hanzo dev` and `hanzo desktop`.
 pub mod dev;
+pub mod dev_server;
 pub mod cloud_sessions;
 
 // Kept resources reachable in the additive model (money, network, provider

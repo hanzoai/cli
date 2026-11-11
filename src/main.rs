@@ -207,6 +207,12 @@ enum Commands {
         command: EngineCommands,
     },
 
+    /// Run a local Hanzo Bot gateway or embedded agent wired to local LLMs, or manage cloud `/v1/bot`
+    Bot {
+        #[command(subcommand)]
+        command: BotCommands,
+    },
+
     /// Pull local AI model weights into the shared Hugging Face cache (`hanzo engine pull <model>`)
     Pull {
         /// Model ID (e.g. `zenlm/zen-nano-0.6b`, `Qwen/Qwen3-8B`, or alias `zen-nano`)
@@ -534,6 +540,54 @@ enum EngineCommands {
 }
 
 #[derive(Subcommand)]
+enum BotCommands {
+    /// Start the local HanzoBot WebSocket & Control UI gateway wired to a local LLM
+    #[command(visible_alias = "start", alias = "serve", alias = "up")]
+    Gateway {
+        /// Gateway WebSocket / Control UI port
+        #[arg(long, default_value_t = 19001)]
+        port: u16,
+        /// Local model ID or alias (`zen-nano` → `zenlm/zen-nano-0.6b`)
+        #[arg(long, default_value = "zen-nano")]
+        model: String,
+        /// Local Hanzo Engine base URL
+        #[arg(long, default_value = "http://127.0.0.1:1234")]
+        engine_url: String,
+        /// Kill any existing listener on the gateway port first
+        #[arg(long)]
+        force: bool,
+    },
+    /// Run a local HanzoBot agent turn powered by the local LLM (`hanzo engine serve`)
+    #[command(visible_alias = "chat", alias = "say")]
+    Ask {
+        /// Prompt / message for the local bot
+        message: String,
+        /// Local model ID or alias (`zen-nano` → `zenlm/zen-nano-0.6b`)
+        #[arg(long, default_value = "zen-nano")]
+        model: String,
+        /// Local Hanzo Engine base URL
+        #[arg(long, default_value = "http://127.0.0.1:1234")]
+        engine_url: String,
+        /// Emit raw JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Drive HanzoBot's dedicated sandboxed Chromium browser (`open`, `navigate`, `click`, `pdf`)
+    #[command(visible_alias = "computer")]
+    Browser {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Show local HanzoBot runtime, gateway, and local LLM status
+    Status {
+        #[arg(long, default_value = "http://127.0.0.1:1234")]
+        engine_url: String,
+        #[arg(long, default_value_t = 19001)]
+        port: u16,
+    },
+}
+
+#[derive(Subcommand)]
 enum RunnerCommands {
     /// Register + run this machine as a CI runner (foreground; Ctrl-C stops it)
     Start,
@@ -607,6 +661,30 @@ enum UpCommands {
 enum SandboxCommands {
     /// Run a coding agent in an isolated sandbox (matches `sbx run <agent>`)
     Run(Box<commands::cloud_sessions::SessionArgs>),
+    /// Execute a command inside the Seatbelt kernel sandbox (or `--vm` Linux microVM)
+    Exec {
+        /// Execute inside a hardware-virtualized `hanzo-vm` microVM instead of Seatbelt
+        #[arg(long)]
+        vm: bool,
+        /// Working directory inside the sandbox
+        #[arg(short = 'C', long)]
+        cd: Option<PathBuf>,
+        /// Command and arguments to run inside the sandbox
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+    /// Run a sandboxed headless browser computer-use capture & local Zen-Nano audit on a URL
+    #[command(visible_alias = "browse", alias = "inspect")]
+    Computer {
+        /// Target URL to open and inspect in the isolated browser sandbox
+        url: String,
+        /// Screenshot output path [default: .hanzo/screenshots/computer-use.png]
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Local Hanzo Engine URL for visual/DOM verification
+        #[arg(long, default_value = "http://127.0.0.1:1234")]
+        engine_url: String,
+    },
     /// List active sandboxes & agent workspaces
     #[command(alias = "ls", alias = "ps")]
     List,
@@ -1042,9 +1120,27 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             EngineCommands::Down => commands::engine::down().await?,
             EngineCommands::Status => commands::engine::status().await?,
         },
+        Commands::Bot { command } => match command {
+            BotCommands::Gateway {
+                port,
+                model,
+                engine_url,
+                force,
+            } => commands::bot::gateway(port, model, engine_url, force).await?,
+            BotCommands::Ask {
+                message,
+                model,
+                engine_url,
+                json,
+            } => commands::bot::ask(message, model, engine_url, json).await?,
+            BotCommands::Browser { args } => commands::bot::browser(args)?,
+            BotCommands::Status { engine_url, port } => {
+                commands::bot::status(engine_url, port).await?
+            }
+        },
         Commands::Scan { path } => commands::scan::scan(path).await?,
         Commands::Serve(args) => commands::serve::run(args, &config).await?,
-        Commands::Build(args) => commands::build::run(args).await?,
+        Commands::Build(args) => commands::build::run(&mut config, args).await?,
         Commands::Vm { args } => commands::vm::run(args).await?,
         Commands::K8s { args } => commands::k8s::run(args).await?,
         Commands::Link { command, shell, read_only, title } => match command {
@@ -1114,6 +1210,14 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
             Some(SandboxCommands::Run(args)) => commands::dev::session(&mut config, *args, Target::Repo).await?,
+            Some(SandboxCommands::Exec { vm, cd, command }) => {
+                commands::bot::sandbox_exec(vm, cd, command).await?
+            }
+            Some(SandboxCommands::Computer {
+                url,
+                out,
+                engine_url,
+            }) => commands::bot::sandbox_computer(url, out, engine_url).await?,
             Some(SandboxCommands::List) => commands::status::list_sandboxes(&mut config).await?,
             Some(SandboxCommands::Explore) => explore_sandboxes(),
             Some(SandboxCommands::Launch { template, node }) => {
@@ -2023,5 +2127,55 @@ mod tests {
             .try_get_matches_from(["hanzo", "billing", "--config", "/tmp/x", "invoices", "list"])
             .expect("a global flag is valid before an absorbed subcommand");
         assert!(commands::product::resolve(&hand, &m).is_some());
+    }
+
+    #[test]
+    fn dev_serve_local_bot_and_sandbox_computer_parse_while_bot_absorbs_cloud_ops() {
+        let hand = Cli::command();
+        let merged = commands::product::augment(hand.clone());
+
+        // `hanzo dev --serve` parses cleanly with port & engine_url.
+        let m = merged
+            .clone()
+            .try_get_matches_from(["hanzo", "dev", "--serve", "--port", "5173"])
+            .expect("dev --serve parses");
+        assert!(commands::product::resolve(&hand, &m).is_none());
+        let Some(Commands::Dev(args)) = Cli::from_arg_matches(&m).unwrap().command else {
+            panic!("expected dev")
+        };
+        assert!(args.remote.serve);
+        assert_eq!(args.remote.port, 5173);
+
+        // `hanzo build --web` parses cleanly.
+        let m = merged
+            .clone()
+            .try_get_matches_from(["hanzo", "build", "--web"])
+            .expect("build --web parses");
+        let Some(Commands::Build(b)) = Cli::from_arg_matches(&m).unwrap().command else {
+            panic!("expected build")
+        };
+        assert!(b.web);
+
+        // `hanzo bot ask` dispatches locally, while `/v1/bot` cloud ops (`members`, `runs`) stay absorbed.
+        let m = merged
+            .clone()
+            .try_get_matches_from(["hanzo", "bot", "ask", "hello", "--model", "zen-nano"])
+            .expect("bot ask parses");
+        assert!(commands::product::resolve(&hand, &m).is_none());
+        assert!(matches!(
+            Cli::from_arg_matches(&m).unwrap().command,
+            Some(Commands::Bot { command: BotCommands::Ask { .. } })
+        ));
+        let bot_sub = merged.find_subcommand("bot").expect("bot exists");
+        for cloud_sub in ["members", "runs"] {
+            assert!(
+                bot_sub.find_subcommand(cloud_sub).is_some(),
+                "cloud `/v1/bot` subcommand `{cloud_sub}` must stay absorbed"
+            );
+        }
+
+        // `hanzo sandbox exec` & `hanzo sandbox computer` parse cleanly.
+        assert!(Cli::try_parse_from(["hanzo", "sandbox", "exec", "--", "uname", "-a"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "sandbox", "computer", "http://127.0.0.1:5173"]).is_ok());
     }
 }

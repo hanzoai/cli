@@ -47,6 +47,16 @@ use crate::config::Config;
 /// One surface's answer: the rows it reported, or WHY it could not be read.
 pub(crate) type Reading = std::result::Result<Vec<Value>, String>;
 
+/// One surface's full answer when read for the status page: its rows plus any
+/// partial-source failures (`degraded: [{source, reason}]`) reported beside them.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Surface {
+    pub rows: Vec<Value>,
+    pub degraded: Vec<(String, String)>,
+}
+
+type SurfaceReading = std::result::Result<Surface, String>;
+
 /// One thing that needs attention: `(what it is, its name, the verdict)`.
 type Problem = (&'static str, String, String);
 
@@ -68,9 +78,9 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
     let seam = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await?;
     // Concurrent: three independent reads, so the page costs one round trip.
     let (clusters, apps, nodes) = tokio::join!(
-        read(&seam, CLUSTERS_ROUTE, "clusters"),
-        read(&seam, APPS_ROUTE, "items"),
-        read(&seam, WORKERS_ROUTE, "workers"),
+        read_surface(&seam, CLUSTERS_ROUTE, "clusters"),
+        read_surface(&seam, APPS_ROUTE, "items"),
+        read_surface(&seam, WORKERS_ROUTE, "workers"),
     );
 
     render(&clusters, &apps, &nodes);
@@ -123,6 +133,10 @@ pub(crate) fn format_sandbox_table(rows: &[Value]) -> Vec<String> {
 /// answer with no list in it all become the SAME honest value — a reason string
 /// — so an empty page is only ever printed when the server actually said empty.
 pub(crate) async fn read(seam: &Seam, path: &str, key: &str) -> Reading {
+    read_surface(seam, path, key).await.map(|s| s.rows)
+}
+
+async fn read_surface(seam: &Seam, path: &str, key: &str) -> SurfaceReading {
     let Reply { status, body } = seam
         .send(Method::GET, path, &[], None)
         .await
@@ -130,17 +144,57 @@ pub(crate) async fn read(seam: &Seam, path: &str, key: &str) -> Reading {
     if !(200..300).contains(&status) {
         return Err(reason(status, &body));
     }
-    if let Some(msg) = envelope_error(&body) {
+    parse_surface(&body, key)
+}
+
+/// Pure body decoder for [`read_surface`]: extracts `key` and any additive
+/// `degraded: [{source, reason}]` list. When `rows` is empty ONLY because an
+/// upstream source failed, this returns `Err` rather than `Ok(empty)` so an
+/// upstream 403/502 folded into `[]` never renders as `"none reported"`.
+fn parse_surface(body: &Value, key: &str) -> SurfaceReading {
+    if let Some(msg) = envelope_error(body) {
         return Err(msg);
     }
     // The `/v1` envelope is `{status,msg,data}` where there is one; a plane that
     // answers its payload directly is read directly. Same rule the product tree
     // prints by, so both surface the same thing.
-    let payload = body.get("data").unwrap_or(&body);
-    match payload.get(key).and_then(Value::as_array) {
-        Some(rows) => Ok(rows.clone()),
-        None => Err(format!("unreadable — the answer carried no `{key}` list")),
+    let payload = body.get("data").unwrap_or(body);
+    let Some(rows) = payload.get(key).and_then(Value::as_array) else {
+        return Err(format!("unreadable — the answer carried no `{key}` list"));
+    };
+    let degraded = parse_degraded(payload);
+    if rows.is_empty() && !degraded.is_empty() {
+        let reasons = degraded
+            .iter()
+            .map(|(src, why)| {
+                if why.starts_with(&format!("{src}:")) {
+                    why.clone()
+                } else {
+                    format!("{src}: {why}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("degraded — {reasons}"));
     }
+    Ok(Surface {
+        rows: rows.clone(),
+        degraded,
+    })
+}
+
+fn parse_degraded(payload: &Value) -> Vec<(String, String)> {
+    let Some(items) = payload.get("degraded").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|d| {
+            let src = first(d, &["/source"], "upstream");
+            let why = terse(&first(d, &["/reason", "/error", "/msg"], "unavailable"));
+            (src, why)
+        })
+        .collect()
 }
 
 /// The server's own words for a refusal, behind its status: `403 not authorized
@@ -231,7 +285,7 @@ fn join(parts: &[String]) -> String {
 
 // ---- the page ----------------------------------------------------------------
 
-fn render(clusters: &Reading, apps: &Reading, nodes: &Reading) {
+fn render(clusters: &SurfaceReading, apps: &SurfaceReading, nodes: &SurfaceReading) {
     let problems = problems(clusters, apps, nodes);
     if problems.is_empty() {
         // Only claim health when every surface was actually READ. A page with an
@@ -255,8 +309,8 @@ fn render(clusters: &Reading, apps: &Reading, nodes: &Reading) {
 
     println!();
     head("clusters", clusters);
-    if let Ok(rows) = clusters {
-        for c in rows {
+    if let Ok(s) = clusters {
+        for c in &s.rows {
             let count = node_count(c).map(|n| format!("{n} nodes")).unwrap_or_default();
             println!(
                 "  {:<28} {}",
@@ -268,11 +322,11 @@ fn render(clusters: &Reading, apps: &Reading, nodes: &Reading) {
 
     println!();
     head("applications", apps);
-    if let Ok(rows) = apps {
+    if let Ok(s) = apps {
         // Grouped, never enumerated: the unhealthy ones are already named above,
         // so here every verdict is one counted line — 336 applications included.
         let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
-        for a in rows {
+        for a in &s.rows {
             *counts.entry(verdict(a)).or_default() += 1;
         }
         for (v, n) in counts {
@@ -282,19 +336,19 @@ fn render(clusters: &Reading, apps: &Reading, nodes: &Reading) {
 
     println!();
     head("compute", nodes);
-    if let Ok(rows) = nodes {
-        for n in rows {
+    if let Ok(s) = nodes {
+        for n in &s.rows {
             node(n);
         }
     }
 }
 
 /// One section heading: the count, "none reported", or WHY there is no count.
-fn head(label: &str, r: &Reading) {
+fn head(label: &str, r: &SurfaceReading) {
     match r {
         Err(why) => println!("{}: {} ({why})", label.bold(), "unavailable".yellow()),
-        Ok(rows) if rows.is_empty() => println!("{}: {}", label.bold(), "none reported".dimmed()),
-        Ok(rows) => println!("{} — {}", label.bold(), rows.len()),
+        Ok(s) if s.rows.is_empty() => println!("{}: {}", label.bold(), "none reported".dimmed()),
+        Ok(s) => println!("{} — {}", label.bold(), s.rows.len()),
     }
 }
 
@@ -379,29 +433,44 @@ fn row(label: &str, value: String) {
 /// same list as the one that was actually down, which buries the incident in
 /// the noise and teaches the reader to skip the block that matters most.
 /// Drift is counted by `drift`, one line, below the alarms.
-fn problems(clusters: &Reading, apps: &Reading, nodes: &Reading) -> Vec<Problem> {
+fn is_healthy_cluster_state(s: &str) -> bool {
+    // Managed DOKS clusters report "running"; attached BYO kubeconfig clusters
+    // report "attached" (cloud/apps/compute/byo.go).
+    s.eq_ignore_ascii_case("running") || s.eq_ignore_ascii_case("attached")
+}
+
+fn problems(clusters: &SurfaceReading, apps: &SurfaceReading, nodes: &SurfaceReading) -> Vec<Problem> {
     let mut out: Vec<Problem> = Vec::new();
-    if let Ok(rows) = apps {
-        for a in rows {
+    if let Ok(s) = apps {
+        for a in &s.rows {
             if first(a, &["/status/health/status"], "Unknown") != "Healthy" {
                 out.push(("application", first(a, &["/metadata/name"], "unnamed"), verdict(a)));
             }
         }
-    }
-    if let Ok(rows) = clusters {
-        for c in rows {
-            let s = state(c);
-            if !s.eq_ignore_ascii_case("running") {
-                out.push(("cluster", first(c, &["/name", "/id"], "unnamed"), s));
-            }
+        for (src, why) in &s.degraded {
+            out.push(("source", src.clone(), why.clone()));
         }
     }
-    if let Ok(rows) = nodes {
-        for n in rows {
-            let s = first(n, &["/status"], "unknown");
-            if s != "online" {
-                out.push(("node", first(n, &["/hostname", "/id"], "unnamed"), s));
+    if let Ok(s) = clusters {
+        for c in &s.rows {
+            let st = state(c);
+            if !is_healthy_cluster_state(&st) {
+                out.push(("cluster", first(c, &["/name", "/id"], "unnamed"), st));
             }
+        }
+        for (src, why) in &s.degraded {
+            out.push(("source", src.clone(), why.clone()));
+        }
+    }
+    if let Ok(s) = nodes {
+        for n in &s.rows {
+            let st = first(n, &["/status"], "unknown");
+            if st != "online" {
+                out.push(("node", first(n, &["/hostname", "/id"], "unnamed"), st));
+            }
+        }
+        for (src, why) in &s.degraded {
+            out.push(("source", src.clone(), why.clone()));
         }
     }
     out
@@ -409,9 +478,10 @@ fn problems(clusters: &Reading, apps: &Reading, nodes: &Reading) -> Vec<Problem>
 
 /// Applications that are serving but whose running tag is not the declared one.
 /// Reported as a COUNT: naming 182 rows that are all fine is not information.
-fn drift(apps: &Reading) -> usize {
-    let Ok(rows) = apps else { return 0 };
-    rows.iter()
+fn drift(apps: &SurfaceReading) -> usize {
+    let Ok(s) = apps else { return 0 };
+    s.rows
+        .iter()
         .filter(|a| {
             first(a, &["/status/health/status"], "Unknown") == "Healthy"
                 && first(a, &["/status/sync/status"], "Unknown") != "Synced"
@@ -469,17 +539,61 @@ mod tests {
         assert_eq!(rows(&json!({"status":"ok","data":{"workers":[1]}}), "workers"), Ok(vec![json!(1)]));
     }
 
-    /// The pure half of [`read`] — the same body handling, without a wire.
+    fn ok_rows(rows: Vec<Value>) -> SurfaceReading {
+        Ok(Surface {
+            rows,
+            degraded: Vec::new(),
+        })
+    }
+
+    /// The pure half of [`read`] — the exact [`parse_surface`] body decoder, without a wire.
     fn rows(body: &Value, key: &str) -> std::result::Result<Vec<Value>, String> {
-        if let Some(msg) = envelope_error(body) {
-            return Err(msg);
-        }
-        let payload = body.get("data").unwrap_or(body);
-        payload
-            .get(key)
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| format!("unreadable — the answer carried no `{key}` list"))
+        parse_surface(body, key).map(|s| s.rows)
+    }
+
+    /// An empty list accompanied by `degraded` means a folded upstream failed
+    /// (`visor: upstream 403`), NEVER `"none reported"` or `"all clear"`.
+    #[test]
+    fn degraded_empty_clusters_is_unavailable_not_none_reported() {
+        let body = json!({
+            "clusters": [],
+            "degraded": [{"source": "visor", "reason": "visor: upstream 403"}]
+        });
+        assert_eq!(
+            parse_surface(&body, "clusters"),
+            Err("degraded — visor: upstream 403".into())
+        );
+    }
+
+    /// Attached BYO clusters (`status == "attached"`) are healthy alongside
+    /// managed `"running"` clusters, while partial `degraded` sources still
+    /// surface in `attention`.
+    #[test]
+    fn attached_byo_cluster_is_healthy_and_partial_degraded_leads_attention() {
+        let healthy_byo = parse_surface(
+            &json!({
+                "clusters": [
+                    {"name": "hanzo-aws", "region": "aws-us-east-1", "status": "attached", "nodeCount": 26},
+                    {"name": "hanzo-doks", "region": "nyc3", "status": "running", "nodeCount": 3}
+                ]
+            }),
+            "clusters",
+        );
+        assert!(problems(&healthy_byo, &ok_rows(vec![]), &ok_rows(vec![])).is_empty());
+
+        let partial = parse_surface(
+            &json!({
+                "clusters": [
+                    {"name": "hanzo-aws", "region": "aws-us-east-1", "status": "attached", "nodeCount": 26}
+                ],
+                "degraded": [{"source": "visor", "reason": "visor: unreachable"}]
+            }),
+            "clusters",
+        );
+        assert_eq!(
+            problems(&partial, &ok_rows(vec![]), &ok_rows(vec![])),
+            vec![("source", "visor".into(), "visor: unreachable".into())]
+        );
     }
 
     // ---- most important first -----------------------------------------------
@@ -490,16 +604,17 @@ mod tests {
     /// it is serving, and 182 of these would bury the one that is down.
     #[test]
     fn only_the_broken_lead_the_page_and_drift_is_not_broken() {
-        let apps = Ok(vec![
+        let apps = ok_rows(vec![
             app("gateway", "Healthy", "Synced"),
             app("iam", "Degraded", "Synced"),
             app("kms", "Healthy", "OutOfSync"),
         ]);
-        let clusters = Ok(vec![
+        let clusters = ok_rows(vec![
             json!({"name": "hanzo-k8s", "status": "running"}),
+            json!({"name": "hanzo-aws", "status": "attached"}),
             json!({"name": "zoo-k8s", "status": {"state": "provisioning"}}),
         ]);
-        let nodes = Ok(vec![
+        let nodes = ok_rows(vec![
             json!({"hostname": "evo", "status": "online"}),
             json!({"hostname": "spark", "status": "offline"}),
         ]);
@@ -532,7 +647,7 @@ mod tests {
     /// drift. Only the serving-but-stale are drift.
     #[test]
     fn drift_counts_only_the_healthy_but_stale() {
-        let apps = Ok(vec![
+        let apps = ok_rows(vec![
             app("a", "Healthy", "OutOfSync"),
             app("b", "Healthy", "Unknown"),
             app("c", "Degraded", "OutOfSync"),
@@ -547,8 +662,8 @@ mod tests {
     /// healthy, so it leads the page rather than hiding in the counts.
     #[test]
     fn an_unstated_verdict_is_unknown_and_never_healthy() {
-        let apps = Ok(vec![json!({"metadata": {"name": "mystery"}})]);
-        let p = problems(&Ok(vec![]), &apps, &Ok(vec![]));
+        let apps = ok_rows(vec![json!({"metadata": {"name": "mystery"}})]);
+        let p = problems(&ok_rows(vec![]), &apps, &ok_rows(vec![]));
         assert_eq!(p, vec![("application", "mystery".into(), "Unknown / Unknown".into())]);
         assert_eq!(state(&json!({"name": "x"})), "unknown");
     }
@@ -557,7 +672,7 @@ mod tests {
     /// and inventing failures is the mirror of inventing health.
     #[test]
     fn an_unavailable_surface_is_not_a_problem_and_not_a_zero() {
-        let out = problems(&Err("403 nope".into()), &Err("403 nope".into()), &Ok(vec![]));
+        let out = problems(&Err("403 nope".into()), &Err("403 nope".into()), &ok_rows(vec![]));
         assert!(out.is_empty());
     }
 

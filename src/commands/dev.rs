@@ -155,6 +155,16 @@ pub enum Target {
 /// Do not add a second launcher for a new spelling: add the spelling to
 /// `select` and let it land here like the rest.
 pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> Result<()> {
+    if args.remote.serve {
+        return super::dev_server::run(
+            config,
+            args.remote.dir,
+            args.remote.port,
+            args.remote.engine_url,
+            args.remote.build_on_change,
+        )
+        .await;
+    }
     if args.remote.cloud_execution || args.remote.teleport.is_some() {
         return super::cloud_sessions::run(config, args, target == Target::Desktop).await;
     }

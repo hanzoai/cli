@@ -93,14 +93,41 @@ pub struct Args {
     /// Disk for the vm, in MB
     #[arg(long, default_value_t = 32768)]
     pub disk_size: u64,
+
+    /// Build a static web/Vite project (`hanzo.yml`) and emit a SHA-256 `/v1/build` receipt
+    #[arg(long, visible_alias = "static", conflicts_with = "cloud")]
+    pub web: bool,
+
+    /// Trigger a remote Hanzo Cloud `/v1/build` job from the active git repository
+    #[arg(long, conflicts_with = "web")]
+    pub cloud: bool,
+
+    /// Poll `GET /v1/build/:id` until the remote build finishes
+    #[arg(long, requires = "cloud")]
+    pub wait: bool,
 }
 
 fn cores() -> u32 {
     std::thread::available_parallelism().map_or(4, |n| n.get() as u32)
 }
 
-/// Boot the vm, start buildkitd, wait for it to answer, build.
-pub async fn run(args: Args) -> Result<()> {
+/// Boot the vm, start buildkitd, wait for it to answer, build (or run `--web` / `--cloud`).
+pub async fn run(cfg: &mut crate::config::Config, args: Args) -> Result<()> {
+    if args.web {
+        crate::commands::dev_server::run_static_build(&args.context)?;
+        return Ok(());
+    }
+    if args.cloud {
+        return crate::commands::dev_server::run_cloud_build(
+            cfg,
+            &args.context,
+            args.file.as_deref(),
+            &args.tags,
+            &args.platform,
+            args.wait,
+        )
+        .await;
+    }
     if args.push && args.tags.is_empty() {
         bail!("--push needs a name: -t registry/repository:tag");
     }
@@ -403,7 +430,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_push_with_no_name_is_refused_before_anything_boots() {
-        let err = run(args(&["--push"])).await.unwrap_err();
+        let err = run(&mut crate::config::Config::default(), args(&["--push"]))
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("--push needs a name"), "{err}");
     }
 

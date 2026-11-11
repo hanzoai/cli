@@ -43,6 +43,7 @@ pub fn build(config: &Config) -> hanzo_event::Telemetry {
 pub fn label(command: &Commands) -> &'static str {
     match command {
         Commands::Auth { .. } => "auth",
+        Commands::Bot { .. } => "bot",
         // `hanzo login` and `hanzo auth login` are one command reached two ways,
         // so they report as one label — a split here would read as two products.
         Commands::Login { .. } | Commands::Whoami { .. } => "auth",
