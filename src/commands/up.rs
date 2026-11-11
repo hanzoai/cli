@@ -69,11 +69,12 @@ const CLOUD_NODE_PORT: u16 = 30080;
 const LOCAL_PORT: u16 = 3690;
 /// The image deployed when the caller names none.
 ///
-/// `main` and not `latest` because it is the tag that publishes an index with
-/// both architectures; `latest` is a lone linux/amd64 manifest, which no arm64
-/// guest can run. Either way the tag is resolved to a digest before it reaches
-/// the cluster, so what floats here is only which bytes a fresh `up` picks.
-pub const CLOUD: &str = "ghcr.io/hanzoai/cloud:main";
+/// `cloud-oss:main` is the public multi-arch (`linux/amd64` + `linux/arm64`)
+/// OCI index published from `github.com/hanzoai/cloud`, pullable anonymously by
+/// containerd inside the local k3s microVM. Either way the tag is resolved to a
+/// digest before it reaches the cluster, so what floats here is only which bytes
+/// a fresh `up` picks.
+pub const CLOUD: &str = "ghcr.io/hanzoai/cloud-oss:main";
 /// Where the cluster keeps everything it owns, and where it writes the
 /// credential for reaching it. k3s defaults both to paths named after the
 /// company that wrote it; we run our own machine, so ours are named for it.
