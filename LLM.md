@@ -7,7 +7,8 @@ plus runs the network. clap + tokio, rustls TLS, no C deps, no daemon.
 **Canonical role**: the terminal face of the Open AI Cloud — the CLI, NOT an SDK. SDK
 model: full cloud SDK per language (`hanzo-<lang>/sdk`) + AI/agents lib (Python `hanzo`
 flagship = `hanzoai/python-sdk`, Node `@hanzo/ai`). This repo is the canonical impl of
-the CLI; discovery/marketing repos link here, never copy it.
+the CLI; discovery/marketing repos link here, never copy it. `LLM.md` is the canonical
+AI instruction file; `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` are tracked symlinks to `LLM.md`.
 
 **Install / run**:
 - `curl -fsSL https://hanzo.sh | sh` — the ONE published install line, on every surface.
@@ -252,22 +253,21 @@ write for them must carry EVERY field their parser requires: it rejects the whol
 document on the first missing one, and that took the session down with it (a lost
 context window is survivable, a session that cannot start is not).
 **`hanzo up` is the cloud, local, measured** (`commands/up.rs`). It boots k3s in
-a hanzo-vm microVM from the `k3s` disk checkpoint, writes two manifests where
+a hanzo-vm microVM from the `k3s-<VM_VERSION>` disk checkpoint, writes two manifests where
 k3s applies what it finds at startup, and holds the vm in a daemonized `up
 supervise`. Three things are worth knowing:
 - **The workload goes in BEFORE k3s starts**, so the cluster's first act is to
   apply it — there is no second tool and no window in which the cluster is up
   running nothing. `cloud-key.yaml` (namespace + a fresh 32-byte at-rest key)
   sorts before `cloud.yaml` (Deployment + NodePort), which is why k3s creates
-  what the workload needs first. The API lands on 127.0.0.1:8080 through a
+  what the workload needs first. The API lands on 127.0.0.1:3690 through a
   vsock forward to node port 30080; kube stays on 6443.
 - **The image is PINNED in the foreground** (`image.rs`: the registry's
   manifest endpoint, the anonymous token dance, platform selection) and the
   digest is handed to the supervisor as `--cloud`, so what the manifest names,
   what containerd verifies and what the measurement covers are one decision.
-  The default is `ghcr.io/hanzoai/cloud:main` because that is the tag with an
-  index for both architectures — `:latest` is a lone linux/amd64 manifest and
-  no arm64 guest can run it.
+  The default is `ghcr.io/hanzoai/cloud-oss:main` (published publicly from
+  `github.com/hanzoai/cloud`) with an OCI index for both `linux/amd64` and `linux/arm64`.
 - **Every boot is measured.** The vm reports its launch register before it says
   `ready` (a vm that reports none is refused); the supervisor extends a second
   register with the image digest and the manifest text, asks the guest what its

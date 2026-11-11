@@ -294,7 +294,7 @@ pub fn list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<44} {:>10}  {}", "MODEL", "SIZE", "REV");
+    println!("{:<44} {:>10}  REV", "MODEL", "SIZE");
     for (repo, bytes, rev) in rows {
         let size = if bytes >= 1024 * 1024 * 1024 {
             format!("{:.2} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))

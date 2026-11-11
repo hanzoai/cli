@@ -12,8 +12,5 @@ __pycache__/
 *.pyc
 
 
-# Agent instruction files are symlinks to LLM.md, local only.
-CLAUDE.md
-AGENTS.md
-GEMINI.md
+# Local-only agent instruction files (AGENTS.md, CLAUDE.md, GEMINI.md are tracked symlinks to LLM.md).
 QWEN.md
