@@ -87,8 +87,12 @@ const KUBECONFIG: &str = "/etc/hanzo/kubeconfig";
 /// it. Neither carries the at-rest key; see [`plant_key`].
 const GROUND: &str = "/var/lib/hanzo/server/manifests/cloud-ns.yaml";
 const WORKLOAD: &str = "/var/lib/hanzo/server/manifests/cloud.yaml";
-/// The disk checkpoint every boot starts from.
-const CHECKPOINT: &str = "k3s";
+/// The disk checkpoint every boot starts from — keyed by [`vm::VM_VERSION`] so
+/// an upgrade of `hanzo-vm` (whose `/usr/bin/vm-guest` lives inside the rootfs
+/// disk image) never boots a stale checkpoint speaking an older guest protocol.
+fn checkpoint() -> String {
+    format!("k3s-{}", vm::VM_VERSION)
+}
 /// How long the guest gets to report a Ready node.
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long the foreground waits on the supervisor to reach `ready`.
@@ -195,7 +199,7 @@ fn run_args(boot: &Boot) -> Vec<String> {
         boot.memory_mb,
         boot.disk_mb,
         &[(K3S_PORT, K3S_PORT), (LOCAL_PORT, CLOUD_NODE_PORT)],
-        CHECKPOINT,
+        &checkpoint(),
     )
 }
 
@@ -642,7 +646,7 @@ pub async fn up(
         ..boot
     };
     let bin = vm::resolve_or_install().await?;
-    vm::ensure_checkpoint(&bin, CHECKPOINT, &install_cmd())?;
+    vm::ensure_checkpoint(&bin, &checkpoint(), &install_cmd())?;
 
     write_state(&dir, "starting");
     spawn_supervisor(&dir, &boot)?;
@@ -864,12 +868,13 @@ mod tests {
     /// the checkpoint.
     #[test]
     fn the_vm_is_booted_with_the_stdio_wire_and_the_forwards() {
+        let cp = checkpoint();
         assert_eq!(
             run_args(&boot()),
             [
                 "run", "--stdio", "--allow-net", "--cpus", "4", "--memory", "4096",
                 "--disk-size", "16384", "-p", "6443:6443", "-p", "3690:30080",
-                "--from", "k3s",
+                "--from", cp.as_str(),
             ]
         );
     }
@@ -995,8 +1000,9 @@ mod tests {
     /// The checkpoint downloads THIS architecture's k3s and marks it runnable.
     #[test]
     fn the_checkpoint_installs_k3s_for_this_architecture() {
-        let args = vm::checkpoint_args(CHECKPOINT, &install_cmd());
-        assert_eq!(&args[..5], ["checkpoint", "create", "k3s", "--allow-net", "--"]);
+        let cp = checkpoint();
+        let args = vm::checkpoint_args(&cp, &install_cmd());
+        assert_eq!(&args[..5], ["checkpoint", "create", cp.as_str(), "--allow-net", "--"]);
         let cmd = args.last().unwrap();
         assert!(cmd.contains("k3s-io/k3s/releases/latest/download"), "{cmd}");
         assert!(cmd.contains(k3s_asset()), "{cmd}");
