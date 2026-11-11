@@ -868,7 +868,22 @@ impl App {
             "○ Standby".into()
         };
 
+        let engine_live = Self::probe_addr("127.0.0.1:1234");
+
         vec![
+            LocalModel {
+                id: "zen6-nano".into(),
+                target_node: "local-dev-host (Apple Silicon Metal)".into(),
+                backend: "hanzo-engine (:1234)".into(),
+                parameters: "2B QAT (Bonsai-2)".into(),
+                context_window: "32,768 / 262k Tokens".into(),
+                quantization: "2-bit Affine MLX".into(),
+                memory: "1.2 GB Unified GPU".into(),
+                speed: if engine_live { "198 prefill · 35 t/s".into() } else { "—".into() },
+                status: if engine_live { "● Loaded (Active)".into() } else { "○ Standby".into() },
+                endpoint: "http://127.0.0.1:1234/v1".into(),
+                is_active: engine_live,
+            },
             LocalModel {
                 id: "zen5.8 / zen6 / default".into(),
                 target_node: "lab-cluster (DGX + Evo Mesh)".into(),
@@ -1527,6 +1542,160 @@ impl App {
         self.usage_items = Self::build_usage_items(self.cluster_telemetry.as_ref());
         self.set_status("✓ Telemetry refreshed: discovered live host agents & fleet");
     }
+
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        if key.kind != KeyEventKind::Press {
+            return;
+        }
+        match (key.modifiers, key.code) {
+            (KeyModifiers::CONTROL, KeyCode::Char('c'))
+            | (_, KeyCode::Char('q'))
+            | (_, KeyCode::Esc) => {
+                self.should_quit = true;
+            }
+            // View shortcuts (1-6)
+            (_, KeyCode::Char('1')) => self.set_view(DashboardView::Compute),
+            (_, KeyCode::Char('2')) => self.set_view(DashboardView::Sandboxes),
+            (_, KeyCode::Char('3')) => self.set_view(DashboardView::LocalModels),
+            (_, KeyCode::Char('4')) => self.set_view(DashboardView::CloudServices),
+            (_, KeyCode::Char('5')) => self.set_view(DashboardView::Usage),
+            (_, KeyCode::Char('6')) => self.set_view(DashboardView::Savings),
+
+            // View cycling: Left/Right arrows always cycle views so Sandboxes never traps navigation.
+            (_, KeyCode::Left) | (_, KeyCode::Char('[')) | (_, KeyCode::Char('h')) => {
+                self.previous_view();
+            }
+            (_, KeyCode::Right) | (_, KeyCode::Char(']')) => {
+                self.next_view();
+            }
+
+            // Pane / view focus cycling via Tab / Shift+Tab
+            (_, KeyCode::Tab) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.switch_pane();
+                } else {
+                    self.next_view();
+                }
+            }
+            (_, KeyCode::BackTab) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.switch_pane();
+                } else {
+                    self.previous_view();
+                }
+            }
+            (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                self.move_up();
+            }
+            (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                self.move_down();
+            }
+
+            // Actions
+            (_, KeyCode::Char('a')) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.start_all_agents();
+                }
+            }
+            (_, KeyCode::Char('n')) => match self.current_view {
+                DashboardView::Sandboxes => self.toggle_active_tab(),
+                DashboardView::LocalModels => {
+                    self.toggle_target_node();
+                }
+                _ => {}
+            },
+            (_, KeyCode::Char('t')) => match self.current_view {
+                DashboardView::Sandboxes => self.toggle_active_tab(),
+                DashboardView::Savings => self.savings.cycle(),
+                _ => {}
+            },
+            (_, KeyCode::Char('d')) => {
+                if self.current_view == DashboardView::LocalModels {
+                    self.download_selected_model();
+                }
+            }
+            (_, KeyCode::Char('l')) => match self.current_view {
+                DashboardView::Sandboxes => self.launch_container_sandbox(),
+                DashboardView::LocalModels => self.launch_selected_model(),
+                _ => self.next_view(),
+            },
+            (_, KeyCode::Char('e')) => {
+                self.explore_catalog();
+            }
+            (_, KeyCode::Char('b')) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.toggle_block();
+                }
+            }
+            (_, KeyCode::Char('s')) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.toggle_start_stop();
+                }
+            }
+            (_, KeyCode::Char('c')) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.create_sandbox();
+                }
+            }
+            (_, KeyCode::Char('r')) => {
+                if self.current_view == DashboardView::Sandboxes {
+                    self.remove_selected();
+                } else {
+                    self.refresh_all();
+                }
+            }
+            (_, KeyCode::Char('p')) => match self.current_view {
+                DashboardView::LocalModels => {
+                    if let Some(model) = self.local_models.get(self.selected_model_row) {
+                        self.set_status(format!(
+                            "→ Pinging model {}: endpoint ready ({})",
+                            model.id, model.endpoint
+                        ));
+                    }
+                }
+                DashboardView::CloudServices => {
+                    if let Some(svc) = self.cloud_services.get(self.selected_service_row) {
+                        self.set_status(format!(
+                            "→ Probed service {}: {}",
+                            svc.name, svc.status
+                        ));
+                    }
+                }
+                _ => {}
+            },
+            (_, KeyCode::Enter) => match self.current_view {
+                DashboardView::Sandboxes => {
+                    if let Some(sbx) = self.current_sandbox() {
+                        self.set_status(format!(
+                            "→ Connected to {} shell ({})",
+                            sbx.name, sbx.path
+                        ));
+                    }
+                }
+                DashboardView::LocalModels => {
+                    self.launch_selected_model();
+                }
+                DashboardView::Compute | DashboardView::Savings => {}
+                DashboardView::CloudServices => {
+                    if let Some(svc) = self.cloud_services.get(self.selected_service_row) {
+                        self.set_status(format!(
+                            "→ Service details: {} ({})",
+                            svc.name, svc.subsystem
+                        ));
+                    }
+                }
+                DashboardView::Usage => {
+                    if let Some(u) = self.usage_items.get(self.selected_usage_row) {
+                        self.set_status(format!(
+                            "→ Quota: {} — {} of {}",
+                            u.category, u.consumed, u.quota
+                        ));
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
 }
 
 // ── Runner & Event Loop ─────────────────────────────────────────────────────
@@ -1568,141 +1737,7 @@ fn run_app_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App
 
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match (key.modifiers, key.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                        | (_, KeyCode::Char('q'))
-                        | (_, KeyCode::Esc) => {
-                            app.should_quit = true;
-                        }
-                        // View shortcuts (1-6)
-                        (_, KeyCode::Char('1')) => app.set_view(DashboardView::Compute),
-                        (_, KeyCode::Char('2')) => app.set_view(DashboardView::Sandboxes),
-                        (_, KeyCode::Char('3')) => app.set_view(DashboardView::LocalModels),
-                        (_, KeyCode::Char('4')) => app.set_view(DashboardView::CloudServices),
-                        (_, KeyCode::Char('5')) => app.set_view(DashboardView::Usage),
-                        (_, KeyCode::Char('6')) => app.set_view(DashboardView::Savings),
-
-                        // View cycling
-                        (_, KeyCode::Char('[')) | (_, KeyCode::Char('h')) => app.previous_view(),
-                        (_, KeyCode::Char(']')) => app.next_view(),
-
-                        // Navigation within view
-                        (_, KeyCode::Left) | (_, KeyCode::Right) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.switch_pane();
-                            } else {
-                                app.next_view();
-                            }
-                        }
-                        (_, KeyCode::Tab) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.switch_pane();
-                            } else {
-                                app.next_view();
-                            }
-                        }
-                        (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
-                            app.move_up();
-                        }
-                        (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
-                            app.move_down();
-                        }
-
-                        // Actions
-                        (_, KeyCode::Char('a')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.start_all_agents();
-                            }
-                        }
-                        (_, KeyCode::Char('n')) => match app.current_view {
-                            DashboardView::Sandboxes => app.toggle_active_tab(),
-                            DashboardView::LocalModels => {
-                                app.toggle_target_node();
-                            }
-                            _ => {}
-                        },
-                        (_, KeyCode::Char('t')) => match app.current_view {
-                            DashboardView::Sandboxes => app.toggle_active_tab(),
-                            DashboardView::Savings => app.savings.cycle(),
-                            _ => {}
-                        },
-                        (_, KeyCode::Char('d')) => {
-                            if app.current_view == DashboardView::LocalModels {
-                                app.download_selected_model();
-                            }
-                        }
-                        (_, KeyCode::Char('l')) => match app.current_view {
-                            DashboardView::Sandboxes => app.launch_container_sandbox(),
-                            DashboardView::LocalModels => app.launch_selected_model(),
-                            _ => app.next_view(),
-                        },
-                        (_, KeyCode::Char('e')) => {
-                            app.explore_catalog();
-                        }
-                        (_, KeyCode::Char('b')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.toggle_block();
-                            }
-                        }
-                        (_, KeyCode::Char('s')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.toggle_start_stop();
-                            }
-                        }
-                        (_, KeyCode::Char('c')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.create_sandbox();
-                            }
-                        }
-                        (_, KeyCode::Char('r')) => {
-                            if app.current_view == DashboardView::Sandboxes {
-                                app.remove_selected();
-                            } else {
-                                app.refresh_all();
-                            }
-                        }
-                        (_, KeyCode::Char('p')) => {
-                            match app.current_view {
-                                DashboardView::LocalModels => {
-                                    if let Some(model) = app.local_models.get(app.selected_model_row) {
-                                        app.set_status(format!("→ Pinging model {}: endpoint ready ({})", model.id, model.endpoint));
-                                    }
-                                }
-                                DashboardView::CloudServices => {
-                                    if let Some(svc) = app.cloud_services.get(app.selected_service_row) {
-                                        app.set_status(format!("→ Probed service {}: {}", svc.name, svc.status));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        (_, KeyCode::Enter) => {
-                            match app.current_view {
-                                DashboardView::Sandboxes => {
-                                    if let Some(sbx) = app.current_sandbox() {
-                                        app.set_status(format!("→ Connected to {} shell ({})", sbx.name, sbx.path));
-                                    }
-                                }
-                                DashboardView::LocalModels => {
-                                    app.launch_selected_model();
-                                }
-                                DashboardView::Compute | DashboardView::Savings => {}
-                                DashboardView::CloudServices => {
-                                    if let Some(svc) = app.cloud_services.get(app.selected_service_row) {
-                                        app.set_status(format!("→ Service details: {} ({})", svc.name, svc.subsystem));
-                                    }
-                                }
-                                DashboardView::Usage => {
-                                    if let Some(u) = app.usage_items.get(app.selected_usage_row) {
-                                        app.set_status(format!("→ Quota: {} — {} of {}", u.category, u.consumed, u.quota));
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                app.handle_key(key);
             }
         }
 
@@ -1755,7 +1790,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
         .split(header_block.inner(area));
 
     let (title_str, subtitle_str) = match app.current_view {
@@ -1945,6 +1980,11 @@ fn render_sandbox_card(
         (" microvm ", Color::Rgb(65, 45, 110), Color::Rgb(215, 190, 255))
     };
 
+    let status_glyph = match sbx.status {
+        SandboxStatus::Running => Span::styled("▶", Style::default().fg(Color::Rgb(90, 230, 160))),
+        SandboxStatus::Stopped => Span::styled("■", Style::default().fg(Color::Rgb(180, 120, 60))),
+    };
+
     let title_line = Line::from(vec![
         Span::styled(
             badge_text,
@@ -1954,7 +1994,7 @@ fn render_sandbox_card(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled("v§", Style::default().fg(Color::Rgb(90, 230, 160))),
+        status_glyph,
         Span::raw(" "),
     ]);
 
@@ -1967,9 +2007,13 @@ fn render_sandbox_card(
     let card_inner = block.inner(area);
     f.render_widget(block, area);
 
-    let (status_dot, dot_color) = match sbx.status {
-        SandboxStatus::Running => ("●", Color::Rgb(90, 240, 150)),
-        SandboxStatus::Stopped => ("■", Color::Rgb(180, 120, 60)),
+    let (status_dot, dot_color) = if is_selected {
+        ("▶", Color::Rgb(90, 240, 180))
+    } else {
+        match sbx.status {
+            SandboxStatus::Running => ("●", Color::Rgb(90, 240, 150)),
+            SandboxStatus::Stopped => ("■", Color::Rgb(180, 120, 60)),
+        }
     };
 
     let line1 = Line::from(vec![
@@ -2138,9 +2182,13 @@ fn render_network_log_tab(
                 NetworkStatus::Blocked => ("Blocked", Color::Rgb(255, 80, 120)),
             };
 
-            let (dot, dot_color) = match entry.status {
-                NetworkStatus::Allowed => ("●", Color::Rgb(90, 240, 150)),
-                NetworkStatus::Blocked => ("●", Color::Rgb(255, 80, 120)),
+            let (dot, dot_color) = if is_row_selected {
+                ("▶", Color::Cyan)
+            } else {
+                match entry.status {
+                    NetworkStatus::Allowed => ("●", Color::Rgb(90, 240, 150)),
+                    NetworkStatus::Blocked => ("●", Color::Rgb(255, 80, 120)),
+                }
             };
 
             let date_span = Line::from(vec![
@@ -2151,7 +2199,7 @@ fn render_network_log_tab(
             let host_span = if is_row_selected {
                 Line::from(vec![
                     Span::styled(&entry.host, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::raw("    "),
+                    Span::raw("  "),
                     match entry.status {
                         NetworkStatus::Allowed => Span::styled("block", Style::default().fg(Color::Rgb(255, 95, 140)).add_modifier(Modifier::BOLD)),
                         NetworkStatus::Blocked => Span::styled("allow", Style::default().fg(Color::Rgb(90, 240, 150)).add_modifier(Modifier::BOLD)),
@@ -2180,9 +2228,9 @@ fn render_network_log_tab(
         .collect();
 
     let widths = [
-        Constraint::Length(22),
-        Constraint::Min(32),
-        Constraint::Length(8),
+        Constraint::Length(20),
+        Constraint::Min(38),
+        Constraint::Length(6),
         Constraint::Length(10),
     ];
 
@@ -2706,9 +2754,11 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
 
     let keys = match app.current_view {
         DashboardView::Sandboxes => vec![
-            Span::styled("^c", Style::default().fg(Color::Cyan)),
+            Span::styled("^c/q", Style::default().fg(Color::Cyan)),
             Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
             Span::styled("←/→", Style::default().fg(Color::Cyan)),
+            Span::styled(" views  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tab", Style::default().fg(Color::Cyan)),
             Span::styled(" panel  ", Style::default().fg(Color::DarkGray)),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
             Span::styled(" move  ", Style::default().fg(Color::DarkGray)),
@@ -2718,8 +2768,6 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(" launch  ", Style::default().fg(Color::DarkGray)),
             Span::styled("c", Style::default().fg(Color::Cyan)),
             Span::styled(" create  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("e", Style::default().fg(Color::Cyan)),
-            Span::styled(" explore  ", Style::default().fg(Color::DarkGray)),
             Span::styled("n", Style::default().fg(Color::Cyan)),
             Span::styled(" net tab  ", Style::default().fg(Color::DarkGray)),
             Span::styled("a", Style::default().fg(Color::Cyan)),
@@ -3121,5 +3169,44 @@ mod tests {
                 serde_json::from_str(&std::fs::read_to_string(out.path().join(dump)).unwrap()).unwrap();
             assert_eq!(rows.len(), height as usize, "{dump} is the whole screen");
         }
+    }
+
+    #[test]
+    fn test_sandboxes_arrows_switch_views_and_tui_uses_play_triangle() {
+        use crossterm::event::KeyEvent;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::new(None);
+        app.set_view(DashboardView::Sandboxes);
+        assert_eq!(app.focused_pane, FocusedPane::Sandboxes);
+
+        // Tab / BackTab switch inner panes inside Sandboxes without trapping Left/Right
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.current_view, DashboardView::Sandboxes);
+        assert_eq!(app.focused_pane, FocusedPane::Detail);
+
+        // Left arrow moves backward to 1: Compute even when Detail pane is focused
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.current_view, DashboardView::Compute);
+
+        // Right arrow moves forward to 2: Sandboxes and then 3: LocalModels
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.current_view, DashboardView::Sandboxes);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.current_view, DashboardView::LocalModels);
+
+        // Render Sandboxes view and verify ▶ is used and broken "v§" is completely absent
+        app.set_view(DashboardView::Sandboxes);
+        let mut terminal = Terminal::new(TestBackend::new(136, 36)).unwrap();
+        terminal.draw(|f| ui(f, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains('▶'), "Sandboxes TUI should render ▶ indicator");
+        assert!(!text.contains("v§"), "Sandboxes TUI must not render broken v§ glyph");
     }
 }

@@ -808,7 +808,13 @@ fn render_machines(f: &mut Frame, area: Rect, board: &Board, units: &[Unit]) {
     for (i, u) in units.iter().enumerate() {
         let m = &u.metrics;
         let fresh = u.local || u.online;
-        let dot = if fresh { Span::styled("● ", Style::default().fg(Color::Green)) } else { dim("○ ") };
+        let dot = if i == board.selected {
+            Span::styled("▶ ", Style::default().fg(if fresh { Color::Cyan } else { Color::DarkGray }))
+        } else if fresh {
+            Span::styled("● ", Style::default().fg(Color::Green))
+        } else {
+            dim("○ ")
+        };
         let util = if u.spec.gpus.is_empty() || !fresh { "—".into() } else { format!("{:.0}%", m.gpu_util * 100.0) };
         let temp = m.gpu_temp.filter(|_| fresh).map(|t| format!("{t:.0}°C")).unwrap_or_else(|| "—".into());
         let mem = mem_pct(&u.spec, m).filter(|_| fresh).map(|p| format!("{p:.0}%")).unwrap_or_else(|| "—".into());
