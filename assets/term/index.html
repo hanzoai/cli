@@ -9,8 +9,8 @@
 <style>
 /*__XTERM_CSS__*/
 @font-face {
-  font-family: 'Geist Mono';
-  src: local('Geist Mono'), local('GeistMono'), local('GeistMono-Regular'),
+  font-family: 'Zen Mono';
+  src: local('Zen Mono'), local('ZenMono'), local('ZenMono-Regular'),
        url('data:font/woff2;base64,__FONT__') format('woff2');
   font-weight: 100 900;
   font-style: normal;
@@ -19,7 +19,7 @@
 :root { color-scheme: dark }
 html, body {
   margin: 0; height: 100%; background: #000; overflow: hidden;
-  font-family: 'Geist Mono', 'Zen Mono', ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+  font-family: 'Zen Mono', ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
 }
 /* The terminal owns the page, minus whatever the key row takes. */
 #term { position: absolute; inset: 0; padding: 6px 8px; }
@@ -42,7 +42,7 @@ html, body {
   flex: 0 0 auto; min-width: 40px; height: 32px; padding: 0 10px;
   border: 1px solid rgba(255,255,255,.10); border-radius: 8px;
   background: #1a1a1a; color: #e6e6e6;
-  font: 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 13px/1 'Zen Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 #keys button:active { background: #2a2a2a }

@@ -189,6 +189,12 @@ enum Commands {
     /// see the box between sessions instead of an hour after the last one.
     Beat,
 
+    /// Opt-in shell startup hook and quiet background fleet presence + runner
+    Shell {
+        #[command(subcommand)]
+        command: commands::shell::Action,
+    },
+
     /// Manage local CLI settings
     Config {
         #[command(subcommand)]
@@ -1030,6 +1036,8 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             let host = commands::dev::Store::host(config.clone());
             hanzo_gen::target::present(host, &hanzo_gen::Root::need()?, iam::paths::DEFAULT_BRAND).await?
         }
+
+        Commands::Shell { command } => commands::shell::run(&config, command).await?,
 
         Commands::Config { command } => match command {
             ConfigCommands::List => commands::config::list(&config)?,

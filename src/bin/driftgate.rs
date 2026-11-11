@@ -295,7 +295,10 @@ const AHEAD: usize = 1;
 ///
 /// 115 -> 63 on @7e2b0e5944: the plugin is mounted again. Every `/v1/commerce`
 /// control answers 404, so the host decides what sits beneath it once more.
-const UNFALSIFIABLE: usize = 63;
+///
+/// 63 -> 64 on @3bbc84917: one new operation landed under an existing auth/relay
+/// prefix whose control already answers non-404.
+const UNFALSIFIABLE: usize = 64;
 
 // ---- the live route table ----------------------------------------------------
 

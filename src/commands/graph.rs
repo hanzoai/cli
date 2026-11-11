@@ -135,8 +135,11 @@ pub enum GraphCommands {
     /// Extract entity state and relationship assertions from conversation turns (`/v1/graph/convo`)
     Convo {
         /// Utterance or dialogue text to extract entity state from
+        #[arg(long, required_unless_present = "turns")]
+        text: Option<String>,
+        /// Structured JSON turn objects (repeatable, or a JSON array) for `/v1/graph/convo`
         #[arg(long)]
-        text: String,
+        turns: Vec<String>,
         /// Speaker entity identifier (defaults to "me")
         #[arg(long, default_value = "me")]
         speaker: String,
@@ -835,21 +838,36 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
             )
             .await
         }
-        GraphCommands::Convo { text, speaker, partner, source, at, dry_run } => {
+        GraphCommands::Convo { text, turns, speaker, partner, source, at, dry_run } => {
             let now = at.unwrap_or_else(|| Utc::now().to_rfc3339());
-            let mut turn = serde_json::Map::new();
-            turn.insert("id".to_string(), Value::String("1".to_string()));
-            turn.insert("speaker".to_string(), Value::String(speaker));
-            if let Some(p) = partner {
-                turn.insert("partner".to_string(), Value::String(p));
-            }
-            turn.insert("text".to_string(), Value::String(text));
-            turn.insert("at".to_string(), Value::String(now.clone()));
+            let turns_val = if !turns.is_empty() {
+                let mut parsed = Vec::new();
+                for raw in turns {
+                    let v: Value = serde_json::from_str(&raw)
+                        .with_context(|| format!("invalid JSON for --turns: {raw}"))?;
+                    match v {
+                        Value::Array(items) => parsed.extend(items),
+                        other => parsed.push(other),
+                    }
+                }
+                parsed
+            } else {
+                let text = text.context("--text or --turns is required")?;
+                let mut turn = serde_json::Map::new();
+                turn.insert("id".to_string(), Value::String("1".to_string()));
+                turn.insert("speaker".to_string(), Value::String(speaker));
+                if let Some(p) = partner {
+                    turn.insert("partner".to_string(), Value::String(p));
+                }
+                turn.insert("text".to_string(), Value::String(text));
+                turn.insert("at".to_string(), Value::String(now.clone()));
+                vec![Value::Object(turn)]
+            };
             let payload = json!({
                 "source": source,
                 "at": now,
                 "dry_run": dry_run,
-                "turns": [Value::Object(turn)],
+                "turns": turns_val,
             });
             crate::commands::product::call(
                 cfg,

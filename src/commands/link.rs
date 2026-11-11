@@ -39,6 +39,7 @@
 //! zsh), or name any command: `bash`, or `tmux` for a session that survives a
 //! disconnect and can be attached locally at the same time.
 
+mod dependencies;
 mod network;
 mod unit;
 mod zt;
@@ -257,18 +258,52 @@ pub async fn run(
     // published is still serving. The guard beats until this command returns —
     // detached and best-effort, never on the critical path of getting a shell up.
     let root = Root::need()?;
-    let _machine = target::beat(
+    let host = context::hostname(&root);
+    let (_machine, _runner) = target::beat_and_serve(
         crate::commands::dev::Store::host(cfg.clone()),
         &root,
         DEFAULT_BRAND,
         &api,
         &context::machine_id(&root),
-        &context::hostname(&root),
+        &host,
     );
+
+    // Fail loudly if another `hanzo link` already holds the loopback shell port.
+    if port_taken(TTYD_PORT) {
+        bail!(
+            "port {TTYD_PORT} is already serving — another `hanzo link` is almost certainly \
+             running on this machine. One link per machine: end that one first, or \
+             attach to the shell it already published with `tmux attach -t hanzo`."
+        );
+    }
+
+    // Browser terminal is optional: if ttyd/tmux or the share tunnel is unavailable
+    // on this workstation, keep the ZT identity, fleet heartbeat, and live Dev
+    // runner active instead of tearing down the whole link.
+    let missing = dependencies::missing(
+        matches!(sh_kind, Shell::Multiplexed),
+        |bin| hanzo_gen::exe::find(bin).is_some(),
+    );
+    if !missing.is_empty() {
+        crate::warn(&format!(
+            "browser terminal skipped (missing: {}). {}",
+            missing.join(", "),
+            dependencies::install_help()
+        ));
+        return hold_runner(&host).await;
+    }
 
     // ttyd next: publishing a port nothing is serving would announce a URL that
     // 502s, which reads as "the fabric is broken" rather than "the shell died".
-    let _ttyd = start_ttyd(TTYD_PORT, &sh_kind, !read_only).await?;
+    let ttyd = match start_ttyd(TTYD_PORT, &sh_kind, !read_only).await {
+        Ok(t) => t,
+        Err(e) => {
+            crate::warn(&format!(
+                "browser terminal unavailable ({e}); continuing with live runner only"
+            ));
+            return hold_runner(&host).await;
+        }
+    };
     println!("{} {}", "→".green(), sh_kind.label().cyan());
 
     // WHOSE SHELL THIS IS, said out loud. A terminal reachable by anyone who
@@ -277,20 +312,33 @@ pub async fn run(
     // already in hand, and the frontend checks it against what hanzo.id says
     // about whoever turns up, so this is a claim about the publisher rather than
     // a decision made here.
-    let email = crate::iam::identity::email(&caller.token).ok_or_else(|| {
-        anyhow!(
-            "this identity carries no email address, and a published shell has to say whose it is.\n\
-             Add one to your Hanzo identity and run `hanzo auth login` again."
-        )
-    })?;
-    let mut sh = share::start(
+    let Some(email) = crate::iam::identity::email(&caller.token) else {
+        drop(ttyd);
+        crate::warn(
+            "this identity carries no email address, so the browser terminal cannot be published; \
+             continuing with live runner only (add an email to your Hanzo identity and run `hanzo auth login` to publish a shell)",
+        );
+        return hold_runner(&host).await;
+    };
+    let mut sh = match share::start(
         cfg,
         format!("http://127.0.0.1:{TTYD_PORT}"),
         "proxy".into(),
         None,
         Some(share::Owner { provider: "hanzo", email: &email }),
     )
-    .await?;
+    .await
+    {
+        Ok(sh) => sh,
+        Err(e) => {
+            drop(ttyd);
+            crate::warn(&format!(
+                "browser terminal share unavailable ({e}); continuing with live runner only"
+            ));
+            return hold_runner(&host).await;
+        }
+    };
+    let _ttyd = ttyd;
 
     // Register the session LAST, so the row never advertises a URL that is not
     // yet answering. The host is the SAME value the run-target above registered
@@ -300,7 +348,6 @@ pub async fn run(
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    let host = context::hostname(&root);
     // A registry that cannot take the row does not take the SHELL with it.
     //
     // The tunnel is up and serving by now; the row is how the console FINDS it,
@@ -560,6 +607,16 @@ fn took_over(code: Option<i32>) -> bool {
 /// `SessionClient::set_status`), so the row cannot end up closed-but-watchable or
 /// watchable-but-closed. Best effort: cloud being unreachable costs a stale row,
 /// not a failed command.
+async fn hold_runner(host: &str) -> Result<()> {
+    println!(
+        "{} live runner active for {} — ready for Dev runs (Ctrl-C leaves)",
+        "→".green(),
+        host.cyan()
+    );
+    stopped().await;
+    Ok(())
+}
+
 async fn finish(tmux: &Tmux, client: &SessionClient, id: Option<&str>, out: Result<()>) -> Result<()> {
     if let Some(id) = id {
         let _ = client.set_status(id, Status::of(out.is_ok())).await;
@@ -1192,6 +1249,20 @@ mod tests {
 
     // The name reaching tmux is bounded BEFORE tmux sees it: `;` is tmux's own
     // command separator, and --url-arg lets a caller send several args.
+    #[test]
+    fn named_shell_skips_tmux_check_and_falls_back_cleanly_without_ttyd() {
+        let zsh = Shell::from_flag(Some("zsh"));
+        assert_eq!(
+            dependencies::missing(matches!(zsh, Shell::Multiplexed), |_| false),
+            ["ttyd"]
+        );
+        let mux = Shell::from_flag(None);
+        assert_eq!(
+            dependencies::missing(matches!(mux, Shell::Multiplexed), |b| b == "sh" || b == "tr" || b == "cut"),
+            ["ttyd", "tmux"]
+        );
+    }
+
     #[test]
     fn the_wrapper_strips_a_name_down_to_something_safe() {
         let script = &Shell::from_flag(None).argv()[2];

@@ -33,5 +33,6 @@ pub mod init;
 pub mod k8s;
 pub mod network;
 pub mod share;
+pub mod shell;
 pub mod vm;
 pub mod wallet;

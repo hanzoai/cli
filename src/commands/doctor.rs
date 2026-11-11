@@ -67,7 +67,7 @@ async fn verify(path: &Path, binary: &str, repo: &str, signer: &str) -> Result<b
     Ok(digest(path)? == digest(&bin.join(filename))?)
 }
 
-pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool) -> Result<()> {
+pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool, share: bool) -> Result<()> {
     println!("Hanzo installation diagnostics");
     let mut failures = 0;
     for &(name, legacy, repo, signer) in TOOLS {
@@ -161,8 +161,27 @@ pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool) -> Resu
     } else {
         println!("INFO No NVIDIA/ROCm runtime detected; local GPU capability is unverified and cloud coding remains available");
     }
+    if share {
+        share_report(&[]).await?;
+    }
     if failures != 0 {
         bail!("{failures} installation checks failed");
+    }
+    Ok(())
+}
+
+pub async fn share_report(args: &[String]) -> Result<()> {
+    let dev_bin = which::which("dev")
+        .or_else(|_| which::which("hanzo-dev"))
+        .context("`dev` (hanzo-dev) is not installed; install with: curl -fsSL https://hanzo.sh | sh -s -- dev mcp")?;
+    let status = Command::new(dev_bin)
+        .arg("report")
+        .args(args)
+        .status()
+        .await
+        .context("failed to run `dev report`")?;
+    if !status.success() {
+        bail!("`dev report` exited with status {status}");
     }
     Ok(())
 }

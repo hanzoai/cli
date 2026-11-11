@@ -21,7 +21,7 @@ const XTERM_JS: &str = include_str!("../../assets/term/xterm.js");
 const XTERM_CSS: &str = include_str!("../../assets/term/xterm.css");
 const FIT_JS: &str = include_str!("../../assets/term/addon-fit.js");
 const CLIENT_JS: &str = include_str!("../../assets/term/client.js");
-/// Geist Mono, the one face the terminal is set in, carried inside the page: a
+/// Zen Mono, the one face the terminal is set in, carried inside the page: a
 /// machine has no reason to have it installed, and a missing face falls to
 /// whatever the browser calls serif.
 const FONT: &[u8] = include_bytes!("../../assets/term/font.woff2");
@@ -69,11 +69,20 @@ mod tests {
         }
     }
 
-    /// The face is in the page, so a machine that has never heard of Geist Mono
-    /// still draws it.
+    /// The face is in the page, so a machine that has never heard of Zen Mono
+    /// still draws it — and it is @hanzo/font's ZenMono-Variable.woff2 (71,396
+    /// bytes), not the old Geist Mono subset (71,368 bytes).
     #[test]
     fn the_face_travels_inside_the_page() {
-        assert!(page().contains("url('data:font/woff2;base64,"), "Geist Mono must be embedded, not looked up");
+        let p = page();
+        assert!(p.contains("url('data:font/woff2;base64,"), "Zen Mono must be embedded, not looked up");
+        assert!(p.contains("font-family: 'Zen Mono'"), "the embedded @font-face must declare Zen Mono");
+        assert!(!p.contains("Geist Mono"), "Geist Mono must not appear anywhere in the terminal page");
+        assert!(
+            p.contains("clearTextureAtlas") && p.contains("document.fonts.load"),
+            "xterm.js must clear its glyph atlas and re-measure after Zen Mono finishes loading",
+        );
+        assert_eq!(FONT.len(), 71_396, "term/font.woff2 must match @hanzo/font ZenMono-Variable.woff2");
     }
 
     /// The library is really inlined, not referenced — ttyd serves ONE document

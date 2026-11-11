@@ -36,7 +36,7 @@
       white: '#e6e6e6', brightWhite: '#ffffff',
     },
     fontFamily:
-      '"Geist Mono", "Zen Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+      '"Zen Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
     fontSize: 13,
     lineHeight: 1.2,
     cursorBlink: true,
@@ -50,6 +50,15 @@
   var FIT = new window.FitAddon.FitAddon();
   TERM.loadAddon(FIT);
   TERM.open(document.getElementById('term'));
+
+  if (document.fonts && document.fonts.load) {
+    document.fonts.load(TERM.options.fontSize + 'px "Zen Mono"').then(function () {
+      TERM.options.fontFamily =
+        '"Zen Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+      if (TERM.clearTextureAtlas) TERM.clearTextureAtlas();
+      fit();
+    }).catch(function () {});
+  }
 
   // Tell whoever framed us that a REAL terminal is here.
   //
@@ -154,10 +163,27 @@
   document.addEventListener('pointerdown', function () { post({ t: 'focus' }); }, true);
   window.addEventListener('message', function (e) {
     var d = e.data;
-    if (!d || d.v !== 1) return;
+    if (!d) return;
+    if (d.source === 'hanzo-term') {
+      if (typeof d.fontSize === 'number') { TERM.options.fontSize = d.fontSize; fit(); }
+      if (typeof d.fontFamily === 'string' && d.fontFamily) {
+        TERM.options.fontFamily = d.fontFamily;
+        if (TERM.clearTextureAtlas) TERM.clearTextureAtlas();
+        fit();
+      }
+      return;
+    }
+    if (d.v !== 1) return;
     if (d.t === 'input' && typeof d.data === 'string') { send('0', d.data); TERM.focus(); }
     if (d.t === 'focus') TERM.focus();
-    if (d.t === 'size' && typeof d.px === 'number') { TERM.options.fontSize = d.px; fit(); }
+    if (d.t === 'size' && typeof d.px === 'number') {
+      TERM.options.fontSize = d.px;
+      if (typeof d.fontFamily === 'string' && d.fontFamily) {
+        TERM.options.fontFamily = d.fontFamily;
+        if (TERM.clearTextureAtlas) TERM.clearTextureAtlas();
+      }
+      fit();
+    }
   });
   post({ t: 'hello' });
 

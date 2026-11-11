@@ -59,12 +59,14 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Scan { .. } => "scan",
         Commands::Build(..) => "build",
         Commands::Vm { .. } => "vm",
+        Commands::K8s { .. } => "k8s",
         Commands::Up { .. } => "up",
         Commands::Down => "down",
         Commands::Status { .. } => "status",
         Commands::Monitor(..) => "monitor",
         Commands::Version => "version",
         Commands::Doctor { .. } => "doctor",
+        Commands::Report { .. } => "report",
         Commands::Upgrade { .. } => "upgrade",
         Commands::Console => "console",
         Commands::Beat => "beat",
@@ -75,6 +77,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Host { .. } => "host",
         Commands::Wallet { .. } => "wallet",
         Commands::Share { .. } => "share",
+        Commands::Shell { .. } => "shell",
         Commands::Init { .. } => "init",
     }
 }
