@@ -533,6 +533,22 @@ struct Callback {
     code: Option<String>,
     state: Option<String>,
     error: Option<String>,
+    /// `error_description`: which of the issuer's rules refused. The code alone
+    /// (`invalid_request`) names a dozen different refusals, and a person told
+    /// only the code can neither act on it nor report it.
+    reason: Option<String>,
+}
+
+impl Callback {
+    /// The refusal as said to the person: the code, and the issuer's reason when
+    /// it gave one.
+    fn denied(&self) -> Option<String> {
+        let err = self.error.as_deref()?;
+        Some(match self.reason.as_deref().filter(|r| !r.is_empty()) {
+            Some(why) => format!("authorization denied: {err} ({why})"),
+            None => format!("authorization denied: {err}"),
+        })
+    }
 }
 
 /// Parse `code`/`state`/`error` from a redirect target like
@@ -546,6 +562,7 @@ fn parse_callback(target: &str) -> Result<Callback> {
             "code" => cb.code = Some(v.into_owned()),
             "state" => cb.state = Some(v.into_owned()),
             "error" => cb.error = Some(v.into_owned()),
+            "error_description" => cb.reason = Some(v.into_owned()),
             _ => {}
         }
     }
@@ -657,8 +674,8 @@ impl Keyboard {
                 println!("That URL belongs to a different sign-in. Paste the one this browser lands on.");
                 continue;
             }
-            if let Some(err) = cb.error {
-                bail!("authorization denied: {err}");
+            if let Some(why) = cb.denied() {
+                bail!("{why}");
             }
             if cb.code.is_some() {
                 return Ok(cb);
@@ -749,6 +766,7 @@ fn parse_pasted(input: &str) -> Callback {
             "code" => cb.code = Some(v),
             "state" => cb.state = Some(v),
             "error" => cb.error = Some(v),
+            "error_description" => cb.reason = Some(v),
             _ => {}
         }
     }
@@ -817,8 +835,8 @@ async fn capture_callback(
 
         // A browser always sends back what we put in the authorize URL, so here —
         // unlike a hand-typed code — an absent state is as wrong as a wrong one.
-        let refusal = if let Some(err) = &cb.error {
-            Some(format!("authorization denied: {err}"))
+        let refusal = if let Some(why) = cb.denied() {
+            Some(why)
         } else if cb.code.is_none() {
             Some("no authorization code in callback".to_string())
         } else if cb.state.as_deref() != Some(state) {
@@ -1519,6 +1537,22 @@ mod tests {
         let cb = parse_callback("/callback?error=access_denied").unwrap();
         assert_eq!(cb.error.as_deref(), Some("access_denied"));
         assert!(cb.code.is_none());
+    }
+
+    #[test]
+    fn a_refusal_says_the_issuers_reason() {
+        let cb = parse_callback(
+            "/callback?error=invalid_request&error_description=the+identity+provider+returned+no+code&state=s",
+        )
+        .unwrap();
+        assert_eq!(
+            cb.denied().as_deref(),
+            Some("authorization denied: invalid_request (the identity provider returned no code)")
+        );
+        let bare = parse_callback("/callback?error=access_denied").unwrap();
+        assert_eq!(bare.denied().as_deref(), Some("authorization denied: access_denied"));
+        let pasted = parse_pasted("http://127.0.0.1:1/callback?error=invalid_request&error_description=PKCE+is+required");
+        assert_eq!(pasted.denied().as_deref(), Some("authorization denied: invalid_request (PKCE is required)"));
     }
 
     // Drive the real loopback server over a TCP socket. The redirect is answered
