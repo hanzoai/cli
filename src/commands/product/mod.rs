@@ -720,6 +720,9 @@ pub(crate) async fn call(
             anyhow::bail!("{path} -> {status}: {shown}{hint}");
         }
     }
+    if status == 401 && seam.token.is_empty() {
+        anyhow::bail!("{path} -> {status}: {shown} — not signed in; run `hanzo auth login`");
+    }
     anyhow::bail!("{path} -> {status}: {shown}");
 }
 
@@ -775,9 +778,9 @@ impl Seam {
         // decides. That is the same rule this module already follows for a 403:
         // the refusal is always the server's, never a client-side guess.
         let identity = store::active_token(cfg, brand).await?;
-        if identity.is_none() && matches!(origin, Origin::Http(_)) {
-            bail!("not signed in — run `hanzo auth login`");
-        }
+        // Public routes (`models list`, health) answer without a credential, so a
+        // signed-out call goes out anonymously; a protected route answers 401 and
+        // the error says how to sign in.
         let held = store::list(cfg, brand);
         let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
