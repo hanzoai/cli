@@ -37,8 +37,9 @@ function Invoke-HanzoInstall {
     $token = $env:HANZO_INSTALL_TOKEN
     if (-not $token) { $token = $env:GH_TOKEN }
     if (-not $token) { $token = $env:GITHUB_TOKEN }
-    $headers = @{ 'User-Agent' = 'hanzo-installer/1.0' }
-    if ($token) { $headers['Authorization'] = "Bearer $token" }
+    $dlHeaders  = @{ 'User-Agent' = 'hanzo-installer/1.0' }
+    $apiHeaders = @{ 'User-Agent' = 'hanzo-installer/1.0' }
+    if ($token) { $apiHeaders['Authorization'] = "Bearer $token" }
 
     function Get-TagCandidates {
         param([string]$RepoName, [hashtable]$Hdr)
@@ -49,10 +50,15 @@ function Invoke-HanzoInstall {
             # Fallback to git ls-remote when API rate limit hits anonymously.
             if (Get-Command git -ErrorAction SilentlyContinue) {
                 $lines = git ls-remote --tags "https://github.com/$RepoName.git" 2>$null
-                $tags = foreach ($line in $lines) {
-                    if ($line -match 'refs/tags/(v\d+\.\d+\.\d+)$') { $Matches[1] }
+                $items = foreach ($line in $lines) {
+                    if ($line -match 'refs/tags/([^\^]+?)(?:\^\{\})?$') {
+                        $tag = $Matches[1]
+                        if ($tag -match '^(?:.*-)?v(\d+\.\d+\.\d+)$') {
+                            [PSCustomObject]@{ Tag = $tag; Ver = [version]$Matches[1] }
+                        }
+                    }
                 }
-                return @($tags | Sort-Object { [version]($_ -replace '^v','') } -Descending)
+                return @($items | Sort-Object Ver -Descending | Select-Object -ExpandProperty Tag -Unique)
             }
             throw
         }
@@ -70,9 +76,9 @@ function Invoke-HanzoInstall {
     }
 
     if (-not $Tag) {
-        $candidates = Get-TagCandidates -RepoName $Repo -Hdr $headers
+        $candidates = Get-TagCandidates -RepoName $Repo -Hdr $apiHeaders
         foreach ($cand in $candidates) {
-            if (Test-ReleaseAsset -RepoName $Repo -ReleaseTag $cand -AssetName $asset -Hdr $headers) {
+            if (Test-ReleaseAsset -RepoName $Repo -ReleaseTag $cand -AssetName $asset -Hdr $dlHeaders) {
                 $Tag = $cand
                 break
             }
@@ -90,8 +96,8 @@ function Invoke-HanzoInstall {
         $shaPath = Join-Path $tmp "$asset.sha256"
 
         Write-Host "${Bin}: $Tag $target"
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -Headers $headers -OutFile $tgzPath
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset.sha256" -Headers $headers -OutFile $shaPath
+        Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -Headers $dlHeaders -OutFile $tgzPath
+        Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset.sha256" -Headers $dlHeaders -OutFile $shaPath
 
         $want = ((Get-Content -Raw $shaPath) -split '\s+')[0].Trim().ToLowerInvariant()
         if ($want.Length -ne 64) {
