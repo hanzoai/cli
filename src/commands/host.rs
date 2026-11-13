@@ -129,16 +129,21 @@ async fn healthy(_addr: &str) -> bool {
 }
 
 #[cfg(not(unix))]
-async fn healthy(addr: &str) -> bool {
+pub(crate) async fn healthy(addr: &str) -> bool {
     use hanzo_client::{Http, Request, Transport};
-    let url = format!("http://{addr}/healthz");
     let http = Http::default();
-    let probe = http.send(Request::new(Method::GET, url));
-    matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status))
+    for path in ["/healthz", "/v1/openapi.json"] {
+        let url = format!("http://{addr}{path}");
+        let probe = http.send(Request::new(Method::GET, url));
+        if matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status)) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Reuse a running host, or start one and wait for it to listen.
-async fn ensure(addr: &str) -> Result<()> {
+pub(crate) async fn ensure(addr: &str) -> Result<()> {
     if healthy(addr).await {
         return Ok(()); // already serving — never double-start
     }
@@ -171,19 +176,36 @@ async fn ensure(addr: &str) -> Result<()> {
 /// override names the BINARY rather than the checkout because the host resolves
 /// its plugins as siblings of its own path, so the directory is the real unit.
 fn binary() -> Result<PathBuf> {
-    let bin = match std::env::var_os("HANZO_HOST_BIN") {
-        Some(p) => PathBuf::from(p),
-        None => default_bin(),
-    };
-    if !bin.is_file() {
-        bail!(
-            "no local cloud host at {}.\n\
-             Build it with `make host` in a hanzoai/cloud checkout, then `make plugin APP=<name>`\n\
-             for the subsystems you need — or set HANZO_HOST_BIN to a host binary.",
-            bin.display()
-        );
+    if let Some(p) = std::env::var_os("HANZO_HOST_BIN") {
+        let bin = PathBuf::from(p);
+        if bin.is_file() {
+            return Ok(bin);
+        }
+        bail!("HANZO_HOST_BIN points to missing binary {}", bin.display());
     }
-    Ok(bin)
+    let home = dirs::home_dir().unwrap_or_default();
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from));
+    let mut candidates = vec![default_bin()];
+    for name in if cfg!(windows) { ["hanzo-cloud.exe", "cloud.exe"] } else { ["hanzo-cloud", "cloud"] } {
+        if let Some(dir) = &exe_dir {
+            candidates.push(dir.join(name));
+        }
+        candidates.push(home.join(".local").join("bin").join(name));
+    }
+    for c in &candidates {
+        if c.is_file() {
+            return Ok(c.clone());
+        }
+    }
+    if let Ok(found) = which::which("hanzo-cloud") {
+        return Ok(found);
+    }
+    bail!(
+        "no local cloud host at {}.\n\
+         Install `hanzo-cloud` via `hanzo upgrade cloud`, build it in hanzoai/cloud,\n\
+         or set HANZO_HOST_BIN to a host binary.",
+        default_bin().display()
+    );
 }
 
 fn default_bin() -> PathBuf {
@@ -199,6 +221,9 @@ fn spawn(bin: &Path, addr: &str) -> Result<Child> {
 
     let mut cmd = Command::new(bin);
     cmd.arg("-addr").arg(addr);
+    cmd.env("CLOUD_LISTEN", addr);
+    cmd.env("CLOUD_HEALTH_LISTEN", "127.0.0.1:19090");
+    cmd.env("CLOUD_ENABLE_STAGED", "functions");
     // ZAP is the host's other listener and the one the CLI dials. zip reads the
     // wire off the address SHAPE, so a path binds a unix socket — which keeps a
     // second port off every interface for a purely local daemon. Asking for one
@@ -233,7 +258,15 @@ fn detach(cmd: &mut Command) {
     cmd.process_group(0);
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn detach(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn detach(_cmd: &mut Command) {}
 
 // ---- the at-rest key -----------------------------------------------------------
@@ -353,7 +386,7 @@ fn log_path() -> Result<PathBuf> {
 }
 
 /// The pid recorded by the last [`spawn`], if the process is still alive.
-fn running_pid() -> Option<i32> {
+pub(crate) fn running_pid() -> Option<i32> {
     let pid: i32 = std::fs::read_to_string(state_dir().ok()?.join("host.pid")).ok()?.trim().parse().ok()?;
     alive(pid).then_some(pid)
 }
@@ -365,7 +398,24 @@ fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(crate) fn win_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    let filter = format!("PID eq {pid}");
+    Command::new("tasklist")
+        .args(["/FI", &filter, "/NH", "/FO", "CSV"])
+        .output()
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(&format!(",\"{pid}\"")))
+}
+
+#[cfg(windows)]
+fn alive(pid: i32) -> bool {
+    win_alive(pid)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn alive(_pid: i32) -> bool {
     false
 }
@@ -439,7 +489,32 @@ fn terminate(pid: i32) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn terminate(pid: i32) -> Result<()> {
+    let status = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .with_context(|| format!("terminating local cloud host pid {pid}"))?;
+    if !status.success() && alive(pid) {
+        bail!("taskkill failed for pid {pid} ({status})");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn stop_recorded_pid() -> Result<Option<i32>> {
+    let Some(pid) = running_pid() else {
+        return Ok(None);
+    };
+    terminate(pid)?;
+    let _ = std::fs::remove_file(state_dir()?.join("host.pid"));
+    Ok(Some(pid))
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn terminate(_pid: i32) -> Result<()> {
     bail!("the local cloud host is a unix daemon")
 }

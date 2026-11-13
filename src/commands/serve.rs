@@ -191,13 +191,23 @@ pub async fn run(args: Args, _config: &Config) -> Result<()> {
     }
 }
 
+fn strip_unc(p: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(s) = p.to_string_lossy().strip_prefix(r"\\?\") {
+            return PathBuf::from(s);
+        }
+    }
+    p
+}
+
 fn resolve_project_dir(dir: Option<PathBuf>) -> Result<PathBuf> {
     let raw = match dir {
         Some(d) => d,
         None => std::env::current_dir().context("determine current working directory")?,
     };
-    std::fs::canonicalize(&raw)
-        .with_context(|| format!("project directory not found: {}", raw.display()))
+    let canon = std::fs::canonicalize(&raw)
+        .with_context(|| format!("project directory not found: {}", raw.display()))?;
+    Ok(strip_unc(canon))
 }
 
 fn resolve_out_dir(root: &Path, out: &Path) -> PathBuf {
@@ -602,9 +612,27 @@ fn run_esbuild(
     let meta_path = out_dir.join(".hanzo-meta.json");
 
     let mut cmd = match esbuild {
-        EsbuildCommand::Binary(bin) => std::process::Command::new(bin),
+        EsbuildCommand::Binary(bin) => {
+            let is_cmd = cfg!(windows)
+                && bin
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+            if is_cmd {
+                let mut c = std::process::Command::new("cmd");
+                c.arg("/C").arg(bin);
+                c
+            } else {
+                std::process::Command::new(bin)
+            }
+        }
         EsbuildCommand::Npx(npx) => {
-            let mut c = std::process::Command::new(npx);
+            let mut c = if cfg!(windows) {
+                let mut w = std::process::Command::new("cmd");
+                w.arg("/C").arg(npx);
+                w
+            } else {
+                std::process::Command::new(npx)
+            };
             c.arg("--no-install").arg("esbuild");
             c
         }

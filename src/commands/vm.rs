@@ -262,7 +262,12 @@ pub(crate) fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(crate) fn alive(pid: i32) -> bool {
+    crate::commands::host::win_alive(pid)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 pub(crate) fn alive(_pid: i32) -> bool {
     false
 }

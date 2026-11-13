@@ -30,7 +30,7 @@ use hanzo_gen::backend::BackendKind;
 use hanzo_gen::Root;
 
 /// Hanzo's native tools, as hanzo.sh names them.
-pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "gen", "zt"];
+pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "gen", "zt", "node", "engine", "cloud"];
 
 /// The installer, served at the root of hanzo.sh.
 const INSTALLER: &str = "https://hanzo.sh";
@@ -96,6 +96,9 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
             "hanzo-dev" => Some("dev"),
             "hanzo-gen" => Some("gen"),
             "hanzo-zet" => Some("zt"),
+            "hanzod" | "hanzo-node" => Some("node"),
+            "hanzo-engine" => Some("engine"),
+            "hanzo-cloud" => Some("cloud"),
             "hanzo-cli" | "cli" => Some("hanzo"),
             other => NATIVE.iter().copied().find(|t| *t == other),
         };
@@ -143,20 +146,34 @@ struct Native {
     name: String,
     repo: String,
     binary: String,
+    alias: String,
 }
 
-/// The tool table out of hanzo.sh itself, `TOOLS='<name>:<repo>:<binary>:<second name>…'`:
-/// the one list of Hanzo's native tools, so this side never keeps a second one.
+/// The tool table out of hanzo.sh itself — supports both legacy 4-column
+/// (`name:repo:binary:alias`) and current 5/6-column (`name:display:repo:binary:alias[:signer]`) rows.
 fn table(script: &str) -> Vec<Native> {
     let Some(start) = script.find("TOOLS='") else { return Vec::new() };
     let body = &script[start + 7..];
     let body = &body[..body.find('\'').unwrap_or(body.len())];
     body.lines()
         .filter_map(|row| {
-            let mut f = row.trim().split(':');
-            let (name, repo, binary) = (f.next()?, f.next()?, f.next()?);
-            (!name.is_empty() && repo.contains('/') && !binary.is_empty())
-                .then(|| Native { name: name.into(), repo: repo.into(), binary: binary.into() })
+            let cols: Vec<&str> = row.trim().split(':').collect();
+            if cols.len() < 3 {
+                return None;
+            }
+            let (name, repo, binary, alias) = if cols[1].contains('/') {
+                (cols[0], cols[1], cols[2], cols.get(3).copied().unwrap_or(""))
+            } else if cols.len() >= 4 && cols[2].contains('/') {
+                (cols[0], cols[2], cols[3], cols.get(4).copied().unwrap_or(""))
+            } else {
+                return None;
+            };
+            (!name.is_empty() && repo.contains('/') && !binary.is_empty()).then(|| Native {
+                name: name.into(),
+                repo: repo.into(),
+                binary: binary.into(),
+                alias: alias.into(),
+            })
         })
         .collect()
 }
@@ -220,6 +237,17 @@ async fn fetch(client: &reqwest::Client, base: &str, tool: &Native, platform: &s
     // A running binary's old copy cannot be removed on Windows until it exits;
     // the next upgrade removes it.
     let _ = std::fs::remove_file(&aside);
+    if !tool.alias.is_empty() && tool.alias != tool.binary {
+        let alias_exe = if platform.starts_with("windows") { format!("{}.exe", tool.alias) } else { tool.alias.clone() };
+        let alias_path = dir.join(&alias_exe);
+        let alias_aside = dir.join(format!("{alias_exe}.old"));
+        let _ = std::fs::remove_file(&alias_aside);
+        if alias_path.exists() {
+            let _ = std::fs::rename(&alias_path, &alias_aside);
+        }
+        let _ = std::fs::copy(&target, &alias_path);
+        let _ = std::fs::remove_file(&alias_aside);
+    }
     Ok(target)
 }
 
@@ -363,7 +391,7 @@ mod tests {
     #[test]
     fn an_unknown_name_is_refused_with_the_list() {
         let e = plan(&names(&["nope"]), |_| false).unwrap_err().to_string();
-        assert!(e.contains("upgradable: hanzo, mcp, dev, gen, zt, claude, codex, interpreter, cursor"), "{e}");
+        assert!(e.contains("upgradable: hanzo, mcp, dev, gen, zt, node, engine, cloud, claude, codex, interpreter, cursor"), "{e}");
     }
 
     #[test]
@@ -382,13 +410,13 @@ mod tests {
 
     #[test]
     fn the_tool_table_is_read_out_of_hanzo_sh() {
-        let script = "#!/bin/sh\nTOOLS='hanzo:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
+        let script = "#!/bin/sh\nTOOLS='hanzo:Hanzo CLI:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
         let t = table(script);
-        assert_eq!(t.iter().map(|n| (n.name.as_str(), n.repo.as_str(), n.binary.as_str())).collect::<Vec<_>>(), [
-            ("hanzo", "hanzoai/cli", "hanzo"),
-            ("mcp", "hanzoai/mcp", "hanzo-mcp"),
-            ("dev", "hanzoai/dev", "dev"),
-            ("zt", "hanzozt/zt", "zt"),
+        assert_eq!(t.iter().map(|n| (n.name.as_str(), n.repo.as_str(), n.binary.as_str(), n.alias.as_str())).collect::<Vec<_>>(), [
+            ("hanzo", "hanzoai/cli", "hanzo", "hanzo-cli"),
+            ("mcp", "hanzoai/mcp", "hanzo-mcp", "mcp"),
+            ("dev", "hanzoai/dev", "dev", ""),
+            ("zt", "hanzozt/zt", "zt", ""),
         ]);
         assert!(table("#!/bin/sh\necho no table\n").is_empty());
     }
@@ -430,7 +458,7 @@ mod tests {
     #[tokio::test]
     async fn a_release_asset_is_checked_unpacked_and_swapped_in_beside_the_old_one() {
         use sha2::{Digest, Sha256};
-        let tool = Native { name: "dev".into(), repo: "hanzoai/dev".into(), binary: "dev".into() };
+        let tool = Native { name: "dev".into(), repo: "hanzoai/dev".into(), binary: "dev".into(), alias: String::new() };
         let tgz = tarball("dev.exe", b"new build");
         let sum: String = Sha256::digest(&tgz).iter().map(|b| format!("{b:02x}")).collect();
         let path = "/hanzoai/dev/releases/latest/download/dev-windows-amd64.tar.gz";

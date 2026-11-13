@@ -175,7 +175,18 @@ fn stop(pid: i32, grace: Duration) -> bool {
     false
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn stop(pid: i32, _grace: Duration) -> bool {
+    Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success() || !alive(pid))
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn stop(_pid: i32, _grace: Duration) -> bool {
     false
 }
@@ -713,6 +724,30 @@ pub async fn up(
     no_ui: bool,
 ) -> Result<()> {
     let dir = up_dir()?;
+    #[cfg(windows)]
+    {
+        let _ = (boot, ui, no_ui);
+        let addr = format!("127.0.0.1:{LOCAL_PORT}");
+        let existed = host::healthy(&addr).await;
+        host::ensure(&addr).await?;
+        write_state(&dir, "ready");
+        let kc = kubeconfig_path()?;
+        if !kc.exists() {
+            if let Some(default_kc) = dirs::home_dir().map(|h| h.join(".kube").join("config")) {
+                if default_kc.is_file() {
+                    if let Some(parent) = kc.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::copy(&default_kc, &kc);
+                }
+            }
+        }
+        let verb = if existed { "already running" } else { "started" };
+        println!("{} local cloud {verb} at {}", "✓".green(), format!("http://{addr}").cyan());
+        endpoints()?;
+        return finish_link(cfg, link).await;
+    }
+
     if let Some(pid) = running(&dir, SUPERVISOR) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
         println!("{} already running (supervisor pid {pid}, {state})", "●".green());
@@ -861,6 +896,30 @@ async fn finish_link(cfg: &mut Config, cluster: Option<String>) -> Result<()> {
 /// `hanzo up status` — the supervisor and the node, honestly separated: the
 /// pidfile answers for the first, the kubeconfig (via kubectl) for the second.
 pub async fn status() -> Result<()> {
+    #[cfg(windows)]
+    {
+        let addr = format!("127.0.0.1:{LOCAL_PORT}");
+        if host::healthy(&addr).await {
+            match host::running_pid() {
+                Some(pid) => println!("{} local cloud running at http://{addr} (pid {pid})", "●".green()),
+                None => println!("{} local cloud running at http://{addr}", "●".green()),
+            }
+            let kc = kubeconfig_path()?;
+            if kc.exists() {
+                if let Ok(kubectl) = which::which("kubectl") {
+                    let _ = Command::new(kubectl)
+                        .arg("--kubeconfig")
+                        .arg(&kc)
+                        .args(["get", "nodes"])
+                        .status();
+                } else {
+                    println!("  kubeconfig {}", kc.display());
+                }
+            }
+            return Ok(());
+        }
+    }
+
     let dir = up_dir()?;
     let Some(pid) = running(&dir, SUPERVISOR) else {
         // A vm with no supervisor is the one state worth naming: it is running
@@ -904,6 +963,14 @@ pub async fn status() -> Result<()> {
 /// recorded pid is how we collect it, and a pid we recorded is the only thing
 /// we will signal.
 pub fn down() -> Result<()> {
+    #[cfg(windows)]
+    if let Some(_pid) = host::stop_recorded_pid()? {
+        let dir = up_dir()?;
+        write_state(&dir, "down");
+        println!("{} local cloud down", "✓".green());
+        return Ok(());
+    }
+
     let dir = up_dir()?;
     let (supervisor, vm) = (running(&dir, SUPERVISOR), running(&dir, VM));
     if supervisor.is_none() && vm.is_none() {

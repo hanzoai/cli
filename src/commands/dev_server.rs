@@ -149,6 +149,27 @@ pub fn load_manifest(project_dir: &Path) -> WebManifest {
     }
 }
 
+fn strip_unc(p: PathBuf) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(s) = p.to_string_lossy().strip_prefix(r"\\?\") {
+            return PathBuf::from(s);
+        }
+    }
+    p
+}
+
+fn shell_command(cmd_line: &str) -> Command {
+    if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.args(["/C", cmd_line]);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.args(["-c", cmd_line]);
+        c
+    }
+}
+
 fn ensure_dependencies(project_dir: &Path, manifest: &WebManifest) -> Result<()> {
     if !project_dir.join("package.json").is_file() || project_dir.join("node_modules").is_dir() {
         return Ok(());
@@ -158,8 +179,7 @@ fn ensure_dependencies(project_dir: &Path, manifest: &WebManifest) -> Result<()>
         "→".cyan(),
         manifest.install_cmd
     );
-    let status = Command::new("sh")
-        .args(["-c", &manifest.install_cmd])
+    let status = shell_command(&manifest.install_cmd)
         .current_dir(project_dir)
         .status()
         .with_context(|| format!("running `{}`", manifest.install_cmd))?;
@@ -241,8 +261,7 @@ pub fn execute_local_build(
 ) -> BuildReceipt {
     let started_wall = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let started = Instant::now();
-    let output = Command::new("sh")
-        .args(["-c", &manifest.build_cmd])
+    let output = shell_command(&manifest.build_cmd)
         .current_dir(project_dir)
         .output();
 
@@ -376,14 +395,27 @@ pub fn run_static_build(project_dir: &Path) -> Result<BuildReceipt> {
 }
 
 fn spawn_vite(project_dir: &Path, vite_port: u16) -> Result<Child> {
-    let local_vite = project_dir.join("node_modules").join(".bin").join("vite");
+    let vite_bin_name = if cfg!(windows) { "vite.cmd" } else { "vite" };
+    let local_vite = project_dir.join("node_modules").join(".bin").join(vite_bin_name);
     let port_str = vite_port.to_string();
     let mut cmd = if local_vite.is_file() {
-        let mut c = Command::new(local_vite);
+        let mut c = if cfg!(windows) {
+            let mut w = Command::new("cmd");
+            w.arg("/C").arg(&local_vite);
+            w
+        } else {
+            Command::new(&local_vite)
+        };
         c.args(["--host", "127.0.0.1", "--port", &port_str, "--strictPort"]);
         c
     } else if let Ok(npx) = which::which("npx") {
-        let mut c = Command::new(npx);
+        let mut c = if cfg!(windows) {
+            let mut w = Command::new("cmd");
+            w.arg("/C").arg(&npx);
+            w
+        } else {
+            Command::new(&npx)
+        };
         c.args([
             "--yes",
             "vite",
@@ -396,7 +428,7 @@ fn spawn_vite(project_dir: &Path, vite_port: u16) -> Result<Child> {
         c
     } else {
         bail!(
-            "Vite binary not found in `{}/node_modules/.bin/vite` and `npx` is unavailable",
+            "Vite binary not found in `{}/node_modules/.bin/{vite_bin_name}` and `npx` is unavailable",
             project_dir.display()
         );
     };
@@ -457,9 +489,11 @@ pub async fn run(
     engine_url: String,
     build_on_change: bool,
 ) -> Result<()> {
-    let project_dir = project_dir
-        .canonicalize()
-        .unwrap_or_else(|_| project_dir.clone());
+    let project_dir = strip_unc(
+        project_dir
+            .canonicalize()
+            .unwrap_or_else(|_| project_dir.clone()),
+    );
     let manifest = load_manifest(&project_dir);
     ensure_dependencies(&project_dir, &manifest)?;
 
