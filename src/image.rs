@@ -162,6 +162,7 @@ pub fn dockerconfigjson(registry: &str, cred: &Credential) -> String {
 
 /// Resolve `reference` to the digest of the image for `architecture`, with no
 /// ambient host credentials (used by hermetic callers and tests).
+#[cfg(test)]
 pub async fn pin(http: &Client, reference: &str, architecture: &str) -> Result<String> {
     pin_with(http, reference, architecture, &[]).await
 }

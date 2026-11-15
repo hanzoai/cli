@@ -734,10 +734,10 @@ async fn create_post(
                 for r in &rows {
                     let id = str_field(r, &["id"]);
                     let prov = str_field(r, &["identifier", "provider"]).to_lowercase();
-                    if id.to_lowercase() == want || prov == want {
-                        if !target_ids.iter().any(|x| x == &id) {
-                            target_ids.push(id);
-                        }
+                    if (id.to_lowercase() == want || prov == want)
+                        && !target_ids.iter().any(|x| x == &id)
+                    {
+                        target_ids.push(id);
                     }
                 }
             }

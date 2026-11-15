@@ -735,7 +735,7 @@ pub(crate) struct Seam {
     /// The bearer. Cloud derives the tenant from the `owner` claim it verifies,
     /// so a request that names no org acts in the caller's own — which is every
     /// request unless [`Seam::org`] is set.
-    token: String,
+    pub(crate) token: String,
     /// The org to act in, when the caller named one (`--org`).
     ///
     /// It rides as `X-Org-Id` and is a SELECTION, not an assertion: the gateway

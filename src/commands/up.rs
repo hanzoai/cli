@@ -716,6 +716,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Resu
 /// Bare `hanzo up`: pin the image, ensure the checkpoint, leave a supervisor
 /// behind, wait for `ready`, print the lines to paste. If interactive, launches
 /// the Sandboxes TUI dashboard.
+#[cfg_attr(windows, allow(unreachable_code))]
 pub async fn up(
     cfg: &mut Config,
     boot: Boot,

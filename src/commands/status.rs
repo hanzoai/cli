@@ -76,6 +76,9 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
     // rendered as though it were the truth. The local GPU machines are
     // `--infer`, and never stand in for a cloud that did not answer.
     let seam = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await?;
+    if seam.token.is_empty() {
+        bail!("not signed in — run `hanzo auth login`");
+    }
     // Concurrent: three independent reads, so the page costs one round trip.
     let (clusters, apps, nodes) = tokio::join!(
         read_surface(&seam, CLUSTERS_ROUTE, "clusters"),
@@ -95,6 +98,9 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
 /// from `GET /v1/sandbox` instead of printing local TUI sample fixtures.
 pub async fn list_sandboxes(cfg: &mut Config) -> Result<()> {
     let seam = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await?;
+    if seam.token.is_empty() {
+        bail!("not signed in — run `hanzo auth login`");
+    }
     let rows = read(&seam, SANDBOXES_ROUTE, "sandboxes")
         .await
         .map_err(|e| anyhow::anyhow!("sandbox list unavailable — {e}"))?;
