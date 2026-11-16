@@ -201,7 +201,7 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
     let id = field(&accepted, "sessionId");
     session_id(id)?;
     println!(
-        "Cloud coding session: {id}\nRepository: {}\nhttps://hanzo.bot/sessions/{id}",
+        "Cloud coding session: {id}\nRepository: {}\nhttps://hanzo.ai/tabs/{id}",
         field(&accepted, "repo")
     );
     if !field(&accepted, "branch").is_empty() {
@@ -420,7 +420,7 @@ async fn checkout(seam: &Seam, id: &str) -> Result<()> {
     git(&["check-ref-format", "--branch", branch])?;
     git(&["fetch", "origin", &format!("refs/heads/{branch}")])?;
     git(&["switch", "--create", &format!("cloud/{id}"), "FETCH_HEAD"])?;
-    println!("Checked out cloud/{id}.\nTranscript: https://hanzo.bot/sessions/{id}\nContinue locally: hanzo");
+    println!("Checked out cloud/{id}.\nTranscript: https://hanzo.ai/tabs/{id}\nContinue locally: hanzo");
     Ok(())
 }
 
