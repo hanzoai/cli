@@ -1425,3 +1425,10 @@ answers (5 to 30 s). So:
   slow cloud costs a run its link, never its first model call. The kit's wait is 2 s. The end-of-run block asks the
   cloud (the price list, 1 s; the meter, 1.5 s) only when stdout is a terminal: a script's process ends when the agent
   does (Claude Code, `after the result` 0.9 s median through `hanzo dev` against 0.08 s bare).
+
+## share: a failed `zrok enable` says why (2026-11-16, hanzo-inc/cloud#767)
+`commands/share.rs` step 3 used to run `zrok enable` with stdout/stderr discarded and the exit
+status ignored, so a broken controller surfaced later as "did you 'zrok2 enable'?". It now keeps
+the output and fails with zrok's last lines (`enable_outcome`); "already have an enabled
+environment" stays success. Server side (zrok-api `/api/v2` vs fork `/v1`, zt-api behind the
+Cloudflare proxy) is tracked on the issue.

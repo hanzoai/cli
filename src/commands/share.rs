@@ -141,14 +141,23 @@ pub async fn start(
     // 2. Locate the zrok fabric helper.
     let zbin = zrok_bin()?;
 
-    // 3. Enable this machine against the provisioned account (idempotent, quiet).
-    let _ = Command::new(&zbin)
+    // 3. Enable this machine against the provisioned account (idempotent). Its
+    // output is kept: a failed enable used to be thrown away, and the user saw only
+    // the later "did you 'zrok2 enable'?" (hanzo-inc/cloud#767).
+    let out = Command::new(&zbin)
         .args(["enable", &pr.account_token])
         .env(CONTROLLER_ENV, &pr.controller)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await;
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| anyhow!("could not run {zbin} enable: {e}"))?;
+    let said = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    enable_outcome(out.status.success(), &said)
+        .map_err(|e| anyhow!("{e} (controller {})", pr.controller))?;
 
     // 4. Share and stream, surfacing the public URL.
     let mut args = vec![
@@ -351,6 +360,21 @@ fn owner_args(o: &Owner<'_>) -> [String; 4] {
     ]
 }
 
+/// Whether `zrok enable` left this machine enabled. An environment that is already
+/// enabled is success (the step is idempotent); any other failure carries zrok's
+/// own last lines, never an account token (zrok does not echo it).
+fn enable_outcome(success: bool, said: &str) -> Result<()> {
+    if success || said.contains("already have an enabled environment") {
+        return Ok(());
+    }
+    let lines: Vec<&str> = said.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if lines.is_empty() {
+        bail!("zrok enable failed with no output");
+    }
+    let tail = lines[lines.len().saturating_sub(5)..].join("\n  ");
+    bail!("zrok enable failed:\n  {tail}")
+}
+
 /// Does this zrok accept `flag` on `share public`?
 ///
 /// Asked rather than assumed because two zrok lineages are in the wild — ours and
@@ -422,6 +446,25 @@ mod tests {
             args,
             ["--oauth-provider", "hanzo", "--oauth-email-domain", "z@hanzo.ai"]
         );
+    }
+
+    // hanzo-inc/cloud#767: a failed `zrok enable` was thrown away, and the user saw
+    // only the later "did you 'zrok2 enable'?". It now fails with zrok's own words.
+    #[test]
+    fn a_failed_enable_says_why() {
+        assert!(enable_outcome(true, "").is_ok());
+        // Enabling twice is the idempotent case, not a failure.
+        assert!(enable_outcome(false, "[ERROR]: you already have an enabled environment").is_ok());
+        let err = enable_outcome(
+            false,
+            "[ERROR]: error creating service client: clientVersionCheck (status 202): {}",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("zrok enable failed"), "{err}");
+        assert!(err.contains("clientVersionCheck (status 202)"), "{err}");
+        let silent = enable_outcome(false, "  ").unwrap_err().to_string();
+        assert!(silent.contains("no output"), "{silent}");
     }
 
     #[test]
