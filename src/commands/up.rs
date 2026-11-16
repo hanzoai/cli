@@ -247,6 +247,20 @@ const PULLFILE: &str = "/dev/shm/.hanzo-registry-pull";
 const PULLFILE_FALLBACK: &str = "/run/.hanzo-registry-pull";
 const PULL_SECRET: &str = "registry-pull";
 
+/// Make sure the workload namespace exists before a Secret lands in it.
+///
+/// k3s applies the ground manifest on its own clock, so on a fresh cluster the
+/// node can be Ready before `hanzo` is. Create-or-get: an existing namespace,
+/// or the manifest winning the race, is success.
+fn ensure_ground(rpc: &mut Rpc) -> Result<()> {
+    match rpc.exec(&["k3s", "kubectl", "create", "namespace", "hanzo"])? {
+        (_, err, code) if code != 0 && !err.contains("already exists") => {
+            bail!("creating the namespace: {}", err.trim())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Create the cloud's at-rest key as a Secret, without the key touching disk
 /// or a command line.
 ///
@@ -695,6 +709,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Resu
     // The cluster answers, so any registry pull credential and the at-rest key
     // can be handed to it via tmpfs without ever being written to the node's
     // disk or entering the workload measurement.
+    ensure_ground(&mut rpc)?;
     if let Some(secret) = pull_secret {
         plant_pull_secret(&mut rpc, secret)?;
     }
