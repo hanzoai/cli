@@ -1432,3 +1432,11 @@ status ignored, so a broken controller surfaced later as "did you 'zrok2 enable'
 the output and fails with zrok's last lines (`enable_outcome`); "already have an enabled
 environment" stays success. Server side (zrok-api `/api/v2` vs fork `/v1`, zt-api behind the
 Cloudflare proxy) is tracked on the issue.
+
+## share: a refused provision prints cloud's reason (2026-11-19, hanzo-inc/cloud#765)
+`commands/share.rs` `enable_refusal` turns a non-2xx `POST /v1/share/enable` into cloud's own
+`detail` and `code` (`provision share: <detail> (HTTP 503, share_controller_unavailable)`).
+Every 503 used to print "sharing is not enabled on this deployment yet" and drop the body,
+which became false once cloud (hanzo-inc/cloud#841) answered an unreachable zrok controller
+as a coded 503 instead of a 502 Cloudflare replaces. A body that is not a problem document
+(Cloudflare's "error code: 502") is printed as it came; only an EMPTY 503 keeps the old line.
