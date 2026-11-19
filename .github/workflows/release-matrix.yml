@@ -52,6 +52,7 @@ env:
   ZIG_VERSION: '0.13.0'
   ZIG_SHA256: 'd45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea'
   ZIGBUILD_VERSION: '0.23.0'
+  ZIGBUILD_SHA256: 'c636e4f72b6f40a40ddf0414c8c6056f78b87eea3be0edf01f08d65fa028a373'
   MACOS_SDK_URL: 'https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz'
   MACOS_SDK_SHA256: 'cd4f08a75577145b8f05245a2975f7c81401d75e9535dcffbb879ee1deefcbf4'
 
@@ -137,8 +138,23 @@ jobs:
           tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
           echo "$HOME/zig" >> "$GITHUB_PATH"
 
+      # The upstream release binary, checksum-pinned, instead of a `cargo install`
+      # compile that each of the five legs repeated from nothing. The compile is
+      # kept as the fallback so a missing asset slows a release and does not stop
+      # it. The sha256 is that of the x86_64-unknown-linux-gnu tarball at
+      # ZIGBUILD_VERSION; bump the two together.
       - name: cargo-zigbuild
-        run: cargo install cargo-zigbuild --version "${ZIGBUILD_VERSION}" --locked
+        run: |
+          set -euo pipefail
+          BIN="$HOME/.cargo/bin"; mkdir -p "$BIN"
+          if curl -fsSL "https://github.com/rust-cross/cargo-zigbuild/releases/download/v${ZIGBUILD_VERSION}/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz" -o zigbuild.tar.xz \
+             && echo "${ZIGBUILD_SHA256}  zigbuild.tar.xz" | sha256sum -c - \
+             && tar -xf zigbuild.tar.xz -C "$BIN" --strip-components=1 cargo-zigbuild-x86_64-unknown-linux-gnu/cargo-zigbuild; then
+            echo "cargo-zigbuild $("$BIN/cargo-zigbuild" --version) from the release binary"
+          else
+            echo "::warning::release binary unusable; compiling cargo-zigbuild ${ZIGBUILD_VERSION}"
+            cargo install cargo-zigbuild --version "${ZIGBUILD_VERSION}" --locked
+          fi
 
       # Zig ships no macOS frameworks (Security/CoreServices/CoreFoundation, which
       # the native keychain links). Vendor a pinned SDK and point SDKROOT at it.
