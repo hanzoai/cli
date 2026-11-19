@@ -362,7 +362,8 @@ jobs:
           # --ignore-scripts: postinstall fetches a binary, and it must run on the
           # INSTALLING machine, not on this runner where it would bake one
           # platform's binary into the tarball.
-          npm publish --access public --ignore-scripts
+          # --no-provenance: a token publish on Forge 422s without it (same as publish-npm.yml).
+          npm publish --access public --ignore-scripts --no-provenance
 
   # BUMP THE HOMEBREW TAP, because nothing ever did.
   #
