@@ -775,10 +775,6 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
         for op in OPS.iter().filter(|o| o.product == p) {
             let argv = argv_for(op);
             let line = argv.join(" ");
-            let m = merged
-                .clone()
-                .try_get_matches_from(&argv)
-                .unwrap_or_else(|e| panic!("`{line}` does not parse:\n{e}"));
             // A SHADOW is a name that means two acts. `hanzo wallet list` reads
             // the local keychain and `GET /v1/wallet` lists the org's cloud
             // wallets; one word, two things, and no rule can give the second a
@@ -790,6 +786,15 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
             let shadowed = local
                 .find_subcommand(shadow)
                 .is_some_and(|c| c.get_subcommands().next().is_none() && op.nodes.is_empty());
+            // `argv` is the GENERATED spelling. A shadow's name belongs to the local
+            // command, whose own operands it need not satisfy (`hanzo post create`
+            // takes a required `<CONTENT>`), so a shadowed argv may fail to parse:
+            // the local command is the route, and `shadowed` proved it terminal.
+            let m = match merged.clone().try_get_matches_from(&argv) {
+                Ok(m) => m,
+                Err(_) if shadowed => continue,
+                Err(e) => panic!("`{line}` does not parse:\n{e}"),
+            };
             let Some(Resolved::Leaf { op: got, .. }) = resolve(&hand, &m) else {
                 assert!(
                     shadowed,
@@ -826,6 +831,44 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
         }
     }
     assert!(absorbed > 0, "no product shares a local name — the collision law is untested");
+}
+
+/// A local command owns EVERY spelling it answers to, its aliases included. The
+/// hand-written `hanzo post delete` answers to `rm`; once cloud's public document
+/// carried `DELETE /v1/post/{id}` (genproduct's verb: `rm`), `absorb` compared
+/// names only, mounted the generated `rm` beside the local alias, and clap
+/// panicked on every `hanzo post` ("command name `rm` is duplicated") — the
+/// drift gate then saw no `Usage: hanzo post` and called a served product an
+/// orphan. `resolve` already reads an alias as the local command's (clap's
+/// `find_subcommand` matches aliases), so the mount has to agree with it.
+#[test]
+fn a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down() {
+    use clap::CommandFactory;
+    let hand = crate::Cli::command();
+    let merged = augment(crate::Cli::command());
+    let mut asked = 0usize;
+    for p in OPS.iter().map(|o| o.product).collect::<std::collections::BTreeSet<_>>() {
+        let (Some(local), Some(here)) = (hand.find_subcommand(p), merged.find_subcommand(p)) else {
+            continue;
+        };
+        for sub in local.get_subcommands() {
+            for alias in sub.get_all_aliases() {
+                asked += 1;
+                let answering: Vec<&str> = here
+                    .get_subcommands()
+                    .filter(|s| s.get_name() == alias || s.get_all_aliases().any(|a| a == alias))
+                    .map(clap::Command::get_name)
+                    .collect();
+                assert_eq!(
+                    answering,
+                    vec![sub.get_name()],
+                    "`hanzo {p} {alias}` must mean the local `{p} {}` and nothing else",
+                    sub.get_name()
+                );
+            }
+        }
+    }
+    assert!(asked > 0, "no absorbed product's local command has an alias — this rule is untested");
 }
 
 /// A NAME MAY ONLY BE RESERVED BY A COMMAND THAT EXISTS.

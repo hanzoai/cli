@@ -298,7 +298,15 @@ const AHEAD: usize = 1;
 ///
 /// 63 -> 64 on @3bbc84917: one new operation landed under an existing auth/relay
 /// prefix whose control already answers non-404.
-const UNFALSIFIABLE: usize = 64;
+///
+/// 64 -> 67 on @f9c56af2b (v8.5.1267): three NEW literal GETs, nothing that was
+/// decidable went blind. `GET /v1/agent/groups` sits under `/v1/agent`, whose
+/// control already answered 401; `GET /v1/channel/groups` and
+/// `GET /v1/channel/providers` sit under `/v1/channel`, a prefix new to the
+/// document whose control answers 401 too (an auth wall before routing). Cloud's
+/// live table claims all three. They fall when those prefixes 404 an unwritten
+/// route for an anonymous caller.
+const UNFALSIFIABLE: usize = 67;
 
 // ---- the live route table ----------------------------------------------------
 

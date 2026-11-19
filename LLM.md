@@ -1440,3 +1440,24 @@ Every 503 used to print "sharing is not enabled on this deployment yet" and drop
 which became false once cloud (hanzo-inc/cloud#841) answered an unreachable zrok controller
 as a coded 503 instead of a 502 Cloudflare replaces. A body that is not a problem document
 (Cloudflare's "error code: 502") is printed as it came; only an EMPTY 503 keeps the old line.
+
+## spec: pinned to what production serves, and a local alias owns its spelling (2026-11-19)
+The forge `cicd` job's client lane checks `spec/cloud.json` against `https://api.hanzo.ai/v1/openapi.json`,
+not against the ref in `.spec-lock`. So every cloud deploy turns the check red until someone re-pins.
+Every `main` run from cli#56 (2026-11-16) through cli#60 failed on it ("would gain 53 operations and lose 6").
+Older runs failed too, for causes not checked here. The re-pin moved `.spec-lock`
+to production's revision, f9c56af2b (v8.5.1267, served digest `3e882d…`), then ran `genspec` and
+`genproduct`, then `make live` (read-only GETs) so `spec/live.json` matches the new capture. The nightly
+re-pin `hanzo.yml` describes (`.hanzo/workflows/drift.yml`) does not exist in this repo, so the pin only
+moves by hand.
+
+Two things surfaced, both now fixed:
+- **`absorb` compared names only.** Cloud now publishes `DELETE /v1/post/{id}`, which folds to the verb `rm`.
+  The hand-written `hanzo post delete` has the alias `rm`, so a second `rm` was mounted and clap panicked on
+  every `hanzo post`. The drift gate then called `post` an orphan. `absorb` now counts every alias as owned.
+  `resolve` already did, through `find_subcommand`. Pinned by
+  `a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down`. The absorbed-product walk now checks
+  for a shadow before parsing: a hand-written command can require its own operand (`post create <CONTENT>`),
+  so the generated spelling need not parse.
+- **The `UNFALSIFIABLE` ceiling went from 64 to 67.** The three new literal GETs are `/v1/agent/groups`,
+  `/v1/channel/groups` and `/v1/channel/providers`. Each sits under a prefix whose made-up control route gets 401.

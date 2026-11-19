@@ -119,8 +119,16 @@ pub fn augment(mut cmd: Command) -> Command {
 /// down, and [`resolve`] reads the same tree to route it back to the derive
 /// dispatch. One predicate, both halves; they cannot disagree.
 fn absorb(local: Command, product: &'static str) -> Command {
-    let owned: std::collections::HashSet<String> =
-        local.get_subcommands().map(|c| c.get_name().to_string()).collect();
+    // A local subcommand owns every spelling it answers to, its aliases included:
+    // `resolve` reads the tree through clap's `find_subcommand`, which matches an
+    // alias, so a generated node mounted on a local alias would be a second
+    // command clap refuses (`hanzo post delete` answers to `rm`, and the
+    // document's `DELETE /v1/post/{id}` folds to the verb `rm`).
+    let owned: std::collections::HashSet<String> = local
+        .get_subcommands()
+        .flat_map(|c| std::iter::once(c.get_name()).chain(c.get_all_aliases()))
+        .map(str::to_string)
+        .collect();
     // A local command that takes a REQUIRED operand becomes a runnable group the
     // moment it gains one, and it is governed by the same rule `to_command` gives
     // every other runnable group: bare it runs itself, with a subcommand it
