@@ -327,33 +327,20 @@ jobs:
             fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");
           ' "$v"
           echo "publishing @hanzo/cli@$v"
-      # THE CREDENTIAL IS READ FROM KMS, WHICH IS WHERE A SECRET LIVES. This job
-      # took `secrets.NPM_TOKEN`, and that secret exists on neither the hanzoai
-      # org nor this repo on git.hanzo.ai. An absent secret interpolates to the
-      # empty string rather than failing, so npm was handed a blank credential,
-      # answered `ENEEDAUTH`, and every release since the job was written failed
-      # here after building all five binaries — which is why @hanzo/cli is still
-      # a 404 on the registry. Same identity and same path hanzoai/ui-design
-      # reads, so there is one npm credential in the fleet and nothing to rotate.
-      #
-      # python3, not jq: jq is installed by the build job above, and this job
-      # does not run that step.
+      # Use the shared KMS client used by publish-npm.yml. Unlike a raw curl
+      # piped into JSON parsing, it preserves HTTP 401/403/404 diagnostics and
+      # retries transient failures, without treating a denial as a missing secret.
       - name: Publish
         working-directory: npm
         env:
           KMS_CLIENT_ID: ${{ secrets.KMS_CLIENT_ID }}
           KMS_CLIENT_SECRET: ${{ secrets.KMS_CLIENT_SECRET }}
-          KMS: ${{ vars.KMS_ENDPOINT || 'https://kms.hanzo.ai' }}
+          KMS_ENDPOINT: ${{ vars.KMS_ENDPOINT || 'https://kms.hanzo.ai' }}
         run: |
           set -euo pipefail
-          val() { python3 -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"; }
-          kt=$(curl -fsS "$KMS/v1/kms/auth/login" -H 'Content-Type: application/json' \
-                 -d "{\"clientId\":\"$KMS_CLIENT_ID\",\"clientSecret\":\"$KMS_CLIENT_SECRET\"}" | val accessToken)
-          [ -n "$kt" ] || { echo "::error::KMS login failed at $KMS/v1/kms/auth/login (check KMS_CLIENT_ID/KMS_CLIENT_SECRET)"; exit 1; }
-          # No -f on the read: a miss must name the path that was empty rather
-          # than exiting 22 with nothing to act on.
-          NODE_AUTH_TOKEN=$(curl -sS "$KMS/v1/kms/secrets/NPM_TOKEN?env=prod" -H "Authorization: Bearer $kt" | val value)
-          [ -n "$NODE_AUTH_TOKEN" ] || { echo "::error::no NPM_TOKEN at $KMS/v1/kms/secrets/NPM_TOKEN?env=prod"; exit 1; }
+          curl -fsSL https://raw.githubusercontent.com/hanzoai/ci/1983074a463e15d3c21efd7925babbddedd5daaf/bin/kms -o "$RUNNER_TEMP/kms"
+          NODE_AUTH_TOKEN=$(bash "$RUNNER_TEMP/kms" NPM_TOKEN prod)
+          [ -n "$NODE_AUTH_TOKEN" ] || { echo "::error::KMS returned an empty NPM_TOKEN"; exit 1; }
           echo "::add-mask::$NODE_AUTH_TOKEN"
           export NODE_AUTH_TOKEN
           # --ignore-scripts: postinstall fetches a binary, and it must run on the
