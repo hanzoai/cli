@@ -251,13 +251,47 @@ async fn enable(api: &str, token: &str, org: Option<&str>) -> Result<EnableResp>
         .with_context(|| format!("request {url}"))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
-    if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
-        bail!("sharing is not enabled on this deployment yet");
-    }
     if !status.is_success() {
-        bail!("provision share: HTTP {status}: {}", text.trim());
+        return Err(enable_refusal(status, &text));
     }
     serde_json::from_str(&text).with_context(|| "decode share credential")
+}
+
+/// What a refused `POST /v1/share/enable` tells the user: cloud's own words.
+///
+/// Cloud answers a refusal as a problem document whose `detail` is written to be
+/// read: a controller it cannot reach is 503 `share_controller_unavailable`,
+/// saying nothing was made and nothing was charged (hanzo-inc/cloud#765). Every
+/// 503 used to print "sharing is not enabled on this deployment yet", true of
+/// only one of them, and the body was dropped. A body that is not cloud's, such
+/// as Cloudflare's "error code: 502", is shown as it came.
+fn enable_refusal(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
+    #[derive(Deserialize)]
+    struct Problem {
+        #[serde(default)]
+        detail: String,
+        #[serde(default)]
+        code: String,
+    }
+    let body = body.trim();
+    match serde_json::from_str::<Problem>(body) {
+        Ok(p) if !p.detail.trim().is_empty() => {
+            // Cloud's share messages name themselves ("share: …"); this line
+            // already does.
+            let detail = p.detail.trim();
+            let detail = detail.strip_prefix("share: ").unwrap_or(detail);
+            let code = if p.code.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", p.code)
+            };
+            anyhow!("provision share: {detail} (HTTP {}{code})", status.as_u16())
+        }
+        _ if status == reqwest::StatusCode::SERVICE_UNAVAILABLE && body.is_empty() => {
+            anyhow!("sharing is not enabled on this deployment yet")
+        }
+        _ => anyhow!("provision share: HTTP {status}: {body}"),
+    }
 }
 
 /// Accept "3000", "localhost:3000", or a full URL → a backend URL to proxy.
@@ -465,6 +499,46 @@ mod tests {
         assert!(err.contains("clientVersionCheck (status 202)"), "{err}");
         let silent = enable_outcome(false, "  ").unwrap_err().to_string();
         assert!(silent.contains("no output"), "{silent}");
+    }
+
+    // hanzo-inc/cloud#765: cloud's reason reaches the user. A 503 is not always
+    // "not enabled", and Cloudflare's own 502 body is shown as it came.
+    #[test]
+    fn a_refused_provision_says_cloud_s_reason() {
+        use reqwest::StatusCode;
+        let down = enable_refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"code":"share_controller_unavailable","detail":"share: Hanzo's tunnel controller could not be reached, so no tunnel account was read or made, and nothing was charged. This is on Hanzo's side, not your sign-in or setup; try again in a few minutes","status":503,"title":"Service Unavailable","type":"about:blank"}"#,
+        )
+        .to_string();
+        assert!(
+            down.starts_with("provision share: Hanzo's tunnel controller could not be reached"),
+            "{down}"
+        );
+        assert!(down.contains("nothing was charged"), "{down}");
+        assert!(
+            down.ends_with("(HTTP 503, share_controller_unavailable)"),
+            "{down}"
+        );
+
+        let unconfigured = enable_refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"detail":"share is not configured on this deployment","status":503,"title":"Service Unavailable","type":"about:blank"}"#,
+        )
+        .to_string();
+        assert_eq!(
+            unconfigured,
+            "provision share: share is not configured on this deployment (HTTP 503)"
+        );
+
+        let edge = enable_refusal(StatusCode::BAD_GATEWAY, "error code: 502").to_string();
+        assert_eq!(
+            edge,
+            "provision share: HTTP 502 Bad Gateway: error code: 502"
+        );
+
+        let bare = enable_refusal(StatusCode::SERVICE_UNAVAILABLE, "").to_string();
+        assert_eq!(bare, "sharing is not enabled on this deployment yet");
     }
 
     #[test]
