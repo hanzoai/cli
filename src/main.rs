@@ -392,7 +392,7 @@ enum Commands {
     },
 
     // ── kept resources (additive) ────────────────────────────────────────────
-    /// Run the L1 chain node (hanzod) on hanzo.network
+    /// Opt in to the chain (`hanzo-chain`, a child of hanzod), or out of it
     ///
     /// `hanzo fabric` is a deprecated alias for one release — use `hanzo chain`.
     #[command(alias = "fabric")]
@@ -605,25 +605,15 @@ enum RunnerCommands {
 
 #[derive(Subcommand)]
 enum ChainCommands {
-    /// Start hanzod on the active network (joins hanzo.network)
+    /// Opt in: fetch, verify and start `hanzo-chain` on a network
     Up {
-        #[arg(long)]
-        foreground: bool,
-        #[arg(long)]
-        with_cloud: bool,
-    },
-    /// Show node + network status
-    Status,
-    /// Switch network and start hanzod
-    Join {
+        /// mainnet | testnet | devnet
         network: String,
-        #[arg(long)]
-        foreground: bool,
-        #[arg(long)]
-        with_cloud: bool,
     },
-    /// Stop the hanzod started by this CLI
-    Stop,
+    /// Show whether the chain is on, and where it stands
+    Status,
+    /// Opt out: stop the chain and release its ports
+    Down,
 }
 
 /// The local cloud host's lifecycle. Every other cloud command starts it on
@@ -1250,14 +1240,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 warn("`hanzo fabric` is now `hanzo chain`; the alias goes away next release");
             }
             match command {
-                ChainCommands::Up { foreground, with_cloud } => {
-                    commands::chain::up(&config, foreground, with_cloud).await?
-                }
+                ChainCommands::Up { network } => commands::chain::up(&config, network).await?,
                 ChainCommands::Status => commands::chain::status(&config).await?,
-                ChainCommands::Join { network, foreground, with_cloud } => {
-                    commands::chain::join(&mut config, network, foreground, with_cloud).await?
-                }
-                ChainCommands::Stop => commands::chain::stop(&config)?,
+                ChainCommands::Down => commands::chain::down(&config).await?,
             }
         }
         Commands::Host { command } => match command {
@@ -1743,8 +1728,9 @@ mod tests {
     fn chain_runs_the_hanzod_node() {
         assert!(Cli::try_parse_from(["hanzo", "chain", "up"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "chain", "status"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "chain", "join", "testnet"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "chain", "stop"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "up", "testnet"]).is_ok());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "up"]).is_err());
+        assert!(Cli::try_parse_from(["hanzo", "chain", "down"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "chain", "cluster", "topology"]).is_err());
 
         // The deprecated spelling still parses — to the SAME variant.

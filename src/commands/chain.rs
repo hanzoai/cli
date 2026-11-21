@@ -1,185 +1,84 @@
-//! `hanzo chain` — run/join hanzo.network (the L1 chain) with hanzod.
+//! `hanzo chain` — opt in to the chain, or out of it (HIP-1330 phase 6).
 //!
-//! hanzod (`~/work/hanzo/node`) is Hanzo's L1 node on the Lux Network (same Quasar
-//! consensus, same ZAP transport as luxd). This command drives it: `up` starts it
-//! on the active network, `join` switches network + starts, `status` reports
-//! liveness, `stop` sends SIGTERM to the process WE started (by recorded PID —
-//! never a blind pkill). Per CI/CD policy we never BUILD the node here; we resolve
-//! an existing binary (`HANZO_NODE_BIN`, then `hanzod` on PATH) and, if absent,
-//! print how to get it.
+//! The chain is `hanzo-chain`, a child of `hanzod`, fetched on opt-in and absent
+//! otherwise. This command is a client of `hanzod`'s `/v1/chain`:
+//!
+//!   GET    /v1/chain                  status
+//!   PUT    /v1/chain {"network": n}   enable for a network (fetch, verify, start)
+//!   DELETE /v1/chain                  disable (stop, release the ports)
+//!
+//! Nothing here fetches, verifies or spawns anything. `hanzod` owns the digest
+//! table, the version check and the keys; the CLI states what the user asked for.
 
-use crate::commands::network;
-use crate::commands::host;
 use crate::config::Config;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use colored::*;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use hanzo_client::Method;
+use serde_json::{json, Value};
 
-/// Where we record the PID of a hanzod we started (for `status`/`stop`).
-fn pid_file() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("hanzo")
-        .join("node.pid")
-}
+/// The networks `hanzo-chain` knows. `hanzod` checks again; this is the usage line.
+const NETWORKS: [&str; 3] = ["mainnet", "testnet", "devnet"];
 
-fn write_pid(pid: u32) -> Result<()> {
-    let f = pid_file();
-    if let Some(dir) = f.parent() {
-        std::fs::create_dir_all(dir).ok();
+/// Send one request to `hanzod` and return its JSON body. A non-2xx status is the
+/// daemon's refusal, and its own message is what the user reads.
+async fn call(method: Method, body: Option<&Value>) -> Result<Value> {
+    let reply = send(method, body).await?;
+    if !(200..300).contains(&reply.status) {
+        let why = reply.body.get("error").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| reply.body.to_string());
+        bail!("hanzod refused ({}): {}", reply.status, why);
     }
-    std::fs::write(&f, pid.to_string()).with_context(|| format!("writing {}", f.display()))
+    Ok(reply.body)
 }
 
-fn read_pid() -> Option<u32> {
-    std::fs::read_to_string(pid_file()).ok()?.trim().parse().ok()
+#[cfg(unix)]
+async fn send(method: Method, body: Option<&Value>) -> Result<hanzo_client::Reply> {
+    let sock = dirs::data_local_dir().unwrap_or_default().join("hanzo").join("hanzod.zap.sock");
+    crate::zap::send(&sock, &method, "/v1/chain", "", body)
+        .await
+        .context("hanzod is not running; start it with `hanzo host start`")
 }
 
-fn clear_pid() {
-    std::fs::remove_file(pid_file()).ok();
-}
-
-fn pid_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Resolve a runnable hanzod: explicit override, then PATH. We do NOT build.
-fn resolve_node_bin() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("HANZO_NODE_BIN") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
+/// Windows has no UNIX socket, so `hanzod`'s loopback view is the only wire.
+#[cfg(not(unix))]
+async fn send(method: Method, body: Option<&Value>) -> Result<hanzo_client::Reply> {
+    use hanzo_client::{Http, Request, Transport};
+    let mut req = Request::new(method, "http://127.0.0.1:3690/v1/chain".to_string());
+    if let Some(b) = body {
+        req = req.json(b);
     }
-    which::which("hanzod").ok()
+    Http::default().send(req).await.context("hanzod is not running; start it with `hanzo host start`")
 }
 
-fn missing_bin_err() -> anyhow::Error {
-    anyhow!(
-        "hanzod not found. Set HANZO_NODE_BIN=/path/to/hanzod, put `hanzod` on PATH, \
-         or build it in ~/work/hanzo/node (we do not build node binaries here — CI/CD does)."
-    )
-}
-
-/// Best-effort start of the cloud control plane alongside the node, through the
-/// ONE cloud-binary resolver (`host::resolve_cloud_bin`).
-fn spawn_cloud() -> Result<()> {
-    match host::resolve_cloud_bin() {
-        Some(b) => {
-            let child = Command::new(&b)
-                .arg("cloud")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .context("spawning cloud control plane")?;
-            println!("{} cloud control plane started (pid {})", "✓".green(), child.id());
-        }
-        None => println!(
-            "{}",
-            "cloud binary not found — start it separately (set HANZO_CLOUD_BIN)".dimmed()
-        ),
+fn show(s: &Value) {
+    if !s["enabled"].as_bool().unwrap_or(false) {
+        println!("{} chain is off: no ports, no peers, no state", "-".dimmed());
+        return;
     }
+    let up = s["running"].as_bool().unwrap_or(false);
+    let mark = if up { "ok".green() } else { "stopped".red() };
+    println!("{} chain {} on {}", mark, s["version"].as_str().unwrap_or("?"), s["network"].as_str().unwrap_or("?"));
+    if let Some(h) = s["height"].as_u64() {
+        println!("  height {h}");
+    }
+    if let Some(p) = s["peers"].as_u64() {
+        println!("  peers  {p}");
+    }
+}
+
+pub async fn status(_config: &Config) -> Result<()> {
+    show(&call(Method::GET, None).await?);
     Ok(())
 }
 
-/// `hanzo chain up [--foreground] [--with-cloud]`
-pub async fn up(cfg: &Config, foreground: bool, with_cloud: bool) -> Result<()> {
-    let net = network::active(cfg);
-    println!(
-        "{} starting hanzod on {} (network_id {}, chain {})",
-        "→".cyan(),
-        net.name.cyan().bold(),
-        net.network_id,
-        net.chain_id
-    );
-    let bin = resolve_node_bin().ok_or_else(missing_bin_err)?;
-
-    let mut cmd = Command::new(&bin);
-    cmd.env("HANZO_NETWORK", &net.name)
-        .env("HANZO_NETWORK_ID", net.network_id.to_string())
-        .env("HANZO_CHAIN_ID", net.chain_id.to_string())
-        .env("HANZO_RPC", &net.rpc);
-
-    if foreground {
-        println!("{}", "running in foreground (Ctrl-C to stop)…".dimmed());
-        let status = cmd.status().context("running hanzod")?;
-        if !status.success() {
-            bail!("hanzod exited with {status}");
-        }
-        return Ok(());
+pub async fn up(_config: &Config, network: String) -> Result<()> {
+    if !NETWORKS.contains(&network.as_str()) {
+        bail!("unknown network {network:?}; one of {}", NETWORKS.join(", "));
     }
-
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    let child = cmd.spawn().context("spawning hanzod")?;
-    let pid = child.id();
-    write_pid(pid)?;
-    println!("{} hanzod started (pid {pid}) on {}", "✓".green(), net.name.cyan().bold());
-    println!("  {} hanzo chain status   {} hanzo chain stop", "→".dimmed(), "→".dimmed());
-
-    if with_cloud {
-        spawn_cloud()?;
-    } else {
-        println!("  {}", "add --with-cloud to also start the cloud control plane".dimmed());
-    }
+    show(&call(Method::PUT, Some(&json!({ "network": network }))).await?);
     Ok(())
 }
 
-/// `hanzo chain join <network> [--foreground] [--with-cloud]`
-pub async fn join(cfg: &mut Config, network_name: String, foreground: bool, with_cloud: bool) -> Result<()> {
-    network::use_network(cfg, network_name)?;
-    up(cfg, foreground, with_cloud).await
-}
-
-/// `hanzo chain status`
-pub async fn status(cfg: &Config) -> Result<()> {
-    let net = network::active(cfg);
-    println!(
-        "{} {} (network_id {}, chain {})",
-        "network".bold(),
-        net.name.cyan(),
-        net.network_id,
-        net.chain_id
-    );
-    match read_pid() {
-        Some(pid) if pid_alive(pid) => println!("{} hanzod running (pid {pid})", "●".green()),
-        Some(pid) => println!("{} stale pidfile (pid {pid} not running)", "○".yellow()),
-        None => println!("{} no hanzod started by this CLI", "○".dimmed()),
-    }
-    let url = format!("{}/health", net.api.trim_end_matches('/'));
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(2)).build()?;
-    match client.get(&url).send().await {
-        Ok(r) => println!("{} {} -> {}", "api".bold(), url.dimmed(), r.status()),
-        Err(_) => println!("{} {} {}", "api".bold(), url.dimmed(), "unreachable".yellow()),
-    }
-    Ok(())
-}
-
-/// `hanzo chain stop`
-pub fn stop(_cfg: &Config) -> Result<()> {
-    match read_pid() {
-        None => {
-            println!("{}", "no hanzod pidfile — nothing to stop".dimmed());
-        }
-        Some(pid) => {
-            let ok = Command::new("kill")
-                .arg(pid.to_string())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            clear_pid();
-            if ok {
-                println!("{} sent SIGTERM to hanzod (pid {pid})", "✓".green());
-            } else {
-                println!("{} no process {pid} (cleared stale pidfile)", "○".yellow());
-            }
-        }
-    }
+pub async fn down(_config: &Config) -> Result<()> {
+    show(&call(Method::DELETE, None).await?);
     Ok(())
 }
