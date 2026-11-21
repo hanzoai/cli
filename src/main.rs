@@ -285,6 +285,16 @@ enum Commands {
     /// Print the CLI version
     Version,
 
+    /// Check installed tools, paths, authentication, GPU runtime and release integrity
+    Doctor {
+        /// Download current releases and verify provenance and installed bytes
+        #[arg(long, conflicts_with = "offline")]
+        verify: bool,
+        /// Skip network and authentication checks
+        #[arg(long)]
+        offline: bool,
+    },
+
     /// Upgrade every Hanzo tool (hanzo, mcp, dev, zt) to its current release, and
     /// every coding agent installed: npm agents under ~/.hanzo, the rest by their
     /// own updater (`claude update`, `goose update`, …) or uv. Name a tool to
@@ -722,7 +732,9 @@ async fn main() -> Result<()> {
         _ => "trace",
     };
     tracing_subscriber::fmt().with_env_filter(log_level).init();
-    commands::host::retire_shared();
+    if matches.subcommand_name() != Some("doctor") {
+        commands::host::retire_shared();
+    }
 
     let mut config = config::Config::load(matches.get_one::<PathBuf>("config").cloned())?;
     // The org selection belongs to this invocation, so it is read from the command
@@ -734,7 +746,11 @@ async fn main() -> Result<()> {
     // so a network selected in another shell meanwhile never moves where this
     // invocation's credentials go.
     config.network.bound = Some(commands::network::active(&config).name);
-    let telemetry = telemetry::build(&config);
+    let telemetry = if matches.subcommand_matches("doctor").is_some_and(|args| args.get_flag("offline")) {
+        hanzo_event::Telemetry::disabled()
+    } else {
+        telemetry::build(&config)
+    };
 
     // A matched generated operation dispatches first, through the shared seam.
     if let Some(resolved) = commands::product::resolve(&hand, &matches) {
@@ -1002,6 +1018,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
+        Commands::Doctor { verify, offline } => commands::doctor::run(&mut config, verify, offline).await?,
         Commands::Upgrade { tools } => commands::upgrade::run(tools).await?,
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {

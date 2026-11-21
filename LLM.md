@@ -11,7 +11,7 @@ the CLI; discovery/marketing repos link here, never copy it.
 
 **Install / run**:
 - `curl -fsSL https://hanzo.sh | sh` — the ONE published install line, on every surface.
-  hanzo.sh drives THIS repo's `install.sh` once per tool (`hanzo`, `hanzo-mcp`, `dev`);
+  hanzo.sh drives THIS repo's `install.sh` once per tool (`hanzo`, `hanzo-mcp`, `dev`, `gen`, `zt`);
   `install.sh` is the one implementation of "fetch a Hanzo binary" (per-platform asset,
   sha256-verified, second-name symlink). No token: the repo is public. A tool whose
   releases are attested names its workflow (`HANZO_INSTALL_SIGNER`, hanzo.sh's fifth
@@ -41,20 +41,20 @@ to `crates/client`, so one copy links.
 **This binary answers to TWO names, and that is by design.** cloud's Go control
 binary (`hanzoai/cloud`, `cmd/hanzo`) owns a small set of control verbs and
 delegates every other verb to US, through `cloud/cli/link.go` `fabricCLI()`,
-which resolves `hanzo-node` on PATH first and only then `hanzo` (with a
+which resolves `hanzo-cli` on PATH first and only then `hanzo` (with a
 self-exec guard). So a machine carrying the Go control binary installs THIS
-artifact as `hanzo-node`. Same build, two names — there is no third CLI
-codebase, and `hanzo-node` is not a separate product.
+artifact as `hanzo-cli`. Same build, two names — there is no third CLI
+codebase, and `hanzo-cli` is not a separate product.
 
-The trap that follows from it: a stale `hanzo-node` is INVISIBLE. The user types
+The trap that follows from it: a stale `hanzo-cli` is INVISIBLE. The user types
 `hanzo`, the Go binary delegates, and they get whatever old build is sitting
 under the other name — with no version in sight. That is not hypothetical: a
-v1.7.2 `hanzo-node` served roughly 150 phantom `/v1/cloud/<verb-noun>` commands,
+v1.7.2 `hanzo-cli` served roughly 150 phantom `/v1/cloud/<verb-noun>` commands,
 because it predates `genspec.rs` and the registry refutation seam and was built
 from the vendored `spec/products.json` (since deleted). Nothing was wrong with
 the live code; the INSTALL was old. So:
 
-> Whatever installs `hanzo` MUST install `hanzo-node` at the same version, and
+> Whatever installs `hanzo` MUST install `hanzo-cli` at the same version, and
 > both must be this crate. An installer that ships one name, or ships two
 > different versions, produces a CLI whose surface nobody can explain.
 
@@ -82,13 +82,13 @@ parser reads (first line, last token, optional `v` stripped) and the shape every
 other `--version` prints. A skew report is a WARNING, not the answer, so it goes
 to STDERR and a caller piping the version gets exactly one clean line.
 
-`install.sh` does exactly that: it installs `hanzo`, symlinks `hanzo-node` to
+`install.sh` does exactly that: it installs `hanzo`, symlinks `hanzo-cli` to
 the same file (a copy where links are unavailable), and warns when another
 `hanzo` earlier on PATH would run instead of the build it just placed — the
 precedence that let a stale twin hide.
 
 The remaining gaps are elsewhere:
-- PyPI carries `hanzo`, `hanzo-cli` and `hanzo-node` as SEPARATE projects that
+- PyPI carries `hanzo`, `hanzo-cli` and `hanzo-cli` as SEPARATE projects that
   are not this crate. `curl hanzo.sh | sh` used to install one of them at the
   name `hanzo`, into `~/.local/bin`, which outranks `/usr/local/bin` on a normal
   PATH. It now calls THIS installer instead, so there is one download path and
