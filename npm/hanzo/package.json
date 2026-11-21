@@ -1,7 +1,7 @@
 {
   "name": "hanzo",
   "version": "9.0.2",
-  "description": "Hanzo — unified CLI, coding agent (dev), MCP server, local inference engine, node, and TypeScript client in one lightweight install.",
+  "description": "Hanzo — one command for the coding agent, MCP server, local inference engine, node, and TypeScript client in one lightweight install.",
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
@@ -11,7 +11,6 @@
   "homepage": "https://hanzo.ai",
   "bin": {
     "hanzo": "bin/hanzo.js",
-    "hanzo-dev": "bin/hanzo.js",
     "hanzo-mcp": "bin/hanzo.js",
     "hanzo-engine": "bin/hanzo.js",
     "hanzo-node": "bin/hanzo.js"

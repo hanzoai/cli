@@ -1,9 +1,9 @@
 # hanzo
 
-One lightweight install for the entire Hanzo stack — CLI, client SDK, `dev` coding agent, `mcp` server, `engine` (high-performance local inference), and `node`.
+One lightweight install for the entire Hanzo stack — CLI, client SDK, coding agent, `mcp` server, `engine` (high-performance local inference), and `node`.
 
 ```sh
-npm install -g hanzo     # unified CLI + lazy-loaded stack (cli, dev, mcp, engine, node)
+npm install -g hanzo     # the one `hanzo` command + lazy-loaded stack (agent, mcp, engine, node)
 npm install hanzo        # TypeScript client SDK (hanzo, hanzo/ai, hanzo/ui)
 ```
 
@@ -31,7 +31,7 @@ A lightweight front door that installs fast and fetches heavy native binaries la
 | `hanzo/ai` (import) | `@hanzo/ai` | the AI and agents library |
 | `hanzo/ui` (import) | `@hanzo/ui` | the component library (optional peer dependency) |
 | `hanzo` (command) | `@hanzo/cli` | the Rust CLI (`hanzoai/cli`), fetched for your platform on install |
-| `hanzo dev` / `hanzo-dev` | `hanzoai/dev` | terminal AI coding agent, fetched lazily on first run |
+| `hanzo` / `hanzo dev` | `hanzoai/dev` | the terminal AI coding agent, fetched lazily on first run |
 | `hanzo mcp` / `hanzo-mcp` | `hanzoai/mcp` | Model Context Protocol server, fetched lazily on first run |
 | `hanzo engine` / `hanzo-engine` | `hanzoai/engine` | high-performance local inference engine, fetched lazily on first run |
 | `hanzo node` / `hanzo-node` | `hanzoai/node` | Hanzo network validator/chain node (`hanzod`), fetched lazily on first run |

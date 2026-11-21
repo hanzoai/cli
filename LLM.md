@@ -83,6 +83,18 @@ parser reads (first line, last token, optional `v` stripped) and the shape every
 other `--version` prints. A skew report is a WARNING, not the answer, so it goes
 to STDERR and a caller piping the version gets exactly one clean line.
 
+**ONE product name, ONE command (hanzoai/cli#64).** The product is "Hanzo" and the
+command a person types is `hanzo`; bare `hanzo` and `hanzo dev` are the same coding
+session. `Hanzo Dev`, `hanzo-dev` and `hz` are not names of anything: `hz` was never
+shipped by this estate (the npm package of that name is someone else's), and `hanzo-dev`
+was an npm `bin` link, an installer second name and a brew formula, all gone. What
+stays is `dev`, the agent binary hanzoai/dev publishes and gen execs by that name; it
+is the engine behind `hanzo`, installed by hanzo.sh next to it and never advertised
+as a command. `hanzo-mcp`, `hanzo-engine` and `hanzo-node` are other programs. The
+`one_command_ships_under_one_name` and `no_screen_names_a_second_product` tests in
+`tests/cli.rs` hold the line: the `[[bin]]` set, both npm `bin` maps and the help and
+`sandbox explore` screens.
+
 `install.sh` does exactly that: it installs `hanzo`, symlinks `hanzo-cli` to
 the same file (a copy where links are unavailable), and warns when another
 `hanzo` earlier on PATH would run instead of the build it just placed — the

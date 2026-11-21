@@ -9,7 +9,7 @@ use crate::{commands::product::Seam, config::Config};
 
 const TOOLS: &[(&str, &str, &str, &str)] = &[
     ("hanzo", "hanzo", "hanzoai/cli", ""),
-    ("hanzo-dev", "dev", "hanzoai/dev", ""),
+    ("dev", "dev", "hanzoai/dev", ""),
     (
         "hanzo-gen",
         "gen",
@@ -172,8 +172,7 @@ pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool, share: 
 
 pub async fn share_report(args: &[String]) -> Result<()> {
     let dev_bin = which::which("dev")
-        .or_else(|_| which::which("hanzo-dev"))
-        .context("`dev` (hanzo-dev) is not installed; install with: curl -fsSL https://hanzo.sh | sh -s -- dev mcp")?;
+        .context("`dev` is not installed; install with: curl -fsSL https://hanzo.sh | sh -s -- dev mcp")?;
     let status = Command::new(dev_bin)
         .arg("report")
         .args(args)

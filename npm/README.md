@@ -1,6 +1,6 @@
 # @hanzo/cli
 
-The Hanzo CLI — unified entrypoint for Hanzo AI cloud, `dev` coding agent, `hanzo-mcp`, `hanzo-engine` local inference, `hanzo-node` (`hanzod`), and `hanzo-vm`.
+The Hanzo CLI — one command for Hanzo AI cloud, the coding agent, `hanzo-mcp`, `hanzo-engine` local inference, `hanzo-node` (`hanzod`), and `hanzo-vm`.
 
 ```bash
 npm i -g hanzo

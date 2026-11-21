@@ -31,7 +31,7 @@ const TOOL_BINS = {
 
 // A tool counts as present when its native binary sits beside this launcher,
 // or anywhere on PATH as a REAL binary. npm's own global shims (`hanzo-mcp`,
-// `hanzo-dev`, … all symlinks to this very file) are on PATH too, and must not
+// `hanzo-engine`, … all symlinks to this very file) are on PATH too, and must not
 // count: treating one as the tool skips the download and then execs nothing.
 function realBinary(p) {
   try {
@@ -64,10 +64,7 @@ let argv = process.argv.slice(2);
 let targetTool = "hanzo";
 const required = [];
 
-if (rawName === "hanzo-dev" || rawName === "dev") {
-  targetTool = "dev";
-  required.push("dev", "mcp");
-} else if (rawName === "hanzo-mcp" || rawName === "mcp") {
+if (rawName === "hanzo-mcp" || rawName === "mcp") {
   targetTool = "mcp";
   required.push("mcp");
 } else if (rawName === "hanzo-engine") {

@@ -1313,7 +1313,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
 fn explore_sandboxes() {
     println!("Available Hanzo Container & MicroVM Environments:\n");
     println!("  {:<18} {:<18} {:<30} ISOLATION", "TEMPLATE", "BASE RUNTIME", "RECOMMENDED AGENT");
-    println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "hanzo-dev", "alpine/rust/node", "Hanzo Dev (Autonomous)");
+    println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "hanzo", "alpine/rust/node", "Hanzo (Autonomous)");
     println!("  {:<18} {:<18} {:<30} MicroVM / VirtioFS", "claude-env", "node-lts/git", "Claude Code (Anthropic)");
     println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)");
     println!("  {:<18} {:<18} {:<30} Metal GPU MicroVM", "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)");

@@ -436,7 +436,7 @@ impl App {
                 let agent_kind = if is_codex {
                     "Codex"
                 } else if is_hanzo {
-                    "Hanzo Dev"
+                    "Hanzo"
                 } else {
                     "Claude Code"
                 };
@@ -712,8 +712,8 @@ impl App {
             },
             Sandbox {
                 id: "sbx-4".into(),
-                name: "hanzo-dev-agent".into(),
-                agent: "Hanzo Dev".into(),
+                name: "hanzo-agent".into(),
+                agent: "Hanzo".into(),
                 path: format!("{home}/work/hanzo/cli"),
                 runtime: "runc (native GPU)".into(),
                 status: SandboxStatus::Running,
@@ -1425,7 +1425,7 @@ impl App {
         let new_sbx = Sandbox {
             id: format!("sbx-{}", self.sandboxes.len() + 1),
             name: name.clone(),
-            agent: if self.sandboxes.len().is_multiple_of(2) { "Hanzo Dev".into() } else { "Claude Code".into() },
+            agent: if self.sandboxes.len().is_multiple_of(2) { "Hanzo".into() } else { "Claude Code".into() },
             path: format!("{home}/work/sandbox-{}", self.sandboxes.len() + 1),
             runtime: "microvm".into(),
             status: SandboxStatus::Running,
@@ -1495,7 +1495,7 @@ impl App {
     }
 
     pub fn explore_catalog(&mut self) {
-        self.set_status("→ Catalog: [Containers] hanzo-dev, claude-env, codex-runner | [Models] qwen3.8-27b, qwen3.8-72b, deepseek-r1");
+        self.set_status("→ Catalog: [Containers] hanzo, claude-env, codex-runner | [Models] qwen3.8-27b, qwen3.8-72b, deepseek-r1");
     }
 
     pub fn remove_selected(&mut self) {
@@ -3041,7 +3041,7 @@ mod tests {
         app.start_all_agents();
         assert!(app.sandboxes.iter().all(|s| s.status == SandboxStatus::Running));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Claude Code"));
-        assert!(app.sandboxes.iter().any(|s| s.agent == "Hanzo Dev"));
+        assert!(app.sandboxes.iter().any(|s| s.agent == "Hanzo"));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Codex"));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Zen Coder"));
     }

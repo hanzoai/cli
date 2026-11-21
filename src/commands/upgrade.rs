@@ -93,7 +93,6 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
         let n = n.trim().to_ascii_lowercase();
         let native = match n.as_str() {
             "hanzo-mcp" => Some("mcp"),
-            "hanzo-dev" => Some("dev"),
             "hanzo-gen" => Some("gen"),
             "hanzo-zet" => Some("zt"),
             "hanzod" | "hanzo-node" => Some("node"),
@@ -396,8 +395,8 @@ mod tests {
 
     #[test]
     fn prefixed_product_names_upgrade_their_native_binaries() {
-        let p = plan(&names(&["hanzo-dev", "hanzo-gen", "hanzo-mcp", "hanzo-zet"]), |_| false).unwrap();
-        assert_eq!(p.native, names(&["dev", "gen", "mcp", "zt"]));
+        let p = plan(&names(&["hanzo-gen", "hanzo-mcp", "hanzo-zet"]), |_| false).unwrap();
+        assert_eq!(p.native, names(&["gen", "mcp", "zt"]));
         assert!(p.tools.is_empty());
     }
 

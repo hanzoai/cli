@@ -20,9 +20,9 @@ pub fn bot_bin() -> Option<PathBuf> {
     launch::resolve("HANZO_BOT_BIN", &["hanzo-bot", "bot"])
 }
 
-/// Locate the local `hanzo-dev` / `dev` coding agent binary (used for Seatbelt sandboxing).
+/// Locate the local `dev` coding agent binary (used for Seatbelt sandboxing).
 fn dev_bin() -> Option<PathBuf> {
-    launch::resolve("HANZO_DEV_BIN", &["hanzo-dev", "dev"])
+    launch::resolve("HANZO_DEV_BIN", &["dev"])
 }
 
 /// Locate a local Chromium / Chrome binary for sandboxed computer-use rendering & screenshots.
@@ -416,7 +416,7 @@ pub async fn status(engine_url: String, port: u16) -> Result<()> {
     Ok(())
 }
 
-/// `hanzo sandbox exec` — execute a command inside the kernel Seatbelt sandbox (`hanzo-dev sandbox`)
+/// `hanzo sandbox exec` — execute a command inside the kernel Seatbelt sandbox (`dev sandbox`)
 /// or inside a hardware-virtualized `hanzo-vm` Linux microVM (`--vm`).
 pub async fn sandbox_exec(use_vm: bool, cd: Option<PathBuf>, command: Vec<String>) -> Result<()> {
     if command.is_empty() {
@@ -438,7 +438,7 @@ pub async fn sandbox_exec(use_vm: bool, cd: Option<PathBuf>, command: Vec<String
     }
 
     let dev = dev_bin().ok_or_else(|| {
-        anyhow!("`hanzo-dev` binary not found on PATH for Seatbelt sandboxing")
+        anyhow!("`dev` binary not found on PATH for Seatbelt sandboxing; install it with: curl -fsSL https://hanzo.sh | sh -s -- dev")
     })?;
     let mut argv = vec!["sandbox".to_string()];
     if let Some(dir) = cd {

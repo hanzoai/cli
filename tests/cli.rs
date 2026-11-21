@@ -95,6 +95,44 @@ fn every_version_spelling_prints_the_one_line() {
     assert_eq!(out(&["version"]), one);
 }
 
+/// ONE product name, ONE command. The crate ships one binary a person types,
+/// `hanzo` (the `[[bin]]`s behind the `maintainer` feature are build tools), and
+/// neither npm package links a second name to the launcher: `hanzo-dev`, `dev`
+/// and `hz` were three spellings of the same coding session. `hanzo-mcp`,
+/// `hanzo-engine` and `hanzo-node` stay: they are other programs, not other
+/// names for this one.
+#[test]
+fn one_command_ships_under_one_name() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cargo: toml::Value = std::fs::read_to_string(root.join("Cargo.toml")).unwrap().parse().unwrap();
+    let shipped: Vec<&str> = cargo["bin"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b.get("required-features").is_none())
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(shipped, ["hanzo"]);
+
+    for package in ["npm/package.json", "npm/hanzo/package.json"] {
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join(package)).unwrap()).unwrap();
+        let mut names: Vec<&str> = json["bin"].as_object().unwrap().keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["hanzo", "hanzo-engine", "hanzo-mcp", "hanzo-node"], "{package}");
+    }
+}
+
+/// The product is "Hanzo". A screen that says "Hanzo Dev" names a second one.
+#[test]
+fn no_screen_names_a_second_product() {
+    let screens: [&[&str]; 3] = [&["--help"], &["sandbox", "explore"], &["dev", "--help"]];
+    for args in screens {
+        let out = hanzo().args(args).assert().success();
+        let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+        assert!(!text.contains("Hanzo Dev") && !text.contains("hanzo-dev"), "{args:?}:\n{text}");
+    }
+}
+
 /// THE DEFECT: there was no `status` command, so `hanzo status` was parsed as the
 /// flattened coding-session TASK and launched a headless agent. It must be a real
 /// command with its own help.

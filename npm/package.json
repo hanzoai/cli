@@ -1,7 +1,7 @@
 {
   "name": "@hanzo/cli",
   "version": "8.5.910",
-  "description": "Hanzo CLI — unified CLI, coding agent (dev), MCP server, local inference engine, and node",
+  "description": "Hanzo CLI — one command for the coding agent, MCP server, local inference engine, and node",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -10,7 +10,6 @@
   "homepage": "https://hanzo.ai",
   "bin": {
     "hanzo": "bin/hanzo.js",
-    "hanzo-dev": "bin/hanzo.js",
     "hanzo-mcp": "bin/hanzo.js",
     "hanzo-engine": "bin/hanzo.js",
     "hanzo-node": "bin/hanzo.js"

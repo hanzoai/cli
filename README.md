@@ -19,8 +19,8 @@ npm i -g hanzo
 
 One install line on Unix (`curl -fsSL https://hanzo.sh | sh`) or cross-platform via npm (`npm i -g hanzo`, including Windows). It resolves the
 release asset for your platform (linux · macOS on amd64 · arm64, Windows on amd64),
-verifies its sha256, and puts `hanzo` in `~/.local/bin` (or `@hanzo/cli/bin`) — and lazily fetches companion tools (`hanzo-dev`, `hanzo-mcp`, `hanzo-engine`, `hanzo-node`, `hanzo-vm`, `hanzo-zet`, `hanzo-gen`) on demand. The short names `dev`,
-`gen`, `mcp`, and `zt` remain available. Re-run to upgrade.
+verifies its sha256, and puts `hanzo` in `~/.local/bin` (or `@hanzo/cli/bin`) — and lazily fetches companion tools (`hanzo-mcp`, `hanzo-engine`, `hanzo-node`, `hanzo-vm`, `hanzo-zet`, `hanzo-gen`) on demand. `hanzo` is the one command you type;
+the coding agent behind it is installed as `dev` and run through `hanzo`. The short names `gen`, `mcp`, and `zt` remain available. Re-run to upgrade.
 
 These are prebuilt native binaries; the installer does not compile crates. Node and
 Bot have public source but no downloadable native releases yet, so they are not
@@ -78,10 +78,10 @@ resumable, portable object: the Hanzo MCP toolset is attached and a signed-in se
 streams live to mission-control. Auto-approve is on by default; the repo's own
 `.mcp.json` is trust-gated off unless you opt in.
 
-Plain `hanzo dev` runs our own Hanzo Dev agent — `curl -fsSL https://hanzo.sh | sh`
+Plain `hanzo dev` (the same as bare `hanzo`) runs Hanzo's own agent — `curl -fsSL https://hanzo.sh | sh`
 installs it. Another tool is a flag: `--claude`, `--codex`, `--cursor` (`--agent`) or
 `--agy`. A third-party tool talks straight to the account it is already signed in to;
-`--metered` runs it on Hanzo's metered models instead. Hanzo Dev's account is Hanzo's, so
+`--metered` runs it on Hanzo's metered models instead. Hanzo's own agent uses Hanzo's account, so
 it uses the cloud when you are signed in.
 
 ```bash
