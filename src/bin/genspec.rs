@@ -78,6 +78,10 @@ use std::path::PathBuf;
 
 use serde_json::{json, Map, Value};
 
+// Same TLS roots as the CLI: webpki alone rejects a machine's own CA, so an
+// ad-hoc `reqwest::get` fails where the CLI connects fine.
+use hanzo_client::tls_client;
+
 const VERBS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 
 fn segs(p: &str) -> Vec<&str> {
@@ -320,7 +324,9 @@ fn args() -> Args {
 /// what it means.
 async fn read_registry(src: &str) -> (Value, String) {
     let body = if src.starts_with("http") {
-        reqwest::get(src)
+        tls_client()
+            .get(src)
+            .send()
             .await
             .and_then(|r| r.error_for_status())
             .unwrap_or_else(|e| panic!("GET {src}: {e}"))
