@@ -359,6 +359,9 @@ hanzo link host [NAME HOST:PORT] [--install [--system]]   host what the identity
 hanzo link dial SERVICE PORT [--install [--system]]       local PORT → SERVICE (bare = <name>.<org>)
 hanzo link status                            identity, org services, zt processes, installed units
 hanzo link rm NAME                           unpublish
+hanzo link grant FOLDER                      let web-started runs work in FOLDER (and under it) here
+hanzo link revoke FOLDER                     stop that; the runner drops it on its next beat
+hanzo link folders                           this machine's granted folders
 --token-command CMD                          any of the network verbs as a machine's own IAM client
 ```
 
@@ -423,6 +426,16 @@ hanzo link rm NAME                           unpublish
   resolves `/usr/local/bin/hanzo`, a stale Go build — `hanzo link …` is that
   program, so run this one by path (`sudo ~/.local/bin/hanzo link …`). Two
   `link`s is a one-way violation to settle in hanzo-inc/cloud.
+- **Folder grants (hanzo-inc/app#310)** (`link/folders.rs`): `grant`, `revoke`,
+  `folders` act on THIS machine's target — one heartbeat (`target::sync`, which
+  registers it in the selected org when cloud has none) names its id — over
+  `/v1/agent/targets/{id}/folders`. A folder is sent as its absolute real path
+  (`canonicalize`), the spelling gen's runner real-paths a run's `dir` against; a
+  revoke of a folder no longer on disk sends it made absolute. Only the machine's
+  owner may grant or revoke: cloud's 403 is printed as it is. The routes are served
+  (hanzo-inc/cloud f5831678ae) and not in the pinned document yet, so the urls are
+  built off the origin, as `unpublish` does; the next re-pin makes `hanzo agent
+  targets folders` too.
 - `DELETE /v1/network/services/{id}` is served (cloud f4a951db74) but not in the
   pinned document yet, so `unpublish` builds its url off the origin; the next spec
   re-pin makes `hanzo network services rm` too.
