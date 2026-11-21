@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub(crate) use hanzo_identity::lock::{lock_path, Lock};
+pub(crate) use hanzo_identity::lock::Lock;
+#[cfg(test)]
+pub(crate) use hanzo_identity::lock::lock_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

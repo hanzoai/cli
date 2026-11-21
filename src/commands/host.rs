@@ -1,28 +1,18 @@
 //! `hanzo host` — the LOCAL cloud, so every cloud command works with no server.
 //!
-//! Every cloud call resolves WHERE through [`origin`]. When the active network
-//! points at loopback, that resolution also GUARANTEES something is listening
-//! there: it reuses a running host, or starts the one `make host` built in a
-//! hanzoai/cloud checkout. Nothing links Go.
+//! The local cloud is served by `hanzod`, the one daemon per machine (HIP-1330),
+//! which starts the cloud host as its own child on the first request and stops
+//! it when idle. This module is a CLIENT of that daemon: every cloud call
+//! resolves WHERE through [`origin`], and when the active network points at
+//! loopback that resolution guarantees `hanzod` is answering on its ZAP socket,
+//! starting it if it is not. Nothing here launches or supervises the host.
 //!
-//! WHY the host and not the 108 app binaries: the host is a ROUTER that mounts
-//! each subsystem as its own process, started on the first request that reaches
-//! its prefix. Cold is ~15ms, warm ~0.5ms, and an app nobody calls costs a route
-//! entry. So pointing the CLI at the host gets the whole surface for the price of
-//! the commands actually run.
-//!
-//! WHY a persistent daemon rather than a child per command: that laziness only
-//! pays off warm. Stopping the host between commands would make every call cold
-//! and throw the entire benefit away. It outlives the CLI, and `hanzo host stop`
-//! ends it — SIGTERM, which zip drains LIFO into every child it started.
-//!
-//! WHY a unix socket, and WHY ZAP: the host serves the SAME routes on two wires —
-//! ZAP, the fleet's primary transport, and HTTP, a secondary view for third
+//! WHY a unix socket, and WHY ZAP: the daemon serves the SAME routes on two wires
+//! — ZAP, the fleet's primary transport, and a loopback HTTP view for third
 //! parties who cannot speak it. The CLI is first party, so locally it speaks ZAP
-//! ([`crate::zap`]) over a unix socket in the user's own state directory: no
-//! HTTP grammar, no second serialization, no port on any interface. The host is
-//! still told to bind loopback TCP because `cmd/host` always listens on both, but
-//! nothing here dials it — a bound port is never what "running" means to us.
+//! ([`crate::zap`]) over the daemon's socket in the user's own state directory
+//! (mode 0600): no HTTP grammar, no second serialization, no port. Windows has no
+//! unix socket to speak it over, so there the payload is the loopback base URL.
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
@@ -37,9 +27,11 @@ use std::time::{Duration, Instant};
 use crate::commands::network;
 use crate::config::Config;
 
-/// How long a freshly started host gets to answer `/healthz`. It boots its eager
-/// subsystems first, so this is seconds, not milliseconds.
-const READY_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a freshly started daemon gets to answer `/healthz`.
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long hanzod gets to drain its children on SIGTERM.
+const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long to wait on a single `/healthz` probe. Short: the question is only
 /// "is someone already listening", and the answer is local either way.
@@ -93,11 +85,11 @@ fn local_wire(addr: &str) -> Result<Origin> {
     Ok(Origin::Local(format!("http://{addr}")))
 }
 
-/// The local host's ZAP socket. zip reads the wire off the address SHAPE, so a
-/// path binds a unix socket — which is why this is a path and not a port.
+/// The daemon's ZAP socket, `<data>/hanzo/hanzod.zap.sock`. The daemon creates
+/// it 0600; the path is the one thing the two sides agree on.
 #[cfg(unix)]
 pub fn zap_socket() -> Result<PathBuf> {
-    Ok(state_dir()?.join("host.zap.sock"))
+    Ok(data_dir()?.join("hanzod.zap.sock"))
 }
 
 /// The `host:port` to bind when `origin` is loopback, else `None`. The host binds
@@ -142,115 +134,64 @@ pub(crate) async fn healthy(addr: &str) -> bool {
     false
 }
 
-/// Reuse a running host, or start one and wait for it to listen.
+/// Reuse a running daemon, or start one and wait for it to answer.
 pub(crate) async fn ensure(addr: &str) -> Result<()> {
     if healthy(addr).await {
         return Ok(()); // already serving — never double-start
     }
     let bin = binary()?;
-    let mut child = spawn(&bin, addr)?;
+    let mut child = spawn(&bin)?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         if healthy(addr).await {
             return Ok(());
         }
-        // A host that died has already written why. Surfacing its exit beats
-        // spending the whole timeout to report a generic one.
-        if let Some(status) = child.try_wait().context("waiting on the local cloud host")? {
-            bail!("local cloud host exited ({status}) — see {}", log_path()?.display());
+        if let Some(status) = child.try_wait().context("waiting on hanzod")? {
+            bail!("hanzod exited ({status}) — see {}", log_path()?.display());
         }
         if Instant::now() >= deadline {
-            bail!(
-                "local cloud host did not listen on {addr} within {}s — see {}",
-                READY_TIMEOUT.as_secs(),
-                log_path()?.display()
-            );
+            bail!("hanzod did not answer within {}s — see {}", READY_TIMEOUT.as_secs(), log_path()?.display());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-/// Locate the host binary: `$HANZO_HOST_BIN`, else `bin/host` in the default
-/// hanzoai/cloud checkout. Deliberately NOT `$PATH` — `host` there is the DNS
-/// lookup tool, and running that instead would be a baffling failure. The
-/// override names the BINARY rather than the checkout because the host resolves
-/// its plugins as siblings of its own path, so the directory is the real unit.
+/// Locate `hanzod`: `~/.hanzo/bin/hanzod` (the one binary on the machine), else
+/// beside this executable, else `PATH`. Never a checkout: the daemon runs only
+/// programs whose digest it has pinned, and the same holds for starting it.
 fn binary() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os("HANZO_HOST_BIN") {
-        let bin = PathBuf::from(p);
-        if bin.is_file() {
-            return Ok(bin);
-        }
-        bail!("HANZO_HOST_BIN points to missing binary {}", bin.display());
-    }
     let home = dirs::home_dir().unwrap_or_default();
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from));
-    let mut candidates = vec![default_bin()];
-    for name in if cfg!(windows) { ["hanzo-cloud.exe", "cloud.exe"] } else { ["hanzo-cloud", "cloud"] } {
-        if let Some(dir) = &exe_dir {
-            candidates.push(dir.join(name));
-        }
-        candidates.push(home.join(".local").join("bin").join(name));
+    let name = if cfg!(windows) { "hanzod.exe" } else { "hanzod" };
+    let mut candidates = vec![home.join(".hanzo").join("bin").join(name)];
+    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) {
+        candidates.push(dir.join(name));
     }
     for c in &candidates {
         if c.is_file() {
             return Ok(c.clone());
         }
     }
-    if let Ok(found) = which::which("hanzo-cloud") {
+    if let Ok(found) = which::which("hanzod") {
         return Ok(found);
     }
     bail!(
-        "no local cloud host at {}.\n\
-         Install `hanzo-cloud` via `hanzo upgrade cloud`, build it in hanzoai/cloud,\n\
-         or set HANZO_HOST_BIN to a host binary.",
-        default_bin().display()
+        "hanzod is not installed at {}.\nInstall it with `hanzo upgrade hanzod`.",
+        candidates[0].display()
     );
 }
 
-fn default_bin() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join("work/hanzo/cloud/bin/host")
-}
-
-/// Start the host detached, logging to the state dir.
-fn spawn(bin: &Path, addr: &str) -> Result<Child> {
-    let state = state_dir()?;
-    let key = at_rest_key(&state)?;
-    let log = std::fs::File::create(state.join("host.log"))
-        .with_context(|| format!("creating {}", state.join("host.log").display()))?;
-
+/// Start the daemon detached, logging to the data dir.
+fn spawn(bin: &Path) -> Result<Child> {
+    let log = std::fs::File::create(log_path()?).with_context(|| format!("creating {}", log_path().map(|p| p.display().to_string()).unwrap_or_default()))?;
     let mut cmd = Command::new(bin);
-    cmd.arg("-addr").arg(addr);
-    cmd.env("CLOUD_LISTEN", addr);
-    cmd.env("CLOUD_HEALTH_LISTEN", "127.0.0.1:19090");
-    cmd.env("CLOUD_ENABLE_STAGED", "functions");
-    // ZAP is the host's other listener and the one the CLI dials. zip reads the
-    // wire off the address SHAPE, so a path binds a unix socket — which keeps a
-    // second port off every interface for a purely local daemon. Asking for one
-    // on Windows would only fail to bind, so there the host listens on TCP alone.
-    #[cfg(unix)]
-    cmd.arg("-zap").arg(zap_socket()?);
-    // The host defaults to /var/lib/cloud, which a developer cannot write.
-    // Local state belongs beside the rest of the CLI's.
-    if let Some(k) = key {
-        cmd.env(MASTER_ENV, k);
-    }
-    cmd.env("CLOUD_DATA_DIR", state.join("data"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log.try_clone().context("duplicating the host log handle")?))
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().context("duplicating the hanzod log handle")?))
         .stderr(Stdio::from(log));
     detach(&mut cmd);
-
-    let child = cmd.spawn().with_context(|| format!("starting {}", bin.display()))?;
-    // The pid is how `stop` finds it in a LATER process. Dropping the handle here
-    // does not signal the child — std never kills on drop — which is what lets the
-    // daemon outlive the command that started it.
-    std::fs::write(state.join("host.pid"), child.id().to_string())
-        .with_context(|| format!("writing {}", state.join("host.pid").display()))?;
-    Ok(child)
+    cmd.spawn().with_context(|| format!("starting {}", bin.display()))
 }
 
-/// Put the host in its own process group so the Ctrl-C that interrupts the CLI
+/// Put the daemon in its own process group so the Ctrl-C that interrupts the CLI
 /// does not also kill the daemon it just started.
 #[cfg(unix)]
 fn detach(cmd: &mut Command) {
@@ -271,11 +212,6 @@ fn detach(_cmd: &mut Command) {}
 
 // ---- the at-rest key -----------------------------------------------------------
 
-/// The variable the cloud reads its at-rest master key from: base64 of 32
-/// bytes. Every store the host opens is sealed under it; without it they fail
-/// closed.
-const MASTER_ENV: &str = "CLOUD_KMS_MASTER_KEY_REF";
-
 /// SHA-256 of the fixed development key that pre-release builds of `hanzo up`
 /// wrote to `~/.hanzo/cloud/master.key`. An at-rest key belongs to one install,
 /// so this one is recognised by its digest and never used.
@@ -292,46 +228,6 @@ pub fn key() -> String {
 
 fn shared(key: &str) -> bool {
     format!("{:x}", Sha256::digest(key.trim().as_bytes())) == SHARED_KEY_SHA256
-}
-
-/// The key the host starts with. One the caller's environment already names is
-/// theirs and passes through untouched (`None`), because the stores sealed
-/// under it open only under it. Otherwise it is this install's own.
-fn at_rest_key(state: &Path) -> Result<Option<String>> {
-    if let Ok(k) = std::env::var(MASTER_ENV) {
-        if !k.trim().is_empty() {
-            if shared(&k) {
-                bail!("{MASTER_ENV} names the shared development key; unset it and the local host uses a key of its own");
-            }
-            return Ok(None);
-        }
-    }
-    install_key(state).map(Some)
-}
-
-/// This install's key: made once in `<state>/master.key`, owner-only, and read
-/// back on every start after — including by a concurrent start that lost the
-/// race to make it. It is never regenerated, since replacing it strands every
-/// store sealed under it, so a malformed file is an error, not a key to
-/// overwrite.
-fn install_key(state: &Path) -> Result<String> {
-    let path = state.join("master.key");
-    if let Err(e) = hanzo_gen::private::create(&path, key().as_bytes()) {
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(e).with_context(|| format!("creating {}", path.display()));
-        }
-    }
-    let k = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let k = k.trim();
-    let whole = matches!(base64::engine::general_purpose::STANDARD.decode(k), Ok(b) if b.len() == 32);
-    if !whole || shared(k) {
-        bail!(
-            "{} is not an at-rest key of this install's own (base64 of 32 bytes); the stores in {} are sealed under it",
-            path.display(),
-            state.join("data").display()
-        );
-    }
-    Ok(k.to_string())
 }
 
 /// Retire the local cloud state pre-release builds of `hanzo up` kept in
@@ -371,23 +267,20 @@ fn retire(dir: &Path, is_shared: fn(&str) -> bool) -> Result<bool> {
     Ok(true)
 }
 
-/// `${XDG_DATA_HOME}/hanzo/host` — the local host's pid, log, socket and data.
-fn state_dir() -> Result<PathBuf> {
-    let dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("hanzo")
-        .join("host");
+/// `${XDG_DATA_HOME}/hanzo` — the daemon's socket, pid and log.
+fn data_dir() -> Result<PathBuf> {
+    let dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("hanzo");
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     Ok(dir)
 }
 
 fn log_path() -> Result<PathBuf> {
-    Ok(state_dir()?.join("host.log"))
+    Ok(data_dir()?.join("hanzod.log"))
 }
 
-/// The pid recorded by the last [`spawn`], if the process is still alive.
+/// The pid hanzod recorded at start, if the process is still alive.
 pub(crate) fn running_pid() -> Option<i32> {
-    let pid: i32 = std::fs::read_to_string(state_dir().ok()?.join("host.pid")).ok()?.trim().parse().ok()?;
+    let pid: i32 = std::fs::read_to_string(data_dir().ok()?.join("hanzod.pid")).ok()?.trim().parse().ok()?;
     alive(pid).then_some(pid)
 }
 
@@ -429,7 +322,7 @@ pub async fn start(cfg: &Config) -> Result<()> {
     let existed = healthy(&addr).await;
     origin(cfg).await?;
     let verb = if existed { "already running" } else { "started" };
-    println!("{} local cloud host {} at {}", "✓".green(), verb, api.cyan());
+    println!("{} hanzod {} — local cloud at {}", "✓".green(), verb, api.cyan());
     Ok(())
 }
 
@@ -459,7 +352,7 @@ pub async fn stop(cfg: &Config) -> Result<()> {
     // whatever process inherited the number. Nothing serving means nothing to stop,
     // whatever the file says.
     if !healthy(&addr).await {
-        let _ = std::fs::remove_file(state_dir()?.join("host.pid"));
+        let _ = std::fs::remove_file(data_dir()?.join("hanzod.pid"));
         println!("{} not running", "○".dimmed());
         return Ok(());
     }
@@ -467,15 +360,15 @@ pub async fn stop(cfg: &Config) -> Result<()> {
         bail!("{api} is served by a host this CLI did not start — stop it where it was started");
     };
     terminate(pid)?;
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let deadline = Instant::now() + STOP_TIMEOUT;
     while alive(pid) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     if alive(pid) {
-        bail!("local cloud host (pid {pid}) did not exit within {}s", READY_TIMEOUT.as_secs());
+        bail!("hanzod (pid {pid}) did not exit within {}s", STOP_TIMEOUT.as_secs());
     }
-    let _ = std::fs::remove_file(state_dir()?.join("host.pid"));
-    println!("{} local cloud host stopped", "✓".green());
+    let _ = std::fs::remove_file(data_dir()?.join("hanzod.pid"));
+    println!("{} hanzod stopped", "✓".green());
     Ok(())
 }
 
@@ -510,7 +403,7 @@ pub(crate) fn stop_recorded_pid() -> Result<Option<i32>> {
         return Ok(None);
     };
     terminate(pid)?;
-    let _ = std::fs::remove_file(state_dir()?.join("host.pid"));
+    let _ = std::fs::remove_file(data_dir()?.join("hanzod.pid"));
     Ok(Some(pid))
 }
 
@@ -596,44 +489,6 @@ mod tests {
         d
     }
 
-    /// Made once, owner-only, a whole 32-byte key, and the same key every start
-    /// after — never regenerated under stores sealed with it.
-    #[test]
-    fn an_install_key_is_made_once_and_kept() {
-        let state = scratch("key");
-        let k = install_key(&state).unwrap();
-        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&k).unwrap().len(), 32);
-        assert_eq!(install_key(&state).unwrap(), k);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(state.join("master.key")).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "must be owner-only, got {mode:o}");
-        }
-        let _ = std::fs::remove_dir_all(&state);
-    }
-
-    /// Two installs never share a key.
-    #[test]
-    fn installs_never_share_a_key() {
-        let (a, b) = (scratch("a"), scratch("b"));
-        assert_ne!(install_key(&a).unwrap(), install_key(&b).unwrap());
-        assert!(!shared(&key()));
-        let _ = std::fs::remove_dir_all(&a);
-        let _ = std::fs::remove_dir_all(&b);
-    }
-
-    /// A malformed key file is refused and left as it is: overwriting it would
-    /// strand whatever was sealed under the key it used to hold.
-    #[test]
-    fn a_malformed_key_is_refused_not_replaced() {
-        let state = scratch("bad");
-        std::fs::write(state.join("master.key"), "not a key").unwrap();
-        assert!(install_key(&state).is_err());
-        assert_eq!(std::fs::read_to_string(state.join("master.key")).unwrap(), "not a key");
-        let _ = std::fs::remove_dir_all(&state);
-    }
-
     /// An install holding a key of its own is left alone; one holding the
     /// shared key loses its store and key, store first, exactly once.
     #[test]
@@ -661,4 +516,28 @@ mod tests {
         assert_eq!(loopback_addr("https://localhost.attacker.example"), None);
         assert_eq!(loopback_addr("not a url"), None);
     }
+}
+
+/// Tell hanzod where the cloud is when something other than its own child serves
+/// it (`hanzo up`'s k3s VM publishes the cloud on a private loopback port).
+/// `None` withdraws the registration, and hanzod goes back to starting its own
+/// host on demand. Unix only: the registration rides the daemon's socket.
+#[cfg(unix)]
+pub async fn register_upstream(addr: Option<&str>) -> Result<()> {
+    ensure("").await?;
+    let sock = zap_socket()?;
+    let (method, body) = match addr {
+        Some(a) => (Method::PUT, Some(serde_json::json!({ "addr": a }))),
+        None => (Method::DELETE, None),
+    };
+    let r = crate::zap::send(&sock, &method, "/v1/hanzod/upstream", "", body.as_ref()).await?;
+    if !(200..300).contains(&r.status) {
+        bail!("hanzod refused the cloud upstream ({}): {}", r.status, r.body);
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub async fn register_upstream(_addr: Option<&str>) -> Result<()> {
+    Ok(())
 }

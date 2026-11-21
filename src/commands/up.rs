@@ -59,14 +59,13 @@ pub struct Boot {
 const K3S_PORT: u16 = 6443;
 /// The cloud's own port, in the pod and on the Service; the node port the
 /// Service is published at inside the guest; and the host port the forward
-/// lands on. The last is 3690 because that is already what `local` means —
-/// `hanzo network`'s built-in local network names `http://localhost:3690` as
-/// its API, so a cluster published there is reachable by every other command
-/// with no second number to remember. It also stays out of the way of 8080,
-/// which on a developer's machine is usually somebody else's.
+/// lands on. The last is private: 3690 is `hanzod`'s, and `local` means
+/// `http://localhost:3690`, so `hanzo up` registers this port with the daemon as
+/// the cloud upstream instead of binding 3690 itself. It also stays out of the
+/// way of 8080, which on a developer's machine is usually somebody else's.
 const CLOUD_PORT: u16 = 8080;
 const CLOUD_NODE_PORT: u16 = 30080;
-const LOCAL_PORT: u16 = 3690;
+const LOCAL_PORT: u16 = 36930;
 /// The image deployed when the caller names none.
 ///
 /// `cloud-oss:main` is the public multi-arch (`linux/amd64` + `linux/arm64`)
@@ -806,6 +805,7 @@ pub async fn up(
     spawn_supervisor(&dir, &boot, cfg.org.as_deref())?;
     wait_ready_state(&dir)?;
     println!("{} k3s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
+    host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await?;
     endpoints()?;
     let res = finish_link(cfg, link).await;
     if ui || (!no_ui && std::io::stdout().is_terminal()) {
@@ -827,7 +827,7 @@ pub fn console() -> Result<()> {
 
 fn endpoints() -> Result<()> {
     println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
-    println!("  the cloud             http://127.0.0.1:{LOCAL_PORT}  (hanzo network use local)");
+    println!("  the cloud             http://127.0.0.1:3690  via hanzod → 127.0.0.1:{LOCAL_PORT}  (hanzo network use local)");
     println!("  what this cluster is  hanzo up --attest");
     Ok(())
 }
@@ -1062,7 +1062,7 @@ mod tests {
             run_args(&boot()),
             [
                 "run", "--stdio", "--allow-net", "--cpus", "4", "--memory", "4096",
-                "--disk-size", "16384", "-p", "6443:6443", "-p", "3690:30080",
+                "--disk-size", "16384", "-p", "6443:6443", "-p", "36930:30080",
                 "--from", cp.as_str(),
             ]
         );
