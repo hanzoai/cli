@@ -1726,7 +1726,6 @@ mod tests {
     /// `/v1/node` and declares no `cluster` subtree under it.
     #[test]
     fn chain_runs_the_hanzod_node() {
-        assert!(Cli::try_parse_from(["hanzo", "chain", "up"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "chain", "status"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "chain", "up", "testnet"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "chain", "up"]).is_err());
@@ -1734,7 +1733,7 @@ mod tests {
         assert!(Cli::try_parse_from(["hanzo", "chain", "cluster", "topology"]).is_err());
 
         // The deprecated spelling still parses — to the SAME variant.
-        let cli = Cli::try_parse_from(["hanzo", "fabric", "up"]).expect("alias parses");
+        let cli = Cli::try_parse_from(["hanzo", "fabric", "status"]).expect("alias parses");
         assert!(matches!(cli.command, Some(Commands::Chain { .. })));
     }
 
