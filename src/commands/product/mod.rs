@@ -1094,8 +1094,8 @@ fn cell(v: &Value) -> Option<String> {
 }
 
 /// An answer as a table: a list is one row per item, a single object one row per field. The columns are the
-/// scalar keys in the order they first appear, as many as fit `width`, the first always; nested values are
-/// left to `-o json`.
+/// scalar keys (an object's keys are sorted, so they are), the identifying ones first, as many as fit `width`,
+/// the first always; nested values are left to `-o json`.
 fn table(v: &Value, width: usize) -> String {
     let (header, grid) = match (rows(v), v) {
         (Some(list), _) => match columns(list) {
@@ -1112,6 +1112,9 @@ fn pretty(v: &Value) -> String {
     serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
 }
 
+/// The keys that identify an item, which lead its row.
+const LEAD: [&str; 2] = ["id", "name"];
+
 /// A list's header and rows, or `None` when its items have nothing scalar to show.
 fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
     let mut keys: Vec<&str> = Vec::new();
@@ -1125,6 +1128,7 @@ fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
     if keys.is_empty() {
         return None;
     }
+    keys.sort_by_key(|key| LEAD.iter().position(|lead| lead == key).unwrap_or(LEAD.len()));
     let grid = list
         .iter()
         .map(|item| {

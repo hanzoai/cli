@@ -1366,16 +1366,16 @@ fn a_list_is_a_table_with_the_scalar_keys_as_columns() {
     ]);
     let text = table(&list, usize::MAX);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[0], "ID    OWNED_BY  CONTEXT");
-    assert_eq!(lines[1], "zen6  hanzo     262144");
-    assert_eq!(lines[2], "zen5  hanzo     -");
+    assert_eq!(lines[0], "ID    CONTEXT  OWNED_BY");
+    assert_eq!(lines[1], "zen6  262144   hanzo");
+    assert_eq!(lines[2], "zen5  -        hanzo");
     assert_eq!(lines.len(), 3, "a nested value is not a column");
 }
 
 #[test]
 fn the_columns_that_fit_are_shown_and_the_first_always() {
     let list = json!([{"id": "zen6", "owned_by": "hanzo", "context": 1}]);
-    assert_eq!(table(&list, 14).lines().next().unwrap(), "ID    OWNED_BY");
+    assert_eq!(table(&list, 13).lines().next().unwrap(), "ID    CONTEXT");
     assert_eq!(table(&list, 1).lines().next().unwrap(), "ID");
 }
 
