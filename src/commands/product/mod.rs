@@ -274,6 +274,14 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
     if op.is_write() && !has_body && !op.fields.iter().any(|f| f.flag == "data") {
         c = c.arg(data_arg());
     }
+    if op.path == "/v1/projects/sites/deploy" {
+        c = c.arg(
+            Arg::new("dir")
+                .long("dir")
+                .value_name("PATH")
+                .help("Directory containing static site files (index.html, etc.) to deploy live"),
+        );
+    }
     c
 }
 
@@ -460,7 +468,91 @@ fn typed_body(op: &Op, m: &ArgMatches) -> Value {
             insert_path(&mut map, f.key, v);
         }
     }
+    if op.path == "/v1/projects/sites/deploy" {
+        let dir_opt = m.get_one::<String>("dir").map(|s| s.as_str()).or_else(|| {
+            if map.contains_key("files") {
+                None
+            } else if std::path::Path::new("index.html").is_file() {
+                Some(".")
+            } else if std::path::Path::new("dist/index.html").is_file() {
+                Some("dist")
+            } else if std::path::Path::new("build/index.html").is_file() {
+                Some("build")
+            } else if std::path::Path::new("out/index.html").is_file() {
+                Some("out")
+            } else if std::path::Path::new("public/index.html").is_file() {
+                Some("public")
+            } else {
+                None
+            }
+        });
+
+        if let Some(dir_str) = dir_opt {
+            if !map.contains_key("files") {
+                let p = std::path::Path::new(dir_str);
+                let mut files = Vec::new();
+                if let Err(e) = walk_site_dir(p, p, &mut files) {
+                    eprintln!("Warning: failed reading directory '{}': {}", dir_str, e);
+                } else {
+                    map.insert("files".to_string(), Value::Array(files));
+                }
+            }
+            if !map.contains_key("slug") {
+                let name = std::path::Path::new(dir_str)
+                    .canonicalize()
+                    .ok()
+                    .and_then(|p| {
+                        let fname = p.file_name().map(|n| n.to_string_lossy().to_string())?;
+                        if matches!(fname.as_str(), "dist" | "build" | "out" | "public") {
+                            p.parent().and_then(|parent| parent.file_name().map(|n| n.to_string_lossy().to_string()))
+                        } else {
+                            Some(fname)
+                        }
+                    })
+                    .or_else(|| {
+                        std::env::current_dir()
+                            .ok()
+                            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    });
+                if let Some(n) = name {
+                    let s = n.to_lowercase().replace('_', "-");
+                    if !s.is_empty() {
+                        map.insert("slug".to_string(), Value::String(s));
+                    }
+                }
+            }
+        }
+    }
     Value::Object(map)
+}
+
+fn walk_site_dir(base: &std::path::Path, current: &std::path::Path, files: &mut Vec<Value>) -> std::io::Result<()> {
+    if !current.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') || name_str == "node_modules" || name_str == "target" || name_str == ".git" {
+            continue;
+        }
+        if path.is_dir() {
+            walk_site_dir(base, &path, files)?;
+        } else if path.is_file() {
+            if let Ok(rel) = path.strip_prefix(base) {
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    files.push(json!({
+                        "path": rel_str,
+                        "content": content
+                    }));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// ONE reading of a flag's value at its schema type, for the body and the query

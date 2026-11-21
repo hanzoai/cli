@@ -810,22 +810,143 @@ fn leading_globals(argv: &[String]) -> usize {
     i
 }
 
-/// `hanzo code …` is `hanzo dev …` unless it names a code-index operation or asks
-/// for help: the session form is rewritten to `dev` here, before parsing, so the
-/// two spellings are one launcher.
+/// Detects whether `hanzo deploy` targets a site or a platform container app.
+/// Checks IaC manifests (hanzo.yml/yaml/json), container definitions, or static assets.
+fn detect_deploy_target(argv: &[String]) -> &'static str {
+    let mut dir = std::path::PathBuf::from(".");
+    let mut iter = argv.iter().skip(1);
+    while let Some(arg) = iter.next() {
+        if arg == "--dir" {
+            if let Some(val) = iter.next() {
+                dir = std::path::PathBuf::from(val);
+            }
+        } else if let Some(stripped) = arg.strip_prefix("--dir=") {
+            dir = std::path::PathBuf::from(stripped);
+        }
+    }
+
+    // 1. IaC manifests
+    for name in ["hanzo.yml", "hanzo.yaml", "hanzo.json"] {
+        let f = dir.join(name);
+        if f.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&f) {
+                let lower = content.to_lowercase();
+                if lower.contains("kind: site")
+                    || lower.contains("type: site")
+                    || lower.contains("\"type\": \"site\"")
+                    || lower.contains("site:")
+                {
+                    return "site";
+                }
+                if lower.contains("kind: app")
+                    || lower.contains("type: app")
+                    || lower.contains("\"type\": \"app\"")
+                    || lower.contains("app:")
+                    || lower.contains("binaries:")
+                    || lower.contains("image:")
+                    || lower.contains("container:")
+                {
+                    return "app";
+                }
+            }
+        }
+    }
+
+    // 2. Containerized app markers
+    for name in [
+        "Dockerfile",
+        "Containerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "app.json",
+        "app.yaml",
+        "app.yml",
+    ] {
+        if dir.join(name).is_file() {
+            return "app";
+        }
+    }
+
+    // 3. Static site markers
+    for sub in [".", "dist", "build", "out", "public"] {
+        if dir.join(sub).join("index.html").is_file() {
+            return "site";
+        }
+    }
+
+    "site"
+}
+
+/// Rewrite command shorthands before parsing:
+/// - `hanzo code …` -> `hanzo dev …` (unless naming a code-index operation)
+/// - `hanzo site deploy …` / `hanzo sites deploy …` -> `hanzo projects sites deploy …`
+/// - `hanzo site …` / `hanzo sites …` -> `hanzo projects sites …`
+/// - `hanzo app deploy …` / `hanzo apps deploy …` -> `hanzo platform apps create …`
+/// - `hanzo app …` / `hanzo apps …` -> `hanzo platform apps …`
+/// - `hanzo deploy --site …` -> `hanzo projects sites deploy …`
+/// - `hanzo deploy --app …` -> `hanzo platform apps create …`
+/// - `hanzo deploy …` -> auto-detects site vs app via IaC/files -> `projects sites deploy` or `platform apps create`
 fn alias(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     let at = leading_globals(&argv);
-    if argv.get(at).map(String::as_str) != Some("code") {
+    let Some(first) = argv.get(at).map(|s| s.as_str()) else {
+        return argv;
+    };
+
+    if first == "code" {
+        let rest = &argv[at + 1..];
+        let help = rest.iter().any(|a| a == "--help" || a == "-h");
+        let index = first_word(rest.iter().cloned())
+            .is_some_and(|w| cmd.find_subcommand("code").is_some_and(|c| c.find_subcommand(&w).is_some()));
+        let cloud = rest.iter().any(|a| a == "--cloud" || a == "--teleport");
+        if cloud || !(help || index) {
+            argv[at] = "dev".into();
+        }
         return argv;
     }
-    let rest = &argv[at + 1..];
-    let help = rest.iter().any(|a| a == "--help" || a == "-h");
-    let index = first_word(rest.iter().cloned())
-        .is_some_and(|w| cmd.find_subcommand("code").is_some_and(|c| c.find_subcommand(&w).is_some()));
-    let cloud = rest.iter().any(|a| a == "--cloud" || a == "--teleport");
-    if cloud || !(help || index) {
-        argv[at] = "dev".into();
+
+    if first == "site" || first == "sites" {
+        let next = argv.get(at + 1).map(String::as_str);
+        if next == Some("deploy") {
+            argv.splice(at..at + 2, ["projects".into(), "sites".into(), "deploy".into()]);
+        } else {
+            argv.splice(at..at + 1, ["projects".into(), "sites".into()]);
+        }
+        return hoist(cmd, argv);
     }
+
+    if first == "app" || first == "apps" {
+        let next = argv.get(at + 1).map(String::as_str);
+        if next == Some("deploy") {
+            argv.splice(at..at + 2, ["platform".into(), "apps".into(), "create".into()]);
+        } else {
+            argv.splice(at..at + 1, ["platform".into(), "apps".into()]);
+        }
+        return hoist(cmd, argv);
+    }
+
+    if first == "deploy" {
+        let is_site_flag = argv.iter().position(|a| a == "--site");
+        let is_app_flag = argv.iter().position(|a| a == "--app");
+
+        if let Some(pos) = is_site_flag {
+            argv.remove(pos);
+            let new_at = leading_globals(&argv);
+            argv.splice(new_at..new_at + 1, ["projects".into(), "sites".into(), "deploy".into()]);
+        } else if let Some(pos) = is_app_flag {
+            argv.remove(pos);
+            let new_at = leading_globals(&argv);
+            argv.splice(new_at..new_at + 1, ["platform".into(), "apps".into(), "create".into()]);
+        } else {
+            let target = detect_deploy_target(&argv);
+            if target == "app" {
+                argv.splice(at..at + 1, ["platform".into(), "apps".into(), "create".into()]);
+            } else {
+                argv.splice(at..at + 1, ["projects".into(), "sites".into(), "deploy".into()]);
+            }
+        }
+        return hoist(cmd, argv);
+    }
+
     argv
 }
 
@@ -1415,6 +1536,18 @@ mod tests {
             ("code fix", "dev fix"),
             ("--as admin code --codex", "--as admin dev --codex"),
             ("-v code", "-v dev"),
+            ("site deploy", "projects sites deploy"),
+            ("sites deploy", "projects sites deploy"),
+            ("site list", "projects sites list"),
+            ("sites list", "projects sites list"),
+            ("app deploy", "platform apps create"),
+            ("apps deploy", "platform apps create"),
+            ("app list", "platform apps list"),
+            ("apps list", "platform apps list"),
+            ("deploy --site", "projects sites deploy"),
+            ("deploy --app", "platform apps create"),
+            ("--as admin site deploy", "--as admin projects sites deploy"),
+            ("-v site deploy", "-v projects sites deploy"),
         ] {
             assert_eq!(alias(&merged, hoist(&merged, argv(said))), hoist(&merged, argv(means)), "`hanzo {said}`");
         }
