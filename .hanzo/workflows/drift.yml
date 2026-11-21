@@ -1,0 +1,118 @@
+name: Drift
+
+# The drift gate and the nightly re-pin, and nothing else. `hanzo.yml` owns
+# what they run; this file owns WHEN.
+#
+# TWO questions, one job:
+#
+#   1. `make live-check` — has production moved under the committed evidence?
+#      It re-asks the live server and refuses if the evidence no longer
+#      agrees. Nightly and on a click.
+#
+#   2. The re-pin — move `.spec-lock` to what production serves, regenerate,
+#      re-capture the evidence, and commit once `make verify` rules on it.
+#      It runs EVEN WHEN live-check failed, because production having moved is
+#      exactly when the pin wants moving.
+#
+# The pin has ONE owner: this job. Nothing else here goes looking for a newest
+# tag or a moved document — the client lane in hanzoai/ci checks the locked
+# ref and writes nothing, and a second notion of the document is the defect
+# that lane exists to prevent.
+#
+# The re-pin commit goes through CI like any push to main (cicd.yml runs on
+# push), and it carries its own message so it is identifiable. It never
+# commits a tree `make verify` refused: a re-pin that fails the gate fails the
+# job instead, and a person reads it.
+
+on:
+  schedule:
+    # Nightly, 02:00 PT.
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+# A re-pin mid-push is a push conflict: a second run waits for the first.
+concurrency:
+  group: drift
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  drift:
+    runs-on: [linux-amd64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The re-pin commits and pushes; a shallow clone cannot see the
+          # branch it would push onto.
+          fetch-depth: 0
+
+      # `toolchain: stable` is STATED, not inferred from the `@stable` ref:
+      # dtolnay/rust-toolchain reads the branch name out of
+      # `github.action_ref` to decide the toolchain — that is GitHub-runner
+      # behaviour, and the forge's runner does not reproduce it, so the action
+      # received an empty input and failed with "'toolchain' is a required
+      # input". Same step as the release matrix.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      # 1. Has production moved under the committed evidence? The answer is
+      # recorded, not acted on here: the re-pin below runs either way.
+      - name: Live-check
+        id: live
+        continue-on-error: true
+        run: make live-check
+
+      # 2. Move the pin to what production serves, then regenerate, re-capture
+      # the evidence, and commit only what `make verify` rules on.
+      - name: Re-pin
+        id: repin
+        if: always()
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+
+          # The ref is cloud's main HEAD; the digest is the document production
+          # SERVES (api.hanzo.ai/v1/openapi.json), not the YAML in the repo —
+          # the two serializations can never hash alike, and `make spec`
+          # refuses a lock whose digest is not the served document's.
+          [ -n "${TOKEN:-}" ] || { echo "::error::the re-pin reads hanzo-inc/cloud and needs GH_PAT"; exit 1; }
+          head="$(curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/hanzo-inc/cloud/commits/main" | jq -r '.sha')"
+          [ -n "$head" ] && [ "$head" != null ] || { echo "::error::could not read hanzo-inc/cloud main"; exit 1; }
+          curl -fsSL "https://api.hanzo.ai/v1/openapi.json" -o "$RUNNER_TEMP/live.json"
+          live_sha="$(sha256sum "$RUNNER_TEMP/live.json" | cut -d' ' -f1)"
+
+          printf 'ref=%s\nsha256=%s\nrepo=%s\npath=%s\n' \
+            "$head" "$live_sha" "hanzo-inc/cloud" "openapi.yaml" > .spec-lock
+
+          # One act, because they are one act: regenerate from the new lock,
+          # re-capture the evidence against it, then rule on the result. A
+          # re-pin that fails the gate fails the job and commits nothing.
+          make spec
+          make verify
+
+          if git diff --quiet; then
+            echo "pin is current at hanzo-inc/cloud@${head:0:7}"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -c user.name="Zach Kelling" -c user.email=z@zeekay.io commit --trailer "Co-authored-by: Hanzo Dev <dev@hanzo.ai>" -qam "spec: re-pin to hanzo-inc/cloud@${head:0:7} (served ${live_sha:0:7})"
+          git push origin HEAD:main
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+      # The verdict: a live-check failure the re-pin just fixed is a success
+      # (the push it made is verified by CI like any other). A live-check
+      # failure with NO commit means production moved and the re-pin did not
+      # land it — that needs a person, so the job goes red.
+      - name: Verdict
+        if: always()
+        run: |
+          if [ "${{ steps.live.outcome }}" = failure ] && [ "${{ steps.repin.outputs.committed }}" != true ]; then
+            echo "::error::live-check failed and the re-pin committed nothing — production moved and the pin did not"
+            exit 1
+          fi
+          echo "drift is current"

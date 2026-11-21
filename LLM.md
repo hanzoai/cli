@@ -1486,8 +1486,8 @@ Every `main` run from cli#56 (2026-11-16) through cli#60 failed on it ("would ga
 Older runs failed too, for causes not checked here. The re-pin moved `.spec-lock`
 to production's revision, f9c56af2b (v8.5.1267, served digest `3e882d…`), then ran `genspec` and
 `genproduct`, then `make live` (read-only GETs) so `spec/live.json` matches the new capture. The nightly
-re-pin `hanzo.yml` describes (`.hanzo/workflows/drift.yml`) does not exist in this repo, so the pin only
-moves by hand.
+re-pin `hanzo.yml` describes (`.hanzo/workflows/drift.yml`) exists since Nov 21, 2026, so the pin moves
+on its own: live-check nightly and on a click, and the re-pin runs even when live-check failed.
 
 Two things surfaced, both now fixed:
 - **`absorb` compared names only.** Cloud now publishes `DELETE /v1/post/{id}`, which folds to the verb `rm`.
