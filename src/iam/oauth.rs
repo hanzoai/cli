@@ -102,6 +102,19 @@ impl std::fmt::Display for Spent {
 
 impl std::error::Error for Spent {}
 
+/// A refresh that provably never reached IAM's token endpoint: no connection was
+/// made, or IAM refused to read it (429). Only this may be sent again.
+#[derive(Debug)]
+pub struct Unsent(String);
+
+impl std::fmt::Display for Unsent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unsent {}
+
 /// Refuse a token outside the org `--as` named. IAM stamps `owner` with the
 /// signing application's org, so another owner means another org's sign-in.
 /// A refusal only: nothing is granted on this unverified read.
@@ -479,16 +492,39 @@ pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
         ])
         .send()
         .await
-        .context("calling IAM token endpoint")?;
+        .map_err(|e| match e.is_connect() {
+            true => anyhow::Error::new(Unsent(format!("calling IAM token endpoint: {e}"))),
+            false => anyhow::Error::new(e).context("calling IAM token endpoint"),
+        })?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     if matches!(status.as_u16(), 400 | 401 | 403) {
         return Err(Spent(format!("token refresh refused ({status}): {body}")).into());
     }
+    if status.as_u16() == 429 {
+        return Err(Unsent(format!("token refresh throttled ({status}): {body}")).into());
+    }
     if !status.is_success() {
         bail!("token refresh failed ({status}): {body}");
     }
     serde_json::from_str::<TokenSet>(&body).context("parsing refresh response")
+}
+
+/// [`refresh`], sent once more when it never reached IAM.
+///
+/// IAM rotates the refresh token as it answers and revokes the whole session
+/// family when a spent one comes back. A request that timed out, was reset, or got
+/// a 5xx may have been processed, its answer lost: sending the same token again is
+/// then that replay, and ends the session of every process that shares it. Only a
+/// request that provably did not arrive is made again.
+pub async fn spend(origin: &str, held: &TokenSet) -> Result<TokenSet> {
+    match refresh(origin, held).await {
+        Err(e) if e.is::<Unsent>() => {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            refresh(origin, held).await
+        }
+        answer => answer,
+    }
 }
 
 /// End the session AT THE SERVER (RFC 7009): revoking a refresh token deletes its
@@ -933,7 +969,7 @@ fn id_label(host: &str) -> String {
 /// them: on hanzo.id the name is "Hanzo AI" and both open https://hanzo.ai;
 /// another issuer gets its own "<Name> ID" and no mark.
 fn chrome(host: &str) -> (String, String) {
-    if host == "hanzo.id" {
+    if host == "hanzo.ai" || host == "hanzo.id" {
         (
             "<a href=\"https://hanzo.ai\" style=\"position:absolute;top:24px;left:24px;margin:0;\
              font-size:19px;font-weight:600;letter-spacing:-0.4px;line-height:1;color:#f4f4f5;\
@@ -1354,6 +1390,26 @@ mod tests {
         assert!(!refresh(&gone, &issued_to("admin-cli", "rt")).await.unwrap_err().is::<Spent>());
     }
 
+    /// A refresh that may have been processed is sent once. IAM rotates the token
+    /// as it answers, so sending the same one again after a timeout or a 5xx is a
+    /// replay, which revokes the session family; only a request that never arrived
+    /// (throttled before it was read, or no connection) is made again.
+    #[tokio::test]
+    async fn wire_only_a_refresh_that_never_arrived_is_sent_again() {
+        for (status, sent) in [("502 Bad Gateway", 1), ("500 Internal Server Error", 1), ("503 Service Unavailable", 1), ("429 Too Many Requests", 2)] {
+            let (origin, seen) = stand(match status {
+                "502 Bad Gateway" => |_| ("502 Bad Gateway", String::new()),
+                "500 Internal Server Error" => |_| ("500 Internal Server Error", String::new()),
+                "503 Service Unavailable" => |_| ("503 Service Unavailable", String::new()),
+                _ => |_| ("429 Too Many Requests", String::new()),
+            })
+            .await;
+            let err = spend(&origin, &issued_to("admin-cli", "rt-once")).await.unwrap_err();
+            assert!(!err.is::<Spent>(), "{status}: {err}");
+            assert_eq!(seen.lock().unwrap().len(), sent, "{status}: the refresh token was sent {} times", seen.lock().unwrap().len());
+        }
+    }
+
     fn admin(req: &str) -> (&'static str, String) {
         let token = claims_jwt(r#"{"owner":"admin","name":"z","sub":"u-1","azp":"admin-cli","aud":["admin-cli"]}"#);
         if req.starts_with("GET /v1/iam/auth/application") {
@@ -1442,7 +1498,7 @@ mod tests {
 
     #[test]
     fn server_url_known_and_unknown() {
-        assert_eq!(server_url("hanzo").unwrap(), "https://hanzo.id");
+        assert_eq!(server_url("hanzo").unwrap(), "https://hanzo.ai");
         assert_eq!(server_url("lux").unwrap(), "https://lux.id");
         assert_eq!(server_url("zoo").unwrap(), "https://zoo.id");
         assert!(server_url("bogus").is_err());

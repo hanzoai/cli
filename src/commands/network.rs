@@ -36,7 +36,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             chain_id: 36963,
             rpc: "https://rpc.hanzo.network".into(),
             api: "https://api.hanzo.ai".into(),
-            iam: Some("https://hanzo.id".into()),
+            iam: Some("https://hanzo.ai".into()),
             explorer: Some("https://explorer.hanzo.network".into()),
         },
         StoredNetwork {
@@ -46,7 +46,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             chain_id: 36962,
             rpc: "https://rpc.testnet.hanzo.network".into(),
             api: "https://api-test.hanzo.ai".into(),
-            iam: Some("https://hanzo.id".into()),
+            iam: Some("https://hanzo.ai".into()),
             explorer: Some("https://explorer.testnet.hanzo.network".into()),
         },
         StoredNetwork {
@@ -66,7 +66,7 @@ pub fn builtins() -> Vec<StoredNetwork> {
             chain_id: 1337,
             rpc: "http://localhost:9630/v1/chain/c/rpc".into(),
             api: "http://localhost:3690".into(),
-            iam: Some("https://hanzo.id".into()),
+            iam: Some("https://hanzo.ai".into()),
             explorer: None,
         },
     ]
@@ -278,10 +278,10 @@ mod tests {
     #[test]
     fn each_network_signs_in_at_the_issuer_its_api_trusts() {
         for (name, api, iam, realm_name) in [
-            ("mainnet", "https://api.hanzo.ai", "https://hanzo.id", "hanzo"),
-            ("testnet", "https://api-test.hanzo.ai", "https://hanzo.id", "hanzo"),
+            ("mainnet", "https://api.hanzo.ai", "https://hanzo.ai", "hanzo"),
+            ("testnet", "https://api-test.hanzo.ai", "https://hanzo.ai", "hanzo"),
             ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai", "hanzo@id-dev.hanzo.ai"),
-            ("local", "http://localhost:3690", "https://hanzo.id", "hanzo"),
+            ("local", "http://localhost:3690", "https://hanzo.ai", "hanzo"),
         ] {
             let n = builtin(name);
             assert_eq!(n.api, api, "{name}");
@@ -304,7 +304,7 @@ mod tests {
             chain_id: 1,
             rpc: "https://rpc.example".into(),
             api: "https://api.hanzo.ai".into(),
-            iam: Some("https://hanzo.id".into()),
+            iam: Some("https://hanzo.ai".into()),
             explorer: None,
         });
         let n = resolve(&cfg, "devnet").unwrap();

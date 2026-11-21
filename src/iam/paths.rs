@@ -52,23 +52,38 @@ pub fn server_url_for_brand(realm: &str) -> Option<String> {
 /// This is the SINGLE place the mapping lives.
 fn brand_origin(brand: &str) -> Option<&'static str> {
     match brand {
-        // hanzo.id, not api.hanzo.ai. The two are different services: api is
-        // the API, hanzo.id is where a person signs in. IAM's authorize
-        // endpoint answers on both, but it 302s to /login/oauth/authorize on
-        // whatever origin it was reached on, and on api.hanzo.ai that path
-        // belongs to the Cloud Console — which renders "No such page" and ends
-        // the sign-in. The console answers 200 while doing it, so nothing in
-        // the CLI could tell. Every other brand below already names its login
-        // host; hanzo was the one that named its API.
-        //
-        // api.hanzo.ai's own discovery document agrees: it publishes
-        // issuer = https://hanzo.id and both endpoints under it.
-        "hanzo" => Some("https://hanzo.id"),
+        // hanzo.ai, not api.hanzo.ai: the API is a different service from the one a
+        // person signs in at, and its authorize path belongs to the Cloud Console,
+        // which renders "No such page" and ends the sign-in while answering 200.
+        // hanzo.id answers the same IAM and redirects to hanzo.ai.
+        "hanzo" => Some("https://hanzo.ai"),
         "lux" => Some("https://lux.id"),
         "zoo" => Some("https://zoo.id"),
         "bootnode" => Some("https://id.bootno.de"),
         "pars" => Some("https://pars.id"),
         _ => None,
+    }
+}
+
+/// Every issuer a credential of `brand` may name. hanzo signed in at hanzo.id
+/// until the issuer moved to hanzo.ai, and tokens it signed are held until they
+/// lapse; hanzo.id leaves this list when it stops answering (hanzo-inc/cloud#904).
+const HANZO_ISSUERS: [&str; 2] = ["https://hanzo.ai", "https://hanzo.id"];
+
+fn issuers(brand: &str) -> Vec<&'static str> {
+    match brand {
+        DEFAULT_BRAND => HANZO_ISSUERS.to_vec(),
+        other => brand_origin(other).into_iter().collect(),
+    }
+}
+
+/// Whether a credential naming `issuer` may be filed in, and sent to, `realm`.
+/// A realm of a network's own issuer takes that issuer alone.
+pub fn trusts(realm: &str, issuer: &str) -> bool {
+    let issuer = trim_server_url(issuer);
+    match realm.split_once('@') {
+        None => issuers(realm).contains(&issuer),
+        Some(_) => server_url_for_brand(realm).as_deref() == Some(issuer),
     }
 }
 
@@ -105,7 +120,7 @@ pub fn brand_of(realm: &str) -> &str {
 
 /// The realm `brand` signs in to on a network whose API trusts `issuer`.
 ///
-/// A network on hanzo.id (mainnet, testnet) trusts every brand's issuer beside
+/// A network on hanzo's own issuer (mainnet, testnet) trusts every brand's issuer beside
 /// it — one API validates hanzo and its white-label brands — so each brand keeps
 /// its own realm, and its credentials. A network with an issuer of its own
 /// (devnet's id-dev.hanzo.ai) trusts that issuer alone: the default brand signs
@@ -116,7 +131,7 @@ pub fn brand_of(realm: &str) -> &str {
 /// hanzo.id.
 pub fn realm(brand: &str, issuer: &str) -> anyhow::Result<String> {
     let issuer = trim_server_url(issuer.trim());
-    if Some(issuer) == brand_origin(DEFAULT_BRAND) {
+    if issuers(DEFAULT_BRAND).contains(&issuer) {
         return Ok(brand.to_string());
     }
     if brand != DEFAULT_BRAND {
@@ -175,12 +190,26 @@ mod tests {
     #[test]
     fn brand_origins_are_canonical() {
         // The login host, not the API host — see server_url_for_brand.
-        assert_eq!(server_url_for_brand("hanzo").as_deref(), Some("https://hanzo.id"));
+        assert_eq!(server_url_for_brand("hanzo").as_deref(), Some("https://hanzo.ai"));
         assert_eq!(server_url_for_brand("lux").as_deref(), Some("https://lux.id"));
         assert_eq!(server_url_for_brand("zoo").as_deref(), Some("https://zoo.id"));
         assert_eq!(server_url_for_brand("bootnode").as_deref(), Some("https://id.bootno.de"));
         assert_eq!(server_url_for_brand("pars").as_deref(), Some("https://pars.id"));
         assert_eq!(server_url_for_brand("nope"), None);
+    }
+
+    /// hanzo accepts the issuer it signs in at and the one it signed in at before;
+    /// no other host is hanzo's, and another brand takes its own issuer alone.
+    #[test]
+    fn hanzo_trusts_its_two_issuers_and_nobody_else() {
+        for iss in ["https://hanzo.ai", "https://hanzo.ai/", "https://hanzo.id"] {
+            assert!(trusts("hanzo", iss), "{iss}");
+        }
+        for iss in ["https://hanzo.evil.example", "https://id-dev.hanzo.ai", "https://api.hanzo.ai", "http://hanzo.ai", "https://lux.id"] {
+            assert!(!trusts("hanzo", iss), "{iss}");
+        }
+        assert!(trusts("lux", "https://lux.id") && !trusts("lux", "https://hanzo.ai"));
+        assert!(trusts("hanzo@id-dev.hanzo.ai", "https://id-dev.hanzo.ai") && !trusts("hanzo@id-dev.hanzo.ai", "https://hanzo.ai"));
     }
 
     /// A network with its own issuer signs the default brand in there, under a
@@ -190,6 +219,8 @@ mod tests {
     fn a_network_with_its_own_issuer_is_a_realm_of_its_own() {
         assert_eq!(realm("hanzo", "https://hanzo.id").unwrap(), "hanzo");
         assert_eq!(realm("hanzo", "https://hanzo.id/").unwrap(), "hanzo");
+        assert_eq!(realm("hanzo", "https://hanzo.ai").unwrap(), "hanzo");
+        assert_eq!(realm("lux", "https://hanzo.ai").unwrap(), "lux");
         assert_eq!(realm("lux", "https://hanzo.id").unwrap(), "lux");
         let dev = realm("hanzo", "https://id-dev.hanzo.ai").unwrap();
         assert_eq!(dev, "hanzo@id-dev.hanzo.ai");

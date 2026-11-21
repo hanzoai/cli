@@ -81,14 +81,7 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
         Some(held) if held.1.refresh_token.is_some() => held,
         _ => (id, tok),
     };
-    // One more try when IAM did not answer at all: a dropped connection is the
-    // commonest reason, and the second attempt costs a second.
-    let mut answer = oauth::refresh(&origin, &tok).await;
-    if answer.as_ref().is_err_and(|e| !e.is::<oauth::Spent>()) {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        answer = oauth::refresh(&origin, &tok).await;
-    }
-    let fresh = match answer {
+    let fresh = match oauth::spend(&origin, &tok).await {
         Ok(fresh) => fresh,
         // IAM refused it: the session is over, for this identity and no other.
         Err(e) if e.is::<oauth::Spent>() => {
@@ -257,7 +250,7 @@ fn issued(realm: &str, access_token: &str) -> Result<()> {
         return Ok(()); // an unknown brand is refused by `oauth::server_url`
     };
     match identity::issuer(access_token) {
-        Some(iss) if paths::trim_server_url(&iss) == origin => Ok(()),
+        Some(iss) if paths::trusts(realm, &iss) => Ok(()),
         None if !realm.contains('@') => Ok(()),
         stated => bail!(
             "this credential was issued by {}, and {realm} signs in at {origin} — refusing to \

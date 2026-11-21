@@ -164,9 +164,9 @@ fn logout_without_a_browser_prints_the_end_session_link() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Signed out of hanzo as hanzo/z"), "{stdout}");
-    assert!(stdout.contains("To sign out of hanzo.id in a browser too, open:"), "{stdout}");
+    assert!(stdout.contains("To sign out of hanzo.ai in a browser too, open:"), "{stdout}");
     assert!(
-        stdout.contains("https://hanzo.id/v1/iam/oauth/logout?client_id=hanzo-cli"),
+        stdout.contains("https://hanzo.ai/v1/iam/oauth/logout?client_id=hanzo-cli"),
         "{stdout}"
     );
     assert!(!stdout.contains("id_token_hint"), "{stdout}");

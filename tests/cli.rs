@@ -364,8 +364,8 @@ fn network_use_persists_across_invocations() {
 fn network_sandboxes_name_their_own_api() {
     for (name, api, iam) in [
         ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai"),
-        ("testnet", "https://api-test.hanzo.ai", "https://hanzo.id"),
-        ("mainnet", "https://api.hanzo.ai", "https://hanzo.id"),
+        ("testnet", "https://api-test.hanzo.ai", "https://hanzo.ai"),
+        ("mainnet", "https://api.hanzo.ai", "https://hanzo.ai"),
     ] {
         let cfg = tmp();
         hanzo().args(["network", "use", name]).args(cfg_args(&cfg)).assert().success();
@@ -385,6 +385,26 @@ fn issued(iss: &str, owner: &str, name: &str) -> String {
     let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
     let claims = format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#);
     format!("{}.{}.c2ln", b64(br#"{"alg":"RS256","typ":"JWT"}"#), b64(claims.as_bytes()))
+}
+
+/// hanzo files a credential from either issuer it has signed in at, and a
+/// credential from any other host is refused.
+#[test]
+fn hanzo_files_a_credential_from_hanzo_ai_and_hanzo_id_and_refuses_a_foreign_issuer() {
+    let (cfg, home) = (tmp(), tmp());
+    let login = |iss: &str, name: &str| {
+        let mut cmd = hanzo();
+        cmd.args(["auth", "login", "--provider", "hanzo", "--token", "-"])
+            .args(cfg_args(&cfg))
+            .env("HOME", home.path())
+            .write_stdin(format!("{}\n", issued(iss, "hanzo", name)));
+        cmd.assert()
+    };
+    login("https://hanzo.ai", "ai").success();
+    login("https://hanzo.id", "id").success();
+    login("https://hanzo.evil.example", "evil")
+        .failure()
+        .stderr(predicate::str::contains("issued by https://hanzo.evil.example"));
 }
 
 /// Identities never cross networks: devnet refuses a hanzo.id credential, holds
