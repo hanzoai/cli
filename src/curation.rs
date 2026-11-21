@@ -84,6 +84,17 @@ pub fn curated(product: &str) -> Option<&'static Curated> {
     CURATED.iter().find(|c| c.product == product)
 }
 
+/// Paths cloud registers as a second address for an operation it serves at a
+/// canonical one: `/v1/completions` is `/v1/chat/completions` under another
+/// name, with the same handler and the same schema. The command keeps its
+/// name; the request goes to the canonical address.
+const SERVED_AT: &[(&str, &str)] = &[("/v1/completions", "/v1/chat/completions")];
+
+/// The address a request for `path` is sent to.
+pub fn served_at(path: &str) -> &str {
+    SERVED_AT.iter().find(|(alias, _)| *alias == path).map_or(path, |(_, canonical)| canonical)
+}
+
 /// The command a curated product's operations are absorbed under, if any.
 pub fn under(product: &str) -> Option<&'static str> {
     match curated(product) {
@@ -101,6 +112,12 @@ pub fn dropped(product: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completions_are_sent_to_chat_completions() {
+        assert_eq!(served_at("/v1/completions"), "/v1/chat/completions");
+        assert_eq!(served_at("/v1/models"), "/v1/models");
+    }
 
     /// Two entries for one product is two policies for one decision, and
     /// [`curated`] would silently obey the first — so it cannot exist.

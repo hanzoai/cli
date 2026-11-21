@@ -1773,7 +1773,7 @@ mod tests {
         let m = parse("--as admin auth login");
         assert_eq!(path(&m), ["auth", "login"]);
         assert_eq!(m.get_one::<String>("org").map(String::as_str), Some("admin"));
-        assert_eq!(path(&parse("--config /tmp/x -vv chain up")), ["chain", "up"]);
+        assert_eq!(path(&parse("--config /tmp/x -vv chain up mainnet")), ["chain", "up"]);
         assert_eq!(path(&parse("--as=admin agent list")), ["agent", "list"]);
         // Behind the whole path, a global never meets a command's own arguments.
         assert_eq!(path(&parse("--as admin link status")), ["link", "status"]);

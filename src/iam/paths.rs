@@ -5,10 +5,10 @@
 //! per-brand from a configurable origin (`server_url`).
 //!
 //! CRITICAL GOTCHA (from the SDK): IAM serves a `200 text/html` SPA catch-all
-//! for ANY unregistered path. A wrong path is silent breakage, not a 404. So
-//! these exact paths are the only ones we ever hit, and we never let a
-//! discovery round-trip resolve to a different path — the hard-coded values
-//! here ARE the discovery fallback.
+//! for ANY unregistered path. A wrong path is silent breakage, not a 404. The
+//! endpoints and the issuer come from the origin's OIDC discovery document
+//! ([`endpoint`], [`trusts`]); these paths are what stands in for it only when
+//! discovery was never reachable.
 
 /// Authorization endpoint (RFC 6749 §3.1).
 pub const AUTHORIZE: &str = "/v1/iam/oauth/authorize";
@@ -52,38 +52,18 @@ pub fn server_url_for_brand(realm: &str) -> Option<String> {
 /// This is the SINGLE place the mapping lives.
 fn brand_origin(brand: &str) -> Option<&'static str> {
     match brand {
-        // hanzo.ai, not api.hanzo.ai: the API is a different service from the one a
-        // person signs in at, and its authorize path belongs to the Cloud Console,
-        // which renders "No such page" and ends the sign-in while answering 200.
-        // hanzo.id answers the same IAM and redirects to hanzo.ai.
+        // hanzo.ai is where a person signs in, not api.hanzo.ai: IAM's
+        // authorize endpoint 302s to /login/oauth/authorize on whatever origin
+        // it was reached on, and on the API host that path belongs to the Cloud
+        // Console, which renders "No such page" and ends the sign-in while
+        // answering 200. Sign-in starts at hanzo.ai; the issuer and every
+        // endpoint come from its discovery document, never from this table.
         "hanzo" => Some("https://hanzo.ai"),
         "lux" => Some("https://lux.id"),
         "zoo" => Some("https://zoo.id"),
         "bootnode" => Some("https://id.bootno.de"),
         "pars" => Some("https://pars.id"),
         _ => None,
-    }
-}
-
-/// Every issuer a credential of `brand` may name. hanzo signed in at hanzo.id
-/// until the issuer moved to hanzo.ai, and tokens it signed are held until they
-/// lapse; hanzo.id leaves this list when it stops answering (hanzo-inc/cloud#904).
-const HANZO_ISSUERS: [&str; 2] = ["https://hanzo.ai", "https://hanzo.id"];
-
-fn issuers(brand: &str) -> Vec<&'static str> {
-    match brand {
-        DEFAULT_BRAND => HANZO_ISSUERS.to_vec(),
-        other => brand_origin(other).into_iter().collect(),
-    }
-}
-
-/// Whether a credential naming `issuer` may be filed in, and sent to, `realm`.
-/// A realm of a network's own issuer takes that issuer alone.
-pub fn trusts(realm: &str, issuer: &str) -> bool {
-    let issuer = trim_server_url(issuer);
-    match realm.split_once('@') {
-        None => issuers(realm).contains(&issuer),
-        Some(_) => server_url_for_brand(realm).as_deref() == Some(issuer),
     }
 }
 
@@ -113,6 +93,16 @@ fn authority_origin(authority: &str) -> Option<String> {
     })
 }
 
+/// Origins a brand signed in at before it moved. Credentials they issued stay
+/// valid until they expire, so they are still accepted and still name the
+/// brand's own realm; a re-login replaces them.
+fn former_origins(brand: &str) -> &'static [&'static str] {
+    match brand {
+        "hanzo" => &["https://hanzo.id"],
+        _ => &[],
+    }
+}
+
 /// The brand a realm belongs to: the realm itself, or what precedes its `@`.
 pub fn brand_of(realm: &str) -> &str {
     realm.split_once('@').map_or(realm, |(brand, _)| brand)
@@ -131,7 +121,7 @@ pub fn brand_of(realm: &str) -> &str {
 /// hanzo.id.
 pub fn realm(brand: &str, issuer: &str) -> anyhow::Result<String> {
     let issuer = trim_server_url(issuer.trim());
-    if issuers(DEFAULT_BRAND).contains(&issuer) {
+    if Some(issuer) == brand_origin(DEFAULT_BRAND) || former_origins(DEFAULT_BRAND).contains(&issuer) {
         return Ok(brand.to_string());
     }
     if brand != DEFAULT_BRAND {
@@ -171,6 +161,29 @@ pub fn brand_flag(realm: &str) -> String {
 /// Strip trailing slashes from a server origin so paths concatenate cleanly.
 pub fn trim_server_url(server_url: &str) -> &str {
     server_url.trim_end_matches('/')
+}
+
+/// Whether `iss` is the issuer of the IAM `realm` signs in at: what its
+/// discovery names, or an issuer its brand held before it moved.
+pub fn trusts(realm: &str, iss: &str) -> bool {
+    let Some(origin) = server_url_for_brand(realm) else { return false };
+    let former = if realm.contains('@') { &[][..] } else { former_origins(brand_of(realm)) };
+    hanzo_identity::discovery::accepts(&origin, former, iss)
+}
+
+/// The address of an IAM endpoint at `origin`: the one its discovery document
+/// names for `path`, else `path` on the origin.
+pub fn endpoint(origin: &str, path: &str) -> String {
+    let named = hanzo_identity::discovery::lookup(origin).and_then(|d| match path {
+        AUTHORIZE => Some(d.authorization_endpoint),
+        TOKEN => Some(d.token_endpoint),
+        USERINFO => d.userinfo_endpoint,
+        REVOKE => d.revocation_endpoint,
+        LOGOUT => d.end_session_endpoint,
+        DEVICE => d.device_authorization_endpoint,
+        _ => None,
+    });
+    named.unwrap_or_else(|| iam_url(origin, path))
 }
 
 /// Build an absolute IAM endpoint URL from a server origin and a path constant.
@@ -217,9 +230,9 @@ mod tests {
     /// keeps each brand's own realm, and so the credentials it already holds.
     #[test]
     fn a_network_with_its_own_issuer_is_a_realm_of_its_own() {
-        assert_eq!(realm("hanzo", "https://hanzo.id").unwrap(), "hanzo");
-        assert_eq!(realm("hanzo", "https://hanzo.id/").unwrap(), "hanzo");
-        assert_eq!(realm("hanzo", "https://hanzo.ai").unwrap(), "hanzo");
+        for own in ["https://hanzo.ai", "https://hanzo.ai/", "https://hanzo.id", "https://hanzo.id/"] {
+            assert_eq!(realm("hanzo", own).unwrap(), "hanzo", "{own}");
+        }
         assert_eq!(realm("lux", "https://hanzo.ai").unwrap(), "lux");
         assert_eq!(realm("lux", "https://hanzo.id").unwrap(), "lux");
         let dev = realm("hanzo", "https://id-dev.hanzo.ai").unwrap();

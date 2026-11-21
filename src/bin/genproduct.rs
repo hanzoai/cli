@@ -743,7 +743,7 @@ fn main() {
                 nodes,
                 verb: f.verb,
                 method,
-                path: path.clone(),
+                path: curation::served_at(path).to_string(),
                 params: f.params,
                 rest,
                 fields,

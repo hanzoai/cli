@@ -73,6 +73,12 @@ pub async fn served(origin: &str, org: Option<&str>) -> Result<bool> {
         .await
         .context("calling IAM application descriptor")?;
     let status = resp.status();
+    // An origin that does not serve the descriptor (discovery does not list it)
+    // has nothing to read before sign-in: the authorize and token endpoints
+    // refuse an unknown client themselves, and the exchange checks the owner.
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
     let body = resp.text().await.unwrap_or_default();
     let found: Descriptor = serde_json::from_str(&body)
         .map_err(|_| anyhow!("IAM's descriptor for `{id}` is unreadable ({status})"))?;
@@ -389,7 +395,7 @@ async fn hold_for_page(stream: &mut TcpStream) -> bool {
 pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
     let origin = &server_url(brand)?;
     let resp = reqwest::Client::new()
-        .get(paths::iam_url(origin, USERINFO))
+        .get(paths::endpoint(origin, USERINFO))
         .bearer_auth(access_token)
         .send()
         .await
@@ -429,7 +435,7 @@ fn build_authorize_url(
         Some(hint) => q.push(("login_hint", hint)),
         None => q.push(("prompt", "select_account")),
     }
-    Url::parse_with_params(&paths::iam_url(origin, AUTHORIZE), &q).context("building authorize URL")
+    Url::parse_with_params(&paths::endpoint(origin, AUTHORIZE), &q).context("building authorize URL")
 }
 
 /// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5),
@@ -442,7 +448,7 @@ async fn exchange_code(
     verifier: &str,
 ) -> Result<TokenSet> {
     let resp = reqwest::Client::new()
-        .post(paths::iam_url(origin, TOKEN))
+        .post(paths::endpoint(origin, TOKEN))
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -484,7 +490,7 @@ pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
         .timeout(REFRESH_TIMEOUT)
         .build()
         .context("building the IAM client")?
-        .post(paths::iam_url(origin, TOKEN))
+        .post(paths::endpoint(origin, TOKEN))
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
@@ -544,7 +550,7 @@ pub async fn revoke(origin: &str, held: &TokenSet) -> Result<()> {
     };
     let client = issued(held)?;
     let resp = reqwest::Client::new()
-        .post(paths::iam_url(origin, REVOKE))
+        .post(paths::endpoint(origin, REVOKE))
         .form(&[
             ("token", refresh_token),
             ("token_type_hint", "refresh_token"),
@@ -969,7 +975,7 @@ fn id_label(host: &str) -> String {
 /// them: on hanzo.id the name is "Hanzo AI" and both open https://hanzo.ai;
 /// another issuer gets its own "<Name> ID" and no mark.
 fn chrome(host: &str) -> (String, String) {
-    if host == "hanzo.ai" || host == "hanzo.id" {
+    if matches!(host, "hanzo.ai" | "hanzo.id") {
         (
             "<a href=\"https://hanzo.ai\" style=\"position:absolute;top:24px;left:24px;margin:0;\
              font-size:19px;font-weight:600;letter-spacing:-0.4px;line-height:1;color:#f4f4f5;\
@@ -1128,7 +1134,7 @@ fn end_session_url(origin: &str, client: &str, back: Option<(&str, &str)>) -> Re
         q.push(("post_logout_redirect_uri", redirect));
         q.push(("state", state));
     }
-    Url::parse_with_params(&paths::iam_url(origin, LOGOUT), &q).context("building end-session URL")
+    Url::parse_with_params(&paths::endpoint(origin, LOGOUT), &q).context("building end-session URL")
 }
 
 /// How long `hanzo auth logout` waits for the browser to come back.

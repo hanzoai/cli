@@ -3,6 +3,7 @@
 //! index naming the active identity. `hanzo` (CLI) and `hanzod` read the same
 //! files through this crate; tokens themselves stay IAM's.
 
+pub mod discovery;
 pub mod identity;
 pub mod index;
 pub mod lock;

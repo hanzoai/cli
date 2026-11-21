@@ -13,7 +13,7 @@
 //! api-dev.hanzo.ai (the `dev` branch, Square sandbox). Selecting testnet or devnet
 //! therefore never reaches production's books.
 //!
-//! And its own issuer, the one its API trusts: hanzo.id for mainnet and testnet,
+//! And its own issuer, the one its API trusts: hanzo.ai for mainnet and testnet,
 //! which runs mainnet's release, and id-dev.hanzo.ai for devnet, which runs code
 //! no review has passed and so never sees a production credential. The issuer
 //! picks the realm every identity is filed and found under (`iam::paths::realm`),

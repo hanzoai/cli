@@ -83,7 +83,7 @@ impl DeviceTokenResp {
 /// Start the device flow: mint a device_code + user_code pair for `brand`.
 pub async fn device_auth(origin: &str, client_id: &str, scope: &str) -> Result<DeviceAuthResp> {
     let resp = reqwest::Client::new()
-        .post(paths::iam_url(origin, DEVICE))
+        .post(paths::endpoint(origin, DEVICE))
         .query(&[
             ("client_id", client_id),
             ("scope", scope),
@@ -120,7 +120,7 @@ async fn request_token(
     device_code: &str,
 ) -> Result<DeviceTokenResp> {
     let resp = reqwest::Client::new()
-        .post(paths::iam_url(origin, TOKEN))
+        .post(paths::endpoint(origin, TOKEN))
         .header("Accept", "application/json")
         .form(&[
             ("grant_type", DEVICE_GRANT_TYPE),

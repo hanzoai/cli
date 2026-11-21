@@ -1437,3 +1437,12 @@ fn an_operation_that_declares_a_request_id_is_given_one() {
     assert_ne!(named(op, json!({}))["requestId"], id, "one id per invocation");
     assert_eq!(named(op, json!({"requestId": "mine"}))["requestId"], "mine");
 }
+
+/// `hanzo completions create` is chat completions: it goes to
+/// `/v1/chat/completions`, never to `/v1/completions`.
+#[test]
+fn completions_create_posts_to_chat_completions() {
+    let op = OPS.iter().find(|o| o.product == "completions" && o.verb == "create").expect("completions create");
+    assert_eq!((op.method, op.path), ("POST", "/v1/chat/completions"));
+    assert!(OPS.iter().all(|o| o.path != "/v1/completions"));
+}

@@ -13,6 +13,7 @@ dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "785b9c01f3c333cae6d4d99b6861737f40765ce5" }
 
 [dev-dependencies]
