@@ -1146,22 +1146,23 @@ fn fields(o: &Map<String, Value>) -> (Vec<String>, Vec<Vec<String>>) {
     (vec!["FIELD".into(), "VALUE".into()], grid)
 }
 
-/// The text of a table: each column as wide as its widest cell, two spaces between, and only the columns
-/// that fit `width` (the first always).
+/// The text of a table: each column as wide as its widest cell, two spaces between, and the columns that fit
+/// `width` (the first always; one too wide is left out and the narrower ones after it are kept).
 fn lay(header: &[String], grid: &[Vec<String>], width: usize) -> String {
     let widths: Vec<usize> = (0..header.len())
         .map(|i| grid.iter().map(|row| row[i].chars().count()).chain([header[i].chars().count()]).max().unwrap_or(0))
         .collect();
-    let (mut used, mut shown) = (0, 0);
-    for w in &widths {
-        let next = used + if shown == 0 { 0 } else { 2 } + w;
-        if shown > 0 && next > width {
-            break;
+    let mut keep: Vec<usize> = Vec::new();
+    let mut used = 0;
+    for (i, w) in widths.iter().enumerate() {
+        let next = used + if keep.is_empty() { 0 } else { 2 } + w;
+        if keep.is_empty() || next <= width {
+            used = next;
+            keep.push(i);
         }
-        (used, shown) = (next, shown + 1);
     }
     let line = |cells: &[String]| {
-        let padded: Vec<String> = cells[..shown].iter().zip(&widths).map(|(c, w)| format!("{c:<w$}", w = *w)).collect();
+        let padded: Vec<String> = keep.iter().map(|&i| format!("{:<w$}", cells[i], w = widths[i])).collect();
         padded.join("  ").trim_end().to_string()
     };
     std::iter::once(line(header)).chain(grid.iter().map(|row| line(row.as_slice()))).collect::<Vec<_>>().join("\n")

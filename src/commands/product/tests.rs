@@ -1373,6 +1373,12 @@ fn a_list_is_a_table_with_the_scalar_keys_as_columns() {
 }
 
 #[test]
+fn a_column_too_wide_is_left_out_and_the_narrow_ones_after_it_are_kept() {
+    let list = json!([{"id": "a", "long": "x".repeat(50), "n": 1}]);
+    assert_eq!(table(&list, 20).lines().next().unwrap(), "ID  N");
+}
+
+#[test]
 fn the_columns_that_fit_are_shown_and_the_first_always() {
     let list = json!([{"id": "zen6", "owned_by": "hanzo", "context": 1}]);
     assert_eq!(table(&list, 13).lines().next().unwrap(), "ID    CONTEXT");
