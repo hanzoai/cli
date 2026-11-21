@@ -44,7 +44,7 @@ async fn send(method: Method, body: Option<&Value>) -> Result<hanzo_client::Repl
     use hanzo_client::{Http, Request, Transport};
     let mut req = Request::new(method, "http://127.0.0.1:3690/v1/chain".to_string());
     if let Some(b) = body {
-        req = req.json(b);
+        req = req.body(b.clone());
     }
     Http::default().send(req).await.context("hanzod is not running; start it with `hanzo host start`")
 }
