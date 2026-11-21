@@ -88,9 +88,10 @@ command a person types is `hanzo`; bare `hanzo` and `hanzo dev` are the same cod
 session. `Hanzo Dev`, `hanzo-dev` and `hz` are not names of anything: `hz` was never
 shipped by this estate (the npm package of that name is someone else's), and `hanzo-dev`
 was an npm `bin` link, an installer second name and a brew formula, all gone. What
-stays is `dev`, the agent binary hanzoai/dev publishes and gen execs by that name; it
-is the engine behind `hanzo`, installed by hanzo.sh next to it and never advertised
-as a command. `hanzo-mcp`, `hanzo-engine` and `hanzo-node` are other programs. The
+stays is `dev`, the agent binary hanzoai/dev-v1 publishes and gen execs by that name; it
+is the engine behind `hanzo`: hanzo.sh's row for it has no display name, so it is
+installed with `hanzo` (and upgraded with it, `upgrade::with_engine`) and never listed,
+named in help or offered as a tool. `hanzo-mcp`, `hanzo-engine` and `hanzo-node` are other programs. The
 `one_command_ships_under_one_name` and `no_screen_names_a_second_product` tests in
 `tests/cli.rs` hold the line: the `[[bin]]` set, both npm `bin` maps and the help and
 `sandbox explore` screens.
@@ -490,7 +491,13 @@ ONE input, PINNED in `.spec-lock`, and only `make spec` moves it. It used to be
 a capture taken from it could never be re-derived and never be checked.
 
 - `make spec` / `make spec-check` — the refresh seam and its gate, both through
-  `scripts/generate.sh` (the same call site hanzoai/ci's `client:` lane uses).
+  `scripts/generate.sh` (the same call site hanzoai/ci's `client:` lane uses). The
+  lane's check hands `generate.sh --check` the document api.hanzo.ai serves NOW, which
+  moves every few hours, so `--check` rules on `spec/cloud.json` only while that
+  document is the one `.spec-lock` names; once it moved it says a re-pin is due and
+  still checks the generated tree against the committed spec. Before that, every push
+  went red as soon as cloud shipped (a8c4fe1, adeb1c4), and the red meant nothing.
+  `scripts/test-generate-check.sh` holds the three cases.
   Underneath: `genspec` reads the document from `HANZO_REGISTRY` (JSON or YAML)
   and stamps `hanzoai/cloud@<ref> sha256:<digest>` into the spec's provenance.
   `--check` re-runs the whole derivation and refuses a delta without writing.

@@ -9,8 +9,8 @@ hanzo --help
 
 `postinstall` stays lightweight by downloading only the `hanzo` CLI binary for
 your platform from the GitHub release matching this package's version and
-verifying it against its `.sha256` sidecar. Companion binaries (`dev`,
-`hanzo-mcp`, `hanzo-engine`, `hanzod`, `zt`, `hanzo-vm`) are downloaded and
+verifying it against its `.sha256` sidecar. Companion binaries (`hanzo-mcp`,
+`hanzo-engine`, `hanzod`, `zt`, `hanzo-vm`) are downloaded and
 verified **lazily on first use** into `bin/`, and `bin/hanzo.js` prepends its
 own `bin/` directory to `PATH` (handling Windows `Path` case-insensitively) so
 companion executables are always discoverable.

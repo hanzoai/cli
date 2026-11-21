@@ -14,7 +14,18 @@ cd "$(dirname "$0")/.."
 export HANZO_REGISTRY="$SPEC" HANZO_SPEC_REF="${SPEC_REF:-unpinned}"
 
 if [ "${1:-}" = "--check" ]; then
-  cargo run --quiet --features maintainer --bin genspec --locked -- --check
+  # genproduct reads the committed spec, so it answers on any day. genspec reads
+  # the document, so it answers only for the document .spec-lock names: the server
+  # moves every few hours, and a moved document is a re-pin due, not a defect in
+  # this tree. Two runs of one commit must agree.
+  cargo run --quiet --features maintainer --bin genproduct --locked -- --check
+  have=$(sed -n 's/^sha256=//p' .spec-lock)
+  got=$(sha256sum "$SPEC" | cut -d' ' -f1)
+  if [ "$got" = "$have" ]; then
+    cargo run --quiet --features maintainer --bin genspec --locked -- --check
+  else
+    echo "generate.sh: the document moved since .spec-lock ($have, now $got): a re-pin is due; spec/cloud.json is not checked against it"
+  fi
   exit 0
 fi
 

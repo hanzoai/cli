@@ -131,6 +131,9 @@ fn no_screen_names_a_second_product() {
         let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
         assert!(!text.contains("Hanzo Dev") && !text.contains("hanzo-dev"), "{args:?}:\n{text}");
     }
+    let refused = hanzo().args(["upgrade", "dev"]).assert().failure();
+    let text = String::from_utf8_lossy(&refused.get_output().stderr).to_string();
+    assert!(text.contains("upgradable: hanzo, mcp, gen") && !text.contains(" dev"), "{text}");
 }
 
 /// THE DEFECT: there was no `status` command, so `hanzo status` was parsed as the

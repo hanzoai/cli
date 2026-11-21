@@ -438,7 +438,7 @@ pub async fn sandbox_exec(use_vm: bool, cd: Option<PathBuf>, command: Vec<String
     }
 
     let dev = dev_bin().ok_or_else(|| {
-        anyhow!("`dev` binary not found on PATH for Seatbelt sandboxing; install it with: curl -fsSL https://hanzo.sh | sh -s -- dev")
+        anyhow!("the Hanzo agent engine is not installed, and Seatbelt sandboxing needs it; run: curl -fsSL https://hanzo.sh | sh")
     })?;
     let mut argv = vec!["sandbox".to_string()];
     if let Some(dir) = cd {

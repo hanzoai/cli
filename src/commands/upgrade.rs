@@ -1,7 +1,7 @@
 //! `hanzo upgrade [tool…]`: every Hanzo tool to its current release, and the
 //! coding agents `hanzo` runs.
 //!
-//! Hanzo's own tools (`hanzo`, `mcp`, `dev`, `gen`, `zt`) are native binaries, and
+//! Hanzo's own tools (`hanzo`, `mcp`, `gen`, `zt`) are native binaries, and
 //! hanzo.sh is the one implementation of fetching one: platform, asset name,
 //! checksum, second name. Upgrading is running it again, into the directory this
 //! `hanzo` lives in, so the build that answers `hanzo` is the build that was
@@ -30,7 +30,11 @@ use hanzo_gen::backend::BackendKind;
 use hanzo_gen::Root;
 
 /// Hanzo's native tools, as hanzo.sh names them.
-pub const NATIVE: &[&str] = &["hanzo", "mcp", "dev", "gen", "zt", "node", "engine", "cloud"];
+pub const NATIVE: &[&str] = &["hanzo", "mcp", "gen", "zt", "node", "engine", "cloud"];
+
+/// The agent engine `hanzo` runs. hanzo.sh installs it with `hanzo`, so it is
+/// upgraded with it and is not a tool anyone names.
+const ENGINE: &str = "dev";
 
 /// The installer, served at the root of hanzo.sh.
 const INSTALLER: &str = "https://hanzo.sh";
@@ -86,7 +90,7 @@ pub struct Plan {
 /// already installed.
 pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan> {
     if names.is_empty() {
-        return Ok(Plan { native: NATIVE.iter().map(|s| s.to_string()).collect(), tools: tools().filter(|t| installed(t)).collect() });
+        return Ok(Plan { native: with_engine(NATIVE.iter().map(|s| s.to_string()).collect()), tools: tools().filter(|t| installed(t)).collect() });
     }
     let mut p = Plan { native: Vec::new(), tools: Vec::new() };
     for n in names {
@@ -111,7 +115,15 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
             bail!("no tool named `{n}` (upgradable: {})", known.join(", "));
         }
     }
+    p.native = with_engine(p.native);
     Ok(p)
+}
+
+fn with_engine(mut native: Vec<String>) -> Vec<String> {
+    if native.iter().any(|t| t == "hanzo") && !native.iter().any(|t| t == ENGINE) {
+        native.push(ENGINE.into());
+    }
+    native
 }
 
 /// Whether `t` is installed the way it upgrades: an npm agent under `~/.hanzo/bin`,
@@ -365,14 +377,14 @@ mod tests {
     #[test]
     fn nothing_named_is_everything_hanzo_ships_and_the_agents_installed() {
         let p = plan(&[], |t| t.name == "gemini" || t.name == "claude").unwrap();
-        assert_eq!(p.native, names(NATIVE));
+        assert_eq!(p.native, names(&[NATIVE, &[ENGINE]].concat()));
         assert_eq!(p.tools.iter().map(|t| t.name).collect::<Vec<_>>(), ["claude", "gemini"]);
     }
 
     #[test]
     fn a_named_tool_is_sorted_to_the_way_it_upgrades() {
-        let p = plan(&names(&["hanzo-mcp", "qwen-code", "dev", "kilocode", "claude-code", "aider", "goose", "oi"]), |_| false).unwrap();
-        assert_eq!(p.native, names(&["mcp", "dev"]));
+        let p = plan(&names(&["hanzo-mcp", "qwen-code", "kilocode", "claude-code", "aider", "goose", "oi"]), |_| false).unwrap();
+        assert_eq!(p.native, names(&["mcp"]));
         let got: Vec<(&str, Upgrade)> = p.tools.iter().map(|t| (t.name, t.upgrade)).collect();
         assert_eq!(
             got,
@@ -390,7 +402,14 @@ mod tests {
     #[test]
     fn an_unknown_name_is_refused_with_the_list() {
         let e = plan(&names(&["nope"]), |_| false).unwrap_err().to_string();
-        assert!(e.contains("upgradable: hanzo, mcp, dev, gen, zt, node, engine, cloud, claude, codex, interpreter, cursor"), "{e}");
+        assert!(e.contains("upgradable: hanzo, mcp, gen, zt, node, engine, cloud, claude, codex, interpreter, cursor"), "{e}");
+    }
+
+    #[test]
+    fn the_engine_is_upgraded_with_hanzo_and_is_not_a_name() {
+        assert_eq!(plan(&names(&["hanzo"]), |_| false).unwrap().native, names(&["hanzo", "dev"]));
+        let e = plan(&names(&["hanzo", "dev"]), |_| false).unwrap_err().to_string();
+        assert!(e.contains("upgradable: hanzo, mcp, gen"), "{e}");
     }
 
     #[test]

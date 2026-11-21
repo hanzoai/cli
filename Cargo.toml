@@ -53,14 +53,19 @@ maintainer = []
 [workspace]
 members = ["crates/event", "crates/client", "crates/identity"]
 
+# One pin for every crate that links the harness: two revs are two copies of it.
+# Pinned by commit; a Gen release moves it.
+[workspace.dependencies]
+hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "41cb6d8a8d2c4479de8a6e359cb0a17f580b8464" }
+
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }
 hanzo-client = { path = "crates/client", version = "0.1.0" }
 hanzo-identity = { path = "crates/identity", version = "0.1.0" }
 # The coding-agent harness: `hanzo dev`, a bare `hanzo`, `hanzo desktop` and the
 # session, target and kit clients all run it, with this CLI as its host
-# (`commands::dev::Store`). Pinned by commit; a Gen release moves it.
-hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "785b9c01f3c333cae6d4d99b6861737f40765ce5" }
+# (`commands::dev::Store`).
+hanzo-gen = { workspace = true }
 strsim = "0.11"
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.36", features = ["full"] }

@@ -172,7 +172,7 @@ pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool, share: 
 
 pub async fn share_report(args: &[String]) -> Result<()> {
     let dev_bin = which::which("dev")
-        .context("`dev` is not installed; install with: curl -fsSL https://hanzo.sh | sh -s -- dev mcp")?;
+        .context("the Hanzo agent engine is not installed; run: curl -fsSL https://hanzo.sh | sh")?;
     let status = Command::new(dev_bin)
         .arg("report")
         .args(args)
