@@ -141,10 +141,43 @@ pub async fn start(
     // 2. Locate the zrok fabric helper.
     let zbin = zrok_bin()?;
 
+    // An environment enabled against the address Hanzo has retired signs in to a
+    // controller whose certificate it cannot verify, and `enable` calls it
+    // "already enabled", so every share after it dies the same way. Say so and
+    // make it again rather than leaving the person a command to run.
+    if let Some(root) = zrok_root() {
+        if stale_environment(&root) {
+            reset(&zbin, &pr.controller, &root).await?;
+        }
+    }
+
+    match open(&zbin, &pr, &backend, &backend_mode, &name, &owner).await {
+        // The same failure from an environment the address did not give away: the
+        // controller refused its identity. One fresh environment, one more try.
+        Err(e) if stale_failure(&format!("{e:#}")) => {
+            let Some(root) = zrok_root() else { return Err(e) };
+            reset(&zbin, &pr.controller, &root).await?;
+            open(&zbin, &pr, &backend, &backend_mode, &name, &owner).await
+        }
+        done => done,
+    }
+}
+
+/// Enable this machine against the provisioned account, share `backend` and wait
+/// for the helper to announce it.
+async fn open(
+    zbin: &str,
+    pr: &EnableResp,
+    backend: &str,
+    backend_mode: &str,
+    name: &Option<String>,
+    owner: &Option<Owner<'_>>,
+) -> Result<Share> {
+
     // 3. Enable this machine against the provisioned account (idempotent). Its
     // output is kept: a failed enable used to be thrown away, and the user saw only
     // the later "did you 'zrok2 enable'?" (hanzo-inc/cloud#767).
-    let out = Command::new(&zbin)
+    let out = Command::new(zbin)
         .args(["enable", &pr.account_token])
         .env(CONTROLLER_ENV, &pr.controller)
         .stdin(Stdio::null())
@@ -165,13 +198,13 @@ pub async fn start(
         "public".into(),
         "--headless".into(),
         "--backend-mode".into(),
-        wire_backend_mode(&backend_mode).to_string(),
+        wire_backend_mode(backend_mode).to_string(),
     ];
     // --name-selection is OUR fork's flag. A machine with upstream zrok on PATH
     // has a binary that rejects it outright, which killed the share rather than
     // degrading — so ask the binary what it takes before assuming.
     if !pr.namespace.is_empty() {
-        if supports_flag(&zbin, "--name-selection").await {
+        if supports_flag(zbin, "--name-selection").await {
             args.push("--name-selection".into());
             args.push(pr.namespace.clone());
         } else {
@@ -182,7 +215,7 @@ pub async fn start(
             );
         }
     }
-    if let Some(n) = &name {
+    if let Some(n) = name {
         args.push("--name".into());
         args.push(n.clone());
     }
@@ -192,16 +225,16 @@ pub async fn start(
     // second, every account hanzo.id knows — every org — could open this shell by
     // learning the hostname, which is a smaller set than the internet and not a
     // small one.
-    if let Some(o) = &owner {
-        if !supports_flag(&zbin, "--oauth-provider").await {
+    if let Some(o) = owner {
+        if !supports_flag(zbin, "--oauth-provider").await {
             bail!("this zrok cannot say who a share is for (--oauth-provider unsupported); refusing to publish an open terminal");
         }
         args.extend(owner_args(o));
     }
-    args.push(backend.clone());
+    args.push(backend.to_string());
 
     println!("{} sharing {}", "→".green(), backend.cyan());
-    let mut child = Command::new(&zbin)
+    let mut child = Command::new(zbin)
         .args(&args)
         .env(CONTROLLER_ENV, &pr.controller)
         .stdout(Stdio::piped())
@@ -426,7 +459,8 @@ async fn supports_flag(zbin: &str, flag: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Locate the zrok helper: `HANZO_ZROK_BIN`, then `zrok` on `PATH`.
+/// Locate the zrok helper: `HANZO_ZROK_BIN`, then `zrok2` (what zrok 2.x installs
+/// as, ours and upstream's), then `zrok` on `PATH`.
 fn zrok_bin() -> Result<String> {
     if let Ok(b) = std::env::var("HANZO_ZROK_BIN") {
         let b = b.trim().to_string();
@@ -434,13 +468,14 @@ fn zrok_bin() -> Result<String> {
             return Ok(b);
         }
     }
-    let name = "zrok";
-    if which(name).is_some() {
-        return Ok(name.to_string());
+    for name in ["zrok2", "zrok"] {
+        if which(name).is_some() {
+            return Ok(name.to_string());
+        }
     }
     bail!(
-        "the zrok fabric helper was not found on PATH; install it or set \
-         HANZO_ZROK_BIN=/path/to/zrok"
+        "the zrok fabric helper was not found on PATH (as zrok2 or zrok); install it or set \
+         HANZO_ZROK_BIN=/path/to/zrok2"
     )
 }
 
@@ -454,6 +489,82 @@ fn which(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The address Hanzo's tunnel controller was reached at before it had a name of
+/// its own for identities: Cloudflare proxies it and drops the client certificate
+/// an environment signs in with (hanzo-inc/cloud#767). `enable` hands out the
+/// current one, `zt-ctrl.hanzo.ai`; an identity that still names this one cannot
+/// work.
+const RETIRED_FABRIC: &str = "zt-api.hanzo.ai";
+
+/// zrok's state directory, where `enable` leaves the environment and its identity.
+fn zrok_root() -> Option<std::path::PathBuf> {
+    Some(dirs::home_dir()?.join(".zrok2"))
+}
+
+fn identity_file(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("identities").join("environment.json")
+}
+
+/// Whether the environment enabled in `root` names the retired address.
+fn stale_environment(root: &std::path::Path) -> bool {
+    std::fs::read_to_string(identity_file(root)).map(|j| stale_identity(&j)).unwrap_or(false)
+}
+
+/// Whether an enrolled identity's client API is the retired address.
+fn stale_identity(json: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return false };
+    let named = |k: &str| match &v[k] {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+        _ => Vec::new(),
+    };
+    named("ztAPI").into_iter().chain(named("ztAPIs")).any(|u| u.contains(RETIRED_FABRIC))
+}
+
+/// Whether a share died because the controller refused this machine's identity:
+/// the sign-in step, against one of Hanzo's hosts. Anything else is not for a new
+/// environment to fix.
+fn stale_failure(text: &str) -> bool {
+    text.contains("hanzo.ai")
+        && (text.contains("authenticate?method=") || text.contains("no apiSession") || text.contains("x509"))
+}
+
+/// Drop this machine's environment, so `enable` makes a fresh one. The helper's own
+/// `disable` first, which also frees it on the controller; when the controller
+/// refuses (the account it names is gone, or its identity is the thing that is
+/// broken) the local files go instead, so the person is never left holding a
+/// state nothing can clear. Only called for an environment that is Hanzo's.
+async fn reset(zbin: &str, controller: &str, root: &std::path::Path) -> Result<()> {
+    eprintln!(
+        "{} this machine's zrok environment cannot sign in to Hanzo's controller; enabling it again",
+        "note:".yellow()
+    );
+    let out = Command::new(zbin)
+        .arg("disable")
+        .env(CONTROLLER_ENV, controller)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| anyhow!("could not run {zbin} disable: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    forget(root)
+}
+
+/// Remove the environment and its identity from `root`. Nothing else there is
+/// touched.
+fn forget(root: &std::path::Path) -> Result<()> {
+    for f in [root.join("environment.json"), identity_file(root)] {
+        match std::fs::remove_file(&f) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => bail!("could not clear {}: {e}", f.display()),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -549,5 +660,86 @@ mod tests {
         );
         assert_eq!(share_token("no token here"), None);
         assert_eq!(share_token("ab.public"), None); // too short
+    }
+
+    #[test]
+    fn an_identity_that_names_the_retired_address_is_stale() {
+        let old = r#"{"ztAPI":"https://zt-api.hanzo.ai:443/edge/client/v1","ztAPIs":null,"id":{"key":"k"}}"#;
+        let old_list = r#"{"ztAPI":"","ztAPIs":["https://zt-api.hanzo.ai:443/edge/client/v1"]}"#;
+        let current = r#"{"ztAPI":"https://zt-ctrl.hanzo.ai:443/edge/client/v1","ztAPIs":["https://zt-ctrl.hanzo.ai:443/edge/client/v1"]}"#;
+        assert!(stale_identity(old));
+        assert!(stale_identity(old_list));
+        assert!(!stale_identity(current));
+        assert!(!stale_identity("not json"));
+        assert!(!stale_identity(r#"{"ztAPI":"https://zt.example.com/edge/client/v1"}"#), "another network's environment is not ours to reset");
+    }
+
+    #[test]
+    fn only_a_refused_sign_in_to_a_hanzo_host_is_for_a_new_environment() {
+        assert!(stale_failure(
+            "zrok did not announce a share url; it last said: [ERROR]: unable to run share (error listening: failed to listen: no apiSession, authentication attempt failed: Post \"https://zt-api.hanzo.ai:443/edge/client/v1/authenticate?method=cert\": tls: failed to verify certificate: x509: certificate signed by unknown authority)"
+        ));
+        assert!(!stale_failure("zrok did not announce a share url; it last said: [ERROR]: bind: address already in use"));
+        assert!(!stale_failure("authenticate?method=cert: x509: certificate signed by unknown authority (zt.example.com)"));
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("hanzo-share-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("identities")).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_stale_environment_is_read_off_its_identity_file() {
+        let root = scratch("stale");
+        assert!(!stale_environment(&root), "no environment is not a stale one");
+        std::fs::write(identity_file(&root), r#"{"ztAPI":"https://zt-api.hanzo.ai:443/edge/client/v1"}"#).unwrap();
+        assert!(stale_environment(&root));
+        std::fs::write(identity_file(&root), r#"{"ztAPI":"https://zt-ctrl.hanzo.ai:443/edge/client/v1"}"#).unwrap();
+        assert!(!stale_environment(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn forgetting_an_environment_clears_its_two_files_and_nothing_else() {
+        let root = scratch("forget");
+        std::fs::write(root.join("environment.json"), "{}").unwrap();
+        std::fs::write(identity_file(&root), "{}").unwrap();
+        std::fs::write(root.join("metadata.json"), "{}").unwrap();
+        forget(&root).unwrap();
+        assert!(!root.join("environment.json").exists());
+        assert!(!identity_file(&root).exists());
+        assert!(root.join("metadata.json").exists());
+        forget(&root).expect("clearing what is already gone is not an error");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_reset_disables_through_the_helper_and_falls_back_to_the_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("reset");
+        let helper = |status: i32| {
+            let p = root.join(format!("helper-{status}"));
+            let log = root.join("calls");
+            std::fs::write(
+                &p,
+                format!("#!/bin/sh\necho \"$1 $ZROK2_API_ENDPOINT\" >> {}\nexit {status}\n", log.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        std::fs::write(identity_file(&root), "{}").unwrap();
+
+        reset(&helper(0), "https://zrok-api.example.test", &root).await.unwrap();
+        assert!(identity_file(&root).exists(), "a disable the helper did cleared nothing of its own");
+
+        reset(&helper(1), "https://zrok-api.example.test", &root).await.unwrap();
+        assert!(!identity_file(&root).exists(), "a disable the controller refused left the files");
+        let calls = std::fs::read_to_string(root.join("calls")).unwrap();
+        assert_eq!(calls.lines().collect::<Vec<_>>(), ["disable https://zrok-api.example.test"; 2]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
