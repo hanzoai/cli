@@ -461,6 +461,30 @@ pub async fn serve(service: String, passthrough: Vec<String>) -> Result<()> {
     crate::commands::launch::exec(&bin, &argv)
 }
 
+/// Tell hanzod where the cloud is when something other than its own child serves
+/// it (`hanzo up`'s k3s VM publishes the cloud on a private loopback port).
+/// `None` withdraws the registration, and hanzod goes back to starting its own
+/// host on demand. Unix only: the registration rides the daemon's socket.
+#[cfg(unix)]
+pub async fn register_upstream(addr: Option<&str>) -> Result<()> {
+    ensure("").await?;
+    let sock = zap_socket()?;
+    let (method, body) = match addr {
+        Some(a) => (Method::PUT, Some(serde_json::json!({ "addr": a }))),
+        None => (Method::DELETE, None),
+    };
+    let r = crate::zap::send(&sock, &method, "/v1/hanzod/upstream", "", body.as_ref()).await?;
+    if !(200..300).contains(&r.status) {
+        bail!("hanzod refused the cloud upstream ({}): {}", r.status, r.body);
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub async fn register_upstream(_addr: Option<&str>) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,28 +540,4 @@ mod tests {
         assert_eq!(loopback_addr("https://localhost.attacker.example"), None);
         assert_eq!(loopback_addr("not a url"), None);
     }
-}
-
-/// Tell hanzod where the cloud is when something other than its own child serves
-/// it (`hanzo up`'s k3s VM publishes the cloud on a private loopback port).
-/// `None` withdraws the registration, and hanzod goes back to starting its own
-/// host on demand. Unix only: the registration rides the daemon's socket.
-#[cfg(unix)]
-pub async fn register_upstream(addr: Option<&str>) -> Result<()> {
-    ensure("").await?;
-    let sock = zap_socket()?;
-    let (method, body) = match addr {
-        Some(a) => (Method::PUT, Some(serde_json::json!({ "addr": a }))),
-        None => (Method::DELETE, None),
-    };
-    let r = crate::zap::send(&sock, &method, "/v1/hanzod/upstream", "", body.as_ref()).await?;
-    if !(200..300).contains(&r.status) {
-        bail!("hanzod refused the cloud upstream ({}): {}", r.status, r.body);
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-pub async fn register_upstream(_addr: Option<&str>) -> Result<()> {
-    Ok(())
 }
