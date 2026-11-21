@@ -338,8 +338,15 @@ the document when present and omitted when not, so the console prints "cache: no
 reported by this cloud" rather than a zero. Console page 6 also scans kai-gateway's
 default ports 8787-8793 every 2s for `GET /dashboard/savings?format=json&from=` and
 keeps its MEASURED columns apart from its ESTIMATED counterfactual (own colour).
-`t` steps the range (24h, 7d, 30d), `r` reads again. `hanzo usage summary` stays the
-generated command and prints JSON; the repo has no table formatter for product ops.
+`t` steps the range (24h, 7d, 30d), `r` reads again. `hanzo usage summary` is a generated
+command: it prints a table on a terminal and JSON on a pipe, or what `-o table|json|yaml` names.
+
+**Every generated command takes `-o table|json|yaml`** (`commands/product` `Output`, `render`): one formatter. A list
+(an array, or the one array an object carries) is a table on a terminal and JSON on a pipe; columns are the scalar keys,
+`id` and `name` first, as many as fit the terminal. `--data` on an operation that types its body is refused with the flags
+it takes. The HTTP wire (`crates/client` `Http`) makes a request again on a 429 (`Retry-After`, at most a minute, else a
+jittered doubling wait) and on a 500, 502, 503, 504 or a connection that failed, four tries; a POST only when its body
+carries a `requestId`, which a cloud session start and every operation that declares one gets, fresh per invocation.
 
 **`hanzo link` is the one way to link a computer** (`commands/link.rs`, `link/`).
 Hanzo ZT is the network: hanzozt/zt, an OpenZiti fork — not ZeroTier, not WireGuard.
