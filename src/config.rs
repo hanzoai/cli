@@ -12,70 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The lock `update` takes, beside the config: `…/config.toml.lock`.
-pub(crate) fn lock_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".lock");
-    path.with_file_name(name)
-}
-
-/// A cross-process exclusive lock guarding read-modify-write of the config.
-///
-/// The lock lives on a SEPARATE `config.toml.lock` file, never on `config.toml`
-/// itself: the atomic write replaces the config's inode, so a lock held on the
-/// old inode would guard nothing once the rename lands.
-///
-/// It is `std::fs::File::lock` — an advisory OS lock (`flock` on unix,
-/// `LockFileEx` on Windows) that the KERNEL releases when the process exits. So a
-/// killed or crashed `hanzo` can never wedge every other invocation behind a
-/// stale lock, which is the failure mode a hand-rolled `O_EXCL` lockfile has.
-///
-/// The credential store (`iam::token::FileVault`) guards its own read-modify-write
-/// with this SAME primitive on its own sidecar lock, so there is exactly one way
-/// the CLI serializes concurrent writers to a shared file.
-pub(crate) struct Lock(std::fs::File);
-
-impl Lock {
-    pub(crate) fn acquire(path: &Path) -> Result<Self> {
-        let lock = lock_path(path);
-        // The lock file lives beside the thing it guards, and on a brand-new
-        // machine that directory does not exist yet — the FIRST `hanzo auth login`
-        // (via `FileVault::set`) is the very thing that would create it. Opening
-        // the lock with `create(true)` makes the FILE, never its parent DIRS, so
-        // without this the first write on a fresh install failed with
-        // "No such file or directory". Ensure the directory before we lock, so a
-        // clean `curl | sh` → `hanzo auth login` just works.
-        if let Some(dir) = lock.parent() {
-            std::fs::create_dir_all(dir).with_context(|| {
-                format!("creating credential store directory {}", dir.display())
-            })?;
-        }
-        let f = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock)
-            .with_context(|| format!("opening config lock {}", lock.display()))?;
-        // Exclusive, and BLOCKING. Every writer stalls until this releases, so
-        // the critical section MUST stay bounded: a parse, a write, an fsync and
-        // a rename (the fsync is the real cost). Nothing that can
-        // block on a human, a network or the OS keychain may run inside it: a
-        // keyring read can open a GUI prompt and wait indefinitely, which would
-        // hang every other `hanzo` process on the box with no explanation. See
-        // `iam::store::switch_in`, which reads the keychain OUTSIDE this lock.
-        f.lock()
-            .with_context(|| format!("locking config {}", lock.display()))?;
-        Ok(Self(f))
-    }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        // Closing the handle would release it anyway; explicit is clearer.
-        let _ = self.0.unlock();
-    }
-}
+pub(crate) use hanzo_identity::lock::{lock_path, Lock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

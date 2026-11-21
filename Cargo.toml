@@ -51,11 +51,12 @@ maintainer = []
 # truth, several consumers. `client` is the platform client itself: the act grant,
 # the held outcome and the typed refusal live there, not in this binary.
 [workspace]
-members = ["crates/event", "crates/client"]
+members = ["crates/event", "crates/client", "crates/identity"]
 
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }
 hanzo-client = { path = "crates/client", version = "0.1.0" }
+hanzo-identity = { path = "crates/identity", version = "0.1.0" }
 # The coding-agent harness: `hanzo dev`, a bare `hanzo`, `hanzo desktop` and the
 # session, target and kit clients all run it, with this CLI as its host
 # (`commands::dev::Store`). Pinned by commit; a Gen release moves it.

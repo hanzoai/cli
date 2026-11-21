@@ -204,8 +204,8 @@ impl FromStr for Selector {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod testjwt {
+/// Unsigned JWTs for tests in this crate and its dependents.
+pub mod testjwt {
     use base64::Engine;
 
     /// Mint an unsigned-but-well-formed JWT carrying `owner`/`name`. The CLI

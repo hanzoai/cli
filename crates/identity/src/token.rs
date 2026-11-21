@@ -29,7 +29,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::identity::Identity;
+use crate::identity::Identity;
 
 /// An OAuth2/OIDC token response (RFC 6749 §5.1). Stored verbatim as the
 /// stored value so the refresh and id tokens survive for the session.
@@ -142,14 +142,14 @@ impl Vault for FileVault {
     }
 
     fn set(&self, key: &str, value: &str) -> Result<()> {
-        let _lock = crate::config::Lock::acquire(&self.path)?;
+        let _lock = crate::lock::Lock::acquire(&self.path)?;
         let mut map = self.read_map()?;
         map.insert(key.to_string(), value.to_string());
         self.write_map(&map)
     }
 
     fn remove(&self, key: &str) -> Result<bool> {
-        let _lock = crate::config::Lock::acquire(&self.path)?;
+        let _lock = crate::lock::Lock::acquire(&self.path)?;
         let mut map = self.read_map()?;
         let existed = map.remove(key).is_some();
         if existed {
@@ -238,12 +238,12 @@ pub fn take(v: &dyn Vault, brand: &str, id: &Identity) -> Result<Option<TokenSet
 /// The pre-multi-identity store key: the bare brand, one token per brand.
 /// Read exactly once, by the forwards-only migration in `store`, which re-files
 /// it and deletes it. Nothing else may read this — there is no dual-read path.
-pub(super) fn legacy_key(brand: &str) -> &str {
+pub fn legacy_key(brand: &str) -> &str {
     brand
 }
 
-#[cfg(test)]
-pub(crate) mod memvault {
+/// An in-memory vault for tests in this crate and its dependents.
+pub mod memvault {
     use super::*;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
@@ -292,7 +292,7 @@ pub(crate) mod memvault {
 mod tests {
     use super::memvault::MemVault;
     use super::*;
-    use crate::iam::identity::testjwt::jwt;
+    use crate::identity::testjwt::jwt;
 
     fn tokens(access: &str) -> TokenSet {
         TokenSet {
@@ -396,7 +396,7 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = std::fs::remove_file(&p);
-        let _ = std::fs::remove_file(crate::config::lock_path(&p));
+        let _ = std::fs::remove_file(crate::lock::lock_path(&p));
         (FileVault::at(p.clone()), p)
     }
 
@@ -523,8 +523,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let creds = dir.path().join("credentials");
         assert_ne!(
-            crate::config::lock_path(&refresh_subject(&creds)),
-            crate::config::lock_path(&creds),
+            crate::lock::lock_path(&refresh_subject(&creds)),
+            crate::lock::lock_path(&creds),
             "the refresh cycle and the vault write must not share one flock file"
         );
 
@@ -532,7 +532,7 @@ mod tests {
         let c = creds.clone();
         std::thread::spawn(move || {
             // Exactly the nesting active_token performs.
-            let _guard = crate::config::Lock::acquire(&refresh_subject(&c)).unwrap();
+            let _guard = crate::lock::Lock::acquire(&refresh_subject(&c)).unwrap();
             FileVault::at(c.clone()).set("hanzo/hanzo/z", "AT").unwrap();
             let _ = tx.send(FileVault::at(c).get("hanzo/hanzo/z").unwrap());
         });

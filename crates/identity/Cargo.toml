@@ -1,0 +1,19 @@
+[package]
+name = "hanzo-identity"
+version = "0.1.0"
+edition = "2021"
+description = "The identity shared by the Hanzo CLI and hanzod"
+license = "MIT"
+repository = "https://github.com/hanzoai/cli"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+dirs = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "785b9c01f3c333cae6d4d99b6861737f40765ce5" }
+
+[dev-dependencies]
+tempfile = "3.10"

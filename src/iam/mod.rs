@@ -19,7 +19,6 @@
 //!   (`resolve_token`: `--token -`/pipe/hidden-prompt, argv refused).
 
 pub mod device;
-pub mod identity;
 pub mod login;
 pub mod oauth;
 pub mod onboarding;
@@ -28,4 +27,4 @@ pub mod pkce;
 pub mod provider;
 pub mod secret;
 pub mod store;
-pub mod token;
+pub use hanzo_identity::{identity, token};

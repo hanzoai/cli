@@ -902,6 +902,7 @@ dependencies = [
  "hanzo-client",
  "hanzo-event",
  "hanzo-gen",
+ "hanzo-identity",
  "k256",
  "libc",
  "predicates",
@@ -974,6 +975,20 @@ dependencies = [
  "toml",
  "tracing",
  "which",
+]
+
+[[package]]
+name = "hanzo-identity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "dirs",
+ "hanzo-gen",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
