@@ -79,7 +79,14 @@ test: ## Everything, including the derivation gates in tests/ — `verify` among
 	@node --test npm/install.test.js
 	@python3 -m unittest discover -s tests -p test_installer.py
 	@cargo build --quiet --features maintainer --bin driftgate --bin genproduct --locked
-	@cargo test --workspace --locked --no-fail-fast
+	# The cache has a home of its own, named before HOME moves — the same move
+	# the gate in hanzo.yml makes for CARGO_HOME and RUSTUP_HOME. The issuer
+	# tests (`trusts`, the credential store) fetch the live discovery documents
+	# and cache them through dirs::cache_dir; with XDG_CACHE_HOME unset that is
+	# $HOME/.cache, so a test run wrote the runner's HOME and the gate refused
+	# it (forge run #85 on the PR #72 merge: hanzo.ai, hanzo.id, lux.id). The
+	# cache belongs in the build tree, never in a person's HOME.
+	@XDG_CACHE_HOME="$(CURDIR)/target/test-cache" cargo test --workspace --locked --no-fail-fast
 
 build: ## The shipped binary.
 	@cargo build --release --bin hanzo --locked

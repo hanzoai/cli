@@ -27,6 +27,12 @@ fn hanzo() -> Command {
     for v in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
         cmd.env_remove(v);
     }
+    // A machine caller's key is read at the point of use (`Seam::open`), so an
+    // ambient HANZO_API_KEY makes a "signed out" test signed in: `hanzo status`
+    // then probes the cloud and answers "no surface answered" instead of
+    // refusing with the login hint. The suite's signed-out tests are only
+    // signed out if the key is gone.
+    cmd.env_remove("HANZO_API_KEY");
     cmd
 }
 
