@@ -135,7 +135,12 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
     if task.trim().is_empty() {
         bail!("a cloud task cannot be empty");
     }
-    let mut body = json!({"prompt": task, "tool": backend.as_str(), "desktop": desktop});
+    let mut body = json!({
+        "prompt": task,
+        "tool": backend.as_str(),
+        "desktop": desktop,
+        "requestId": super::product::request_id(),
+    });
     if let Some(id) = previous {
         let prior = detail(&seam, &id).await?;
         if !finished(field(&prior, "status")) && field(&prior, "status") != "paused" {

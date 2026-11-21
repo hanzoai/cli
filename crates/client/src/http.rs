@@ -7,10 +7,12 @@
 //! `Err` here.
 
 use std::future::Future;
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::error::Error;
+use crate::retry;
 
 pub use reqwest::Method;
 
@@ -50,6 +52,13 @@ impl Request {
         self.body = Some(body);
         self
     }
+
+    /// Whether the request may be made again after a failure that left it possibly processed: any but a
+    /// POST or PATCH, and a POST or PATCH that names itself with a `requestId`, which the platform answers once.
+    pub(crate) fn repeats(&self) -> bool {
+        let named = self.body.as_ref().and_then(|b| b.get("requestId")).and_then(Value::as_str);
+        !matches!(self.method, Method::POST | Method::PATCH) || named.is_some_and(|id| !id.is_empty())
+    }
 }
 
 /// What a server said: its status, and its body parsed where it parses.
@@ -86,11 +95,10 @@ impl Http {
     pub fn new(client: reqwest::Client) -> Self {
         Http { client }
     }
-}
 
-impl Transport for Http {
-    async fn send(&self, request: Request) -> Result<Reply, Error> {
-        let mut call = self.client.request(request.method, &request.url);
+    /// One try: the reply and the wait its `Retry-After` named, or the fault and whether it passes.
+    async fn once(&self, request: &Request) -> Result<(Reply, Option<Duration>), (Error, bool)> {
+        let mut call = self.client.request(request.method.clone(), &request.url);
         if let Some(token) = &request.token {
             call = call.bearer_auth(token);
         }
@@ -100,10 +108,17 @@ impl Transport for Http {
         if let Some(body) = &request.body {
             call = call.json(body);
         }
-        let fault = |cause: String| Error::Wire { url: request.url.clone(), cause };
-        let answer = call.send().await.map_err(|e| fault(e.to_string()))?;
+        let fault = |e: reqwest::Error| {
+            (Error::Wire { url: request.url.clone(), cause: e.to_string() }, retry::passes(&e))
+        };
+        let answer = call.send().await.map_err(fault)?;
         let status = answer.status().as_u16();
-        let text = answer.text().await.map_err(|e| fault(e.to_string()))?;
+        let named = answer
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(retry::wait_of);
+        let text = answer.text().await.map_err(fault)?;
         // An error page is still the caller's to show, so text that is not JSON
         // rides back as a JSON string rather than becoming a parse failure.
         let body = if text.is_empty() {
@@ -111,6 +126,25 @@ impl Transport for Http {
         } else {
             serde_json::from_str(&text).unwrap_or(Value::String(text))
         };
-        Ok(Reply { status, body })
+        Ok((Reply { status, body }, named))
+    }
+}
+
+impl Transport for Http {
+    /// The request is made again (see [`retry`]) while the server is busy or failing in a way that passes.
+    async fn send(&self, request: Request) -> Result<Reply, Error> {
+        let mut attempt = 1;
+        loop {
+            let tried = self.once(&request).await;
+            let (again, named) = match &tried {
+                Ok((reply, named)) => (retry::status(reply.status, request.repeats()), *named),
+                Err((_, passes)) => (*passes && request.repeats(), None),
+            };
+            if !again || attempt == retry::TRIES || named.is_some_and(|wait| wait > retry::HOLD) {
+                return tried.map(|(reply, _)| reply).map_err(|(error, _)| error);
+            }
+            tokio::time::sleep(named.unwrap_or_else(|| retry::backoff(attempt))).await;
+            attempt += 1;
+        }
     }
 }

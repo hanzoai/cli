@@ -178,7 +178,7 @@ fn op_params_are_unique_and_not_reserved() {
         for p in op.params {
             assert!(seen.insert(*p), "duplicate positional {p} in {}", op.path);
             assert!(
-                !["data", "query", "raw", "method", "subpath"].contains(p),
+                !["data", "output", "query", "method", "subpath"].contains(p),
                 "positional {p} collides with a reserved control in {}",
                 op.path
             );
@@ -308,14 +308,19 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
         assert_eq!(v[f.key], format!("v-{}", f.key), "{} did not reach the body", f.key);
     }
 
-    // A typed leaf exposes NO `--data` — the flags ARE the body.
+    // A typed leaf takes no `--data` — the flags ARE the body — and using it is refused by name.
     let mut leaky = argv.clone();
     leaky.push("--data");
     leaky.push("{}");
-    assert!(
-        augment(hand()).try_get_matches_from(&leaky).is_err(),
-        "a typed write must not also accept --data: {leaky:?}"
-    );
+    let m = matches_of(&leaky);
+    let Some(Resolved::Leaf { body: LeafBody::Misused, .. }) = resolve(&hand(), &m) else {
+        panic!("a typed write must refuse --data: {leaky:?}");
+    };
+    let said = flags_not_data(op);
+    assert!(said.contains("takes its body as flags, not --data"), "{said}");
+    for f in op.fields.iter().filter(|f| !f.query && !f.secret) {
+        assert!(said.contains(&format!("--{}", field_flag(f))), "{said} does not name --{}", field_flag(f));
+    }
 }
 
 /// An INTEGER-typed flag reaches the body as a JSON number (not a string), and an
@@ -1349,4 +1354,80 @@ fn a_machine_key_is_the_variable_trimmed_and_nothing_when_blank() {
         use std::os::unix::ffi::OsStringExt;
         assert_eq!(machine_key(Some(OsString::from_vec(vec![0xff, 0xfe]))), None, "not text is no key");
     }
+}
+
+// ---- the answer: one formatter, `-o table|json|yaml` -------------------------
+
+#[test]
+fn a_list_is_a_table_with_the_scalar_keys_as_columns() {
+    let list = json!([
+        {"id": "zen6", "owned_by": "hanzo", "context": 262144, "tags": ["a"]},
+        {"id": "zen5", "owned_by": "hanzo", "context": null},
+    ]);
+    let text = table(&list, usize::MAX);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "ID    OWNED_BY  CONTEXT");
+    assert_eq!(lines[1], "zen6  hanzo     262144");
+    assert_eq!(lines[2], "zen5  hanzo     -");
+    assert_eq!(lines.len(), 3, "a nested value is not a column");
+}
+
+#[test]
+fn the_columns_that_fit_are_shown_and_the_first_always() {
+    let list = json!([{"id": "zen6", "owned_by": "hanzo", "context": 1}]);
+    assert_eq!(table(&list, 14).lines().next().unwrap(), "ID    OWNED_BY");
+    assert_eq!(table(&list, 1).lines().next().unwrap(), "ID");
+}
+
+#[test]
+fn the_one_array_an_object_carries_is_its_list_and_an_object_is_field_rows() {
+    let envelope = json!({"object": "list", "data": [{"id": "a"}, {"id": "b"}]});
+    assert_eq!(table(&envelope, usize::MAX), "ID\na\nb");
+    let one = json!({"id": "a", "n": 2, "nested": {"x": 1}});
+    assert_eq!(table(&one, usize::MAX), "FIELD  VALUE\nid     a\nn      2");
+}
+
+#[test]
+fn json_and_yaml_render_the_same_value() {
+    let v = json!({"id": "a", "n": [1, 2]});
+    assert_eq!(render(&v, Output::Json, 80).unwrap(), serde_json::to_string_pretty(&v).unwrap());
+    let yaml = render(&v, Output::Yaml, 80).unwrap();
+    assert_eq!(serde_norway::from_str::<Value>(&yaml).unwrap(), v, "{yaml}");
+    assert_eq!(render(&Value::Null, Output::Table, 80), None);
+    assert_eq!(render(&json!("plain"), Output::Yaml, 80).unwrap(), "plain");
+}
+
+/// `-o` is on every generated command and names the format; without it the command line gives none.
+#[test]
+fn the_output_flag_is_on_every_generated_command() {
+    let op = OPS.iter().find(|o| o.method == "GET" && o.params.is_empty() && o.fields.is_empty()).expect("a bare read");
+    let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
+    argv.extend(op.nodes.iter().map(|n| n.to_string()));
+    argv.push(op.verb.to_string());
+    let bare: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let Some(Resolved::Leaf { output, .. }) = resolve(&hand(), &matches_of(&bare)) else { panic!("leaf") };
+    assert_eq!(output, None);
+    for (flag, want) in [("table", Output::Table), ("json", Output::Json), ("yaml", Output::Yaml)] {
+        let mut given = bare.clone();
+        given.extend(["-o", flag]);
+        let Some(Resolved::Leaf { output, .. }) = resolve(&hand(), &matches_of(&given)) else { panic!("leaf") };
+        assert_eq!(output, Some(want));
+    }
+    let mut wrong = bare.clone();
+    wrong.extend(["--output", "xml"]);
+    assert!(augment(hand()).try_get_matches_from(&wrong).is_err(), "xml is not a format");
+}
+
+/// An operation that declares a `requestId` is given one per invocation, and keeps the one a caller gave.
+#[test]
+fn an_operation_that_declares_a_request_id_is_given_one() {
+    let op = OPS
+        .iter()
+        .find(|o| o.fields.iter().any(|f| f.key == "requestId" && !f.query))
+        .expect("cloud declares a requestId on a write");
+    let body = named(op, json!({}));
+    let id = body["requestId"].as_str().unwrap().to_string();
+    assert!(id.starts_with("cli-") && id.len() > 20, "{id}");
+    assert_ne!(named(op, json!({}))["requestId"], id, "one id per invocation");
+    assert_eq!(named(op, json!({"requestId": "mine"}))["requestId"], "mine");
 }

@@ -41,7 +41,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use hanzo_client::{Http, Method, Reply, Request, Transport};
 use serde_json::{json, Map, Value};
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 
 use crate::commands::host::{self, Origin};
 use crate::config::Config;
@@ -279,10 +279,56 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
         c = c.arg(field_arg(f));
     }
     let has_body = op.fields.iter().any(|f| !f.query);
-    if op.is_write() && !has_body && !op.fields.iter().any(|f| f.flag == "data") {
-        c = c.arg(data_arg());
+    if op.is_write() && !op.fields.iter().any(|f| f.flag == "data") {
+        // An op with no typed body takes `--data`; one with a typed body takes flags, and `--data` is
+        // parsed (hidden) only so that using it is refused by name (see [`flags_not_data`]).
+        c = c.arg(if has_body { data_arg().hide(true) } else { data_arg() });
     }
-    c
+    c.arg(output_arg())
+}
+
+/// How an answer is printed (`-o`): a table, JSON or YAML. One formatter serves every generated command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Output {
+    Table,
+    Json,
+    Yaml,
+}
+
+fn output_arg() -> Arg {
+    Arg::new("output")
+        .short('o')
+        .long("output")
+        .value_name("FORMAT")
+        .value_parser(["table", "json", "yaml"])
+        .help("how to print the answer: table (the default for a list on a terminal), json or yaml")
+}
+
+/// The `-o` a command line gave, if it gave one.
+fn output_of(m: &ArgMatches) -> Option<Output> {
+    m.try_get_one::<String>("output").ok().flatten().map(|name| match name.as_str() {
+        "table" => Output::Table,
+        "yaml" => Output::Yaml,
+        _ => Output::Json,
+    })
+}
+
+/// The refusal for `--data` on an operation that types its body: the flags it takes, by name.
+fn flags_not_data(op: &'static Op) -> String {
+    let mut name = vec![op.product];
+    name.extend(op.nodes);
+    name.push(op.verb);
+    let flags: Vec<String> = op
+        .fields
+        .iter()
+        .filter(|f| !f.query && !f.secret)
+        .map(|f| format!("--{}", field_flag(f)))
+        .collect();
+    format!(
+        "`hanzo {}` takes its body as flags, not --data: {}",
+        name.join(" "),
+        flags.join(" ")
+    )
 }
 
 /// A typed body flag from a schema property. The clap parser matches the JSON
@@ -327,6 +373,8 @@ fn field_flag(f: &'static Field) -> &'static str {
         ("config", true) => "query-config",
         ("verbose", false) => "body-verbose",
         ("verbose", true) => "query-verbose",
+        ("output", false) => "body-output",
+        ("output", true) => "query-output",
         ("help", false) => "body-help",
         ("help", true) => "query-help",
         ("version", false) => "body-version",
@@ -389,7 +437,13 @@ fn data_arg() -> Arg {
 /// What a matched generated command resolves to. Pure over the clap matches —
 /// no config, no keychain — so it is unit-testable without a network.
 pub enum Resolved {
-    Leaf { op: &'static Op, values: Vec<String>, body: LeafBody, query: Vec<String> },
+    Leaf {
+        op: &'static Op,
+        values: Vec<String>,
+        body: LeafBody,
+        query: Vec<String>,
+        output: Option<Output>,
+    },
 }
 
 /// A leaf's request body: assembled from typed flags, read raw from `--data`, or
@@ -397,6 +451,8 @@ pub enum Resolved {
 pub enum LeafBody {
     Typed(Value),
     Data(Option<String>),
+    /// `--data` given to an operation that types its body: refused at dispatch, naming the flags.
+    Misused,
     None,
 }
 
@@ -442,7 +498,10 @@ fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
         .collect();
     let has_body = op.fields.iter().any(|f| !f.query);
     let body = if has_body {
-        LeafBody::Typed(typed_body(op, m))
+        match m.try_get_one::<String>("data").ok().flatten() {
+            Some(_) => LeafBody::Misused,
+            None => LeafBody::Typed(typed_body(op, m)),
+        }
     } else if op.is_write() {
         // `--data` exists only when no field already claims the `data` long.
         let data = (!op.fields.iter().any(|f| f.flag == "data"))
@@ -452,7 +511,7 @@ fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
     } else {
         LeafBody::None
     };
-    Resolved::Leaf { op, values, body, query: typed_query(op, m) }
+    Resolved::Leaf { op, values, body, query: typed_query(op, m), output: output_of(m) }
 }
 
 /// Assemble the JSON body from the BODY flags actually provided — nothing else.
@@ -562,19 +621,35 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 /// never asked; all other params are the user's positionals. The bearer + origin
 /// are `call`'s to resolve.
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
-    let Resolved::Leaf { op, values, body, query } = resolved;
+    let Resolved::Leaf { op, values, body, query, output } = resolved;
     let owner = store::acting(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
     let path = fill_path(op.path, op.rest, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
     let body = match body {
         // A typed body may carry a stdin-secret field, read here (the IO layer)
         // so `resolve` stays pure and the value never passes through argv.
-        LeafBody::Typed(v) => Some(inject_secret(op, v)?),
+        LeafBody::Typed(v) => Some(named(op, inject_secret(op, v)?)),
         LeafBody::Data(d) => read_body(d, &method)?,
+        LeafBody::Misused => bail!("{}", flags_not_data(op)),
         LeafBody::None => None,
     };
-    // The `/v1` envelope's `data` is always what we surface (there is no `--raw`).
-    call(cfg, method, path, body, query, false).await
+    call(cfg, method, path, body, query, output).await
+}
+
+/// A fresh id for one invocation: the platform answers a request that carries it once, so a request made
+/// again after a failure cannot do its work twice.
+pub(crate) fn request_id() -> String {
+    format!("cli-{:032x}", rand::random::<u128>())
+}
+
+/// The body of an operation that declares a `requestId`, with one given when the caller gave none.
+fn named(op: &Op, mut body: Value) -> Value {
+    if op.fields.iter().any(|f| f.key == "requestId" && !f.query) {
+        if let Some(map) = body.as_object_mut() {
+            map.entry("requestId").or_insert_with(|| json!(request_id()));
+        }
+    }
+    body
 }
 
 /// Fill a secret body field (`kms secrets create`'s `value`, `integrations
@@ -697,7 +772,7 @@ pub(crate) async fn call(
     path: String,
     body: Option<Value>,
     query: Vec<String>,
-    raw: bool,
+    output: Option<Output>,
 ) -> Result<()> {
     let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await?;
     let Reply { status, body: resp } = seam.send(method, &path, &query, body).await?;
@@ -710,7 +785,7 @@ pub(crate) async fn call(
         if let Some(msg) = envelope_error(&resp) {
             bail!("{path}: {msg}");
         }
-        print_body(&resp, raw);
+        print_body(&resp, output);
         return Ok(());
     }
 
@@ -963,15 +1038,129 @@ pub(crate) fn envelope_error(body: &Value) -> Option<String> {
     }
 }
 
-/// Print the response. The cloud `/v1` envelope is `{status,msg,data}`; by default
-/// we surface `data` (what a caller pipes), and `--raw` prints the whole envelope.
-fn print_body(resp: &Value, raw: bool) {
-    let shown = if raw { resp } else { resp.get("data").unwrap_or(resp) };
-    match shown {
-        Value::Null => {}
-        Value::String(s) => println!("{s}"),
-        v => println!("{}", serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())),
+/// Print the response. The cloud `/v1` envelope is `{status,msg,data}` and what is shown is `data`. A list
+/// prints as a table on a terminal and as JSON anywhere else, so a pipe still gets what it can parse; `-o`
+/// names the format outright.
+fn print_body(resp: &Value, output: Option<Output>) {
+    let shown = resp.get("data").unwrap_or(resp);
+    let output = output.unwrap_or_else(|| {
+        if rows(shown).is_some() && std::io::stdout().is_terminal() {
+            Output::Table
+        } else {
+            Output::Json
+        }
+    });
+    if let Some(text) = render(shown, output, terminal_width()) {
+        println!("{text}");
     }
+}
+
+/// An answer in a format: nothing for none, a string as written.
+fn render(v: &Value, output: Output, width: usize) -> Option<String> {
+    match (v, output) {
+        (Value::Null, _) => None,
+        (Value::String(s), _) => Some(s.clone()),
+        (v, Output::Table) => Some(table(v, width)),
+        (v, Output::Yaml) => Some(serde_norway::to_string(v).unwrap_or_else(|_| v.to_string()).trim_end().to_string()),
+        (v, Output::Json) => Some(pretty(v)),
+    }
+}
+
+fn terminal_width() -> usize {
+    crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(usize::MAX)
+}
+
+/// The list an answer is: the array itself, or the one array an object carries (`{"models":[…]}`).
+fn rows(v: &Value) -> Option<&Vec<Value>> {
+    match v {
+        Value::Array(a) => Some(a),
+        Value::Object(o) => {
+            let mut arrays = o.values().filter_map(Value::as_array);
+            let only = arrays.next()?;
+            arrays.next().is_none().then_some(only)
+        }
+        _ => None,
+    }
+}
+
+/// A scalar as a table cell: text as written, null as `-`.
+fn cell(v: &Value) -> Option<String> {
+    match v {
+        Value::Null => Some("-".into()),
+        Value::String(s) => Some(s.replace('\n', " ")),
+        Value::Bool(_) | Value::Number(_) => Some(v.to_string()),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+/// An answer as a table: a list is one row per item, a single object one row per field. The columns are the
+/// scalar keys in the order they first appear, as many as fit `width`, the first always; nested values are
+/// left to `-o json`.
+fn table(v: &Value, width: usize) -> String {
+    let (header, grid) = match (rows(v), v) {
+        (Some(list), _) => match columns(list) {
+            Some(shape) => shape,
+            None => return pretty(v),
+        },
+        (None, Value::Object(o)) => fields(o),
+        _ => return pretty(v),
+    };
+    lay(&header, &grid, width)
+}
+
+fn pretty(v: &Value) -> String {
+    serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+}
+
+/// A list's header and rows, or `None` when its items have nothing scalar to show.
+fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
+    let mut keys: Vec<&str> = Vec::new();
+    for item in list.iter().filter_map(Value::as_object) {
+        for (key, value) in item {
+            if cell(value).is_some() && !keys.contains(&key.as_str()) {
+                keys.push(key);
+            }
+        }
+    }
+    if keys.is_empty() {
+        return None;
+    }
+    let grid = list
+        .iter()
+        .map(|item| {
+            keys.iter()
+                .map(|key| item.get(*key).and_then(cell).unwrap_or_else(|| "-".into()))
+                .collect()
+        })
+        .collect();
+    Some((keys.iter().map(|key| key.to_uppercase()).collect(), grid))
+}
+
+/// One object's header and rows: a field and its value, for each field that is a scalar.
+fn fields(o: &Map<String, Value>) -> (Vec<String>, Vec<Vec<String>>) {
+    let grid = o.iter().filter_map(|(key, value)| Some(vec![key.clone(), cell(value)?])).collect();
+    (vec!["FIELD".into(), "VALUE".into()], grid)
+}
+
+/// The text of a table: each column as wide as its widest cell, two spaces between, and only the columns
+/// that fit `width` (the first always).
+fn lay(header: &[String], grid: &[Vec<String>], width: usize) -> String {
+    let widths: Vec<usize> = (0..header.len())
+        .map(|i| grid.iter().map(|row| row[i].chars().count()).chain([header[i].chars().count()]).max().unwrap_or(0))
+        .collect();
+    let (mut used, mut shown) = (0, 0);
+    for w in &widths {
+        let next = used + if shown == 0 { 0 } else { 2 } + w;
+        if shown > 0 && next > width {
+            break;
+        }
+        (used, shown) = (next, shown + 1);
+    }
+    let line = |cells: &[String]| {
+        let padded: Vec<String> = cells[..shown].iter().zip(&widths).map(|(c, w)| format!("{c:<w$}", w = *w)).collect();
+        padded.join("  ").trim_end().to_string()
+    };
+    std::iter::once(line(header)).chain(grid.iter().map(|row| line(row.as_slice()))).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]

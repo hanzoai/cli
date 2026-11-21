@@ -44,7 +44,7 @@ required-features = ["maintainer"]
 # and a reader has no use for them. genproduct in particular parses no arguments,
 # so a bare invocation rewrote generated.rs inside the caller's own registry cache.
 [features]
-maintainer = ["dep:serde_norway"]
+maintainer = []
 
 # The two library crates the CLI is BUILT ON, each in its own crate so another
 # consumer shares the exact same wire via a pinned git dependency — one source of
@@ -66,7 +66,7 @@ tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_norway = { version = "0.9", optional = true }        # genspec only — reads hanzoai/openapi's YAML master
+serde_norway = "0.9"                                       # YAML: `-o yaml`, and genspec reading hanzoai/openapi's master
 toml = "0.8"
 dirs = "5.0"
 colored = "2.1"

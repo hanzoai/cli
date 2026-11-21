@@ -35,6 +35,7 @@ mod error;
 mod grant;
 mod http;
 mod result;
+mod retry;
 
 use std::sync::Arc;
 

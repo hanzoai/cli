@@ -753,7 +753,7 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
                 graph_route("apple"),
                 Some(snap.apple_payload),
                 Vec::new(),
-                false,
+                None,
             )
             .await
         }
@@ -781,7 +781,7 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
                 graph_route("ontology"),
                 None,
                 query,
-                false,
+                None,
             )
             .await
         }
@@ -809,7 +809,7 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
                 graph_route("entity"),
                 Some(Value::Object(body)),
                 Vec::new(),
-                false,
+                None,
             )
             .await
         }
@@ -834,7 +834,7 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
                 graph_route("apple"),
                 Some(snap.apple_payload),
                 Vec::new(),
-                false,
+                None,
             )
             .await
         }
@@ -875,7 +875,7 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
                 graph_route("convo"),
                 Some(payload),
                 Vec::new(),
-                false,
+                None,
             )
             .await
         }
