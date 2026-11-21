@@ -1170,6 +1170,18 @@ command (`sign in again: hanzo --as admin auth login`), never another identity.
 `auth show` under `--as <org>` with no identity held there refuses rather than
 name the default.
 
+**Issuers** (`iam/paths.rs`, `crates/identity/src/discovery.rs`). hanzo signs in at
+`https://hanzo.ai` (`brand_origin`); hanzo.ai and hanzo.id are interchangeable
+issuers. A credential is filed and sent when its `iss` is the issuer that origin's OIDC
+discovery publishes (hanzo.ai) or one the brand held before it moved (`former_origins`:
+hanzo → hanzo.id); any other issuer is refused (`store::issued`, `paths::trusts`), and
+no other brand borrows hanzo's two. Endpoints come from discovery; the `/v1/iam/oauth/*`
+constants answer only when discovery was never reachable. hanzo.id credentials stay
+valid until they expire. A refresh runs under `refresh.lock`, a sibling of the
+credential file and never its own `credentials.lock` (`FileVault::set` takes that one
+inside the refresh and would block on itself); `tests/refresh.rs` runs 8 processes
+against a stand-in IAM that revokes the family on a replay and requires one refresh.
+
 **Each org has its own active identity** (`auth.active_in`, brand → org → name, in
 `config.toml`; `store::active_in`). `--as <org>` speaks as the identity active in
 that org: its own choice, else the default when that lives there, else the only

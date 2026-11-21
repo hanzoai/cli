@@ -1026,6 +1026,40 @@ mod tests {
         assert!(list(&c, "hanzo").is_empty());
     }
 
+    /// hanzo signs in at hanzo.ai and still honours what hanzo.id signed: a
+    /// credential from either is filed and sent; an issuer that is neither is
+    /// refused, and no other brand takes hanzo's two.
+    #[test]
+    fn hanzo_files_what_either_of_its_issuers_signed() {
+        let (v, mut c) = (MemVault::new(), cfg());
+        for (iss, name) in [("https://hanzo.ai", "a"), ("https://hanzo.ai/", "b"), ("https://hanzo.id", "c")] {
+            let token = issued_jwt(iss, "hanzo", name);
+            add_in(&v, &mut c, "hanzo", &tokens(&token)).unwrap_or_else(|e| panic!("{iss} refused: {e}"));
+            let held = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
+            assert_eq!(held.1.access_token, token, "{iss}");
+        }
+        assert_eq!(list(&c, "hanzo").len(), 3);
+
+        for iss in [
+            "https://hanzo.evil.example",
+            "https://hanzo.ai.evil.example",
+            "https://api.hanzo.ai",
+            "http://hanzo.ai",
+            "https://id-dev.hanzo.ai",
+            "https://lux.id",
+        ] {
+            let err = add_in(&v, &mut c, "hanzo", &tokens(&issued_jwt(iss, "hanzo", "x"))).unwrap_err().to_string();
+            assert!(err.contains("hanzo signs in at https://hanzo.ai"), "{iss}: {err}");
+        }
+        assert_eq!(list(&c, "hanzo").len(), 3, "a refused credential was filed");
+
+        for iss in ["https://hanzo.ai", "https://hanzo.id"] {
+            let err = add_in(&v, &mut c, "lux", &tokens(&issued_jwt(iss, "lux", "z"))).unwrap_err().to_string();
+            assert!(err.contains("lux signs in at https://lux.id"), "{iss}: {err}");
+        }
+        let _ = std::fs::remove_file(c.effective_path());
+    }
+
     /// One network's identities are not another's: each is filed in its own
     /// realm, found only on its own network, and presented only there.
     #[test]
