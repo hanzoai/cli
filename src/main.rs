@@ -102,7 +102,7 @@ enum Commands {
     /// Hanzo's metered models), and the session streamed live to mission control.
     /// Use `--cloud` to execute the task remotely in a Hanzo sandbox.
     ///
-    /// Runs our own `dev` agent by default. Name another tool with a flag:
+    /// Runs Hanzo's own agent by default. Name another tool with a flag:
     ///
     ///   hanzo dev              our own agent (the default)
     ///   hanzo dev --claude     hanzo dev --codex     hanzo dev --cursor     hanzo dev --agy
@@ -357,7 +357,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Upgrade every Hanzo tool (hanzo, mcp, dev, zt) to its current release, and
+    /// Upgrade every Hanzo tool (hanzo, mcp, gen, zt) to its current release, and
     /// every coding agent installed: npm agents under ~/.hanzo, the rest by their
     /// own updater (`claude update`, `goose update`, …) or uv. Name a tool to
     /// upgrade only it; naming an npm agent (gemini, qwen, opencode, …) installs it

@@ -131,6 +131,8 @@ fn no_screen_names_a_second_product() {
         let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
         assert!(!text.contains("Hanzo Dev") && !text.contains("hanzo-dev"), "{args:?}:\n{text}");
     }
+    let upgrade = hanzo().args(["upgrade", "--help"]).assert().success();
+    assert!(!String::from_utf8_lossy(&upgrade.get_output().stdout).contains("mcp, dev"));
     let refused = hanzo().args(["upgrade", "dev"]).assert().failure();
     let text = String::from_utf8_lossy(&refused.get_output().stderr).to_string();
     assert!(text.contains("upgradable: hanzo, mcp, gen") && !text.contains(" dev"), "{text}");
