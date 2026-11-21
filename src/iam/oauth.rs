@@ -22,6 +22,7 @@
 //! was meant to prevent.
 
 use anyhow::{anyhow, bail, Context, Result};
+use hanzo_client::{tls_builder, tls_client};
 use reqwest::Url;
 use serde::Deserialize;
 use std::io::IsTerminal;
@@ -66,7 +67,7 @@ pub async fn served(origin: &str, org: Option<&str>) -> Result<bool> {
         grants: Vec<String>,
     }
     let id = client(org);
-    let resp = reqwest::Client::new()
+    let resp = tls_client()
         .get(paths::iam_url(origin, APPLICATION))
         .query(&[("clientId", id.as_str()), ("responseType", "code")])
         .send()
@@ -394,7 +395,7 @@ async fn hold_for_page(stream: &mut TcpStream) -> bool {
 /// Fetch the userinfo profile for an access token.
 pub async fn userinfo(brand: &str, access_token: &str) -> Result<UserInfo> {
     let origin = &server_url(brand)?;
-    let resp = reqwest::Client::new()
+    let resp = tls_client()
         .get(paths::endpoint(origin, USERINFO))
         .bearer_auth(access_token)
         .send()
@@ -447,7 +448,7 @@ async fn exchange_code(
     redirect_uri: &str,
     verifier: &str,
 ) -> Result<TokenSet> {
-    let resp = reqwest::Client::new()
+    let resp = tls_client()
         .post(paths::endpoint(origin, TOKEN))
         .form(&[
             ("grant_type", "authorization_code"),
@@ -486,7 +487,7 @@ pub async fn refresh(origin: &str, held: &TokenSet) -> Result<TokenSet> {
         .as_deref()
         .context("the stored credential holds no refresh token")?;
     let client = issued(held).map_err(|e| Spent(e.to_string()))?;
-    let resp = reqwest::Client::builder()
+    let resp = tls_builder()
         .timeout(REFRESH_TIMEOUT)
         .build()
         .context("building the IAM client")?
@@ -549,7 +550,7 @@ pub async fn revoke(origin: &str, held: &TokenSet) -> Result<()> {
         return Ok(());
     };
     let client = issued(held)?;
-    let resp = reqwest::Client::new()
+    let resp = tls_client()
         .post(paths::endpoint(origin, REVOKE))
         .form(&[
             ("token", refresh_token),

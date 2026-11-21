@@ -9,6 +9,7 @@
 //! flow does, [`oauth::client`]: one registration per org, whichever flow runs.
 
 use anyhow::{anyhow, Result};
+use hanzo_client::tls_client;
 use serde::Deserialize;
 use std::time::{Duration, Instant};
 
@@ -82,7 +83,7 @@ impl DeviceTokenResp {
 
 /// Start the device flow: mint a device_code + user_code pair for `brand`.
 pub async fn device_auth(origin: &str, client_id: &str, scope: &str) -> Result<DeviceAuthResp> {
-    let resp = reqwest::Client::new()
+    let resp = tls_client()
         .post(paths::endpoint(origin, DEVICE))
         .query(&[
             ("client_id", client_id),
@@ -119,7 +120,7 @@ async fn request_token(
     client_id: &str,
     device_code: &str,
 ) -> Result<DeviceTokenResp> {
-    let resp = reqwest::Client::new()
+    let resp = tls_client()
         .post(paths::endpoint(origin, TOKEN))
         .header("Accept", "application/json")
         .form(&[
