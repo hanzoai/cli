@@ -2,6 +2,8 @@
 
 # hanzo — AI engineer in your terminal
 
+[![Open in Hanzo](https://hanzo.app/badges/open-in-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/cli&ref=main&action=open) [![Edit with Hanzo](https://hanzo.app/badges/edit-with-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/cli&ref=main&action=edit) [![Deploy with Hanzo](https://hanzo.app/badges/deploy-with-hanzo.svg)](https://hanzo.app/dev/open?repo=github.com/hanzoai/cli&ref=main&action=deploy)
+
 The Hanzo CLI. One binary to code with an AI agent, sign in, and drive every product of
 the [Hanzo cloud](https://hanzo.ai) from the terminal — plus run the network. Written in
 Rust: a single static binary, rustls TLS, no runtime, no daemon.
