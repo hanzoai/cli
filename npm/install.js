@@ -28,7 +28,7 @@ const REPO = "hanzoai/cli";
 const TOOLS = {
   hanzo:  { repo: "hanzoai/cli",    bin: "hanzo",        alias: "hanzo-cli", versioned: true },
   mcp:    { repo: "hanzoai/mcp",    bin: "hanzo-mcp",    alias: "mcp" },
-  dev:    { repo: "hanzoai/dev",    bin: "dev",          alias: "" },
+  dev:    { repo: "hanzoai/dev-v1",    bin: "dev",          alias: "" },
   gen:    { repo: "hanzoai/gen",    bin: "gen",          alias: "hanzo-gen" },
   zt:     { repo: "hanzozt/zt",     bin: "zt",           alias: "hanzo-zet" },
   engine: { repo: "hanzoai/engine", bin: "hanzo-engine", alias: "hanzoai",   kind: "engine" },

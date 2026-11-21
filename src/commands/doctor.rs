@@ -9,7 +9,7 @@ use crate::{commands::product::Seam, config::Config};
 
 const TOOLS: &[(&str, &str, &str, &str)] = &[
     ("hanzo", "hanzo", "hanzoai/cli", ""),
-    ("dev", "dev", "hanzoai/dev", ""),
+    ("dev", "dev", "hanzoai/dev-v1", ""),
     (
         "hanzo-gen",
         "gen",

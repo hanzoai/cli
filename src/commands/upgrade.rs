@@ -409,12 +409,12 @@ mod tests {
 
     #[test]
     fn the_tool_table_is_read_out_of_hanzo_sh() {
-        let script = "#!/bin/sh\nTOOLS='hanzo:Hanzo CLI:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
+        let script = "#!/bin/sh\nTOOLS='hanzo:Hanzo CLI:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev-v1:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
         let t = table(script);
         assert_eq!(t.iter().map(|n| (n.name.as_str(), n.repo.as_str(), n.binary.as_str(), n.alias.as_str())).collect::<Vec<_>>(), [
             ("hanzo", "hanzoai/cli", "hanzo", "hanzo-cli"),
             ("mcp", "hanzoai/mcp", "hanzo-mcp", "mcp"),
-            ("dev", "hanzoai/dev", "dev", ""),
+            ("dev", "hanzoai/dev-v1", "dev", ""),
             ("zt", "hanzozt/zt", "zt", ""),
         ]);
         assert!(table("#!/bin/sh\necho no table\n").is_empty());
@@ -457,10 +457,10 @@ mod tests {
     #[tokio::test]
     async fn a_release_asset_is_checked_unpacked_and_swapped_in_beside_the_old_one() {
         use sha2::{Digest, Sha256};
-        let tool = Native { name: "dev".into(), repo: "hanzoai/dev".into(), binary: "dev".into(), alias: String::new() };
+        let tool = Native { name: "dev".into(), repo: "hanzoai/dev-v1".into(), binary: "dev".into(), alias: String::new() };
         let tgz = tarball("dev.exe", b"new build");
         let sum: String = Sha256::digest(&tgz).iter().map(|b| format!("{b:02x}")).collect();
-        let path = "/hanzoai/dev/releases/latest/download/dev-windows-amd64.tar.gz";
+        let path = "/hanzoai/dev-v1/releases/latest/download/dev-windows-amd64.tar.gz";
         let base = serve(vec![(path.into(), tgz.clone()), (format!("{path}.sha256"), format!("{sum}  dev-windows-amd64.tar.gz\n").into_bytes())]).await;
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("dev.exe"), b"old build").unwrap();
