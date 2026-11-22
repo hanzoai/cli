@@ -135,4 +135,5 @@ const r = spawnSync(bin, argv, {
   env,
 });
 if (r.error) { console.error("hanzo:", r.error.message); process.exit(1); }
-process.exit(r.status ?? 0);
+if (r.signal) process.kill(process.pid, r.signal);
+process.exit(r.status ?? 1);
