@@ -11,7 +11,9 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } = require("node:fs");
 const { tmpdir } = require("node:os");
@@ -112,6 +114,20 @@ function runInstaller(context, { expectedSha = context.sha256, pathPrefix, syste
     timeout: 30_000,
   });
 }
+
+test("replaces dangling native aliases instead of writing through the stale symlink", { skip: process.platform === "win32" }, (t) => {
+  const context = createCase(t);
+  const bin = join(context.packageDir, "bin");
+  mkdirSync(bin);
+  const alias = join(bin, "hanzo-cli");
+  const stale = join(bin, "previous-hanzo");
+  symlinkSync("previous-hanzo", alias);
+
+  const result = runInstaller(context);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readlinkSync(alias), "hanzo", "alias should point at the currently installed binary");
+  assert.equal(existsSync(stale), false, "installer must not follow a dangling alias to create a stale file");
+});
 
 test(
   "Windows uses the system tar with a drive-letter, spaces, Unicode, and a hostile PATH tar",

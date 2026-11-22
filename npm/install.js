@@ -15,7 +15,7 @@
 // binaries (`dev`, `mcp`, `engine`, `node`, `zt`, `vm`, `gen`) are fetched
 // lazily on first use by `bin/hanzo.js` (or eagerly with `HANZO_NPM_EAGER=1` /
 // `node install.js --all`).
-const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
+const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, lstatSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const { rm } = require("node:fs/promises");
 const { join } = require("node:path");
@@ -88,7 +88,8 @@ function linkAlias(dest, binName, aliasName, ext) {
   const dst = join(dest, `${aliasName}${ext}`);
   if (!existsSync(src)) return;
   try {
-    if (existsSync(dst)) unlinkSync(dst);
+    // existsSync misses dangling aliases; never copy through a stale symlink.
+    if (lstatSync(dst, { throwIfNoEntry: false })) unlinkSync(dst);
     symlinkSync(`${binName}${ext}`, dst);
   } catch {
     copyFileSync(src, dst);
