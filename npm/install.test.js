@@ -11,6 +11,7 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } = require("node:fs");
@@ -34,7 +35,7 @@ function setEnvironmentKey(env, name, value) {
   env[name] = value;
 }
 
-function createCase(t, { validArchive = true, archiveMember, archiveKind = "file" } = {}) {
+function createCase(t, { validArchive = true, archiveMember, archiveKind = "file", archiveExtras = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "hanzo issue 41 café "));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -54,8 +55,9 @@ function createCase(t, { validArchive = true, archiveMember, archiveKind = "file
     const member = archiveMember || binary;
     if (archiveKind === "directory") mkdirSync(join(sourceDir, member));
     else writeFileSync(join(sourceDir, member), archiveKind === "empty" ? "" : "local fixture only\n");
+    for (const extra of archiveExtras) writeFileSync(join(sourceDir, extra), "sidecar fixture only\n");
     const archiveTar = process.platform === "win32" ? WINDOWS_SYSTEM_TAR : "tar";
-    execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, member]);
+    execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, member, ...archiveExtras]);
   } else {
     writeFileSync(archive, "not a tar archive\n");
   }
@@ -193,6 +195,27 @@ test("rejects directory and empty-file placeholders instead of claiming a native
     assert.notEqual(result.status, 0, `${archiveKind} must not install successfully`);
     assert.match(result.stderr, /missing native binary/i);
   }
+});
+
+test("a valid replacement keeps additional archive files and clears staging", (t) => {
+  const context = createCase(t, { archiveExtras: ["README.txt"] });
+  mkdirSync(join(context.packageDir, "bin"));
+  writeFileSync(context.installedBinary, "previous working binary\n");
+  const result = runInstaller(context);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "local fixture only\n");
+  assert.equal(readFileSync(join(context.packageDir, "bin", "README.txt"), "utf8"), "sidecar fixture only\n");
+  assert.equal(readdirSync(join(context.packageDir, "bin")).some((name) => name.startsWith(".hanzo-staging-")), false);
+});
+
+test("a stale installed binary cannot mask a missing binary in a new release", (t) => {
+  const context = createCase(t, { archiveMember: "README.txt" });
+  mkdirSync(join(context.packageDir, "bin"));
+  writeFileSync(context.installedBinary, "previous working binary\n");
+  const result = runInstaller(context);
+  assert.notEqual(result.status, 0, "missing release binary must fail despite an old installation");
+  assert.match(result.stderr, /missing native binary/i);
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "previous working binary\n", "failed updates preserve working installed binaries");
 });
 
 test("an extraction failure is propagated", (t) => {

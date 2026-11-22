@@ -15,8 +15,9 @@
 // binaries (`dev`, `mcp`, `engine`, `node`, `zt`, `vm`, `gen`) are fetched
 // lazily on first use by `bin/hanzo.js` (or eagerly with `HANZO_NPM_EAGER=1` /
 // `node install.js --all`).
-const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, lstatSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
+const { createWriteStream, mkdirSync, mkdtempSync, chmodSync, copyFileSync, cpSync, existsSync, lstatSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
+const { tmpdir } = require("node:os");
 const { rm } = require("node:fs/promises");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
@@ -122,21 +123,34 @@ async function downloadAndExtract({ assetUrl, sha256Url, assetName, dest }) {
 
 async function fetchStandardTool({ base, bin, alias, target, dest, ext }) {
   const asset = `${bin}-${target}.tar.gz`;
-  await downloadAndExtract({
-    assetUrl: `${base}/${asset}`,
-    sha256Url: `${base}/${asset}.sha256`,
-    assetName: asset,
-    dest,
-  });
-  const out = join(dest, `${bin}${ext}`);
-  // A release asset must contain a real, non-empty executable file. Directories
-  // and symlinks (including links outside the extraction root) are not binaries.
-  const extracted = lstatSync(out, { throwIfNoEntry: false });
-  if (!extracted?.isFile() || extracted.size === 0) {
-    throw new Error(`release ${asset} is missing native binary ${bin}${ext} (expected a non-empty regular file)`);
+  // Validate the new release away from the live installation. An old binary
+  // must not make a malformed archive look correct, and a failed download
+  // must not remove or rewrite the previously working installation.
+  const staging = mkdtempSync(join(tmpdir(), "hanzo-npm-staging-"));
+  try {
+    await downloadAndExtract({
+      assetUrl: `${base}/${asset}`,
+      sha256Url: `${base}/${asset}.sha256`,
+      assetName: asset,
+      dest: staging,
+    });
+    const out = join(staging, `${bin}${ext}`);
+    // Directories, zero-byte placeholders and symlinks are not native binaries.
+    const extracted = lstatSync(out, { throwIfNoEntry: false });
+    if (!extracted?.isFile() || extracted.size === 0) {
+      throw new Error(`release ${asset} is missing native binary ${bin}${ext} (expected a non-empty regular file)`);
+    }
+    if (process.platform !== "win32") chmodSync(out, 0o755);
+    // Preserve any sidecar files shipped with a release, not only the
+    // executable, while retaining the previous contents until validation.
+    mkdirSync(dest, { recursive: true });
+    for (const name of readdirSync(staging)) {
+      cpSync(join(staging, name), join(dest, name), { recursive: true, force: true });
+    }
+    linkAlias(dest, bin, alias, ext);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
   }
-  if (process.platform !== "win32") chmodSync(out, 0o755);
-  linkAlias(dest, bin, alias, ext);
 }
 
 async function fetchEngine({ key, dest, ext }) {
