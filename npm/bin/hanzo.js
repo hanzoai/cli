@@ -135,5 +135,14 @@ const r = spawnSync(bin, argv, {
   env,
 });
 if (r.error) { console.error("hanzo:", r.error.message); process.exit(1); }
-if (r.signal) process.kill(process.pid, r.signal);
+if (r.signal) {
+  // Node reserves SIGUSR1 for the debugger and ignores SIGPIPE. Sending
+  // these to ourselves would start an inspector (or silently do nothing)
+  // rather than preserving the native program's termination semantics.
+  if (process.platform !== "win32" && r.signal !== "SIGUSR1" && r.signal !== "SIGPIPE") {
+    try { process.kill(process.pid, r.signal); } catch { /* use shell exit status below */ }
+  }
+  const number = require("node:os").constants.signals[r.signal];
+  process.exit(typeof number === "number" ? 128 + number : 1);
+}
 process.exit(r.status ?? 1);

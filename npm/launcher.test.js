@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
 const { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs");
-const { tmpdir } = require("node:os");
+const { constants: osConstants, tmpdir } = require("node:os");
 const { join } = require("node:path");
 
 const LAUNCHER = join(__dirname, "bin", "hanzo.js");
@@ -21,6 +21,7 @@ function runFakeNative(t, script) {
   return spawnSync(process.execPath, [join(binDir, "hanzo.js")], {
     env: { ...process.env, HANZO_NO_LAZY_INSTALL: "1" },
     encoding: "utf8",
+    timeout: 5_000,
   });
 }
 
@@ -36,4 +37,13 @@ test("launcher propagates native termination signals", { skip: process.platform 
   assert.equal(result.error, undefined);
   assert.equal(result.status, null);
   assert.equal(result.signal, "SIGTERM");
+});
+
+
+test("launcher never starts the Node inspector for a native SIGUSR1", { skip: process.platform === "win32" }, (t) => {
+  const result = runFakeNative(t, "kill -USR1 $$");
+  assert.equal(result.error, undefined, result.stderr);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 128 + osConstants.signals.SIGUSR1);
+  assert.doesNotMatch(result.stderr ?? "", /Debugger listening|Debugger attached/i);
 });
