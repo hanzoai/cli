@@ -58,9 +58,12 @@ verify: ## Refuse a tree the committed evidence contradicts. Hermetic. The drift
 
 # THE GATES IN tests/ EXEC BINARIES CARGO DOES NOT BUILD FOR THEM. `driftgate`
 # and `genproduct` are maintainer tools behind `required-features`, so a plain
-# `cargo test` skips building them and the two tests that exec them die on
+# `cargo test` skips building them and the two tests that exec them died on
 # `NotFound` instead of ruling. A gate that cannot run reads exactly like a gate
-# that passed — the same defect `verify` had, wearing different clothes.
+# that passed — the same defect `verify` had, wearing different clothes. The
+# tests now run this same build themselves (`tests/spec_drift.rs` `maintainer`,
+# hanzoai/cli#71), so a bare `cargo test` rules too; the build here keeps it a
+# fingerprint check by the time they ask.
 #
 # The gate is built WITH the feature; its SUBJECT is not. Reachability is a fact
 # about the binary a person installs, and `--features maintainer` changes that

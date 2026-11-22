@@ -100,13 +100,20 @@ pub struct FileVault {
 }
 
 impl FileVault {
-    /// The store's location: `${XDG_DATA_HOME}/hanzo/credentials`
-    /// (`~/.local/share/hanzo/credentials` on Linux), beside `machine-id`.
+    /// The store's location: `<data dir>/hanzo/credentials`, beside `machine-id`.
+    /// The data dir is the platform's: `${XDG_DATA_HOME}` or
+    /// `~/.local/share` on Linux, `~/Library/Application Support` on macOS.
     pub fn resolve() -> Result<Self> {
         let dir = dirs::data_local_dir()
             .ok_or_else(|| anyhow::anyhow!("no data directory for the credential store"))?
             .join("hanzo");
         Ok(Self { path: dir.join("credentials") })
+    }
+
+    /// The file this store reads and writes. A test that seeds the store under a
+    /// throwaway HOME asks here rather than restating one platform's layout.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 
     /// Point a `FileVault` at an explicit file — the seam a test writes through.
