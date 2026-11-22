@@ -187,9 +187,13 @@ shift
 model=""; port=""; set -- "$@" --hanzo-end
 while [ "$1" != --hanzo-end ]; do
   case "$1" in
-    -m|--model) model="$2"; shift 2 ;;
-    -p|--port) port="$2"; shift 2 ;;
-    --overlay) shift 2 ;;
+    -m|--model|-p|--port|--overlay)
+      [ -n "\${2:-}" ] && [ "$2" != --hanzo-end ] || { echo "hanzo-engine: $1 requires a value" >&2; exit 2; }
+      case "$1" in
+        -m|--model) model="$2" ;;
+        -p|--port) port="$2" ;;
+      esac
+      shift 2 ;;
     *) set -- "$@" "$1"; shift ;;
   esac
 done
@@ -315,4 +319,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { extractArchive, resolveTarExecutable };
+module.exports = { extractArchive, resolveTarExecutable, ENGINE_ADAPTER };
