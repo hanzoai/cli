@@ -117,9 +117,9 @@ impl<T: Transport> Client<T> {
     ///
     /// A 202 is [`Outcome::Held`] carrying the approval; any other 2xx is
     /// [`Outcome::Done`] with the parsed body; a non-2xx is [`Error::Api`]. A
-    /// 401 on a scoped client drops the minted token and retries ONCE, so an
-    /// expired token is invisible to the caller and a truly rejected credential
-    /// still surfaces.
+    /// A 401 on a scoped client drops its minted token. Replay-safe requests
+    /// retry once with a new grant; non-idempotent writes without a requestId
+    /// surface the 401 instead of risking duplicate side effects.
     pub async fn call<R: DeserializeOwned>(
         &self,
         method: Method,
@@ -131,7 +131,16 @@ impl<T: Transport> Client<T> {
         if reply.status == 401 {
             if let Some(grant) = &self.grant {
                 grant.invalidate();
-                reply = self.once(&url, &method, &body).await?;
+                // Keep 401 token-refresh retries under the same idempotency
+                // rule as transport retries: an unnamed POST/PATCH may have
+                // reached the server, and repeating it may create two effects.
+                let mut request = Request::new(method.clone(), url.as_str());
+                if let Some(body) = &body {
+                    request = request.body(body.clone());
+                }
+                if request.repeats() {
+                    reply = self.once(&url, &method, &body).await?;
+                }
             }
         }
         if reply.status == 202 {

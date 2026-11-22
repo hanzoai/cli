@@ -194,6 +194,47 @@ async fn a_401_remints_and_retries_once() {
     );
 }
 
+/// An unnamed write cannot be retried just because its scoped token got 401:
+/// a server may have performed the mutation before rejecting the response.
+#[tokio::test]
+async fn non_idempotent_scoped_writes_stop_after_first_401() {
+    for method in [Method::POST, Method::PATCH] {
+        let stub = Stub::new(vec![
+            minted("act_1", 3600),
+            reply(401, json!({"msg": "expired"})),
+            minted("act_2", 3600),
+            reply(200, json!({"ok": true})),
+        ]);
+        let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
+        let err = user
+            .call::<Value>(method.clone(), "/v1/card", Some(json!({"limit": 500})))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Api { status: 401, .. }));
+        let seen = stub.seen();
+        assert_eq!(seen.len(), 2, "mint plus one write — no repeat for {method}");
+        assert_eq!(seen[1].method, method);
+    }
+}
+
+/// A requestId makes POST/PATCH safe to retry as the transport contract states.
+#[tokio::test]
+async fn named_scoped_post_can_remint_and_retry_once() {
+    let stub = Stub::new(vec![
+        minted("act_1", 3600),
+        reply(401, json!({"msg": "expired"})),
+        minted("act_2", 3600),
+        reply(200, json!({"ok": true})),
+    ]);
+    let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
+    let out = user
+        .call::<Value>(Method::POST, "/v1/card", Some(json!({"limit": 500, "requestId": "req_1"})))
+        .await
+        .unwrap();
+    assert_eq!(out.done().unwrap(), json!({"ok": true}));
+    assert_eq!(stub.seen().len(), 4, "mint, first call, remint and safe retry");
+}
+
 /// The retry is once, not a loop: a credential that is genuinely rejected
 /// surfaces as the server's own 401.
 #[tokio::test]
