@@ -129,7 +129,8 @@ async function fetchStandardTool({ base, bin, alias, target, dest, ext }) {
     dest,
   });
   const out = join(dest, `${bin}${ext}`);
-  if (existsSync(out) && process.platform !== "win32") chmodSync(out, 0o755);
+  if (!existsSync(out)) throw new Error(`release ${asset} is missing native binary ${bin}${ext}`);
+  if (process.platform !== "win32") chmodSync(out, 0o755);
   linkAlias(dest, bin, alias, ext);
 }
 

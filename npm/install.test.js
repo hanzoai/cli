@@ -34,7 +34,7 @@ function setEnvironmentKey(env, name, value) {
   env[name] = value;
 }
 
-function createCase(t, { validArchive = true } = {}) {
+function createCase(t, { validArchive = true, archiveMember } = {}) {
   const root = mkdtempSync(join(tmpdir(), "hanzo issue 41 café "));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -51,9 +51,10 @@ function createCase(t, { validArchive = true } = {}) {
   const archive = join(root, assetName);
 
   if (validArchive) {
-    writeFileSync(join(sourceDir, binary), "local fixture only\n");
+    const member = archiveMember || binary;
+    writeFileSync(join(sourceDir, member), "local fixture only\n");
     const archiveTar = process.platform === "win32" ? WINDOWS_SYSTEM_TAR : "tar";
-    execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, binary]);
+    execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, member]);
   } else {
     writeFileSync(archive, "not a tar archive\n");
   }
@@ -174,6 +175,14 @@ test("Windows propagates an invalid system tar failure", (t) => {
     platform: "win32",
     systemRoot: invalidRoot,
   }));
+});
+
+test("rejects an archive that extracts successfully but lacks the expected native binary", (t) => {
+  const context = createCase(t, { archiveMember: "README.txt" });
+  const result = runInstaller(context);
+  assert.notEqual(result.status, 0, "an archive missing the binary must not be considered installed");
+  assert.match(result.stderr, /expected binary|missing native binary/i);
+  assert.equal(existsSync(context.installedBinary), false);
 });
 
 test("an extraction failure is propagated", (t) => {
