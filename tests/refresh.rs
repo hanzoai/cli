@@ -96,14 +96,31 @@ fn serve(listener: TcpListener, origin: String, iam: Arc<Mutex<Iam>>) {
 struct Home(PathBuf);
 
 impl Home {
+    /// A throwaway HOME, taken by this process as well as by every `hanzo` it
+    /// starts. Call it before any thread exists: it sets this process's
+    /// environment.
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("hanzo-refresh-{}-{}", std::process::id(), now()));
         std::fs::create_dir_all(&root).unwrap();
+        std::env::set_var("HOME", &root);
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("XDG_DATA_HOME");
         Self(root)
     }
 
     fn path(&self) -> &Path {
         &self.0
+    }
+
+    /// The credential store the binary under test writes, resolved by the
+    /// product's own resolver against the same environment the binary sees. The
+    /// path is the platform's data dir, so it is not spelled out here:
+    /// `~/.local/share` on Linux and `~/Library/Application Support` on macOS
+    /// (hanzoai/cli#70).
+    fn credentials(&self) -> PathBuf {
+        let store = hanzo_identity::token::FileVault::resolve().unwrap();
+        assert!(store.path().starts_with(self.path()), "the store resolved outside the throwaway HOME: {}", store.path().display());
+        store.path().to_path_buf()
     }
 
     fn hanzo(&self) -> std::process::Command {
@@ -127,6 +144,7 @@ impl Drop for Home {
 /// and every one of them gets the fresh credential.
 #[test]
 fn processes_that_need_a_refresh_at_once_spend_the_refresh_token_once() {
+    let home = Home::new();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let iam = Arc::new(Mutex::new(Iam { current: "rt-0".into(), ..Iam::default() }));
@@ -135,7 +153,6 @@ fn processes_that_need_a_refresh_at_once_spend_the_refresh_token_once() {
         std::thread::spawn(move || serve(listener, origin, iam));
     }
 
-    let home = Home::new();
     let run = |args: &[&str], stdin: Option<&str>| {
         let mut cmd = home.hanzo();
         cmd.args(args).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
@@ -155,7 +172,7 @@ fn processes_that_need_a_refresh_at_once_spend_the_refresh_token_once() {
     let stale = jwt(&origin, now() - 3600, 0);
     let signed = run(&["auth", "login", "--provider", "hanzo", "--token", "-"], Some(&format!("{stale}\n")));
     assert!(signed.status.success(), "{}", String::from_utf8_lossy(&signed.stderr));
-    let credentials = home.path().join(".local/share/hanzo/credentials");
+    let credentials = home.credentials();
     let mut map: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&std::fs::read(&credentials).unwrap()).unwrap();
     for value in map.values_mut() {
         let mut held: serde_json::Value = serde_json::from_str(value.as_str().unwrap()).unwrap();

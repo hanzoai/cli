@@ -27,10 +27,52 @@
 //! network, no clock, no host. A gate that needs the network in CI gets switched
 //! off, and a switched-off gate is worse than none.
 
+use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
 
 fn root() -> &'static str {
     env!("CARGO_MANIFEST_DIR")
+}
+
+/// A maintainer tool the gates below exec, BUILT before it is asked.
+///
+/// `genproduct` and `driftgate` sit behind `required-features = ["maintainer"]`,
+/// so cargo hands this file their paths (`CARGO_BIN_EXE_*`) and never builds
+/// them: a bare `cargo test` died on `NotFound` (hanzoai/cli#71), and a binary
+/// left over from an older build would rule with yesterday's code. Skipping is
+/// not the answer either — a gate that cannot look must not read as one that
+/// passed. So this runs the build `make test` runs, once per test binary; when
+/// `make test` already ran it, it is a fingerprint check.
+///
+/// The tools are built WITH the feature and their subject is not: `hanzo` stays
+/// the binary cargo built for this test, the one a person installs.
+fn maintainer(exe: &'static str) -> &'static str {
+    static BUILT: OnceLock<Result<(), String>> = OnceLock::new();
+    let built = BUILT.get_or_init(|| {
+        // The profile cargo built this test with, read off where it put the tools.
+        let profile = match Path::new(exe).parent().and_then(Path::file_name).and_then(|p| p.to_str()) {
+            Some("debug") | None => "dev",
+            Some(other) => other,
+        };
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let out = Command::new(cargo)
+            .args(["build", "--quiet", "--locked", "--features", "maintainer", "--profile", profile])
+            .args(["--bin", "driftgate", "--bin", "genproduct"])
+            .current_dir(root())
+            .output()
+            .map_err(|e| format!("run cargo: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).into_owned())
+        }
+    });
+    if let Err(e) = built {
+        panic!("building the maintainer tools failed:\n{e}");
+    }
+    assert!(Path::new(exe).exists(), "{exe} was not built where cargo said it would be; run `make test`");
+    exe
 }
 
 /// The generated product tree is DERIVED, not maintained. This re-runs the
@@ -44,7 +86,7 @@ fn root() -> &'static str {
 /// writes the file.
 #[test]
 fn generated_is_exactly_what_the_spec_derives() {
-    let out = Command::new(env!("CARGO_BIN_EXE_genproduct")).arg("--check").output().expect("run genproduct");
+    let out = Command::new(maintainer(env!("CARGO_BIN_EXE_genproduct"))).arg("--check").output().expect("run genproduct");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
@@ -129,7 +171,7 @@ fn the_committed_spec_names_the_release_it_was_generated_from() {
 fn the_live_server_contradicts_this_command_tree_in_neither_direction() {
     // The binary it asks keeps state under HOME; a gate run is nobody's home.
     let home = tempfile::tempdir().expect("a home for the binary under test");
-    let out = Command::new(env!("CARGO_BIN_EXE_driftgate"))
+    let out = Command::new(maintainer(env!("CARGO_BIN_EXE_driftgate")))
         .args(["--hanzo", env!("CARGO_BIN_EXE_hanzo")])
         .env("HOME", home.path())
         .output()

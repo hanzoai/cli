@@ -57,9 +57,11 @@ client:
 # else in it: `.hanzo/workflows/drift.yml`, nightly and on a click, `make
 # live-check`. One predicate per place, and neither shares its fate with anything.
 #
-# `make test`, never a bare `cargo test`: the gates below exec maintainer
-# binaries that `cargo test` does not build, and a gate that dies on NotFound
-# reads exactly like a gate that passed. One invocation, in the Makefile.
+# `make test`, never a bare `cargo test`: it also runs the installer and
+# generator scripts, every workspace member and the test cache outside HOME. The
+# gates below exec maintainer binaries `cargo test` does not build; they build
+# them themselves now (hanzoai/cli#71), and `make test` builds them first too.
+# One invocation, in the Makefile.
 #
 # THE LINT GATE HAS TO INSTALL WHAT IT LINTS WITH. `dtolnay/rust-toolchain@stable`
 # provisions rustc and cargo and no components, so `cargo clippy` answered
