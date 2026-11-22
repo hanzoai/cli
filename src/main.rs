@@ -121,6 +121,13 @@ enum Commands {
     /// how it drives the desktop, so this pins the toolset on.
     Desktop(commands::cloud_sessions::SessionArgs),
 
+    /// Talk directly to the local Rust `hanzod` daemon (same backend Hanzo Desktop uses for Dev)
+    Daemon(commands::daemon::DaemonArgs),
+
+    /// Unified linked machines, provider accounts, and cross-source usage (HIP-1350)
+    #[command(alias = "source")]
+    Sources(commands::sources::SourcesArgs),
+
     /// Manage identities and credentials
     Auth {
         #[command(subcommand)]
@@ -1094,6 +1101,8 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Code => anyhow::bail!("`hanzo code` takes a code-index subcommand: `hanzo code --help`"),
 
         Commands::Desktop(args) => commands::dev::session(&mut config, args, Target::Desktop).await?,
+        Commands::Daemon(args) => commands::daemon::run(&mut config, args).await?,
+        Commands::Sources(args) => commands::sources::run(&mut config, args).await?,
 
         // `hanzo dev` IS the launcher.
         Commands::Dev(args) => commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?,

@@ -50,8 +50,10 @@ pub fn label(command: &Commands) -> &'static str {
         // The coding session reports as `dev` (a bare `hanzo` too, because it IS
         // that command); `code` is the code index.
         Commands::Code => "code",
+        Commands::Daemon(..) => "daemon",
         Commands::Dev(..) => "dev",
         Commands::Desktop(..) => "desktop",
+        Commands::Sources(..) => "sources",
         Commands::Config { .. } => "config",
         Commands::Engine { .. } | Commands::Pull { .. } => "engine",
         Commands::Graph { .. } => "graph",

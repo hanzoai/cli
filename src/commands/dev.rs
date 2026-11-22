@@ -165,6 +165,34 @@ pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> 
         )
         .await;
     }
+    if args.remote.daemon {
+        let prompt = [args.local.positional.as_deref(), args.local.tail.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string();
+        if prompt.is_empty() {
+            return super::daemon::run(
+                config,
+                super::daemon::DaemonArgs {
+                    command: Some(super::daemon::DaemonCommand::Sessions { command: None }),
+                },
+            )
+            .await;
+        }
+        return super::daemon::run_turn(
+            config,
+            &prompt,
+            args.remote.daemon_session,
+            None,
+            args.local.model,
+            None,
+            false,
+        )
+        .await;
+    }
     if args.remote.cloud_execution || args.remote.teleport.is_some() {
         return super::cloud_sessions::run(config, args, target == Target::Desktop).await;
     }
