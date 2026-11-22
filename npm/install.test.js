@@ -68,6 +68,7 @@ function createCase(t, { validArchive = true } = {}) {
       'const { Readable } = require("node:stream");',
       "global.fetch = async (url) => {",
       "  if (String(url).endsWith(\".sha256\")) {",
+      '    if (process.env.HANZO_TEST_EMPTY_SHA === "1") return { ok: true, text: async () => "" };',
       "    return {",
       "      ok: true,",
       "      text: async () => `${process.env.HANZO_TEST_SHA}  ${process.env.HANZO_TEST_ASSET}\\n`,",
@@ -91,11 +92,12 @@ function createCase(t, { validArchive = true } = {}) {
   };
 }
 
-function runInstaller(context, { expectedSha = context.sha256, pathPrefix, systemRoot } = {}) {
+function runInstaller(context, { expectedSha = context.sha256, pathPrefix, systemRoot, emptySha = false } = {}) {
   const env = { ...process.env };
   setEnvironmentKey(env, "HANZO_TEST_ARCHIVE", context.archive);
   setEnvironmentKey(env, "HANZO_TEST_ASSET", context.assetName);
   setEnvironmentKey(env, "HANZO_TEST_SHA", expectedSha);
+  setEnvironmentKey(env, "HANZO_TEST_EMPTY_SHA", emptySha ? "1" : "0");
 
   if (pathPrefix) {
     const currentPath = Object.entries(process.env).find(
@@ -181,6 +183,21 @@ test("an extraction failure is propagated", (t) => {
   const result = runInstaller(context);
   assert.notEqual(result.status, 0);
   assert.equal(existsSync(context.installedBinary), false);
+});
+
+test("an empty checksum file refuses the installation rather than skipping verification", (t) => {
+  const context = createCase(t);
+  const result = runInstaller(context, { emptySha: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /invalid checksum/i);
+  assert.equal(existsSync(context.installedBinary), false);
+});
+
+test("uppercase SHA-256 checksum digests verify successfully", (t) => {
+  const context = createCase(t);
+  const result = runInstaller(context, { expectedSha: context.sha256.toUpperCase() });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "local fixture only\n");
 });
 
 test("a checksum mismatch stops before extraction", (t) => {

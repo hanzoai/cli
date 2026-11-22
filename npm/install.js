@@ -101,6 +101,10 @@ async function downloadAndExtract({ assetUrl, sha256Url, assetName, dest }) {
   let want = null;
   if (sha256Url) {
     want = (await (await get(sha256Url)).text()).trim().split(/\s+/)[0];
+    if (!/^[0-9a-f]{64}$/i.test(want)) {
+      throw new Error(`invalid checksum for ${assetName}: expected a 64-character SHA-256 digest`);
+    }
+    want = want.toLowerCase();
   }
 
   const res = await get(assetUrl);
