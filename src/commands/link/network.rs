@@ -33,7 +33,7 @@ pub struct Caller {
     selected: Option<String>,
     pub who: Identity,
     pub sub: String,
-    http: Http,
+    pub(super) http: Http,
 }
 
 impl Caller {
@@ -68,7 +68,7 @@ impl Caller {
         Ok(Caller { api, token, org, selected, who, sub, http: Http::default() })
     }
 
-    fn request(&self, method: Method, url: String) -> Request {
+    pub(super) fn request(&self, method: Method, url: String) -> Request {
         let request = Request::new(method, url).token(&self.token);
         match &self.selected {
             Some(org) => request.org(org),
@@ -77,7 +77,7 @@ impl Caller {
     }
 
     /// One call, and its 2xx body; a non-2xx is the server's own status and words.
-    async fn send(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
+    pub(super) async fn send(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
         let mut request = self.request(method, format!("{}{path}", self.api));
         if let Some(body) = body {
             request = request.body(body);
@@ -260,7 +260,7 @@ pub fn host_port(s: &str) -> Result<(String, u16)> {
 
 /// An id the controller mints — letters, digits, `-`, `_`, `.` — and never one
 /// of dots alone, which a url would read as a path step.
-fn url_id(id: &str) -> bool {
+pub(super) fn url_id(id: &str) -> bool {
     !id.is_empty()
         && !id.bytes().all(|b| b == b'.')
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
@@ -347,11 +347,11 @@ pub(crate) mod tests {
     }
 
     /// A token whose claims name owner `acme`, user `box` and subject `sub_1`.
-    fn token() -> String {
+    pub(crate) fn token() -> String {
         identity::testjwt::claims_jwt(r#"{"owner":"acme","name":"box","sub":"sub_1"}"#)
     }
 
-    fn caller(base: &str, selected: Option<&str>) -> Caller {
+    pub(crate) fn caller(base: &str, selected: Option<&str>) -> Caller {
         Caller::new(base.to_string(), token(), selected.map(str::to_string)).unwrap()
     }
 

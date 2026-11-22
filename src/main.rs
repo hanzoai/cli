@@ -164,6 +164,7 @@ enum Commands {
     /// Bare, it puts this machine's identity on the org's network, registers it
     /// as a run-target and publishes a shell. `host`, `dial`, `status` and `rm`
     /// are the network: what this machine serves, what it reaches, what is up.
+    /// `grant`, `revoke` and `folders` are the folders the web may start runs in.
     #[command(args_conflicts_with_subcommands = true)]
     Link {
         #[command(subcommand)]
@@ -748,7 +749,7 @@ enum NetworkCommands {
     },
 }
 
-/// The org's Hanzo ZT network, from this machine.
+/// The org's Hanzo ZT network, and the folders the web may use, from this machine.
 #[derive(Subcommand)]
 enum LinkCommands {
     /// Host this identity's services; with NAME and HOST:PORT, publish that
@@ -790,6 +791,18 @@ enum LinkCommands {
         #[command(flatten)]
         signer: commands::link::Signer,
     },
+    /// Let runs started from the web work in FOLDER on this machine, and under it
+    Grant {
+        /// The folder, sent as its absolute real path
+        folder: PathBuf,
+    },
+    /// Stop runs started from the web from working in FOLDER on this machine
+    Revoke {
+        /// The folder, as it was granted
+        folder: PathBuf,
+    },
+    /// The folders on this machine the web may start runs in
+    Folders,
 }
 
 #[derive(Subcommand)]
@@ -1156,6 +1169,9 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             }
             Some(LinkCommands::Status { signer }) => commands::link::status(&mut config, signer).await?,
             Some(LinkCommands::Rm { name, signer }) => commands::link::rm(&mut config, name, signer).await?,
+            Some(LinkCommands::Grant { folder }) => commands::link::folders::grant(&mut config, folder).await?,
+            Some(LinkCommands::Revoke { folder }) => commands::link::folders::revoke(&mut config, folder).await?,
+            Some(LinkCommands::Folders) => commands::link::folders::list(&mut config).await?,
         },
 
         Commands::Beat => {
@@ -1999,6 +2015,20 @@ mod tests {
             parse(&["hanzo", "link", "rm", "engine"]),
             Ok(Some(Commands::Link { command: Some(LinkCommands::Rm { .. }), .. }))
         ));
+        let Ok(Some(Commands::Link { command: Some(LinkCommands::Grant { folder }), .. })) =
+            parse(&["hanzo", "link", "grant", "/home/me/site"])
+        else {
+            panic!("link grant")
+        };
+        assert_eq!(folder, PathBuf::from("/home/me/site"));
+        assert!(matches!(
+            parse(&["hanzo", "link", "revoke", "site"]),
+            Ok(Some(Commands::Link { command: Some(LinkCommands::Revoke { .. }), .. }))
+        ));
+        assert!(matches!(
+            parse(&["hanzo", "link", "folders"]),
+            Ok(Some(Commands::Link { command: Some(LinkCommands::Folders), .. }))
+        ));
 
         // A name without a target, a system unit that is not installed, port 0,
         // and a shell flag on a network verb are all refused at parse time.
@@ -2008,6 +2038,7 @@ mod tests {
             &["hanzo", "link", "dial", "k8s.hanzo", "0"],
             &["hanzo", "link", "dial", "k8s.hanzo"],
             &["hanzo", "link", "--shell", "bash", "status"],
+            &["hanzo", "link", "grant"],
         ] {
             assert!(parse(bad).is_err(), "{bad:?} parsed");
         }

@@ -8,6 +8,9 @@
 //!   `link host` publishes a service and hosts it, `link dial` carries a local port
 //!   to one, `link status` says what is up, `link rm` takes a service down, and
 //!   `--install` leaves either tunnel running under the service manager.
+//! - A MACHINE THE WEB MAY USE, folder by folder: `link grant` lets runs started
+//!   from the web work in a folder of it, `link revoke` stops that, `link folders`
+//!   lists them (`folders`).
 //!
 //!   HOSTING AND DIALING ARE TWO IDENTITIES. zt has no dial-only mode: `tunnel
 //!   proxy` also hosts everything its identity may bind, so a dialer that may
@@ -40,6 +43,7 @@
 //! disconnect and can be attached locally at the same time.
 
 mod dependencies;
+pub mod folders;
 mod network;
 mod unit;
 mod zt;
