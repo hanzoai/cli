@@ -6,7 +6,7 @@
 // `hanzo-vm`, `zt`, `hanzod`) are always discoverable, and lazily fetches any
 // missing companion binary on first invocation via `../install.js`.
 const { spawnSync } = require("node:child_process");
-const { existsSync, realpathSync } = require("node:fs");
+const { accessSync, constants, existsSync, realpathSync, statSync } = require("node:fs");
 const { basename, delimiter, join } = require("node:path");
 
 const ext = process.platform === "win32" ? ".exe" : "";
@@ -35,6 +35,8 @@ const TOOL_BINS = {
 // count: treating one as the tool skips the download and then execs nothing.
 function realBinary(p) {
   try {
+    if (!statSync(p).isFile()) return false;
+    if (process.platform !== "win32") accessSync(p, constants.X_OK);
     return !realpathSync(p).endsWith(".js");
   } catch {
     return false;
