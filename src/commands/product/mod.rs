@@ -341,9 +341,16 @@ fn field_arg(f: &'static Field) -> Arg {
     match f.ty {
         Ty::Int => a = a.value_parser(clap::value_parser!(i64)).value_name("INT"),
         Ty::Num => a = a.value_parser(clap::value_parser!(f64)).value_name("NUMBER"),
-        // An array of booleans still takes a VALUE — `--f --f` could not say
-        // `[true,false]` — so only a scalar bool is a bare presence flag.
-        Ty::Bool if !f.repeat => a = a.action(ArgAction::SetTrue),
+        // A scalar boolean accepts `--enabled` (true) or `--enabled false`.
+        // Presence-only flags cannot express false on update endpoints.
+        Ty::Bool if !f.repeat => {
+            a = a
+                .action(ArgAction::Set)
+                .num_args(0..=1)
+                .default_missing_value("true")
+                .value_parser(clap::value_parser!(bool))
+                .value_name("BOOL")
+        }
         Ty::Bool => a = a.value_parser(clap::value_parser!(bool)).value_name("BOOL"),
         Ty::Json => a = a.value_parser(parse_json).value_name("JSON"),
         Ty::Union => a = a.value_parser(parse_union).value_name("TEXT|JSON"),
@@ -549,9 +556,9 @@ fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
         Ty::Str => m.get_one::<String>(f.id).map(|v| json!(v)),
         Ty::Int => m.get_one::<i64>(f.id).map(|v| json!(v)),
         Ty::Num => m.get_one::<f64>(f.id).map(|v| json!(v)),
-        // A scalar bool is a presence flag: absent means "unset", so it is
-        // omitted rather than sent as `false` over the server's own default.
-        Ty::Bool => m.get_flag(f.id).then_some(json!(true)),
+        // Optional booleans remain absent unless given: explicit false must
+        // reach the API instead of being mistaken for an unset flag.
+        Ty::Bool => m.get_one::<bool>(f.id).copied().map(Value::Bool),
         Ty::Json | Ty::Union => m.get_one::<Value>(f.id).cloned(),
     }
 }

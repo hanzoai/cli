@@ -1307,6 +1307,40 @@ fn hand_written_command_names_are_not_verb_nouns() {
     assert!(bad.is_empty(), "verb-noun command names — name the thing, let the position say the verb:\n  {}", bad.join("\n  "));
 }
 
+/// A generated boolean body field must distinguish omission from explicit
+/// false, while keeping the original bare-flag spelling for true.
+#[test]
+fn scalar_boolean_field_preserves_explicit_false_and_optional_omission() {
+    static ENABLED: Field = Field {
+        key: "enabled",
+        id: "field.enabled",
+        flag: "enabled",
+        ty: Ty::Bool,
+        required: false,
+        choices: &[],
+        query: false,
+        secret: false,
+        repeat: false,
+    };
+    let value = |args: Vec<&str>| {
+        let matches = Command::new("test")
+            .arg(field_arg(&ENABLED))
+            .try_get_matches_from(args)
+            .expect("parses");
+        field_value(&ENABLED, &matches)
+    };
+    assert_eq!(value(vec!["test"]), None);
+    assert_eq!(value(vec!["test", "--enabled"]), Some(Value::Bool(true)));
+    assert_eq!(
+        value(vec!["test", "--enabled", "true"]),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        value(vec!["test", "--enabled", "false"]),
+        Some(Value::Bool(false))
+    );
+}
+
 /// A UNION flag says what it looks like: a JSON object or array reaches the body
 /// as that value, anything else as the text typed. The field is stated here, read
 /// through the builder every generated command uses: since cloud 8.5.640 the
