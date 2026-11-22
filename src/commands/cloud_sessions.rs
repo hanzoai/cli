@@ -78,6 +78,12 @@ pub struct CloudArgs {
     /// Project directory to serve (`hanzo dev --serve --dir <PATH>`).
     #[arg(long, default_value = ".", requires = "serve")]
     pub dir: std::path::PathBuf,
+    /// Execute through the local Rust `hanzod` daemon (`/v1/dev/sessions`, same backend as Hanzo Desktop).
+    #[arg(long, conflicts_with_all = ["cloud_execution", "teleport", "serve"])]
+    pub daemon: bool,
+    /// Existing `hanzod` session id to continue when `--daemon` is set.
+    #[arg(long, value_name = "SESSION_ID", requires = "daemon")]
+    pub daemon_session: Option<String>,
 }
 
 pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> Result<()> {

@@ -27,9 +27,11 @@ pub mod upgrade;
 pub mod up;
 
 // The one coding/agent orchestrator, behind `hanzo dev` and `hanzo desktop`.
+pub mod daemon;
 pub mod dev;
 pub mod dev_server;
 pub mod cloud_sessions;
+pub mod sources;
 
 // Kept resources reachable in the additive model (money, network, provider
 // connectors, local dev helpers, and the TS SDK proxies).
