@@ -134,6 +134,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 
+// The probe and the table fetch go through the same TLS roots as the CLI:
+// webpki alone rejects a machine's own CA (a corporate MITM, this sandbox),
+// so an ad-hoc `reqwest::Client` goes BLIND where the CLI connects fine.
+use hanzo_client::{tls_builder, tls_client};
+
 #[path = "../curation.rs"]
 mod curation;
 use curation::{Curated, Instead};
@@ -857,7 +862,7 @@ async fn read(src: &str) -> Value {
             if attempt > 0 {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
-            match reqwest::get(src).await.and_then(reqwest::Response::error_for_status) {
+            match tls_client().get(src).send().await.and_then(reqwest::Response::error_for_status) {
                 Ok(r) => match r.text().await {
                     Ok(t) => {
                         got = Some(t);
@@ -887,7 +892,7 @@ async fn read(src: &str) -> Value {
 /// itself rate-limited into a BLIND verdict.
 async fn gather(a: &Args, spec: &Value, spec_sha: String, spec_ref: String) -> Evidence {
     let table = Table::read(&read(&a.registry).await);
-    let client = reqwest::Client::builder()
+    let client = tls_builder()
         .timeout(std::time::Duration::from_secs(20))
         // A REDIRECT IS AN ANSWER, and following it asks a different question
         // about a different address. This turned two live routes into false 404s:

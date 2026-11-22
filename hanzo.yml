@@ -1,5 +1,5 @@
 # Canonical CI config for hanzoai/cli — read by the hanzoai/ci reusable
-# (.github/workflows/cicd.yml) and by platform.hanzo.ai. This repo had neither
+# (.hanzo/workflows/cicd.yml) and by platform.hanzo.ai. This repo had neither
 # this file nor a Makefile, which is why `genspec` — the one thing that keeps
 # the CLI's command surface honest — was reachable only by a maintainer typing
 # it. A capture nothing re-asks goes stale silently, and this one did: it was

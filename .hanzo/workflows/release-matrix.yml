@@ -1,7 +1,10 @@
 name: Release Matrix (CLI)
 
 # THIS FILE RUNS ON GIT.HANZO.AI (git.hanzo.ai), and that is why it lives in
-# `.hanzo/workflows/` rather than `.github/workflows/`.
+# `.hanzo/workflows/` rather than `.github/workflows/`. Moved there Nov 21,
+# 2026: while it sat under `.github/`, GitHub queued a dead copy against a
+# label nothing offers on every tag (six runs sat queued Nov 21 alone), beside
+# the one real build on the forge.
 #
 # `runs-on: linux-amd64` was always a GIT.HANZO.AI label. It is one of 28
 # advertised by the git-runner pool (hanzo/git-runner-0..9, registered to

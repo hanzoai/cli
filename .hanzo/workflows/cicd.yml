@@ -4,8 +4,11 @@
 # The runners are git.hanzo.ai's. The pool that answers `linux-amd64` is
 # registered there; github.com has none at any level, so a job github.com picks
 # up simply queues. Hanzo Git reads BOTH `.hanzo/workflows` and
-# `.github/workflows`, and one directory serving both planes is why this sits
-# under `.github/` now.
+# `.github/workflows`, and GitHub reads only `.github/workflows` — so a file
+# left under `.github/` runs TWICE: once on the forge, and once on GitHub where
+# nothing can pick it up and the job queues in silence (the Nov 21 runs sat
+# queued for hours). This file lives under `.hanzo/workflows/` since Nov 21,
+# 2026, so there is exactly one execution, on the forge.
 #
 # The `uses:` pin names `.github/workflows/build.yml`, which is where hanzoai/ci
 # publishes the reusable. Checked at tag v1 against a deliberately bogus path as
@@ -20,7 +23,7 @@
 # pin's whole history is one hand-typed commit against 104 runs. A trigger that
 # is undeliverable in both directions is not a coupling, it is a story about one,
 # so it is gone. The pin moves by PULLING, on the side that has runners —
-# `.hanzo/workflows/drift.yml`, which already runs on a schedule with the network
+# `.hanzo/workflows/drift.yml`, which runs on a schedule with the network
 # it needs.
 name: CI/CD
 on:
