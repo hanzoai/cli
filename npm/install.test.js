@@ -11,6 +11,7 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } = require("node:fs");
@@ -176,11 +177,15 @@ test("Windows propagates an invalid system tar failure", (t) => {
   }));
 });
 
-test("an extraction failure is propagated", (t) => {
+test("a failed extraction removes the downloaded archive", (t) => {
   const context = createCase(t, { validArchive: false });
   const result = runInstaller(context);
   assert.notEqual(result.status, 0);
   assert.equal(existsSync(context.installedBinary), false);
+  const leftovers = readdirSync(context.packageDir).filter(
+    (name) => name.startsWith(`${result.pid}-`) && name.endsWith(".tar.gz")
+  );
+  assert.deepEqual(leftovers, [], "failed extraction must not leave the downloaded archive behind");
 });
 
 test("a checksum mismatch stops before extraction", (t) => {

@@ -105,19 +105,21 @@ async function downloadAndExtract({ assetUrl, sha256Url, assetName, dest }) {
 
   const res = await get(assetUrl);
   const hash = createHash("sha256");
-  const file = createWriteStream(tmp);
-  await pipeline(res.body, async function* (src) {
-    for await (const chunk of src) { hash.update(chunk); yield chunk; }
-  }, file);
+  try {
+    const file = createWriteStream(tmp);
+    await pipeline(res.body, async function* (src) {
+      for await (const chunk of src) { hash.update(chunk); yield chunk; }
+    }, file);
 
-  const got = hash.digest("hex");
-  if (want && got !== want) {
+    const got = hash.digest("hex");
+    if (want && got !== want) {
+      throw new Error(`checksum mismatch for ${assetName}\n  expected ${want}\n  got      ${got}`);
+    }
+
+    extractArchive(tmp, dest);
+  } finally {
     await rm(tmp, { force: true });
-    throw new Error(`checksum mismatch for ${assetName}\n  expected ${want}\n  got      ${got}`);
   }
-
-  extractArchive(tmp, dest);
-  await rm(tmp, { force: true });
 }
 
 async function fetchStandardTool({ base, bin, alias, target, dest, ext }) {
