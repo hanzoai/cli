@@ -189,6 +189,7 @@ while [ "$1" != --hanzo-end ]; do
   case "$1" in
     -m|--model|-p|--port|--overlay)
       [ -n "\${2:-}" ] && [ "$2" != --hanzo-end ] || { echo "hanzo-engine: $1 requires a value" >&2; exit 2; }
+      case "$2" in -*) echo "hanzo-engine: $1 requires a value" >&2; exit 2 ;; esac
       case "$1" in
         -m|--model) model="$2" ;;
         -p|--port) port="$2" ;;

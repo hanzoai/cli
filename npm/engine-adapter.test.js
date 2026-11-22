@@ -26,6 +26,20 @@ test("adapter rejects missing model/port/overlay values without looping", { skip
   }
 });
 
+test("adapter rejects an option in place of a required value", { skip: process.platform === "win32" }, (t) => {
+  for (const args of [
+    ["serve", "-m", "-p", "5544"],
+    ["serve", "--model", "--verbose"],
+    ["serve", "-m", "demo", "-p", "--overlay", "some-file"],
+    ["serve", "-m", "demo", "--overlay", "--verbose"],
+  ]) {
+    const result = run(t, args);
+    assert.equal(result.error, undefined, `must return an argument error: ${args}`);
+    assert.equal(result.status, 2, `another option cannot be used as the value for ${args}`);
+    assert.match(result.stderr, /requires a value/);
+  }
+});
+
 test("adapter preserves a valid model and explicit port", { skip: process.platform === "win32" }, (t) => {
   const result = run(t, ["serve", "-m", "example-model", "-p", "5544"]);
   assert.equal(result.error, undefined);
