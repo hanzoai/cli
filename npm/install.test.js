@@ -34,7 +34,7 @@ function setEnvironmentKey(env, name, value) {
   env[name] = value;
 }
 
-function createCase(t, { validArchive = true, archiveMember } = {}) {
+function createCase(t, { validArchive = true, archiveMember, archiveKind = "file" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "hanzo issue 41 café "));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -52,7 +52,8 @@ function createCase(t, { validArchive = true, archiveMember } = {}) {
 
   if (validArchive) {
     const member = archiveMember || binary;
-    writeFileSync(join(sourceDir, member), "local fixture only\n");
+    if (archiveKind === "directory") mkdirSync(join(sourceDir, member));
+    else writeFileSync(join(sourceDir, member), archiveKind === "empty" ? "" : "local fixture only\n");
     const archiveTar = process.platform === "win32" ? WINDOWS_SYSTEM_TAR : "tar";
     execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, member]);
   } else {
@@ -183,6 +184,15 @@ test("rejects an archive that extracts successfully but lacks the expected nativ
   assert.notEqual(result.status, 0, "an archive missing the binary must not be considered installed");
   assert.match(result.stderr, /expected binary|missing native binary/i);
   assert.equal(existsSync(context.installedBinary), false);
+});
+
+test("rejects directory and empty-file placeholders instead of claiming a native binary was installed", (t) => {
+  for (const archiveKind of ["directory", "empty"]) {
+    const context = createCase(t, { archiveKind });
+    const result = runInstaller(context);
+    assert.notEqual(result.status, 0, `${archiveKind} must not install successfully`);
+    assert.match(result.stderr, /missing native binary/i);
+  }
 });
 
 test("an extraction failure is propagated", (t) => {

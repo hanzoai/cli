@@ -15,7 +15,7 @@
 // binaries (`dev`, `mcp`, `engine`, `node`, `zt`, `vm`, `gen`) are fetched
 // lazily on first use by `bin/hanzo.js` (or eagerly with `HANZO_NPM_EAGER=1` /
 // `node install.js --all`).
-const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
+const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, lstatSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const { rm } = require("node:fs/promises");
 const { join } = require("node:path");
@@ -129,7 +129,12 @@ async function fetchStandardTool({ base, bin, alias, target, dest, ext }) {
     dest,
   });
   const out = join(dest, `${bin}${ext}`);
-  if (!existsSync(out)) throw new Error(`release ${asset} is missing native binary ${bin}${ext}`);
+  // A release asset must contain a real, non-empty executable file. Directories
+  // and symlinks (including links outside the extraction root) are not binaries.
+  const extracted = lstatSync(out, { throwIfNoEntry: false });
+  if (!extracted?.isFile() || extracted.size === 0) {
+    throw new Error(`release ${asset} is missing native binary ${bin}${ext} (expected a non-empty regular file)`);
+  }
   if (process.platform !== "win32") chmodSync(out, 0o755);
   linkAlias(dest, bin, alias, ext);
 }
