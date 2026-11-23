@@ -928,13 +928,18 @@ async fn run() -> Result<()> {
     let telemetry = if matches.subcommand_matches("doctor").is_some_and(|args| args.get_flag("offline")) {
         hanzo_event::Telemetry::disabled()
     } else {
-        telemetry::build(&config)
+        let t = telemetry::build(&config);
+        telemetry::install_panic_hook(&t);
+        t
     };
 
     // A matched generated operation dispatches first, through the shared seam.
     if let Some(resolved) = commands::product::resolve(&hand, &matches) {
         let started = std::time::Instant::now();
         let outcome = commands::product::dispatch(&mut config, resolved).await;
+        if let Err(ref err) = outcome {
+            telemetry.capture_error("CommandError", &err.to_string(), None, true, Some("product"));
+        }
         telemetry.command("product", started.elapsed(), outcome.is_ok());
         telemetry.flush().await;
         return outcome;
@@ -946,6 +951,9 @@ async fn run() -> Result<()> {
             let command_label = telemetry::label(&command);
             let started = std::time::Instant::now();
             let outcome = dispatch(command, config).await;
+            if let Err(ref err) = outcome {
+                telemetry.capture_error("CommandError", &err.to_string(), None, true, Some(command_label));
+            }
             telemetry.command(command_label, started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
             outcome
@@ -958,6 +966,9 @@ async fn run() -> Result<()> {
             code.link = true;
             let started = std::time::Instant::now();
             let outcome = commands::dev::session(&mut config, code, Target::Repo).await;
+            if let Err(ref err) = outcome {
+                telemetry.capture_error("CommandError", &err.to_string(), None, true, Some("dev"));
+            }
             telemetry.command("dev", started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
             outcome

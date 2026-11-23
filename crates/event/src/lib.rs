@@ -48,20 +48,46 @@ pub const TIMEOUT_ENV: &str = "HANZO_EVENT_TIMEOUT_MS";
 /// this so a slow or dead network delays process teardown by at most ~1s.
 const DEFAULT_TIMEOUT_MS: u64 = 1000;
 
-/// The canonical analytics event — the entire ingest contract in four fields. The
-/// tenant is NOT here: the server resolves it from the bearer, so a caller only ever
-/// writes into its own org. Everything non-core travels in [`Event::properties`].
+/// The canonical analytics event — the entire ingest contract. The tenant is NOT
+/// here: the server resolves it from the bearer, so a caller only ever writes into
+/// its own org. Everything non-core travels in [`Event::properties`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
-    /// Event name (required; an empty name is dropped server-side as unroutable).
+    /// Wire kind (`"error"` for exceptions/panics; omitted for tracked acts).
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Event name (required for tracked acts; `"error"` for exceptions).
     pub event: String,
     /// The stable, non-PII visitor id the caller owns (the per-install device id).
     #[serde(rename = "distinctId")]
     pub distinct_id: String,
     /// RFC3339 timestamp; the server clamps skew and fills an absent value.
     pub time: String,
+    /// Emitting product surface (`"cli"`, `"dev"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
+    /// Emitter release version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
+    /// Severity level (`"error"`, `"fatal"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Structured exception payload on `type: "error"` events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<Exception>,
     /// Everything non-core.
     pub properties: Map<String, Value>,
+}
+
+/// Structured exception payload matching Cloud `/v1/event` `CaptureEvent.Error`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Exception {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
+    pub handled: bool,
 }
 
 /// How to build a [`Telemetry`] handle. The caller resolves the pieces from its own
@@ -201,14 +227,90 @@ impl Telemetry {
             return;
         }
         let ev = Event {
+            kind: None,
             event: event.to_string(),
             distinct_id: self.distinct_id.clone(),
             time: now_rfc3339(),
+            product: Some(self.product.clone()),
+            release: Some(self.version.clone()),
+            level: None,
+            error: None,
             properties,
         };
         if let Ok(mut buf) = self.events.lock() {
             buf.push(ev);
         }
+    }
+
+    /// Buffer one scrubbed error/panic event on the canonical `type: "error"` wire.
+    pub fn capture_error(
+        &self,
+        err_type: &str,
+        message: &str,
+        stack: Option<&str>,
+        handled: bool,
+        command: Option<&str>,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let ev = self.build_error_event(err_type, message, stack, handled, command);
+        if let Ok(mut buf) = self.events.lock() {
+            buf.push(ev);
+        }
+    }
+
+    /// Build a canonical `type: "error"` event with secrets and user paths scrubbed.
+    pub fn build_error_event(
+        &self,
+        err_type: &str,
+        message: &str,
+        stack: Option<&str>,
+        handled: bool,
+        command: Option<&str>,
+    ) -> Event {
+        let mut props = Map::new();
+        props.insert("product".into(), Value::String(self.product.clone()));
+        props.insert("version".into(), Value::String(self.version.clone()));
+        props.insert("os".into(), Value::String(std::env::consts::OS.into()));
+        props.insert("arch".into(), Value::String(std::env::consts::ARCH.into()));
+        if let Some(cmd) = command {
+            props.insert("command".into(), Value::String(cmd.to_string()));
+        }
+        let clean_msg = scrub_text(message);
+        let clean_stack = stack.map(scrub_text).filter(|s| !s.is_empty());
+        Event {
+            kind: Some("error".to_string()),
+            event: "error".to_string(),
+            distinct_id: self.distinct_id.clone(),
+            time: now_rfc3339(),
+            product: Some(self.product.clone()),
+            release: Some(self.version.clone()),
+            level: Some(if handled { "error" } else { "fatal" }.to_string()),
+            error: Some(Exception {
+                kind: err_type.to_string(),
+                message: clean_msg,
+                stack: clean_stack,
+                handled,
+            }),
+            properties: props,
+        }
+    }
+
+    /// Snapshot the endpoint and credential for out-of-band crash/panic reporting.
+    /// Returns `None` when telemetry is disabled or no credential is available.
+    pub fn crash_target(&self) -> Option<(String, String, String, String, String)> {
+        if !self.enabled {
+            return None;
+        }
+        let auth = self.auth.as_ref()?.clone();
+        Some((
+            self.endpoint.clone(),
+            auth,
+            self.distinct_id.clone(),
+            self.product.clone(),
+            self.version.clone(),
+        ))
     }
 
     /// Drain the buffer and POST it as one `[Event]` batch. Bounded by the flush
@@ -277,6 +379,76 @@ pub fn device_id(dir: &Path) -> String {
     let _ = std::fs::create_dir_all(dir);
     let _ = write_private(&path, id.as_bytes());
     id
+}
+
+/// Scrub tokens, API keys, emails, and user home directory paths from an error
+/// message or stack trace before transmission.
+pub fn scrub_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len().min(512));
+    let mut chars = input.chars().peekable();
+    let mut buf = String::new();
+    let flush_word = |word: &str, dst: &mut String| {
+        if word.starts_with("sk-")
+            || word.starts_with("pk-")
+            || word.starts_with("hk-")
+            || word.starts_with("ghp_")
+            || word.starts_with("gho_")
+            || word.starts_with("ghs_")
+            || word.starts_with("eyJ")
+            || (word.contains('@') && word.contains('.') && !word.starts_with('/'))
+        {
+            dst.push_str("[redacted]");
+            return;
+        }
+        // Scrub /Users/<name>/... or /home/<name>/...
+        if let Some(rest) = word.strip_prefix("/Users/").or_else(|| word.strip_prefix("/home/")) {
+            if let Some(idx) = rest.find('/') {
+                dst.push_str("~");
+                dst.push_str(&rest[idx..]);
+                return;
+            }
+            dst.push_str("~");
+            return;
+        }
+        dst.push_str(word);
+    };
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            if !buf.is_empty() {
+                let is_bearer = buf.eq_ignore_ascii_case("bearer") || buf.eq_ignore_ascii_case("basic");
+                flush_word(&buf, &mut out);
+                buf.clear();
+                out.push(c);
+                if is_bearer {
+                    while let Some(&nc) = chars.peek() {
+                        if nc.is_whitespace() {
+                            break;
+                        }
+                        chars.next();
+                    }
+                    out.push_str("[redacted]");
+                }
+            } else {
+                out.push(c);
+            }
+        } else {
+            buf.push(c);
+        }
+        if out.len() >= 1000 {
+            break;
+        }
+    }
+    if !buf.is_empty() && out.len() < 1000 {
+        flush_word(&buf, &mut out);
+    }
+    if out.len() > 1000 {
+        let mut end = 1000;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    out
 }
 
 /// Current time as RFC3339 UTC — the wire's `time` field.
@@ -515,5 +687,38 @@ mod tests {
             listener.accept().is_err(),
             "no request was sent without a credential"
         );
+    }
+
+    #[test]
+    fn capture_error_builds_scrubbed_canonical_error_event() {
+        let t = Telemetry::build(
+            true,
+            "http://127.0.0.1:1/v1/event".into(),
+            Some("pk-test".into()),
+            "device-err".into(),
+            "cli".into(),
+            "0.9.0".into(),
+        );
+        t.capture_error(
+            "CommandError",
+            "failed reading /Users/alice/secret.txt with Bearer tok_secret123 sk-live-abcdef123456 for alice@hanzo.ai",
+            None,
+            true,
+            Some("auth"),
+        );
+        let buf = t.events.lock().unwrap();
+        assert_eq!(buf.len(), 1);
+        let wire = serde_json::to_value(&buf[0]).unwrap();
+        assert_eq!(wire["type"], Value::String("error".into()));
+        assert_eq!(wire["product"], Value::String("cli".into()));
+        assert_eq!(wire["release"], Value::String("0.9.0".into()));
+        assert_eq!(wire["level"], Value::String("error".into()));
+        assert_eq!(wire["error"]["type"], Value::String("CommandError".into()));
+        assert_eq!(wire["error"]["handled"], Value::Bool(true));
+        let msg = wire["error"]["message"].as_str().unwrap();
+        assert!(!msg.contains("alice"), "path/email scrubbed: {msg}");
+        assert!(!msg.contains("tok_secret123"), "bearer scrubbed: {msg}");
+        assert!(!msg.contains("sk-live-abcdef123456"), "api key scrubbed: {msg}");
+        assert!(msg.contains("~/secret.txt"), "home dir normalized: {msg}");
     }
 }
