@@ -403,11 +403,11 @@ pub fn scrub_text(input: &str) -> String {
         // Scrub /Users/<name>/... or /home/<name>/...
         if let Some(rest) = word.strip_prefix("/Users/").or_else(|| word.strip_prefix("/home/")) {
             if let Some(idx) = rest.find('/') {
-                dst.push_str("~");
+                dst.push('~');
                 dst.push_str(&rest[idx..]);
                 return;
             }
-            dst.push_str("~");
+            dst.push('~');
             return;
         }
         dst.push_str(word);
