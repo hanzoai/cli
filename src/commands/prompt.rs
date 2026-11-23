@@ -271,28 +271,38 @@ mod tests {
     fn embedded_prompt_matches_canonical_hanzo_rules() {
         assert!(HANZO_PROMPT.starts_with("# Hanzo Rules"));
         for heading in [
-            "**Voice**",
-            "**Workflow**",
-            "**Naming**",
-            "**Stack**",
-            "**Skills & MCP**",
-            "**Endpoints**",
-            "**Auth**",
-            "**SuperAdmin**",
-            "**Secrets**",
-            "**Infra**",
-            "**Unified lifecycle**",
-            "**Data**",
-            "**Lux**",
-            "**Networks**",
-            "**Docs**",
-            "**Estate**",
-            "**Browser MCP**",
+            "## Voice",
+            "## Workflow",
+            "## Portability",
+            "## Hanzo Setup",
+            "## MCP — 19 Canonical Tools",
+            "## Skills",
+            "## Code",
+            "## AI",
+            "## API",
+            "## IAM",
+            "## Secrets",
+            "## Source",
+            "## Fleet",
+            "## Data",
+            "## Lux",
+            "## Docs",
+            "## Validation",
+            "## Ship",
         ] {
             assert!(HANZO_PROMPT.contains(heading), "missing {heading}");
         }
-        assert!(HANZO_PROMPT.contains("hanzoskills.com/llms.txt"));
-        assert!(HANZO_PROMPT.contains("Hanzo MCP"));
+        for tool in [
+            "`fs`", "`exec`", "`code`", "`git`", "`fetch`", "`workspace`",
+            "`browser`", "`computer`", "`ui`", "`kai`", "`think`", "`plan`",
+            "`memory`", "`tasks`", "`tracker`", "`coding`", "`research`",
+            "`skills`", "`hanzo`",
+        ] {
+            assert!(HANZO_PROMPT.contains(tool), "missing MCP tool {tool}");
+        }
+        assert!(HANZO_PROMPT.contains("https://hanzoskills.com"));
+        assert!(HANZO_PROMPT.contains("npx -y hanzo mcp"));
+        assert!(!HANZO_PROMPT.contains("Ilove"), "must not contain bootstrap credentials");
     }
 
     #[test]
