@@ -194,7 +194,7 @@ async fn link(
     once: bool,
     as_json: bool,
 ) -> Result<()> {
-    let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
+    let mut seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     let key_path = source_key_path()?;
     let kp = load_or_create_keypair(&key_path)?;
     let pub_b64 = URL_SAFE_NO_PAD.encode(kp.public_key().as_ref());
@@ -271,6 +271,9 @@ async fn link(
     eprintln!("  heartbeating every {interval_secs}s (Ctrl-C to stop)...");
     let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
     ticker.tick().await; // consume immediate tick
+    let mut last_auth_refresh = tokio::time::Instant::now();
+    // OAuth access tokens typically live 45–60m; refresh proactively every 35m and on any 401.
+    const PROACTIVE_REFRESH: Duration = Duration::from_secs(35 * 60);
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -278,14 +281,39 @@ async fn link(
                 return Ok(());
             }
             _ = ticker.tick() => {
+                if last_auth_refresh.elapsed() >= PROACTIVE_REFRESH {
+                    if let Ok(fresh) = Seam::open(cfg, DEFAULT_BRAND).await {
+                        seam = fresh;
+                        last_auth_refresh = tokio::time::Instant::now();
+                    }
+                }
                 let provs = discover_local_providers(share_providers);
                 match send_heartbeat(&seam, &kp, &id, &version, &effective_zap, &provs, 0).await {
                     Ok(_) => {}
+                    Err(e) if is_auth_failure(&e) => {
+                        match Seam::open(cfg, DEFAULT_BRAND).await {
+                            Ok(fresh) => {
+                                seam = fresh;
+                                last_auth_refresh = tokio::time::Instant::now();
+                                if let Err(retry_err) = send_heartbeat(&seam, &kp, &id, &version, &effective_zap, &provs, 0).await {
+                                    eprintln!("  {} heartbeat failed after token refresh: {retry_err:#}", "!".yellow());
+                                }
+                            }
+                            Err(refresh_err) => {
+                                eprintln!("  {} heartbeat auth refresh failed: {refresh_err:#}", "!".yellow());
+                            }
+                        }
+                    }
                     Err(e) => eprintln!("  {} heartbeat failed: {e:#}", "!".yellow()),
                 }
             }
         }
     }
+}
+
+fn is_auth_failure(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}");
+    msg.contains("(401)") || msg.contains("401 Unauthorized") || msg.contains("validated principal is required")
 }
 
 async fn send_heartbeat(
@@ -669,5 +697,14 @@ mod tests {
         let sig = kp1.sign(msg.as_bytes());
         let pubkey = UnparsedPublicKey::new(&ED25519, kp2.public_key().as_ref());
         pubkey.verify(msg.as_bytes(), sig.as_ref()).unwrap();
+    }
+
+    #[test]
+    fn detects_401_auth_failure_for_heartbeat_refresh() {
+        assert!(is_auth_failure(&anyhow!(
+            "source heartbeat failed (401): a validated principal is required: send Authorization: Bearer <API key>"
+        )));
+        assert!(is_auth_failure(&anyhow!("401 Unauthorized")));
+        assert!(!is_auth_failure(&anyhow!("source heartbeat failed (503): no instance running")));
     }
 }
