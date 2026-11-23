@@ -56,7 +56,7 @@ members = ["crates/event", "crates/client", "crates/identity"]
 # One pin for every crate that links the harness: two revs are two copies of it.
 # Pinned by commit; a Gen release moves it.
 [workspace.dependencies]
-hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "41cb6d8a8d2c4479de8a6e359cb0a17f580b8464" }
+hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "f9af5e4d94bc807f86085de5e180cc056abcea6c" }
 
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }

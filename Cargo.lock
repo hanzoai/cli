@@ -351,7 +351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -969,13 +969,14 @@ dependencies = [
 [[package]]
 name = "hanzo-gen"
 version = "0.1.3"
-source = "git+https://github.com/hanzoai/gen?rev=41cb6d8a8d2c4479de8a6e359cb0a17f580b8464#41cb6d8a8d2c4479de8a6e359cb0a17f580b8464"
+source = "git+https://github.com/hanzoai/gen?rev=f9af5e4d94bc807f86085de5e180cc056abcea6c#f9af5e4d94bc807f86085de5e180cc056abcea6c"
 dependencies = [
  "anyhow",
  "base64",
  "chrono",
  "clap",
  "colored",
+ "flate2",
  "hanzo-client",
  "libc",
  "rand 0.8.6",
@@ -983,6 +984,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "tokio",
  "toml",
@@ -3222,7 +3224,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
