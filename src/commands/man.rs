@@ -26,7 +26,10 @@ fn hand(cmd: &clap::Command) -> (Vec<Entry<'_>>, Vec<Entry<'_>>) {
     let (mut groups, mut commands) = (Vec::new(), Vec::new());
     for sub in cmd.get_subcommands() {
         let name = sub.get_name();
-        let entry = (name, sub.get_about().map(ToString::to_string).unwrap_or_default());
+        let entry = (
+            name,
+            sub.get_about().map(ToString::to_string).unwrap_or_default(),
+        );
         // clap's `help` builtin mirrors the whole tree beneath itself so that
         // `hanzo help <command>` reaches every page. That mirror is not a product
         // group; to a reader `help` is one terminal command.
@@ -121,16 +124,30 @@ pub fn page(cmd: &clap::Command) -> String {
          \x20   `hanzo status` shows cloud health and local inference cluster status.\n\n",
     );
 
-    o.push_str("    `hanzo --cloud \"task\"` runs in a cloud sandbox; `--watch` follows it.\n\
+    o.push_str(
+        "    `hanzo --cloud \"task\"` runs in a cloud sandbox; `--watch` follows it.\n\
         \x20   `hanzo --cloud` lists runs; `--cloud --resume ID --watch` follows one.\n\
         \x20   `hanzo --teleport ID` fetches its branch into a clean checkout.\n\
-        \x20   `--metered` selects Hanzo models for a local session.\n\n");
+        \x20   `--metered` selects Hanzo models for a local session.\n\n",
+    );
     o.push_str(&format!("{}\n", b("GLOBAL FLAGS")));
     for (f, d) in [
-        ("--config=FILE", "Use a custom CLI config file for this invocation."),
-        ("--as=ORG", "Act as this org, as your identity in it when you hold one."),
-        ("--verbose, -v", "Increase logging verbosity (repeat for more)."),
-        ("--help", "Display this page, or a subcommand's detailed help."),
+        (
+            "--config=FILE",
+            "Use a custom CLI config file for this invocation.",
+        ),
+        (
+            "--as=ORG",
+            "Act as this org, as your identity in it when you hold one.",
+        ),
+        (
+            "--verbose, -v",
+            "Increase logging verbosity (repeat for more).",
+        ),
+        (
+            "--help",
+            "Display this page, or a subcommand's detailed help.",
+        ),
     ] {
         o.push_str(&format!("     {}\n        {}\n\n", b(f), d));
     }
@@ -138,7 +155,10 @@ pub fn page(cmd: &clap::Command) -> String {
     let (mut groups, mut commands) = hand(cmd);
 
     o.push_str(&format!("{}\n", b("GROUPS")));
-    o.push_str(&format!("    {} is one of the following:\n\n", "GROUP".underline()));
+    o.push_str(&format!(
+        "    {} is one of the following:\n\n",
+        "GROUP".underline()
+    ));
     // Hand groups and generated products, one alphabetical list — the reader
     // does not care which half of the binary answers.
     groups.extend(product::catalog(cmd));
@@ -148,7 +168,10 @@ pub fn page(cmd: &clap::Command) -> String {
     }
 
     o.push_str(&format!("{}\n", b("COMMANDS")));
-    o.push_str(&format!("    {} is one of the following:\n\n", "COMMAND".underline()));
+    o.push_str(&format!(
+        "    {} is one of the following:\n\n",
+        "COMMAND".underline()
+    ));
     commands.sort_by_key(|(n, _)| *n);
     for (name, about) in &commands {
         entry(&mut o, name, about);
@@ -173,8 +196,14 @@ mod tests {
             .and_then(|rest| rest.split("GROUPS").next())
             .expect("the page has a GLOBAL FLAGS section");
         for arg in cmd.get_arguments().filter(|a| a.is_global_set()) {
-            let long = format!("--{}", arg.get_long().expect("a global flag has a long name"));
-            assert!(flags.contains(&long), "`{long}` is global and the page never names it");
+            let long = format!(
+                "--{}",
+                arg.get_long().expect("a global flag has a long name")
+            );
+            assert!(
+                flags.contains(&long),
+                "`{long}` is global and the page never names it"
+            );
         }
     }
 
@@ -197,7 +226,11 @@ mod tests {
         // A name is real if either half of the binary answers to it: the built
         // hand tree (which is where clap materializes its own `help`), or the
         // generated products mounted beside it.
-        let resolve = |n: &str| built.find_subcommand(n).or_else(|| merged.find_subcommand(n));
+        let resolve = |n: &str| {
+            built
+                .find_subcommand(n)
+                .or_else(|| merged.find_subcommand(n))
+        };
 
         // The tables: every entry parses, and every entry says what it does.
         for (name, about) in groups.iter().chain(commands.iter()) {
@@ -205,21 +238,34 @@ mod tests {
                 resolve(name).is_some(),
                 "the page names `hanzo {name}`, which the parser does not accept"
             );
-            assert!(!about.is_empty(), "`hanzo {name}` is on the page with nothing to say");
+            assert!(
+                !about.is_empty(),
+                "`hanzo {name}` is on the page with nothing to say"
+            );
         }
 
         // The other direction: a command absent from the page is a command nobody
         // can find. `hanzo up` and `hanzo link` both were.
-        let named: Vec<&str> = groups.iter().chain(commands.iter()).map(|(n, _)| *n).collect();
+        let named: Vec<&str> = groups
+            .iter()
+            .chain(commands.iter())
+            .map(|(n, _)| *n)
+            .collect();
         for sub in built.get_subcommands().map(clap::Command::get_name) {
-            assert!(named.contains(&sub), "`hanzo {sub}` is a command the page never names");
+            assert!(
+                named.contains(&sub),
+                "`hanzo {sub}` is a command the page never names"
+            );
         }
 
         // The page's own PROSE names commands too, and only this walks it. Scoped
         // to the text this file writes: a product summary is cloud's sentence, and
         // a command it misnames is fixed upstream, never here.
         let page = super::page(&hand);
-        let prose = page.split("GLOBAL FLAGS").next().expect("the page opens with prose");
+        let prose = page
+            .split("GLOBAL FLAGS")
+            .next()
+            .expect("the page opens with prose");
         for quoted in prose.split('`').skip(1).step_by(2) {
             let mut words = quoted.split_whitespace().peekable();
             if words.next() != Some("hanzo") {

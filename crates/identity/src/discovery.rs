@@ -46,7 +46,9 @@ struct Cached {
 /// `https://host[:port]` — or http on a loopback host — and nothing after it
 /// but a path. Credentials are only ever sent to such an address.
 fn sendable(url: &str) -> bool {
-    let Some((scheme, rest)) = url.split_once("://") else { return false };
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() || authority.contains('@') {
         return false;
@@ -75,7 +77,10 @@ pub fn parse(body: &str) -> Result<Document> {
             ("userinfo_endpoint", &doc.userinfo_endpoint),
             ("revocation_endpoint", &doc.revocation_endpoint),
             ("end_session_endpoint", &doc.end_session_endpoint),
-            ("device_authorization_endpoint", &doc.device_authorization_endpoint),
+            (
+                "device_authorization_endpoint",
+                &doc.device_authorization_endpoint,
+            ),
         ]
         .into_iter()
         .filter_map(|(n, u)| u.as_ref().map(|u| (n, u))),
@@ -89,7 +94,10 @@ pub fn parse(body: &str) -> Result<Document> {
 
 /// The address an origin publishes its configuration at.
 fn well_known(origin: &str) -> String {
-    format!("{}/.well-known/openid-configuration", origin.trim_end_matches('/'))
+    format!(
+        "{}/.well-known/openid-configuration",
+        origin.trim_end_matches('/')
+    )
 }
 
 /// Fetch and read the document `origin` publishes. BLOCKING, on a thread of its
@@ -98,7 +106,9 @@ pub fn fetch(origin: &str) -> Result<Document> {
     let url = well_known(origin);
     let body = std::thread::scope(|s| {
         s.spawn(|| -> Result<String> {
-            let client = reqwest::blocking::Client::builder().timeout(TIMEOUT).build()?;
+            let client = reqwest::blocking::Client::builder()
+                .timeout(TIMEOUT)
+                .build()?;
             let resp = client.get(&url).send()?.error_for_status()?;
             Ok(resp.text()?)
         })
@@ -120,7 +130,13 @@ fn cache_file(dir: &Path, origin: &str) -> PathBuf {
     let name: String = origin
         .trim_end_matches('/')
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     dir.join(format!("{name}.json"))
 }
@@ -130,8 +146,9 @@ fn cache_file(dir: &Path, origin: &str) -> PathBuf {
 /// nothing was ever fetched and the origin cannot be reached.
 pub fn resolve_in(dir: &Path, origin: &str, ttl: Duration) -> Result<Document> {
     let file = cache_file(dir, origin);
-    let held: Option<Cached> =
-        std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let held: Option<Cached> = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
     if let Some(c) = &held {
         if now().saturating_sub(c.fetched_at) < ttl.as_secs() {
             return Ok(c.document.clone());
@@ -142,7 +159,13 @@ pub fn resolve_in(dir: &Path, origin: &str, ttl: Duration) -> Result<Document> {
             // A cache that cannot be written costs a refetch, not the answer.
             let _ = std::fs::create_dir_all(dir).and_then(|()| {
                 let tmp = file.with_extension("tmp");
-                std::fs::write(&tmp, serde_json::to_vec(&Cached { fetched_at: now(), document: document.clone() })?)?;
+                std::fs::write(
+                    &tmp,
+                    serde_json::to_vec(&Cached {
+                        fetched_at: now(),
+                        document: document.clone(),
+                    })?,
+                )?;
                 std::fs::rename(&tmp, &file)
             });
             Ok(document)
@@ -153,7 +176,10 @@ pub fn resolve_in(dir: &Path, origin: &str, ttl: Duration) -> Result<Document> {
 
 /// [`resolve_in`] in the user's cache directory, for [`TTL`].
 pub fn resolve(origin: &str) -> Result<Document> {
-    let dir = dirs::cache_dir().ok_or_else(|| anyhow!("no cache directory"))?.join("hanzo").join("discovery");
+    let dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow!("no cache directory"))?
+        .join("hanzo")
+        .join("discovery");
     resolve_in(&dir, origin, TTL)
 }
 
@@ -174,7 +200,9 @@ pub fn lookup(origin: &str) -> Option<Document> {
 /// expire. With no document the origin itself is the expected issuer.
 pub fn issued_by(doc: Option<&Document>, origin: &str, former: &[&str], iss: &str) -> bool {
     let iss = iss.trim_end_matches('/');
-    let expected = doc.map_or(origin, |d| d.issuer.as_str()).trim_end_matches('/');
+    let expected = doc
+        .map_or(origin, |d| d.issuer.as_str())
+        .trim_end_matches('/');
     iss == expected || former.iter().any(|f| iss == f.trim_end_matches('/'))
 }
 
@@ -223,7 +251,10 @@ mod tests {
         let d = resolve_in(dir.path(), &origin, TTL).unwrap();
         h.join().unwrap();
         assert_eq!(d.issuer, "https://issuer.example");
-        assert_eq!(d.token_endpoint, "https://issuer.example/v1/iam/oauth/token");
+        assert_eq!(
+            d.token_endpoint,
+            "https://issuer.example/v1/iam/oauth/token"
+        );
         assert_ne!(d.issuer, origin);
     }
 
@@ -237,14 +268,23 @@ mod tests {
         h.join().unwrap(); // the server is gone now
         assert_eq!(resolve_in(dir.path(), &origin, TTL).unwrap(), first);
         // Zero TTL forces a refresh, which fails: the last good copy answers.
-        assert_eq!(resolve_in(dir.path(), &origin, Duration::ZERO).unwrap(), first);
+        assert_eq!(
+            resolve_in(dir.path(), &origin, Duration::ZERO).unwrap(),
+            first
+        );
         // Never fetched, unreachable: an error, not a guess.
         assert!(resolve_in(tempfile::tempdir().unwrap().path(), &origin, TTL).is_err());
     }
 
     #[test]
     fn an_address_a_credential_cannot_go_to_is_refused() {
-        for bad in ["http://issuer.example", "ftp://x.example", "https://u:p@x.example", "x.example", "http://127.evil.example"] {
+        for bad in [
+            "http://issuer.example",
+            "ftp://x.example",
+            "https://u:p@x.example",
+            "x.example",
+            "http://127.evil.example",
+        ] {
             assert!(parse(&doc(bad)).is_err(), "{bad}");
         }
         assert!(parse(&doc("http://localhost:8000")).is_ok());
@@ -261,7 +301,12 @@ mod tests {
         assert!(issued_by(Some(&d), origin, &[], "https://issuer.example"));
         assert!(issued_by(Some(&d), origin, &[], "https://issuer.example/"));
         assert!(!issued_by(Some(&d), origin, &[], origin));
-        assert!(issued_by(Some(&d), origin, &["https://old.example"], "https://old.example"));
+        assert!(issued_by(
+            Some(&d),
+            origin,
+            &["https://old.example"],
+            "https://old.example"
+        ));
         assert!(!issued_by(Some(&d), origin, &[], "https://old.example"));
         assert!(issued_by(None, origin, &[], origin));
     }

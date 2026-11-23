@@ -108,7 +108,11 @@ fn parse_prometheus(text: &str) -> HashMap<String, f64> {
     metrics
 }
 
-async fn fetch_json(client: &reqwest::Client, url: &str, auth_bearer: Option<&str>) -> Option<Value> {
+async fn fetch_json(
+    client: &reqwest::Client,
+    url: &str,
+    auth_bearer: Option<&str>,
+) -> Option<Value> {
     let mut req = client.get(url).timeout(Duration::from_millis(1500));
     if let Some(token) = auth_bearer {
         req = req.bearer_auth(token);
@@ -141,7 +145,9 @@ async fn get_evo_stats(client: &reqwest::Client) -> NodeStats {
     for base in endpoints {
         if let Some(h) = fetch_json(client, &format!("{base}/health"), None).await {
             health = Some(h);
-            metrics_raw = fetch_text(client, &format!("{base}/metrics")).await.unwrap_or_default();
+            metrics_raw = fetch_text(client, &format!("{base}/metrics"))
+                .await
+                .unwrap_or_default();
             break;
         }
     }
@@ -158,34 +164,77 @@ async fn get_evo_stats(client: &reqwest::Client) -> NodeStats {
 
     let prom = parse_prometheus(&metrics_raw);
     let online = health.is_some() || !prom.is_empty();
-    let prefill_s = prom.get("llamacpp:prompt_tokens_seconds").copied().unwrap_or(0.0);
-    let decode_s = prom.get("llamacpp:predicted_tokens_seconds").copied().unwrap_or(0.0);
-    let kv_usage = prom.get("llamacpp:kv_cache_usage_ratio").copied().unwrap_or(0.0) * 100.0;
+    let prefill_s = prom
+        .get("llamacpp:prompt_tokens_seconds")
+        .copied()
+        .unwrap_or(0.0);
+    let decode_s = prom
+        .get("llamacpp:predicted_tokens_seconds")
+        .copied()
+        .unwrap_or(0.0);
+    let kv_usage = prom
+        .get("llamacpp:kv_cache_usage_ratio")
+        .copied()
+        .unwrap_or(0.0)
+        * 100.0;
     let kv_tokens = prom.get("llamacpp:kv_cache_tokens").copied().unwrap_or(0.0) as usize;
-    let kv_total = prom.get("halogen:kv_pool_positions").copied().unwrap_or(262144.0) as usize;
+    let kv_total = prom
+        .get("halogen:kv_pool_positions")
+        .copied()
+        .unwrap_or(262144.0) as usize;
 
-    let draft_total = prom.get("halogen:draft_tokens_total").copied().unwrap_or(0.0);
-    let draft_acc = prom.get("halogen:draft_tokens_accepted_total").copied().unwrap_or(0.0);
-    let draft_pct = if draft_total > 0.0 { (draft_acc / draft_total) * 100.0 } else { 0.0 };
+    let draft_total = prom
+        .get("halogen:draft_tokens_total")
+        .copied()
+        .unwrap_or(0.0);
+    let draft_acc = prom
+        .get("halogen:draft_tokens_accepted_total")
+        .copied()
+        .unwrap_or(0.0);
+    let draft_pct = if draft_total > 0.0 {
+        (draft_acc / draft_total) * 100.0
+    } else {
+        0.0
+    };
 
     let in_flight = health
         .as_ref()
         .and_then(|h| h.get("in_flight"))
         .and_then(Value::as_u64)
-        .unwrap_or_else(|| prom.get("llamacpp:requests_processing").copied().unwrap_or(0.0) as u64) as usize;
+        .unwrap_or_else(|| {
+            prom.get("llamacpp:requests_processing")
+                .copied()
+                .unwrap_or(0.0) as u64
+        }) as usize;
     let queued = health
         .as_ref()
         .and_then(|h| h.get("queued"))
         .and_then(Value::as_u64)
-        .unwrap_or_else(|| prom.get("llamacpp:requests_deferred").copied().unwrap_or(0.0) as u64) as usize;
+        .unwrap_or_else(|| {
+            prom.get("llamacpp:requests_deferred")
+                .copied()
+                .unwrap_or(0.0) as u64
+        }) as usize;
 
-    let prompt_toks = prom.get("llamacpp:prompt_tokens_total").copied().unwrap_or(0.0) as u64;
-    let gen_toks = prom.get("llamacpp:tokens_predicted_total").copied().unwrap_or(0.0) as u64;
+    let prompt_toks = prom
+        .get("llamacpp:prompt_tokens_total")
+        .copied()
+        .unwrap_or(0.0) as u64;
+    let gen_toks = prom
+        .get("llamacpp:tokens_predicted_total")
+        .copied()
+        .unwrap_or(0.0) as u64;
     let total_tokens = prompt_toks + gen_toks;
     let requests_completed = prom.get("halogen:requests_total").copied().unwrap_or(0.0) as u64;
 
-    let prompt_sec = prom.get("llamacpp:prompt_seconds_total").copied().unwrap_or(0.0);
-    let pred_sec = prom.get("llamacpp:tokens_predicted_seconds_total").copied().unwrap_or(0.0);
+    let prompt_sec = prom
+        .get("llamacpp:prompt_seconds_total")
+        .copied()
+        .unwrap_or(0.0);
+    let pred_sec = prom
+        .get("llamacpp:tokens_predicted_seconds_total")
+        .copied()
+        .unwrap_or(0.0);
     let reqs = (requests_completed as f64).max(1.0);
     let p50_latency_ms = if prompt_toks > 0 {
         ((prompt_sec + pred_sec) / reqs) * 20.0
@@ -240,7 +289,9 @@ async fn get_dgx_stats(client: &reqwest::Client) -> NodeStats {
     for base in endpoints {
         if let Some(m) = fetch_json(client, &format!("{base}/v1/models"), None).await {
             models_data = Some(m);
-            metrics_raw = fetch_text(client, &format!("{base}/metrics")).await.unwrap_or_default();
+            metrics_raw = fetch_text(client, &format!("{base}/metrics"))
+                .await
+                .unwrap_or_default();
             break;
         }
     }
@@ -257,23 +308,55 @@ async fn get_dgx_stats(client: &reqwest::Client) -> NodeStats {
 
     let prom = parse_prometheus(&metrics_raw);
     let online = models_data.is_some() || !prom.is_empty();
-    let running = prom.get("vllm:num_requests_running").copied().unwrap_or(0.0) as usize;
-    let waiting = prom.get("vllm:num_requests_waiting").copied().unwrap_or(0.0) as usize;
+    let running = prom
+        .get("vllm:num_requests_running")
+        .copied()
+        .unwrap_or(0.0) as usize;
+    let waiting = prom
+        .get("vllm:num_requests_waiting")
+        .copied()
+        .unwrap_or(0.0) as usize;
     let kv_usage = prom.get("vllm:kv_cache_usage_perc").copied().unwrap_or(0.0) * 100.0;
 
-    let prefix_queries = prom.get("vllm:prefix_cache_queries_total").copied().unwrap_or(0.0);
-    let prefix_hits = prom.get("vllm:prefix_cache_hits_total").copied().unwrap_or(0.0);
-    let hit_rate = if prefix_queries > 0.0 { (prefix_hits / prefix_queries) * 100.0 } else { 0.0 };
+    let prefix_queries = prom
+        .get("vllm:prefix_cache_queries_total")
+        .copied()
+        .unwrap_or(0.0);
+    let prefix_hits = prom
+        .get("vllm:prefix_cache_hits_total")
+        .copied()
+        .unwrap_or(0.0);
+    let hit_rate = if prefix_queries > 0.0 {
+        (prefix_hits / prefix_queries) * 100.0
+    } else {
+        0.0
+    };
 
     let prompt_toks = prom.get("vllm:prompt_tokens_total").copied().unwrap_or(0.0) as u64;
-    let gen_toks = prom.get("vllm:generation_tokens_total").copied().unwrap_or(0.0) as u64;
+    let gen_toks = prom
+        .get("vllm:generation_tokens_total")
+        .copied()
+        .unwrap_or(0.0) as u64;
     let total_tokens = prompt_toks + gen_toks;
 
-    let draft_total = prom.get("vllm:spec_decode_num_draft_tokens_total").copied().unwrap_or(0.0);
-    let draft_acc = prom.get("vllm:spec_decode_num_accepted_tokens_total").copied().unwrap_or(0.0);
-    let draft_pct = if draft_total > 0.0 { (draft_acc / draft_total) * 100.0 } else { 0.0 };
+    let draft_total = prom
+        .get("vllm:spec_decode_num_draft_tokens_total")
+        .copied()
+        .unwrap_or(0.0);
+    let draft_acc = prom
+        .get("vllm:spec_decode_num_accepted_tokens_total")
+        .copied()
+        .unwrap_or(0.0);
+    let draft_pct = if draft_total > 0.0 {
+        (draft_acc / draft_total) * 100.0
+    } else {
+        0.0
+    };
 
-    let ttft_sum = prom.get("vllm:time_to_first_token_seconds_sum").copied().unwrap_or(0.0);
+    let ttft_sum = prom
+        .get("vllm:time_to_first_token_seconds_sum")
+        .copied()
+        .unwrap_or(0.0);
     let prefill_tok_s = if ttft_sum > 0.0 && prompt_toks > 0 {
         (prompt_toks as f64) / ttft_sum
     } else if running > 0 {
@@ -282,8 +365,14 @@ async fn get_dgx_stats(client: &reqwest::Client) -> NodeStats {
         0.0
     };
 
-    let decode_sum = prom.get("vllm:request_time_per_output_token_seconds_sum").copied().unwrap_or(0.0);
-    let decode_count = prom.get("vllm:request_time_per_output_token_seconds_count").copied().unwrap_or(0.0);
+    let decode_sum = prom
+        .get("vllm:request_time_per_output_token_seconds_sum")
+        .copied()
+        .unwrap_or(0.0);
+    let decode_count = prom
+        .get("vllm:request_time_per_output_token_seconds_count")
+        .copied()
+        .unwrap_or(0.0);
     let decode_tok_s = if decode_sum > 0.0 && decode_count > 0.0 {
         (1.0 / (decode_sum / decode_count)).min(100.0)
     } else if running > 0 {
@@ -294,7 +383,10 @@ async fn get_dgx_stats(client: &reqwest::Client) -> NodeStats {
 
     let kv_tokens = ((kv_usage / 100.0) * 1_000_000.0) as usize;
 
-    let requests_completed = prom.get("vllm:e2e_request_latency_seconds_count").copied().unwrap_or(0.0) as u64;
+    let requests_completed = prom
+        .get("vllm:e2e_request_latency_seconds_count")
+        .copied()
+        .unwrap_or(0.0) as u64;
     let decode_p50 = if decode_count > 0.0 {
         ((decode_sum / decode_count) * 1000.0).clamp(5.0, 200.0)
     } else {
@@ -381,9 +473,19 @@ async fn get_dbc_stats(client: &reqwest::Client) -> NodeStats {
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
 
-    let draft_n = timings.and_then(|t| t.get("draft_n")).and_then(Value::as_f64).unwrap_or(0.0);
-    let draft_acc = timings.and_then(|t| t.get("draft_n_accepted")).and_then(Value::as_f64).unwrap_or(0.0);
-    let draft_pct = if draft_n > 0.0 { (draft_acc / draft_n) * 100.0 } else { 0.0 };
+    let draft_n = timings
+        .and_then(|t| t.get("draft_n"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let draft_acc = timings
+        .and_then(|t| t.get("draft_n_accepted"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let draft_pct = if draft_n > 0.0 {
+        (draft_acc / draft_n) * 100.0
+    } else {
+        0.0
+    };
 
     let mem = health.get("memory_plan");
     let kv_reserve_tokens = mem
@@ -391,8 +493,14 @@ async fn get_dbc_stats(client: &reqwest::Client) -> NodeStats {
         .and_then(Value::as_u64)
         .unwrap_or(176128) as usize;
 
-    let prompt_n = timings.and_then(|t| t.get("prompt_n")).and_then(Value::as_u64).unwrap_or(0);
-    let pred_n = timings.and_then(|t| t.get("predicted_n")).and_then(Value::as_u64).unwrap_or(0);
+    let prompt_n = timings
+        .and_then(|t| t.get("prompt_n"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let pred_n = timings
+        .and_then(|t| t.get("predicted_n"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let kv_tokens = (prompt_n + pred_n) as usize;
     let kv_usage_pct = if kv_reserve_tokens > 0 {
         ((kv_tokens as f64) / (kv_reserve_tokens as f64)) * 100.0
@@ -400,7 +508,10 @@ async fn get_dbc_stats(client: &reqwest::Client) -> NodeStats {
         0.0
     };
 
-    let chip = health.get("chip").and_then(Value::as_str).unwrap_or("Apple M4 Max");
+    let chip = health
+        .get("chip")
+        .and_then(Value::as_str)
+        .unwrap_or("Apple M4 Max");
 
     NodeStats {
         name: "dbc".to_string(),
@@ -459,7 +570,10 @@ pub async fn collect_telemetry() -> ClusterTelemetry {
     let total_inflight = evo.in_flight + dgx.in_flight + dbc.in_flight;
     let total_queued = evo.queued + dgx.queued + dbc.queued;
 
-    let online_nodes: Vec<&NodeStats> = [&evo, &dgx, &dbc].into_iter().filter(|n| n.online).collect();
+    let online_nodes: Vec<&NodeStats> = [&evo, &dgx, &dbc]
+        .into_iter()
+        .filter(|n| n.online)
+        .collect();
     let cluster_p50_latency_ms = if !online_nodes.is_empty() {
         online_nodes.iter().map(|n| n.p50_latency_ms).sum::<f64>() / (online_nodes.len() as f64)
     } else {
@@ -494,14 +608,18 @@ pub async fn collect_telemetry() -> ClusterTelemetry {
 }
 
 pub fn render_dashboard(telem: &ClusterTelemetry) {
-    println!("{}", "=== HANZO LOCAL GPU INFERENCE CLUSTER ===".cyan().bold());
+    println!(
+        "{}",
+        "=== HANZO LOCAL GPU INFERENCE CLUSTER ===".cyan().bold()
+    );
     println!(
         "{}",
         "Topology: Native Bare-Metal / runc GPU Execution (Zero Sandboxing · gVisor-free)".dimmed()
     );
     println!(
         "{}",
-        "Auth & Mesh: Hanzo IAM Native OIDC · Bearer Injection · WireGuard mesh · .pleo Overlays".dimmed()
+        "Auth & Mesh: Hanzo IAM Native OIDC · Bearer Injection · WireGuard mesh · .pleo Overlays"
+            .dimmed()
     );
     println!();
 
@@ -542,7 +660,12 @@ pub fn render_dashboard(telem: &ClusterTelemetry) {
 
     // Table 2: Deep Telemetry & KV Cache Breakdown
     println!();
-    println!("{}", "--- INFERENCE TELEMETRY & KV CACHE BREAKDOWN ---".cyan().bold());
+    println!(
+        "{}",
+        "--- INFERENCE TELEMETRY & KV CACHE BREAKDOWN ---"
+            .cyan()
+            .bold()
+    );
     println!(
         "{:<6} {:<18} {:<16} {:<20} {:<14} {:<12} {:<10}",
         "NODE".bold(),
@@ -660,7 +783,9 @@ pub fn render_dashboard(telem: &ClusterTelemetry) {
             "  • Routing:       {} ({} registered model routes)",
             telem.router_balancing, telem.router_routes
         );
-        println!("  • Auth Policy:   Native Bearer token injection for upstream nodes (DBC verified)");
+        println!(
+            "  • Auth Policy:   Native Bearer token injection for upstream nodes (DBC verified)"
+        );
         println!("  • Overlay Mesh:  Active (propagates .pleo header and rewrites request body)");
     }
 

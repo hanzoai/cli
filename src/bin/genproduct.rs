@@ -78,7 +78,8 @@ fn kebab(s: &str) -> String {
 
 fn has_child(p: &str, all: &BTreeSet<String>) -> bool {
     let pre = format!("{}/", p.trim_end_matches('/'));
-    all.iter().any(|k| k != p && k.trim_end_matches('/').starts_with(&pre))
+    all.iter()
+        .any(|k| k != p && k.trim_end_matches('/').starts_with(&pre))
 }
 /// A collection is a path whose MEMBERS are addressed by appending a `{param}`.
 /// The member path need not STOP there: `/v1/admin/plugins/{name}/reload` selects
@@ -178,7 +179,11 @@ fn fold(
     }
     let product = sg[0].to_string();
     let ct = cmd_tokens(sg);
-    let params: Vec<String> = ct.iter().filter(|s| is_param(s)).map(|s| pname(s).to_string()).collect();
+    let params: Vec<String> = ct
+        .iter()
+        .filter(|s| is_param(s))
+        .map(|s| pname(s).to_string())
+        .collect();
     let p = path.trim_end_matches('/').to_string();
     if ct.is_empty() {
         return Some(Folded {
@@ -222,7 +227,12 @@ fn fold(
     } else {
         last.clone()
     };
-    Some(Folded { product, nodes, verb, params })
+    Some(Folded {
+        product,
+        nodes,
+        verb,
+        params,
+    })
 }
 
 // ---- typed field extraction -------------------------------------------------
@@ -294,14 +304,43 @@ fn is_secret(name: &str, pschema: &Value) -> bool {
     if pschema.get("type").and_then(Value::as_str) != Some("string") {
         return false;
     }
-    let n: String = name.to_ascii_lowercase().chars().filter(char::is_ascii_alphanumeric).collect();
+    let n: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect();
 
     /// Names that DESCRIBE a credential rather than carrying one.
     const NOT_THE_VALUE: &[&str] = &[
-        "file", "path", "hash", "salt", "ref", "id", "name", "type", "format",
-        "method", "url", "uri", "days", "options", "ttl", "count", "enabled",
-        "attributes", "fields", "prefix", "algorithm", "scheme", "kind", "mode",
-        "expiry", "expires", "at", "by", "signingmethod",
+        "file",
+        "path",
+        "hash",
+        "salt",
+        "ref",
+        "id",
+        "name",
+        "type",
+        "format",
+        "method",
+        "url",
+        "uri",
+        "days",
+        "options",
+        "ttl",
+        "count",
+        "enabled",
+        "attributes",
+        "fields",
+        "prefix",
+        "algorithm",
+        "scheme",
+        "kind",
+        "mode",
+        "expiry",
+        "expires",
+        "at",
+        "by",
+        "signingmethod",
     ];
     if NOT_THE_VALUE.iter().any(|suf| n.ends_with(suf)) {
         return false;
@@ -310,8 +349,17 @@ fn is_secret(name: &str, pschema: &Value) -> bool {
     /// What a secret is called, as a whole name or the tail of one
     /// (`clientSecret`, `accessSecret`, `apiKey`, `refreshToken`).
     const IS_THE_VALUE: &[&str] = &[
-        "password", "passwd", "passphrase", "secret", "apikey", "privatekey",
-        "credential", "token", "clientsecret", "accesskey", "secretkey",
+        "password",
+        "passwd",
+        "passphrase",
+        "secret",
+        "apikey",
+        "privatekey",
+        "credential",
+        "token",
+        "clientsecret",
+        "accesskey",
+        "secretkey",
     ];
     IS_THE_VALUE.iter().any(|w| n == *w || n.ends_with(w))
 }
@@ -354,7 +402,11 @@ fn classify(spec: &Value, pschema: &Value) -> (&'static str, Vec<String>, bool) 
     let enum_vals: Vec<String> = d
         .get("enum")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     match d.get("type").and_then(Value::as_str).unwrap_or("") {
         "string" => ("Str", enum_vals, false),
@@ -377,9 +429,13 @@ fn classify(spec: &Value, pschema: &Value) -> (&'static str, Vec<String>, bool) 
         // no string variant is a JSON value. It used to fall through to `Str`,
         // so `--state '{"message":"…"}'` reached the server as a quoted string.
         _ if d.get("anyOf").or_else(|| d.get("oneOf")).is_some() => {
-            let variants = d.get("anyOf").or_else(|| d.get("oneOf")).and_then(Value::as_array);
+            let variants = d
+                .get("anyOf")
+                .or_else(|| d.get("oneOf"))
+                .and_then(Value::as_array);
             let text = variants.is_some_and(|vs| {
-                vs.iter().any(|v| deref(spec, v).get("type").and_then(Value::as_str) == Some("string"))
+                vs.iter()
+                    .any(|v| deref(spec, v).get("type").and_then(Value::as_str) == Some("string"))
             });
             (if text { "Union" } else { "Json" }, vec![], false)
         }
@@ -445,9 +501,15 @@ fn walk_object(
     for (name, pschema) in props {
         let key = format!("{prefix}{name}");
         let req = req_path && required.contains(&name);
-        let refname = pschema.get("$ref").and_then(Value::as_str).map(str::to_string);
+        let refname = pschema
+            .get("$ref")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let d = deref(spec, &pschema);
-        let expandable = d.get("properties").and_then(Value::as_object).is_some_and(|p| !p.is_empty())
+        let expandable = d
+            .get("properties")
+            .and_then(Value::as_object)
+            .is_some_and(|p| !p.is_empty())
             || d.get("allOf").is_some();
         let cycle = refname.as_ref().is_some_and(|r| seen.contains(r));
         if expandable && depth < MAX_NEST && !cycle {
@@ -491,7 +553,9 @@ fn query_fields(spec: &Value, op: &Value) -> Vec<FieldDef> {
         if p.get("in").and_then(Value::as_str) != Some("query") {
             continue;
         }
-        let Some(name) = p.get("name").and_then(Value::as_str) else { continue };
+        let Some(name) = p.get("name").and_then(Value::as_str) else {
+            continue;
+        };
         let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
         let (ty, choices, repeat) = match p.get("schema") {
             Some(schema) => classify(spec, schema),
@@ -535,18 +599,26 @@ struct Op {
 }
 
 fn method_rank(m: &str) -> usize {
-    METHOD_PRIORITY.iter().position(|x| *x == m).unwrap_or(usize::MAX)
+    METHOD_PRIORITY
+        .iter()
+        .position(|x| *x == m)
+        .unwrap_or(usize::MAX)
 }
 
 fn main() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let spec_path = manifest.join("spec/cloud.json");
-    let spec: Value = serde_json::from_str(
-        &fs::read_to_string(&spec_path)
-            .unwrap_or_else(|e| panic!("read {}: {e} — run `cargo run --features genspec --bin genspec`", spec_path.display())),
-    )
+    let spec: Value = serde_json::from_str(&fs::read_to_string(&spec_path).unwrap_or_else(|e| {
+        panic!(
+            "read {}: {e} — run `cargo run --features genspec --bin genspec`",
+            spec_path.display()
+        )
+    }))
     .unwrap();
-    let paths = spec.get("paths").and_then(Value::as_object).expect("spec has no paths");
+    let paths = spec
+        .get("paths")
+        .and_then(Value::as_object)
+        .expect("spec has no paths");
 
     // Per-product prose: the spec's `tags`, each description the owning Go
     // package's doc synopsis (lifted by cloud's weave, carried by genspec).
@@ -560,7 +632,12 @@ fn main() {
         .flatten()
         .filter_map(|t| {
             let n = t.get("name")?.as_str()?.to_string();
-            let d = t.get("description")?.as_str()?.split_whitespace().collect::<Vec<_>>().join(" ");
+            let d = t
+                .get("description")?
+                .as_str()?
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             // Go doc convention opens with "Package <name> "; that identifier
             // belongs to Go's namespace, not the help line. Same rule as the
             // handler-name strip: drop the exact prefix, recapitalize, and a
@@ -574,7 +651,10 @@ fn main() {
                 if let Some(rest) = d.strip_prefix("Package ") {
                     if let Some(sp) = rest.find(' ') {
                         let rest = &rest[sp + 1..];
-                        let rest = rest.strip_prefix("is ").or_else(|| rest.strip_prefix("are ")).unwrap_or(rest);
+                        let rest = rest
+                            .strip_prefix("is ")
+                            .or_else(|| rest.strip_prefix("are "))
+                            .unwrap_or(rest);
                         let mut c = rest.chars();
                         d = match c.next() {
                             Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
@@ -613,7 +693,11 @@ fn main() {
     // The path universe the fold reads to tell a collection from an item and a
     // group from a leaf. It is the SERVED surface, so a sibling route that cloud
     // does not answer can no longer shape a command that it does.
-    let all: BTreeSet<String> = paths.keys().filter(|p| p.starts_with("/v1/")).cloned().collect();
+    let all: BTreeSet<String> = paths
+        .keys()
+        .filter(|p| p.starts_with("/v1/"))
+        .cloned()
+        .collect();
 
     // Addresses answering more than one verb. A terminal noun at one of these
     // cannot be the command's verb without collapsing every method onto one
@@ -636,8 +720,11 @@ fn main() {
     // this, every entry decays into the "this one 404s" knowledge deleting it cost
     // a release.
     let carried: BTreeSet<&str> = all.iter().filter_map(|p| segs(p).get(1).copied()).collect();
-    let stale: Vec<&str> =
-        curation::CURATED.iter().map(|c| c.product).filter(|n| !carried.contains(n)).collect();
+    let stale: Vec<&str> = curation::CURATED
+        .iter()
+        .map(|c| c.product)
+        .filter(|n| !carried.contains(n))
+        .collect();
     assert!(
         stale.is_empty(),
         "curation names {} product(s) spec/cloud.json does not carry: {}\n\n\
@@ -665,7 +752,9 @@ fn main() {
                 continue;
             }
             let method = m.to_uppercase();
-            let Some(f) = fold(&method, path, &all, &multi) else { continue };
+            let Some(f) = fold(&method, path, &all, &multi) else {
+                continue;
+            };
             // Curation remap: absorb a product UNDER another as a sub-namespace
             // (e.g. `machines list` → `compute machines list`). The PATH is
             // unchanged — only the command coordinate moves.
@@ -718,9 +807,18 @@ fn main() {
             let rest: Vec<String> = op
                 .get("x-catch-all")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default();
-            let sum = op.get("summary").and_then(Value::as_str).unwrap_or("").to_string();
+            let sum = op
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             // A METHOD-OVERRIDE TUNNEL IS NOT A COMMAND. cloud registers a POST
             // beside the real verb at some addresses so a browser form — which can
             // only send GET and POST — can still reach a PUT/PATCH/DELETE handler.
@@ -824,7 +922,14 @@ fn main() {
     let mut seen_coord: BTreeSet<(String, Vec<String>, String)> = BTreeSet::new();
     for o in &coords {
         let c = (o.product.clone(), o.nodes.clone(), o.verb.clone());
-        assert!(seen_coord.insert(c), "DUP COORD: {} {:?} {} <- {}", o.product, o.nodes, o.verb, o.path);
+        assert!(
+            seen_coord.insert(c),
+            "DUP COORD: {} {:?} {} <- {}",
+            o.product,
+            o.nodes,
+            o.verb,
+            o.path
+        );
     }
 
     // Guard: prose is not optional, and there is no substitute for it. A command
@@ -861,10 +966,12 @@ fn main() {
     // The elision census, read beside the ops it stands for. It is printed every
     // run and written into the generated header, because a gap nobody prints is a
     // gap nobody closes.
-    let by_product = elided.iter().fold(BTreeMap::<&str, usize>::new(), |mut m, o| {
-        *m.entry(o.product.as_str()).or_default() += 1;
-        m
-    });
+    let by_product = elided
+        .iter()
+        .fold(BTreeMap::<&str, usize>::new(), |mut m, o| {
+            *m.entry(o.product.as_str()).or_default() += 1;
+            m
+        });
     let worst = {
         let mut v: Vec<_> = by_product.iter().collect();
         v.sort_by_key(|(p, n)| (std::cmp::Reverse(**n), **p));
@@ -913,7 +1020,11 @@ fn main() {
     let gap_worst = {
         let mut v: Vec<_> = gap_by_product.iter().collect();
         v.sort_by_key(|(p, n)| (std::cmp::Reverse(**n), **p));
-        v.into_iter().take(8).map(|(p, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", ")
+        v.into_iter()
+            .take(8)
+            .map(|(p, n)| format!("{p} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     eprintln!(
         "genproduct: {} write command(s) take --data — {no_schema} because the handler declares no \
@@ -936,11 +1047,17 @@ fn main() {
         .iter()
         .filter(|o| o.fields.is_empty() && matches!(o.method.as_str(), "POST" | "PUT" | "PATCH"))
         .count();
-    let nprod = coords.iter().map(|o| &o.product).collect::<BTreeSet<_>>().len();
+    let nprod = coords
+        .iter()
+        .map(|o| &o.product)
+        .collect::<BTreeSet<_>>()
+        .len();
 
     let mut s = String::new();
     s.push_str("//! @generated by `cargo run --bin genproduct` from `spec/cloud.json`\n");
-    s.push_str("//! (itself a projection of hanzoai/cloud's emitted openapi.yaml, and of nothing else).\n");
+    s.push_str(
+        "//! (itself a projection of hanzoai/cloud's emitted openapi.yaml, and of nothing else).\n",
+    );
     s.push_str("//! DO NOT EDIT BY HAND — `cargo test` regenerates and diffs this.\n//!\n");
     s.push_str("//! Pure DATA: (product, resource nodes, verb, method, /v1 path, params, typed\n");
     s.push_str("//! body fields). No host, no absolute URL, no auth — pinned by a test.\n//!\n");
@@ -1017,7 +1134,10 @@ fn main() {
             );
             std::process::exit(1);
         }
-        eprintln!("genproduct --check: {} ops match spec/cloud.json", coords.len());
+        eprintln!(
+            "genproduct --check: {} ops match spec/cloud.json",
+            coords.len()
+        );
         return;
     }
     fs::write(&out, s).unwrap();
@@ -1032,7 +1152,14 @@ fn main() {
 }
 
 fn emit_slice(items: &[String]) -> String {
-    format!("&[{}]", items.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "))
+    format!(
+        "&[{}]",
+        items
+            .iter()
+            .map(|s| format!("{s:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn emit_op(o: &Op) -> String {
@@ -1088,7 +1215,10 @@ mod tests {
     /// The standard marker still decides, on its own, whatever the field is called.
     #[test]
     fn the_openapi_marker_is_honoured_first() {
-        assert!(is_secret("anything", &json!({ "type": "string", "format": "password" })));
+        assert!(is_secret(
+            "anything",
+            &json!({ "type": "string", "format": "password" })
+        ));
     }
 
     /// …and is not TRUSTED on its own. Cloud's document carries `format: password`
@@ -1099,11 +1229,26 @@ mod tests {
     #[test]
     fn a_credential_is_recognised_by_name_too() {
         for name in [
-            "password", "newPassword", "oldPassword", "defaultPassword", "masterPassword",
-            "secret", "clientSecret", "accessSecret", "token", "accessToken",
-            "refreshToken", "apiKey", "privateKey", "passphrase", "credential",
+            "password",
+            "newPassword",
+            "oldPassword",
+            "defaultPassword",
+            "masterPassword",
+            "secret",
+            "clientSecret",
+            "accessSecret",
+            "token",
+            "accessToken",
+            "refreshToken",
+            "apiKey",
+            "privateKey",
+            "passphrase",
+            "credential",
         ] {
-            assert!(s(name, "string"), "`{name}` carries a credential and must go to stdin");
+            assert!(
+                s(name, "string"),
+                "`{name}` carries a credential and must go to stdin"
+            );
         }
     }
 
@@ -1112,11 +1257,22 @@ mod tests {
     #[test]
     fn naming_a_credential_is_not_carrying_one() {
         for name in [
-            "passwordSalt", "passwordHash", "password_file", "tokenFormat",
-            "tokenSigningMethod", "secretRef", "credentialId", "tokenPrefix",
-            "passwordExpireDays", "secretName", "tokenUrl",
+            "passwordSalt",
+            "passwordHash",
+            "password_file",
+            "tokenFormat",
+            "tokenSigningMethod",
+            "secretRef",
+            "credentialId",
+            "tokenPrefix",
+            "passwordExpireDays",
+            "secretName",
+            "tokenUrl",
         ] {
-            assert!(!s(name, "string"), "`{name}` names a credential without being one");
+            assert!(
+                !s(name, "string"),
+                "`{name}` names a credential without being one"
+            );
         }
     }
 
@@ -1124,7 +1280,11 @@ mod tests {
     /// `budgetTokens` is a budget, an array `tokenFields` is a schema.
     #[test]
     fn only_a_string_can_be_the_value() {
-        for (name, ty) in [("secret", "boolean"), ("budgetTokens", "integer"), ("tokenFields", "array")] {
+        for (name, ty) in [
+            ("secret", "boolean"),
+            ("budgetTokens", "integer"),
+            ("tokenFields", "array"),
+        ] {
             assert!(!s(name, ty), "`{name}: {ty}` is not a secret value");
         }
     }

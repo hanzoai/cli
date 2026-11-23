@@ -99,18 +99,28 @@ pub(crate) async fn send(
     let mut conn = UnixStream::connect(sock)
         .await
         .with_context(|| format!("connecting to the local cloud host at {}", sock.display()))?;
-    write_frame(&mut conn, &frame).await.context("sending the request frame")?;
-    let reply = read_frame(&mut conn).await.context("reading the response frame")?;
+    write_frame(&mut conn, &frame)
+        .await
+        .context("sending the request frame")?;
+    let reply = read_frame(&mut conn)
+        .await
+        .context("reading the response frame")?;
 
     let (status, body) = decode_response(&reply)?;
     if body.is_empty() {
-        return Ok(Reply { status, body: Value::Null });
+        return Ok(Reply {
+            status,
+            body: Value::Null,
+        });
     }
     // A body that is not JSON is still the caller's to show — the same rule the
     // HTTP seam follows, so an error page never becomes a parse failure here.
     let value = serde_json::from_slice(body)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()));
-    Ok(Reply { status, body: value })
+    Ok(Reply {
+        status,
+        body: value,
+    })
 }
 
 // ---- framing ----------------------------------------------------------------
@@ -197,7 +207,9 @@ fn decode_response(f: &[u8]) -> Result<(u16, &[u8])> {
         FRAME_RESPONSE => {}
         // Named rather than silently truncated: a streamed body arrives as
         // head/data/end frames, which this client does not reassemble.
-        FRAME_RESPONSE_HEAD => bail!("the host streamed this response; the ZAP client reads single-frame replies only"),
+        FRAME_RESPONSE_HEAD => {
+            bail!("the host streamed this response; the ZAP client reads single-frame replies only")
+        }
         other => bail!("expected a response frame, got type {other:#04x}"),
     }
     let root = u32::from_le_bytes([f[8], f[9], f[10], f[11]]) as usize;
@@ -251,8 +263,12 @@ fn read_var(f: &[u8], size: usize, slot: usize) -> Result<&[u8]> {
         return Ok(&[]);
     }
     let len = u32::from_le_bytes([f[slot + 4], f[slot + 5], f[slot + 6], f[slot + 7]]) as usize;
-    let start = slot.checked_add(rel).ok_or_else(|| anyhow!("slot offset overflow"))?;
-    let end = start.checked_add(len).ok_or_else(|| anyhow!("slot length overflow"))?;
+    let start = slot
+        .checked_add(rel)
+        .ok_or_else(|| anyhow!("slot offset overflow"))?;
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| anyhow!("slot length overflow"))?;
     if start < HEADER || end > size {
         bail!("field at {start}+{len} runs past the {size}-byte frame");
     }

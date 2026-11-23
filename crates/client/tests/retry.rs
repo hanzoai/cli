@@ -43,7 +43,11 @@ impl Server {
                 let text = String::from_utf8_lossy(&head).to_string();
                 let length = text
                     .lines()
-                    .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap()))
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap())
+                    })
                     .unwrap_or(0);
                 let mut body = vec![0u8; length];
                 socket.read_exact(&mut body).await.ok();
@@ -85,12 +89,20 @@ fn post(server: &Server, body: Value) -> Request {
 
 #[tokio::test]
 async fn a_429_waits_the_retry_after_then_succeeds() {
-    let server = Server::new(vec![Answer::Status(429, "Retry-After: 1\r\n"), Answer::Status(200, "")]).await;
+    let server = Server::new(vec![
+        Answer::Status(429, "Retry-After: 1\r\n"),
+        Answer::Status(200, ""),
+    ])
+    .await;
     let began = Instant::now();
     let reply = Http::default().send(get(&server)).await.unwrap();
     assert_eq!(reply.status, 200);
     assert_eq!(server.tries(), 2);
-    assert!(began.elapsed() >= Duration::from_secs(1), "did not wait the Retry-After: {:?}", began.elapsed());
+    assert!(
+        began.elapsed() >= Duration::from_secs(1),
+        "did not wait the Retry-After: {:?}",
+        began.elapsed()
+    );
 }
 
 #[tokio::test]
@@ -105,7 +117,10 @@ async fn a_5xx_that_later_succeeds_is_made_again() {
 #[tokio::test]
 async fn a_dropped_connection_is_made_again() {
     let server = Server::new(vec![Answer::Drop, Answer::Status(200, "")]).await;
-    assert_eq!(Http::default().send(get(&server)).await.unwrap().status, 200);
+    assert_eq!(
+        Http::default().send(get(&server)).await.unwrap().status,
+        200
+    );
     assert_eq!(server.tries(), 2);
 }
 
@@ -129,7 +144,10 @@ async fn a_request_that_keeps_failing_is_made_four_times_and_its_last_answer_ret
 #[tokio::test]
 async fn a_post_is_made_again_after_a_failure_only_with_a_request_id() {
     let bare = Server::new(vec![Answer::Status(503, ""), Answer::Status(200, "")]).await;
-    let reply = Http::default().send(post(&bare, json!({"prompt": "x"}))).await.unwrap();
+    let reply = Http::default()
+        .send(post(&bare, json!({"prompt": "x"})))
+        .await
+        .unwrap();
     assert_eq!((reply.status, bare.tries()), (503, 1));
 
     let named = Server::new(vec![Answer::Status(503, ""), Answer::Status(200, "")]).await;
@@ -144,15 +162,26 @@ async fn a_post_is_made_again_after_a_failure_only_with_a_request_id() {
 /// A 429 was never processed, so even a POST with no id is made again.
 #[tokio::test]
 async fn a_post_is_made_again_after_a_429() {
-    let server = Server::new(vec![Answer::Status(429, "Retry-After: 1\r\n"), Answer::Status(200, "")]).await;
-    let reply = Http::default().send(post(&server, json!({"prompt": "x"}))).await.unwrap();
+    let server = Server::new(vec![
+        Answer::Status(429, "Retry-After: 1\r\n"),
+        Answer::Status(200, ""),
+    ])
+    .await;
+    let reply = Http::default()
+        .send(post(&server, json!({"prompt": "x"})))
+        .await
+        .unwrap();
     assert_eq!((reply.status, server.tries()), (200, 2));
 }
 
 /// A wait past the hold is not waited for: the 429 is answered as it was.
 #[tokio::test]
 async fn a_wait_past_the_hold_is_answered_at_once() {
-    let server = Server::new(vec![Answer::Status(429, "Retry-After: 3600\r\n"), Answer::Status(200, "")]).await;
+    let server = Server::new(vec![
+        Answer::Status(429, "Retry-After: 3600\r\n"),
+        Answer::Status(200, ""),
+    ])
+    .await;
     let began = Instant::now();
     let reply = Http::default().send(get(&server)).await.unwrap();
     assert_eq!((reply.status, server.tries()), (429, 1));

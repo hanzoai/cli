@@ -15,7 +15,10 @@ use crate::config::Config;
 
 /// `hanzo config list` — the whole config as pretty TOML.
 pub fn list(cfg: &Config) -> Result<()> {
-    print!("{}", toml::to_string_pretty(cfg).context("serializing config")?);
+    print!(
+        "{}",
+        toml::to_string_pretty(cfg).context("serializing config")?
+    );
     Ok(())
 }
 
@@ -137,7 +140,10 @@ mod tests {
     #[test]
     fn walk_reads_a_dotted_key() {
         let v = serde_json::json!({"code": {"link": true, "theme": "dracula"}});
-        assert_eq!(walk(&v, "code.theme"), Some(&Value::String("dracula".into())));
+        assert_eq!(
+            walk(&v, "code.theme"),
+            Some(&Value::String("dracula".into()))
+        );
         assert_eq!(walk(&v, "code.link"), Some(&Value::Bool(true)));
         assert_eq!(walk(&v, "code.missing"), None);
     }

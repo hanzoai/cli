@@ -110,7 +110,6 @@ fn listed(home: &Home) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
-
 /// `auth list` names each identity as `login` reports it and `use` takes it,
 /// with the address its token claims, and marks the active one.
 #[test]
@@ -119,10 +118,16 @@ fn the_listing_names_each_identity_by_owner_name_and_address() {
     sign_in(&home, &jwt("hanzo", "z", Some("z@hanzo.ai")));
     sign_in(&home, &jwt("hanzo", "grundy", Some("grundy@example.com")));
     let list = listed(&home);
-    assert!(list.contains("* hanzo/grundy  grundy@example.com"), "{list}");
+    assert!(
+        list.contains("* hanzo/grundy  grundy@example.com"),
+        "{list}"
+    );
     assert!(list.contains("  hanzo/z  z@hanzo.ai"), "{list}");
 
-    hanzo(&home).args(["auth", "use", "hanzo/z"]).assert().success();
+    hanzo(&home)
+        .args(["auth", "use", "hanzo/z"])
+        .assert()
+        .success();
     let list = listed(&home);
     assert!(list.contains("* hanzo/z  z@hanzo.ai"), "{list}");
 }
@@ -136,12 +141,26 @@ fn an_account_never_rides_a_handed_token() {
         vec!["auth", "login", "--token", "-", "--account", "hanzo/z"],
         vec!["login", "--token", "-", "--account", "z@hanzo.ai"],
     ] {
-        let out = hanzo(&home).args(&args).write_stdin("x\n").output().unwrap();
+        let out = hanzo(&home)
+            .args(&args)
+            .write_stdin("x\n")
+            .output()
+            .unwrap();
         assert!(!out.status.success(), "{args:?} was accepted");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be used with"), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("cannot be used with"),
+            "{args:?}"
+        );
     }
     let out = hanzo(&home)
-        .args(["auth", "login", "--provider", "openai", "--account", "hanzo/z"])
+        .args([
+            "auth",
+            "login",
+            "--provider",
+            "openai",
+            "--account",
+            "hanzo/z",
+        ])
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -161,10 +180,20 @@ fn logout_without_a_browser_prints_the_end_session_link() {
         .args(["auth", "logout"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Signed out of hanzo as hanzo/z"), "{stdout}");
-    assert!(stdout.contains("To sign out of hanzo.ai in a browser too, open:"), "{stdout}");
+    assert!(
+        stdout.contains("Signed out of hanzo as hanzo/z"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("To sign out of hanzo.ai in a browser too, open:"),
+        "{stdout}"
+    );
     assert!(
         stdout.contains("https://hanzo.ai/v1/iam/oauth/logout?client_id=hanzo-cli"),
         "{stdout}"
@@ -182,31 +211,58 @@ fn as_an_org_files_its_identity_beside_the_default_and_speaks_as_it() {
     sign_in(&home, &jwt("hanzo", "z", Some("z@hanzo.ai")));
     let as_admin = |token: String| {
         hanzo(&home)
-            .args(["--as", "admin", "auth", "login", "--provider", "hanzo", "--token", "-"])
+            .args([
+                "--as",
+                "admin",
+                "auth",
+                "login",
+                "--provider",
+                "hanzo",
+                "--token",
+                "-",
+            ])
             .write_stdin(format!("{token}\n"))
             .assert()
     };
 
-    let refused = hanzo(&home).args(["--as", "admin", "auth", "show"]).assert().failure();
+    let refused = hanzo(&home)
+        .args(["--as", "admin", "auth", "show"])
+        .assert()
+        .failure();
     let err = String::from_utf8_lossy(&refused.get_output().stderr).into_owned();
     assert!(err.contains("no hanzo identity in admin"), "{err}");
     assert!(err.contains("without --as you are hanzo/z"), "{err}");
 
     let wrong = as_admin(jwt("hanzo", "x", None)).failure();
     let err = String::from_utf8_lossy(&wrong.get_output().stderr).into_owned();
-    assert!(err.contains("IAM returned hanzo/x, which is not in admin"), "{err}");
-    assert!(!listed(&home).contains("hanzo/x"), "a token from another org was filed");
+    assert!(
+        err.contains("IAM returned hanzo/x, which is not in admin"),
+        "{err}"
+    );
+    assert!(
+        !listed(&home).contains("hanzo/x"),
+        "a token from another org was filed"
+    );
 
     let added = as_admin(jwt("admin", "z", Some("z@hanzo.ai"))).success();
     let out = String::from_utf8_lossy(&added.get_output().stdout).into_owned();
     assert!(out.contains("active: hanzo/z (unchanged)"), "{out}");
-    assert!(out.contains("`hanzo --as admin …` speaks as admin/z"), "{out}");
+    assert!(
+        out.contains("`hanzo --as admin …` speaks as admin/z"),
+        "{out}"
+    );
     let list = listed(&home);
-    assert!(list.contains("* hanzo/z") && list.contains("+ admin/z"), "{list}");
+    assert!(
+        list.contains("* hanzo/z") && list.contains("+ admin/z"),
+        "{list}"
+    );
 
     // `auth show` reads userinfo after naming the identity; the stand-in token is
     // refused there, so only the identity line is asserted.
-    let shown = hanzo(&home).args(["--as", "admin", "auth", "show"]).output().unwrap();
+    let shown = hanzo(&home)
+        .args(["--as", "admin", "auth", "show"])
+        .output()
+        .unwrap();
     let out = String::from_utf8_lossy(&shown.stdout);
     assert!(out.contains("identity: admin/z"), "{out}");
     let shown = hanzo(&home).args(["auth", "show"]).output().unwrap();
@@ -222,27 +278,53 @@ fn as_an_org_signs_out_and_hands_out_only_its_own_identity() {
     sign_in(&home, &jwt("hanzo", "z", Some("z@hanzo.ai")));
     let run = |args: &[&str]| hanzo(&home).args(args).output().unwrap();
 
-    for refused in [run(&["--as", "admin", "auth", "logout"]), run(&["--as", "admin", "auth", "token"])] {
+    for refused in [
+        run(&["--as", "admin", "auth", "logout"]),
+        run(&["--as", "admin", "auth", "token"]),
+    ] {
         assert!(!refused.status.success());
-        assert!(refused.stdout.is_empty(), "{}", String::from_utf8_lossy(&refused.stdout));
+        assert!(
+            refused.stdout.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&refused.stdout)
+        );
         let err = String::from_utf8_lossy(&refused.stderr);
         assert!(err.contains("no hanzo identity in admin"), "{err}");
     }
-    assert!(listed(&home).contains("* hanzo/z"), "the default was signed out");
+    assert!(
+        listed(&home).contains("* hanzo/z"),
+        "the default was signed out"
+    );
 
     let admin = jwt("admin", "z", None);
     hanzo(&home)
-        .args(["--as", "admin", "auth", "login", "--provider", "hanzo", "--token", "-"])
+        .args([
+            "--as",
+            "admin",
+            "auth",
+            "login",
+            "--provider",
+            "hanzo",
+            "--token",
+            "-",
+        ])
         .write_stdin(format!("{admin}\n"))
         .assert()
         .success();
     let token = run(&["--as", "admin", "auth", "token"]);
     assert_eq!(String::from_utf8_lossy(&token.stdout).trim(), admin);
     let out = run(&["--as", "admin", "auth", "logout"]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(String::from_utf8_lossy(&out.stdout).contains("Signed out of hanzo as admin/z"));
     let list = listed(&home);
-    assert!(list.contains("* hanzo/z") && !list.contains("admin/z"), "{list}");
+    assert!(
+        list.contains("* hanzo/z") && !list.contains("admin/z"),
+        "{list}"
+    );
 }
 
 /// Each org has its own active identity. `hanzo --as hanzo auth login` among
@@ -258,31 +340,67 @@ fn each_org_keeps_its_own_active_identity() {
     let run = |args: &[&str]| hanzo(&home).args(args).output().unwrap();
     let token = |args: &[&str]| {
         let out = run(args);
-        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 
     // A fresh `--as hanzo` sign-in is hanzo's active identity at once.
     let z = jwt("hanzo", "z", None);
     let added = hanzo(&home)
-        .args(["--as", "hanzo", "auth", "login", "--provider", "hanzo", "--token", "-"])
+        .args([
+            "--as",
+            "hanzo",
+            "auth",
+            "login",
+            "--provider",
+            "hanzo",
+            "--token",
+            "-",
+        ])
         .write_stdin(format!("{z}\n"))
         .assert()
         .success();
     let out = String::from_utf8_lossy(&added.get_output().stdout).into_owned();
-    assert!(out.contains("`hanzo --as hanzo …` speaks as hanzo/z"), "{out}");
+    assert!(
+        out.contains("`hanzo --as hanzo …` speaks as hanzo/z"),
+        "{out}"
+    );
     assert_eq!(token(&["--as", "hanzo", "auth", "token"]), z);
-    assert_eq!(token(&["auth", "token"]), jwt("admin", "z", None), "the default stayed");
+    assert_eq!(
+        token(&["auth", "token"]),
+        jwt("admin", "z", None),
+        "the default stayed"
+    );
     let list = listed(&home);
-    assert!(list.contains("* admin/z") && list.contains("+ hanzo/z"), "{list}");
+    assert!(
+        list.contains("* admin/z") && list.contains("+ hanzo/z"),
+        "{list}"
+    );
 
     // `use` in one org moves the default and that org's choice, and no other's.
-    hanzo(&home).args(["auth", "use", "hanzo/b"]).assert().success();
+    hanzo(&home)
+        .args(["auth", "use", "hanzo/b"])
+        .assert()
+        .success();
     assert_eq!(token(&["auth", "token"]), jwt("hanzo", "b", None));
-    hanzo(&home).args(["auth", "use", "admin/z"]).assert().success();
+    hanzo(&home)
+        .args(["auth", "use", "admin/z"])
+        .assert()
+        .success();
     assert_eq!(token(&["auth", "token"]), jwt("admin", "z", None));
-    assert_eq!(token(&["--as", "hanzo", "auth", "token"]), jwt("hanzo", "b", None), "hanzo kept its choice");
-    assert_eq!(token(&["--as", "admin", "auth", "token"]), jwt("admin", "z", None));
+    assert_eq!(
+        token(&["--as", "hanzo", "auth", "token"]),
+        jwt("hanzo", "b", None),
+        "hanzo kept its choice"
+    );
+    assert_eq!(
+        token(&["--as", "admin", "auth", "token"]),
+        jwt("admin", "z", None)
+    );
 
     // Signing out hanzo's active identity leaves hanzo with none, not a survivor.
     assert!(run(&["--as", "hanzo", "auth", "logout"]).status.success());

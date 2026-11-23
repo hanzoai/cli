@@ -60,9 +60,10 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     }
     // Nothing to spend, or a brand with no IAM: hand back what we hold and let the
     // SERVER refuse it. Falling back can only ever match the old behaviour.
-    let (Some(_), Some(origin)) =
-        (tok.refresh_token.as_deref(), paths::server_url_for_brand(brand))
-    else {
+    let (Some(_), Some(origin)) = (
+        tok.refresh_token.as_deref(),
+        paths::server_url_for_brand(brand),
+    ) else {
         return Ok(Some((id, tok)));
     };
     // SERIALIZE the refresh. IAM rotates single-use refresh tokens and, on replay,
@@ -77,7 +78,9 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
     // And refresh with what the vault holds NOW, not the credential read before it.
     let _guard = crate::config::Lock::acquire(&token::lock_subject())?;
     let (id, tok) = match active_token_in(&*token::vault()?, cfg, brand)? {
-        Some((id2, tok2)) if !expiring(&tok2.access_token, now_unix()) => return Ok(Some((id2, tok2))),
+        Some((id2, tok2)) if !expiring(&tok2.access_token, now_unix()) => {
+            return Ok(Some((id2, tok2)))
+        }
         Some(held) if held.1.refresh_token.is_some() => held,
         _ => (id, tok),
     };
@@ -85,7 +88,10 @@ pub async fn active_token(cfg: &mut Config, brand: &str) -> Result<Option<(Ident
         Ok(fresh) => fresh,
         // IAM refused it: the session is over, for this identity and no other.
         Err(e) if e.is::<oauth::Spent>() => {
-            bail!("the {id} session has ended ({e}); sign in again: {}", relogin(brand, &id))
+            bail!(
+                "the {id} session has ended ({e}); sign in again: {}",
+                relogin(brand, &id)
+            )
         }
         Err(e) => {
             // IAM did not answer. Still fall back — a caller that would have sent a
@@ -200,7 +206,8 @@ fn moved_in(
             .identities
             .retain(|i| !(i.brand == brand && i.owner == from.owner && i.name == from.name));
         index(c, brand, to);
-        let was_default = c.auth.active.get(brand).map(String::as_str) == Some(from.to_string().as_str());
+        let was_default =
+            c.auth.active.get(brand).map(String::as_str) == Some(from.to_string().as_str());
         let was_chosen = chosen_in(c, brand, from);
         unset_active(c, brand, from);
         if was_default {
@@ -235,7 +242,10 @@ pub(crate) fn realm(cfg: &Config, brand: &str) -> Result<String> {
     };
     let want = paths::realm(paths::brand_of(brand), issuer)?;
     if brand != paths::brand_of(brand) && brand != want {
-        bail!("{brand} is not a realm of the active network {} ({want})", network.name);
+        bail!(
+            "{brand} is not a realm of the active network {} ({want})",
+            network.name
+        );
     }
     Ok(want)
 }
@@ -444,13 +454,19 @@ pub fn active(cfg: &Config, brand: &str) -> Option<Identity> {
 /// held there. `None` when several are held and none was chosen.
 pub fn active_in(cfg: &Config, brand: &str, org: &str) -> Option<Identity> {
     let brand: &str = &realm(cfg, brand).ok()?;
-    let held: Vec<Identity> = list(cfg, brand).into_iter().filter(|i| i.owner == org).collect();
+    let held: Vec<Identity> = list(cfg, brand)
+        .into_iter()
+        .filter(|i| i.owner == org)
+        .collect();
     let chosen = cfg
         .auth
         .active_in
         .get(brand)
         .and_then(|orgs| orgs.get(org))
-        .map(|name| Identity { owner: org.to_string(), name: name.clone() })
+        .map(|name| Identity {
+            owner: org.to_string(),
+            name: name.clone(),
+        })
         .filter(|id| held.contains(id));
     chosen
         .or_else(|| active(cfg, brand).filter(|a| a.owner == org))
@@ -700,7 +716,11 @@ pub(crate) fn active_token_in(
     };
     // `--as <org>` holding identities, none of them acting: refuse by name, as
     // `within` does, never speak as the active identity of another org instead.
-    if cfg.org.as_deref().is_some_and(|org| id.owner != org && list(cfg, brand).iter().any(|i| i.owner == org)) {
+    if cfg
+        .org
+        .as_deref()
+        .is_some_and(|org| id.owner != org && list(cfg, brand).iter().any(|i| i.owner == org))
+    {
         within(cfg, brand)?;
     }
     // NO FALLBACK, NO CASCADE. A missing credential for the active identity
@@ -732,8 +752,8 @@ pub(crate) fn token_for_in(
 ) -> Result<Option<TokenSet>> {
     let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
-    // Only ever resolve an identity we actually INDEX — the same membership
-    // `active`/`switch`/`remove` use — never an arbitrary slot a caller named.
+                               // Only ever resolve an identity we actually INDEX — the same membership
+                               // `active`/`switch`/`remove` use — never an arbitrary slot a caller named.
     if !list(cfg, brand).contains(id) {
         return Ok(None);
     }
@@ -810,10 +830,10 @@ pub(crate) fn remove_in(
 ) -> Result<Removed> {
     let brand: &str = &realm(cfg, brand)?;
     oauth::server_url(brand)?; // reject unknown brands before touching the keychain
-    // Resolve + de-index atomically against fresh state, THEN drop the secret.
-    // Index-first is the crash-safe order: the index is the only reference, so an
-    // interrupted logout leaves an unreferenced secret (harmless, and `login`
-    // re-files it) rather than a pointer to a credential that is already gone.
+                               // Resolve + de-index atomically against fresh state, THEN drop the secret.
+                               // Index-first is the crash-safe order: the index is the only reference, so an
+                               // interrupted logout leaves an unreferenced secret (harmless, and `login`
+                               // re-files it) rather than a pointer to a credential that is already gone.
     let target = cfg.update(|c| {
         let target = match &sel {
             Some(s) => resolve_selector(c, brand, s)?,
@@ -889,7 +909,11 @@ fn set_active_in(cfg: &mut Config, brand: &str, id: &Identity) {
 
 /// Whether `id` is the identity its org's choice names.
 fn chosen_in(cfg: &Config, brand: &str, id: &Identity) -> bool {
-    cfg.auth.active_in.get(brand).and_then(|orgs| orgs.get(&id.owner)) == Some(&id.name)
+    cfg.auth
+        .active_in
+        .get(brand)
+        .and_then(|orgs| orgs.get(&id.owner))
+        == Some(&id.name)
 }
 
 /// Drop every pointer at `id`: a pointer never dangles at a removed identity,
@@ -911,17 +935,17 @@ fn unset_active(cfg: &mut Config, brand: &str, id: &Identity) {
 fn resolve_selector(cfg: &Config, brand: &str, sel: &Selector) -> Result<Identity> {
     let ids = list(cfg, brand);
     if ids.is_empty() {
-        bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
+        bail!(
+            "not signed in to {brand} — run `hanzo auth login{}`",
+            brand_flag(brand)
+        );
     }
     match sel {
         Selector::Exact(id) => {
             if ids.contains(id) {
                 Ok(id.clone())
             } else {
-                bail!(
-                    "no {brand} identity {id}. Known:\n{}",
-                    render(cfg, brand)
-                )
+                bail!("no {brand} identity {id}. Known:\n{}", render(cfg, brand))
             }
         }
         Selector::Owner(owner) => {
@@ -1009,7 +1033,9 @@ mod tests {
 
     /// A token as an issuer mints it: `iss` stated.
     fn issued_jwt(iss: &str, owner: &str, name: &str) -> String {
-        claims_jwt(&format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#))
+        claims_jwt(&format!(
+            r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#
+        ))
     }
 
     // ---- networks ------------------------------------------------------------
@@ -1019,8 +1045,13 @@ mod tests {
     #[test]
     fn devnet_refuses_a_credential_its_issuer_did_not_sign() {
         let (v, mut c) = (MemVault::new(), devnet());
-        for token in [issued_jwt("https://hanzo.id", "hanzo", "z"), jwt("hanzo", "z")] {
-            let err = add_in(&v, &mut c, "hanzo", &tokens(&token)).unwrap_err().to_string();
+        for token in [
+            issued_jwt("https://hanzo.id", "hanzo", "z"),
+            jwt("hanzo", "z"),
+        ] {
+            let err = add_in(&v, &mut c, "hanzo", &tokens(&token))
+                .unwrap_err()
+                .to_string();
             assert!(err.contains("signs in at https://id-dev.hanzo.ai"), "{err}");
         }
         assert!(list(&c, "hanzo").is_empty());
@@ -1032,9 +1063,14 @@ mod tests {
     #[test]
     fn hanzo_files_what_either_of_its_issuers_signed() {
         let (v, mut c) = (MemVault::new(), cfg());
-        for (iss, name) in [("https://hanzo.ai", "a"), ("https://hanzo.ai/", "b"), ("https://hanzo.id", "c")] {
+        for (iss, name) in [
+            ("https://hanzo.ai", "a"),
+            ("https://hanzo.ai/", "b"),
+            ("https://hanzo.id", "c"),
+        ] {
             let token = issued_jwt(iss, "hanzo", name);
-            add_in(&v, &mut c, "hanzo", &tokens(&token)).unwrap_or_else(|e| panic!("{iss} refused: {e}"));
+            add_in(&v, &mut c, "hanzo", &tokens(&token))
+                .unwrap_or_else(|e| panic!("{iss} refused: {e}"));
             let held = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
             assert_eq!(held.1.access_token, token, "{iss}");
         }
@@ -1048,14 +1084,24 @@ mod tests {
             "https://id-dev.hanzo.ai",
             "https://lux.id",
         ] {
-            let err = add_in(&v, &mut c, "hanzo", &tokens(&issued_jwt(iss, "hanzo", "x"))).unwrap_err().to_string();
-            assert!(err.contains("hanzo signs in at https://hanzo.ai"), "{iss}: {err}");
+            let err = add_in(&v, &mut c, "hanzo", &tokens(&issued_jwt(iss, "hanzo", "x")))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("hanzo signs in at https://hanzo.ai"),
+                "{iss}: {err}"
+            );
         }
         assert_eq!(list(&c, "hanzo").len(), 3, "a refused credential was filed");
 
         for iss in ["https://hanzo.ai", "https://hanzo.id"] {
-            let err = add_in(&v, &mut c, "lux", &tokens(&issued_jwt(iss, "lux", "z"))).unwrap_err().to_string();
-            assert!(err.contains("lux signs in at https://lux.id"), "{iss}: {err}");
+            let err = add_in(&v, &mut c, "lux", &tokens(&issued_jwt(iss, "lux", "z")))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("lux signs in at https://lux.id"),
+                "{iss}: {err}"
+            );
         }
         let _ = std::fs::remove_file(c.effective_path());
     }
@@ -1129,7 +1175,10 @@ mod tests {
     #[test]
     fn a_realm_is_only_the_active_networks() {
         assert_eq!(realm(&devnet(), "hanzo").unwrap(), "hanzo@id-dev.hanzo.ai");
-        assert_eq!(realm(&devnet(), "hanzo@id-dev.hanzo.ai").unwrap(), "hanzo@id-dev.hanzo.ai");
+        assert_eq!(
+            realm(&devnet(), "hanzo@id-dev.hanzo.ai").unwrap(),
+            "hanzo@id-dev.hanzo.ai"
+        );
         assert_eq!(realm(&cfg(), "hanzo").unwrap(), "hanzo");
         assert!(realm(&cfg(), "hanzo@id-dev.hanzo.ai").is_err());
         assert!(realm(&devnet(), "hanzo@evil.example").is_err());
@@ -1154,7 +1203,10 @@ mod tests {
         let other = file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "grundy")), false).unwrap();
         assert_eq!(other.to_string(), "hanzo/grundy");
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), "hanzo/z");
-        assert!(list(&c, "hanzo").contains(&other), "the account was not filed");
+        assert!(
+            list(&c, "hanzo").contains(&other),
+            "the account was not filed"
+        );
         assert!(token_for_in(&v, &c, "hanzo", &other).unwrap().is_some());
 
         file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "grundy")), true).unwrap();
@@ -1170,7 +1222,10 @@ mod tests {
         both(&v, &mut c);
 
         assert_eq!(
-            list(&c, "hanzo").iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+            list(&c, "hanzo")
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>(),
             vec![ADMIN, ORG]
         );
         // Both credentials are still addressable — the incident was that the
@@ -1247,16 +1302,26 @@ mod tests {
 
         c.org = Some("hanzo/ops".into());
         pin(&mut c, "hanzo").unwrap();
-        assert_eq!(c.org.as_deref(), Some("hanzo"), "the org is what rides as X-Org-Id");
+        assert_eq!(
+            c.org.as_deref(),
+            Some("hanzo"),
+            "the org is what rides as X-Org-Id"
+        );
         let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
-        assert_eq!((id.to_string().as_str(), tok.access_token), ("hanzo/ops", jwt("hanzo", "ops")));
+        assert_eq!(
+            (id.to_string().as_str(), tok.access_token),
+            ("hanzo/ops", jwt("hanzo", "ops"))
+        );
 
         // Nothing moved: the default is the same.
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
 
         c.org = Some("hanzo/nobody".into());
         let err = pin(&mut c, "hanzo").unwrap_err().to_string();
-        assert!(err.contains("you hold no hanzo identity hanzo/nobody"), "{err}");
+        assert!(
+            err.contains("you hold no hanzo identity hanzo/nobody"),
+            "{err}"
+        );
 
         // A bare org, or none, is `--as` as it was.
         c.org = Some("admin".into());
@@ -1269,7 +1334,10 @@ mod tests {
     #[test]
     fn the_list_as_json_names_every_identity_and_marks_the_default() {
         let (v, mut cfg) = (MemVault::new(), cfg());
-        for who in [r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai","exp":2000000000}"#, r#"{"owner":"hanzo","name":"z","email":"z@hanzo.ai"}"#] {
+        for who in [
+            r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai","exp":2000000000}"#,
+            r#"{"owner":"hanzo","name":"z","email":"z@hanzo.ai"}"#,
+        ] {
             add_in(&v, &mut cfg, "hanzo", &tokens(&claims_jwt(who))).unwrap();
         }
         let out = identities_json_in(&v, &cfg, "hanzo").unwrap();
@@ -1287,13 +1355,29 @@ mod tests {
     /// A session is renewed through the client of the org it belongs to.
     #[test]
     fn signing_in_again_names_the_identitys_own_org() {
-        assert_eq!(relogin("hanzo", &ident(ADMIN)), "hanzo --as admin auth login --account admin/z");
-        assert_eq!(relogin("hanzo", &ident(ORG)), "hanzo auth login --account hanzo/z");
+        assert_eq!(
+            relogin("hanzo", &ident(ADMIN)),
+            "hanzo --as admin auth login --account admin/z"
+        );
+        assert_eq!(
+            relogin("hanzo", &ident(ORG)),
+            "hanzo auth login --account hanzo/z"
+        );
         assert_eq!(choose("hanzo", &ident(ORG)), "hanzo auth login");
-        assert_eq!(choose("hanzo", &ident(ADMIN)), "hanzo --as admin auth login");
-        assert_eq!(relogin("lux", &ident("lux/a")), "hanzo --as lux auth login --account lux/a --brand lux");
+        assert_eq!(
+            choose("hanzo", &ident(ADMIN)),
+            "hanzo --as admin auth login"
+        );
+        assert_eq!(
+            relogin("lux", &ident("lux/a")),
+            "hanzo --as lux auth login --account lux/a --brand lux"
+        );
         let err = adopted("hanzo", &ident(ADMIN), tokens(&jwt("hanzo", "z"))).unwrap_err();
-        assert!(err.to_string().contains("run `hanzo --as admin auth login --account admin/z`"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("run `hanzo --as admin auth login --account admin/z`"),
+            "{err}"
+        );
     }
 
     /// `--as` naming an org with no identity held there is refused by name,
@@ -1314,7 +1398,11 @@ mod tests {
 
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("admin", "ops"))).unwrap();
         switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
-        assert_eq!(within(&c, "hanzo").unwrap(), Some(ident("admin/ops")), "the latest sign-in in admin");
+        assert_eq!(
+            within(&c, "hanzo").unwrap(),
+            Some(ident("admin/ops")),
+            "the latest sign-in in admin"
+        );
         // An index written before orgs had a choice of their own names none.
         c.auth.active_in.clear();
         let err = within(&c, "hanzo").unwrap_err().to_string();
@@ -1339,7 +1427,9 @@ mod tests {
         switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
         c.auth.active_in.clear();
         c.org = Some("hanzo".into());
-        let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
+        let err = active_token_in(&v, &mut c, "hanzo")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("2 hanzo identities in hanzo"), "{err}");
 
         switch_in(&v, &mut c, "hanzo", sel(ORG)).unwrap();
@@ -1361,7 +1451,11 @@ mod tests {
         c.org = Some("hanzo".into());
         file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z")), false).unwrap();
 
-        assert_eq!(active(&c, "hanzo").unwrap().to_string(), ADMIN, "the default stays");
+        assert_eq!(
+            active(&c, "hanzo").unwrap().to_string(),
+            ADMIN,
+            "the default stays"
+        );
         let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ORG);
         assert_eq!(tok.access_token, jwt("hanzo", "z"));
@@ -1377,14 +1471,23 @@ mod tests {
     #[test]
     fn use_moves_one_orgs_choice_and_no_other() {
         let (v, mut c) = (MemVault::new(), cfg());
-        for (owner, name) in [("hanzo", "z"), ("hanzo", "a"), ("admin", "z"), ("admin", "ops")] {
+        for (owner, name) in [
+            ("hanzo", "z"),
+            ("hanzo", "a"),
+            ("admin", "z"),
+            ("admin", "ops"),
+        ] {
             add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
         }
         switch_in(&v, &mut c, "hanzo", sel("hanzo/z")).unwrap();
         switch_in(&v, &mut c, "hanzo", sel("admin/ops")).unwrap();
         assert_eq!(active(&c, "hanzo"), Some(ident("admin/ops")));
         assert_eq!(active_in(&c, "hanzo", "admin"), Some(ident("admin/ops")));
-        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/z")), "hanzo's choice survived");
+        assert_eq!(
+            active_in(&c, "hanzo", "hanzo"),
+            Some(ident("hanzo/z")),
+            "hanzo's choice survived"
+        );
 
         c.org = Some("hanzo".into());
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
@@ -1393,7 +1496,11 @@ mod tests {
         // Restoring the default (`use admin/z`) is the report's case.
         switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
-        assert_eq!(id.to_string(), "hanzo/z", "--as hanzo still speaks as hanzo/z");
+        assert_eq!(
+            id.to_string(),
+            "hanzo/z",
+            "--as hanzo still speaks as hanzo/z"
+        );
         c.org = Some("admin".into());
         assert_eq!(within(&c, "hanzo").unwrap(), Some(ident(ADMIN)));
 
@@ -1409,7 +1516,12 @@ mod tests {
     #[test]
     fn logout_clears_only_its_orgs_choice() {
         let (v, mut c) = (MemVault::new(), cfg());
-        for (owner, name) in [("hanzo", "z"), ("hanzo", "a"), ("hanzo", "b"), ("admin", "z")] {
+        for (owner, name) in [
+            ("hanzo", "z"),
+            ("hanzo", "a"),
+            ("hanzo", "b"),
+            ("admin", "z"),
+        ] {
             add_in(&v, &mut c, "hanzo", &tokens(&jwt(owner, name))).unwrap();
         }
         switch_in(&v, &mut c, "hanzo", sel("hanzo/z")).unwrap();
@@ -1417,7 +1529,10 @@ mod tests {
         assert_eq!(active_in(&c, "hanzo", "hanzo"), None);
         assert_eq!(active_in(&c, "hanzo", "admin"), Some(ident(ADMIN)));
         c.org = Some("hanzo".into());
-        assert!(active_token_in(&v, &mut c, "hanzo").unwrap().is_none(), "no survivor speaks for hanzo");
+        assert!(
+            active_token_in(&v, &mut c, "hanzo").unwrap().is_none(),
+            "no survivor speaks for hanzo"
+        );
 
         remove_all_in(&v, &mut c, "hanzo").unwrap();
         assert!(c.auth.active_in.is_empty());
@@ -1431,9 +1546,21 @@ mod tests {
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "y"))).unwrap();
         file_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "x")), false).unwrap();
         assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/x")));
-        moved_in(&v, &mut c, "hanzo", &ident("hanzo/x"), &ident("lux/x"), &tokens(&jwt("lux", "x"))).unwrap();
+        moved_in(
+            &v,
+            &mut c,
+            "hanzo",
+            &ident("hanzo/x"),
+            &ident("lux/x"),
+            &tokens(&jwt("lux", "x")),
+        )
+        .unwrap();
         assert_eq!(active_in(&c, "hanzo", "lux"), Some(ident("lux/x")));
-        assert_eq!(active_in(&c, "hanzo", "hanzo"), Some(ident("hanzo/y")), "the lone survivor");
+        assert_eq!(
+            active_in(&c, "hanzo", "hanzo"),
+            Some(ident("hanzo/y")),
+            "the lone survivor"
+        );
     }
 
     // ---- token_for: read-only per-identity resolution (the usage fan-out) ---
@@ -1449,10 +1576,22 @@ mod tests {
 
         // The NON-active identity resolves to ITS OWN token, not the active one's.
         let admin = ident(ADMIN);
-        assert_eq!(token_for_in(&v, &c, "hanzo", &admin).unwrap().unwrap().access_token, jwt("admin", "z"));
+        assert_eq!(
+            token_for_in(&v, &c, "hanzo", &admin)
+                .unwrap()
+                .unwrap()
+                .access_token,
+            jwt("admin", "z")
+        );
         // The active identity resolves to its own too.
         let org = ident(ORG);
-        assert_eq!(token_for_in(&v, &c, "hanzo", &org).unwrap().unwrap().access_token, jwt("hanzo", "z"));
+        assert_eq!(
+            token_for_in(&v, &c, "hanzo", &org)
+                .unwrap()
+                .unwrap()
+                .access_token,
+            jwt("hanzo", "z")
+        );
         // Reading a credential NEVER moves the active pointer.
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
     }
@@ -1464,7 +1603,9 @@ mod tests {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
         v.remove("hanzo/admin/z").unwrap(); // admin credential vanishes; index stays
-        assert!(token_for_in(&v, &c, "hanzo", &ident(ADMIN)).unwrap().is_none());
+        assert!(token_for_in(&v, &c, "hanzo", &ident(ADMIN))
+            .unwrap()
+            .is_none());
     }
 
     /// An identity we do not INDEX resolves to `None` even if a slot exists — a
@@ -1474,8 +1615,17 @@ mod tests {
         let (v, mut c) = (MemVault::new(), cfg());
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
         // A slot we never indexed, even present in the vault, is not resolvable.
-        v.set("hanzo/admin/z", &serde_json::to_string(&tokens(&jwt("admin", "z"))).unwrap()).unwrap();
-        assert!(token_for_in(&v, &c, "hanzo", &ident(ADMIN)).unwrap().is_none(), "unindexed slot is unreachable");
+        v.set(
+            "hanzo/admin/z",
+            &serde_json::to_string(&tokens(&jwt("admin", "z"))).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            token_for_in(&v, &c, "hanzo", &ident(ADMIN))
+                .unwrap()
+                .is_none(),
+            "unindexed slot is unreachable"
+        );
     }
 
     /// A tampered slot fails CLOSED: a credential that self-identifies as someone
@@ -1486,8 +1636,14 @@ mod tests {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
         // Overwrite admin/z's slot with a token that CLAIMS hanzo/z.
-        v.set("hanzo/admin/z", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap()).unwrap();
-        let err = token_for_in(&v, &c, "hanzo", &ident(ADMIN)).unwrap_err().to_string();
+        v.set(
+            "hanzo/admin/z",
+            &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap(),
+        )
+        .unwrap();
+        let err = token_for_in(&v, &c, "hanzo", &ident(ADMIN))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("identifies as"), "must fail closed: {err}");
     }
 
@@ -1515,7 +1671,10 @@ mod tests {
         assert!(hint.contains("You are hanzo/z"), "{hint}");
         assert!(hint.contains("admin"), "must name the reserved org: {hint}");
         assert!(hint.contains("You also hold admin/z"), "{hint}");
-        assert!(hint.contains("hanzo --as admin"), "must be actionable: {hint}");
+        assert!(
+            hint.contains("hanzo --as admin"),
+            "must be actionable: {hint}"
+        );
     }
 
     /// A SuperAdmin refused is NOT an identity problem: suggesting a switch to
@@ -1532,7 +1691,10 @@ mod tests {
         let hint = refusal_hint(&ident(ORG), &[ident(ORG)]).unwrap();
         assert!(hint.contains("hold no `admin` identity"), "{hint}");
         assert!(hint.contains("hanzo --as admin auth login"), "{hint}");
-        assert!(!hint.contains("hanzo auth use"), "must not suggest an impossible switch: {hint}");
+        assert!(
+            !hint.contains("hanzo auth use"),
+            "must not suggest an impossible switch: {hint}"
+        );
     }
 
     /// Several SuperAdmin identities: defer to `switch`'s own bare-owner
@@ -1540,7 +1702,10 @@ mod tests {
     #[test]
     fn a_refusal_with_several_admin_identities_defers_to_switch() {
         let hint = refusal_hint(&ident(ORG), &[ident(ADMIN), ident("admin/ops")]).unwrap();
-        assert!(hint.contains("hanzo auth use admin\n") || hint.contains("hanzo auth use admin"), "{hint}");
+        assert!(
+            hint.contains("hanzo auth use admin\n") || hint.contains("hanzo auth use admin"),
+            "{hint}"
+        );
         assert!(hint.contains("several"), "{hint}");
     }
 
@@ -1587,11 +1752,17 @@ mod tests {
 
         remove_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
 
-        assert!(active(&c, "hanzo").is_none(), "no auto-switch to the survivor");
+        assert!(
+            active(&c, "hanzo").is_none(),
+            "no auto-switch to the survivor"
+        );
         assert!(active_token_in(&v, &mut c, "hanzo").unwrap().is_none());
         // The survivor is untouched and still selectable.
         assert_eq!(
-            list(&c, "hanzo").iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+            list(&c, "hanzo")
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>(),
             vec![ORG]
         );
         assert!(v.has("hanzo/hanzo/z"));
@@ -1626,7 +1797,11 @@ mod tests {
         assert_eq!(removed.len(), 2);
         assert!(list(&c, "hanzo").is_empty());
         assert!(active(&c, "hanzo").is_none());
-        assert!(v.keys().is_empty(), "no credential left behind: {:?}", v.keys());
+        assert!(
+            v.keys().is_empty(),
+            "no credential left behind: {:?}",
+            v.keys()
+        );
     }
 
     /// Brand isolation: logging out of one brand leaves another brand alone.
@@ -1663,7 +1838,11 @@ mod tests {
         assert_eq!(list(&c, "hanzo").len(), 2);
         let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(id.to_string(), ADMIN);
-        assert_eq!(tok.refresh_token.as_deref(), Some("NEW_RT"), "token replaced");
+        assert_eq!(
+            tok.refresh_token.as_deref(),
+            Some("NEW_RT"),
+            "token replaced"
+        );
         assert_eq!(v.keys(), vec!["hanzo/admin/z", "hanzo/hanzo/z"]);
     }
 
@@ -1697,8 +1876,11 @@ mod tests {
 
         // Forge the index: claim the org token is the SuperAdmin identity, and
         // plant it in the SuperAdmin slot.
-        v.set("hanzo/admin/z", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap())
-            .unwrap();
+        v.set(
+            "hanzo/admin/z",
+            &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap(),
+        )
+        .unwrap();
         c.auth.identities.push(StoredIdentity {
             brand: "hanzo".to_string(),
             owner: "admin".to_string(),
@@ -1706,7 +1888,9 @@ mod tests {
         });
         c.auth.active.insert("hanzo".to_string(), ADMIN.to_string());
 
-        let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
+        let err = active_token_in(&v, &mut c, "hanzo")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("identifies as"), "must fail closed: {err}");
     }
 
@@ -1726,14 +1910,23 @@ mod tests {
     #[test]
     fn legacy_entry_migrates_once_and_the_old_key_is_gone() {
         let (v, mut c) = (MemVault::new(), cfg());
-        v.set("hanzo", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap())
-            .unwrap();
+        v.set(
+            "hanzo",
+            &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap(),
+        )
+        .unwrap();
 
         let (id, tok) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
 
         assert_eq!(id.to_string(), ORG);
         assert_eq!(tok.access_token, jwt("hanzo", "z"));
-        assert_eq!(list(&c, "hanzo").iter().map(|i| i.to_string()).collect::<Vec<_>>(), vec![ORG]);
+        assert_eq!(
+            list(&c, "hanzo")
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>(),
+            vec![ORG]
+        );
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
         // One shot: the legacy key is gone and only the identity slot remains.
         assert!(!v.has("hanzo"), "legacy bare-brand key must be deleted");
@@ -1748,8 +1941,11 @@ mod tests {
         both(&v, &mut c);
         switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap();
         // A stale legacy blob for the OTHER identity turns up.
-        v.set("hanzo", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap())
-            .unwrap();
+        v.set(
+            "hanzo",
+            &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap(),
+        )
+        .unwrap();
 
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
 
@@ -1780,8 +1976,11 @@ mod tests {
         // staged as its two committed effects (credential + index) rather than
         // through `add_in`: a real `add_in` also consumes the legacy key, and
         // that consumption is precisely what has not reached A yet.
-        v.set("hanzo", &serde_json::to_string(&tokens(&jwt("admin", "z"))).unwrap())
-            .unwrap();
+        v.set(
+            "hanzo",
+            &serde_json::to_string(&tokens(&jwt("admin", "z"))).unwrap(),
+        )
+        .unwrap();
 
         // B logs in explicitly, and COMMITS, while A's migration is in flight.
         let org = Identity::from_access_token(&jwt("hanzo", "z")).unwrap();
@@ -1795,16 +1994,26 @@ mod tests {
         assert_eq!(active(&b, "hanzo").unwrap().to_string(), ORG);
 
         // A finishes. `a` still holds its STALE pre-login snapshot.
-        assert!(active(&a, "hanzo").is_none(), "A's snapshot predates B's login");
+        assert!(
+            active(&a, "hanzo").is_none(),
+            "A's snapshot predates B's login"
+        );
         let (id, _) = active_token_in(&v, &mut a, "hanzo").unwrap().unwrap();
 
         // B's explicit choice stands, in A's own view and on disk.
-        assert_eq!(id.to_string(), ORG, "migration must not demote the user off their choice");
+        assert_eq!(
+            id.to_string(),
+            ORG,
+            "migration must not demote the user off their choice"
+        );
         let disk = Config::load(Some(a.effective_path())).unwrap();
         assert_eq!(active(&disk, "hanzo").unwrap().to_string(), ORG);
         // ...and B's index row was not erased by A's stale snapshot.
         assert_eq!(
-            list(&disk, "hanzo").iter().map(|i| i.to_string()).collect::<Vec<_>>(),
+            list(&disk, "hanzo")
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>(),
             vec![ADMIN, ORG],
             "both identities survive; neither writer clobbered the other"
         );
@@ -1890,19 +2099,31 @@ mod tests {
         // The same must hold for every other keychain-touching operation.
         let probe = LockProbeVault::new(&v, &c);
         add_in(&probe, &mut c, "hanzo", &tokens(&jwt("zoo", "z"))).unwrap();
-        assert!(!probe.lock_was_held.get(), "login touched the keychain under the lock");
+        assert!(
+            !probe.lock_was_held.get(),
+            "login touched the keychain under the lock"
+        );
 
         let probe = LockProbeVault::new(&v, &c);
         remove_in(&probe, &mut c, "hanzo", sel("zoo/z")).unwrap();
-        assert!(!probe.lock_was_held.get(), "logout touched the keychain under the lock");
+        assert!(
+            !probe.lock_was_held.get(),
+            "logout touched the keychain under the lock"
+        );
 
         let probe = LockProbeVault::new(&v, &c);
         active_token_in(&probe, &mut c, "hanzo").unwrap();
-        assert!(!probe.lock_was_held.get(), "resolve touched the keychain under the lock");
+        assert!(
+            !probe.lock_was_held.get(),
+            "resolve touched the keychain under the lock"
+        );
 
         let probe = LockProbeVault::new(&v, &c);
         remove_all_in(&probe, &mut c, "hanzo").unwrap();
-        assert!(!probe.lock_was_held.get(), "logout --all touched the keychain under the lock");
+        assert!(
+            !probe.lock_was_held.get(),
+            "logout --all touched the keychain under the lock"
+        );
         let _ = std::fs::remove_file(c.effective_path());
     }
 
@@ -1911,8 +2132,11 @@ mod tests {
     #[test]
     fn migration_does_not_touch_the_keychain_under_the_lock() {
         let (v, mut c) = (MemVault::new(), cfg());
-        v.set("hanzo", &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap())
-            .unwrap();
+        v.set(
+            "hanzo",
+            &serde_json::to_string(&tokens(&jwt("hanzo", "z"))).unwrap(),
+        )
+        .unwrap();
 
         let probe = LockProbeVault::new(&v, &c);
         let (id, _) = active_token_in(&probe, &mut c, "hanzo").unwrap().unwrap();
@@ -1936,9 +2160,14 @@ mod tests {
         // remains — exactly the state that made `switch` lie about billing.
         v.remove("hanzo/admin/z").unwrap();
 
-        let err = switch_in(&v, &mut c, "hanzo", sel(ADMIN)).unwrap_err().to_string();
+        let err = switch_in(&v, &mut c, "hanzo", sel(ADMIN))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not in the keychain"), "{err}");
-        assert!(err.contains("hanzo auth login"), "must be actionable: {err}");
+        assert!(
+            err.contains("hanzo auth login"),
+            "must be actionable: {err}"
+        );
         // A refused switch changes nothing.
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
     }
@@ -1948,11 +2177,19 @@ mod tests {
     #[test]
     fn an_unidentifiable_legacy_entry_fails_closed_and_login_clears_it() {
         let (v, mut c) = (MemVault::new(), cfg());
-        v.set("hanzo", &serde_json::to_string(&tokens("hk-legacy-key")).unwrap())
-            .unwrap();
+        v.set(
+            "hanzo",
+            &serde_json::to_string(&tokens("hk-legacy-key")).unwrap(),
+        )
+        .unwrap();
 
-        let err = active_token_in(&v, &mut c, "hanzo").unwrap_err().to_string();
-        assert!(err.contains("hanzo auth login"), "must be actionable: {err}");
+        let err = active_token_in(&v, &mut c, "hanzo")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("hanzo auth login"),
+            "must be actionable: {err}"
+        );
 
         // The advertised escape hatch actually works.
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
@@ -1967,7 +2204,12 @@ mod tests {
     fn switch_resolves_a_bare_owner_when_unambiguous() {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
-        assert_eq!(switch_in(&v, &mut c, "hanzo", sel("admin")).unwrap().to_string(), ADMIN);
+        assert_eq!(
+            switch_in(&v, &mut c, "hanzo", sel("admin"))
+                .unwrap()
+                .to_string(),
+            ADMIN
+        );
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ADMIN);
     }
 
@@ -1977,9 +2219,14 @@ mod tests {
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "ops"))).unwrap();
 
-        let err = switch_in(&v, &mut c, "hanzo", sel("hanzo")).unwrap_err().to_string();
+        let err = switch_in(&v, &mut c, "hanzo", sel("hanzo"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("ambiguous"), "{err}");
-        assert!(err.contains("hanzo/ops") && err.contains("hanzo/z"), "{err}");
+        assert!(
+            err.contains("hanzo/ops") && err.contains("hanzo/z"),
+            "{err}"
+        );
     }
 
     /// Bare `hanzo auth use` with exactly two identities toggles.
@@ -1988,8 +2235,14 @@ mod tests {
         let (v, mut c) = (MemVault::new(), cfg());
         both(&v, &mut c);
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
-        assert_eq!(switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(), ADMIN);
-        assert_eq!(switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(), ORG);
+        assert_eq!(
+            switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(),
+            ADMIN
+        );
+        assert_eq!(
+            switch_in(&v, &mut c, "hanzo", None).unwrap().to_string(),
+            ORG
+        );
     }
 
     /// Bare `hanzo auth use` with more than two is ambiguous: list, do not guess.
@@ -1999,7 +2252,9 @@ mod tests {
         both(&v, &mut c);
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("zoo", "z"))).unwrap();
 
-        let err = switch_in(&v, &mut c, "hanzo", None).unwrap_err().to_string();
+        let err = switch_in(&v, &mut c, "hanzo", None)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("3 identities"), "{err}");
         assert!(err.contains("hanzo auth use <owner/name>"), "{err}");
         // The active identity is untouched by a refused switch.
@@ -2092,7 +2347,11 @@ mod tests {
         );
 
         for path in &files {
-            let rel = path.strip_prefix(&src_root).unwrap().to_string_lossy().replace('\\', "/");
+            let rel = path
+                .strip_prefix(&src_root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
             let src = std::fs::read_to_string(path).unwrap();
             for door in doors {
                 if permitted(&rel, door) {
@@ -2111,7 +2370,9 @@ mod tests {
     /// Collect every `.rs` file under `dir`, recursively — the seam guard's
     /// structural scan (so the guarantee covers files that do not exist yet).
     fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -2167,13 +2428,34 @@ mod tests {
     #[test]
     fn expiry_comes_from_the_token_itself_and_is_acted_on_early() {
         const NOW: i64 = 1_785_521_882;
-        assert!(!expiring(&jwt_until("hanzo", "z", NOW + 3600), NOW), "an hour left");
-        assert!(!expiring(&jwt_until("hanzo", "z", NOW + 61), NOW), "just outside the skew");
-        assert!(expiring(&jwt_until("hanzo", "z", NOW + 30), NOW), "would expire in flight");
-        assert!(expiring(&jwt_until("hanzo", "z", NOW - 1), NOW), "already spent");
-        assert!(spent_at(&jwt_until("hanzo", "z", NOW - 1), NOW), "spent is past exp");
-        assert!(!spent_at(&jwt_until("hanzo", "z", NOW + 30), NOW), "inside the skew is not spent");
-        assert!(!spent_at("not-a-jwt", NOW), "no exp is the server's to judge");
+        assert!(
+            !expiring(&jwt_until("hanzo", "z", NOW + 3600), NOW),
+            "an hour left"
+        );
+        assert!(
+            !expiring(&jwt_until("hanzo", "z", NOW + 61), NOW),
+            "just outside the skew"
+        );
+        assert!(
+            expiring(&jwt_until("hanzo", "z", NOW + 30), NOW),
+            "would expire in flight"
+        );
+        assert!(
+            expiring(&jwt_until("hanzo", "z", NOW - 1), NOW),
+            "already spent"
+        );
+        assert!(
+            spent_at(&jwt_until("hanzo", "z", NOW - 1), NOW),
+            "spent is past exp"
+        );
+        assert!(
+            !spent_at(&jwt_until("hanzo", "z", NOW + 30), NOW),
+            "inside the skew is not spent"
+        );
+        assert!(
+            !spent_at("not-a-jwt", NOW),
+            "no exp is the server's to judge"
+        );
     }
 
     /// A token we cannot read an expiry out of is LIVE. Validity is the server's
@@ -2182,7 +2464,10 @@ mod tests {
     #[test]
     fn a_token_with_no_readable_expiry_is_treated_as_live() {
         const NOW: i64 = 1_785_521_882;
-        assert!(!expiring(&jwt("hanzo", "z"), NOW), "a JWT with no exp claim");
+        assert!(
+            !expiring(&jwt("hanzo", "z"), NOW),
+            "a JWT with no exp claim"
+        );
         assert!(!expiring("not-a-jwt", NOW));
         assert!(!expiring("", NOW));
     }
@@ -2200,12 +2485,18 @@ mod tests {
 
         let (id, held) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(held.access_token, spent);
-        assert!(expiring(&held.access_token, now_unix()), "the read hands back a spent token");
+        assert!(
+            expiring(&held.access_token, now_unix()),
+            "the read hands back a spent token"
+        );
 
         // What the refresh half does once IAM has answered.
-        let Adopted::Same(fresh) =
-            adopted("hanzo", &id, tokens(&jwt_until("hanzo", "z", 9_999_999_999))).unwrap()
-        else {
+        let Adopted::Same(fresh) = adopted(
+            "hanzo",
+            &id,
+            tokens(&jwt_until("hanzo", "z", 9_999_999_999)),
+        )
+        .unwrap() else {
             panic!("the same identity read as a move");
         };
         token::store(&v, "hanzo", &id, &fresh).unwrap();
@@ -2233,7 +2524,9 @@ mod tests {
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
 
-        let err = adopted("hanzo", &id, tokens(&jwt("admin", "z"))).unwrap_err().to_string();
+        let err = adopted("hanzo", &id, tokens(&jwt("admin", "z")))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("identifies as admin/z"), "{err}");
         assert!(err.contains("hanzo auth login"), "{err}");
 
@@ -2253,7 +2546,8 @@ mod tests {
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "alice"))).unwrap();
         let (id, _) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
 
-        let Adopted::Moved(to, fresh) = adopted("hanzo", &id, tokens(&jwt("acme", "alice"))).unwrap()
+        let Adopted::Moved(to, fresh) =
+            adopted("hanzo", &id, tokens(&jwt("acme", "alice"))).unwrap()
         else {
             panic!("a founder's move was not followed");
         };
@@ -2265,7 +2559,10 @@ mod tests {
         assert_eq!(tok.access_token, fresh.access_token);
         let held: Vec<String> = list(&c, "hanzo").iter().map(|i| i.to_string()).collect();
         assert_eq!(held, vec!["acme/alice".to_string()]);
-        assert!(token::take(&v, "hanzo", &id).unwrap().is_none(), "the old key still holds a secret");
+        assert!(
+            token::take(&v, "hanzo", &id).unwrap().is_none(),
+            "the old key still holds a secret"
+        );
     }
 
     /// A moved identity that was not the active one stays not active: the pointer
@@ -2276,7 +2573,15 @@ mod tests {
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "alice"))).unwrap();
         add_in(&v, &mut c, "hanzo", &tokens(&jwt("hanzo", "z"))).unwrap();
         let alice = ident("hanzo/alice");
-        moved_in(&v, &mut c, "hanzo", &alice, &ident("acme/alice"), &tokens(&jwt("acme", "alice"))).unwrap();
+        moved_in(
+            &v,
+            &mut c,
+            "hanzo",
+            &alice,
+            &ident("acme/alice"),
+            &tokens(&jwt("acme", "alice")),
+        )
+        .unwrap();
         assert_eq!(active(&c, "hanzo").unwrap().to_string(), ORG);
     }
 
@@ -2285,12 +2590,26 @@ mod tests {
     fn only_the_same_person_outside_superadmin_is_followed() {
         let alice = ident("hanzo/alice");
         let bob = tokens(&claims_jwt(r#"{"owner":"acme","name":"bob","sub":"u-1"}"#));
-        assert!(adopted("hanzo", &alice, bob).is_err(), "a different name was followed");
-        let nobody = tokens(&claims_jwt(r#"{"owner":"acme","name":"alice"}"#));
-        assert!(adopted("hanzo", &alice, nobody).is_err(), "a credential stating no person was followed");
-        assert!(adopted("hanzo", &alice, tokens(&jwt("admin", "alice"))).is_err(), "a refresh made someone a SuperAdmin");
         assert!(
-            adopted("hanzo", &ident("admin/alice"), tokens(&jwt("acme", "alice"))).is_err(),
+            adopted("hanzo", &alice, bob).is_err(),
+            "a different name was followed"
+        );
+        let nobody = tokens(&claims_jwt(r#"{"owner":"acme","name":"alice"}"#));
+        assert!(
+            adopted("hanzo", &alice, nobody).is_err(),
+            "a credential stating no person was followed"
+        );
+        assert!(
+            adopted("hanzo", &alice, tokens(&jwt("admin", "alice"))).is_err(),
+            "a refresh made someone a SuperAdmin"
+        );
+        assert!(
+            adopted(
+                "hanzo",
+                &ident("admin/alice"),
+                tokens(&jwt("acme", "alice"))
+            )
+            .is_err(),
             "a SuperAdmin was moved out of admin by a refresh"
         );
     }
@@ -2312,7 +2631,9 @@ mod tests {
         )
         .unwrap();
         let decls = |prefix: &str| {
-            src.lines().filter(|l| l.trim_start().starts_with(prefix)).count()
+            src.lines()
+                .filter(|l| l.trim_start().starts_with(prefix))
+                .count()
         };
         assert_eq!(decls("pub async fn active_token"), 1, "the one accessor");
         assert_eq!(
@@ -2323,4 +2644,3 @@ mod tests {
         );
     }
 }
-

@@ -184,7 +184,10 @@ fn ensure_dependencies(project_dir: &Path, manifest: &WebManifest) -> Result<()>
         .status()
         .with_context(|| format!("running `{}`", manifest.install_cmd))?;
     if !status.success() {
-        bail!("dependency install `{}` exited with {status}", manifest.install_cmd);
+        bail!(
+            "dependency install `{}` exited with {status}",
+            manifest.install_cmd
+        );
     }
     Ok(())
 }
@@ -325,7 +328,10 @@ pub fn execute_local_build(
                     digest: None,
                     files: None,
                     bytes: None,
-                    error: Some(format!("`{}` exited with {}", manifest.build_cmd, out.status)),
+                    error: Some(format!(
+                        "`{}` exited with {}",
+                        manifest.build_cmd, out.status
+                    )),
                     logs,
                 }
             }
@@ -396,7 +402,10 @@ pub fn run_static_build(project_dir: &Path) -> Result<BuildReceipt> {
 
 fn spawn_vite(project_dir: &Path, vite_port: u16) -> Result<Child> {
     let vite_bin_name = if cfg!(windows) { "vite.cmd" } else { "vite" };
-    let local_vite = project_dir.join("node_modules").join(".bin").join(vite_bin_name);
+    let local_vite = project_dir
+        .join("node_modules")
+        .join(".bin")
+        .join(vite_bin_name);
     let port_str = vite_port.to_string();
     let mut cmd = if local_vite.is_file() {
         let mut c = if cfg!(windows) {
@@ -449,7 +458,10 @@ async fn wait_port_ready(port: u16, child: &mut Child, timeout: Duration) -> Res
             bail!("Vite dev server exited prematurely ({status})");
         }
         if Instant::now() >= deadline {
-            bail!("Vite dev server did not listen on 127.0.0.1:{port} within {}s", timeout.as_secs());
+            bail!(
+                "Vite dev server did not listen on 127.0.0.1:{port} within {}s",
+                timeout.as_secs()
+            );
         }
         tokio::time::sleep(Duration::from_millis(80)).await;
     }
@@ -615,7 +627,11 @@ async fn trigger_local_build(state: Arc<ServerState>, wait: bool) -> BuildReceip
         logs: String::new(),
     };
     {
-        state.builds.write().await.insert(id.clone(), initial.clone());
+        state
+            .builds
+            .write()
+            .await
+            .insert(id.clone(), initial.clone());
         state.build_order.write().await.push(id.clone());
     }
 
@@ -846,16 +862,29 @@ async fn handle_conn(mut client: TcpStream, state: Arc<ServerState>) -> Result<(
             } else {
                 serde_json::from_slice(body_bytes).unwrap_or_else(|_| json!({}))
             };
-            let wait = head.query.split('&').any(|kv| kv == "wait=true" || kv == "wait=1")
-                || req_json.get("wait").and_then(Value::as_bool).unwrap_or(false);
-            let cloud = req_json.get("cloud").and_then(Value::as_bool).unwrap_or(false);
+            let wait = head
+                .query
+                .split('&')
+                .any(|kv| kv == "wait=true" || kv == "wait=1")
+                || req_json
+                    .get("wait")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            let cloud = req_json
+                .get("cloud")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
             if cloud {
                 let mut cfg = state.cfg.clone();
                 match Seam::open(&mut cfg, DEFAULT_BRAND).await {
-                    Ok(seam) => match seam.send(Method::POST, "/v1/build", &[], Some(req_json)).await {
+                    Ok(seam) => match seam
+                        .send(Method::POST, "/v1/build", &[], Some(req_json))
+                        .await
+                    {
                         Ok(reply) => {
-                            return write_json_response(&mut client, reply.status, &reply.body).await;
+                            return write_json_response(&mut client, reply.status, &reply.body)
+                                .await;
                         }
                         Err(err) => {
                             return write_json_response(
@@ -905,10 +934,12 @@ async fn handle_conn(mut client: TcpStream, state: Arc<ServerState>) -> Result<(
                 let order = state.build_order.read().await;
                 if let Some(last_id) = order.last() {
                     if let Some(rec) = state.builds.read().await.get(last_id).cloned() {
-                        return write_json_response(&mut client, 200, &serde_json::to_value(rec)?).await;
+                        return write_json_response(&mut client, 200, &serde_json::to_value(rec)?)
+                            .await;
                     }
                 }
-                return write_json_response(&mut client, 404, &json!({ "error": "no builds yet" })).await;
+                return write_json_response(&mut client, 404, &json!({ "error": "no builds yet" }))
+                    .await;
             }
             if let Some(rec) = state.builds.read().await.get(id).cloned() {
                 return write_json_response(&mut client, 200, &serde_json::to_value(rec)?).await;
@@ -916,11 +947,19 @@ async fn handle_conn(mut client: TcpStream, state: Arc<ServerState>) -> Result<(
             // Fall back to cloud `/v1/build/:id` if it's a remote build job ID.
             let mut cfg = state.cfg.clone();
             if let Ok(seam) = Seam::open(&mut cfg, DEFAULT_BRAND).await {
-                if let Ok(reply) = seam.send(Method::GET, &format!("/v1/build/{id}"), &[], None).await {
+                if let Ok(reply) = seam
+                    .send(Method::GET, &format!("/v1/build/{id}"), &[], None)
+                    .await
+                {
                     return write_json_response(&mut client, reply.status, &reply.body).await;
                 }
             }
-            write_json_response(&mut client, 404, &json!({ "error": format!("build `{id}` not found") })).await
+            write_json_response(
+                &mut client,
+                404,
+                &json!({ "error": format!("build `{id}` not found") }),
+            )
+            .await
         }
         ("GET", "/v1/dev/status") | ("GET", "/__hanzo/status") => {
             let status = collect_stack_status(&state).await;
@@ -945,10 +984,12 @@ async fn handle_conn(mut client: TcpStream, state: Arc<ServerState>) -> Result<(
             match res {
                 Ok(Ok(reply)) => write_json_response(&mut client, 200, &reply).await,
                 Ok(Err(err)) => {
-                    write_json_response(&mut client, 502, &json!({ "error": err.to_string() })).await
+                    write_json_response(&mut client, 502, &json!({ "error": err.to_string() }))
+                        .await
                 }
                 Err(err) => {
-                    write_json_response(&mut client, 500, &json!({ "error": err.to_string() })).await
+                    write_json_response(&mut client, 500, &json!({ "error": err.to_string() }))
+                        .await
                 }
             }
         }
@@ -966,8 +1007,8 @@ async fn proxy_to_engine(
     body_bytes: &[u8],
 ) -> Result<()> {
     let url = format!("{}{}", state.engine_url, head.target);
-    let method = reqwest::Method::from_bytes(head.method.as_bytes())
-        .unwrap_or(reqwest::Method::GET);
+    let method =
+        reqwest::Method::from_bytes(head.method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let mut req = state.http.request(method, &url);
     for (k, v) in &head.headers {
         if matches!(
@@ -1045,7 +1086,10 @@ async fn collect_stack_status(state: &ServerState) -> Value {
             arr.iter()
                 .filter_map(|m| m.get("id").and_then(Value::as_str))
                 .find(|id| *id != "default")
-                .or_else(|| arr.first().and_then(|m| m.get("id").and_then(Value::as_str)))
+                .or_else(|| {
+                    arr.first()
+                        .and_then(|m| m.get("id").and_then(Value::as_str))
+                })
         })
         .map(String::from);
 
@@ -1099,7 +1143,11 @@ pub async fn run_cloud_build(
             .output()
             .context("running git")?;
         if !out.status.success() {
-            bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+            bail!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
         Ok(String::from_utf8(out.stdout)?.trim().to_string())
     };
@@ -1107,7 +1155,8 @@ pub async fn run_cloud_build(
     let origin = git_out(&["remote", "get-url", "origin"])
         .context("`hanzo build --cloud` needs a git `origin` remote (or use `hanzo build create --repo ...`)")?;
     let repo = normalize_repo_url(&origin)?;
-    let branch = git_out(&["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "main".into());
+    let branch =
+        git_out(&["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| "main".into());
     let sha = git_out(&["rev-parse", "HEAD"])?;
     let image = tags
         .first()
@@ -1133,9 +1182,15 @@ pub async fn run_cloud_build(
     }
 
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
-    let reply = seam.send(Method::POST, "/v1/build", &[], Some(body)).await?;
+    let reply = seam
+        .send(Method::POST, "/v1/build", &[], Some(body))
+        .await?;
     if !(200..300).contains(&reply.status) {
-        bail!("POST /v1/build returned HTTP {}: {}", reply.status, reply.body);
+        bail!(
+            "POST /v1/build returned HTTP {}: {}",
+            reply.status,
+            reply.body
+        );
     }
     let id = reply
         .body
@@ -1157,8 +1212,14 @@ pub async fn run_cloud_build(
 
     loop {
         tokio::time::sleep(Duration::from_secs(3)).await;
-        let poll = seam.send(Method::GET, &format!("/v1/build/{id}"), &[], None).await?;
-        let st = poll.body.get("status").and_then(Value::as_str).unwrap_or("unknown");
+        let poll = seam
+            .send(Method::GET, &format!("/v1/build/{id}"), &[], None)
+            .await?;
+        let st = poll
+            .body
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
         println!("  • [{id}] status = {st}");
         match st {
             "succeeded" | "done" | "complete" => {
@@ -1175,10 +1236,16 @@ pub async fn run_cloud_build(
 
 fn normalize_repo_url(remote: &str) -> Result<String> {
     if let Some(rest) = remote.strip_prefix("git@github.com:") {
-        return Ok(format!("https://github.com/{}", rest.trim_end_matches(".git")));
+        return Ok(format!(
+            "https://github.com/{}",
+            rest.trim_end_matches(".git")
+        ));
     }
     if let Some(rest) = remote.strip_prefix("git@git.hanzo.ai:") {
-        return Ok(format!("https://git.hanzo.ai/{}", rest.trim_end_matches(".git")));
+        return Ok(format!(
+            "https://git.hanzo.ai/{}",
+            rest.trim_end_matches(".git")
+        ));
     }
     if remote.starts_with("https://") {
         return Ok(remote.trim_end_matches(".git").to_string());
@@ -1205,7 +1272,11 @@ mod tests {
 
         let out_dir = tmp.path().join("build_out");
         std::fs::create_dir_all(out_dir.join("assets")).unwrap();
-        std::fs::write(out_dir.join("index.html"), b"<!doctype html><title>Antje</title>").unwrap();
+        std::fs::write(
+            out_dir.join("index.html"),
+            b"<!doctype html><title>Antje</title>",
+        )
+        .unwrap();
         std::fs::write(out_dir.join("assets/app.js"), b"console.log('ok')").unwrap();
 
         let (d1, f1, b1) = hash_output_dir(&out_dir).unwrap();
@@ -1217,7 +1288,8 @@ mod tests {
 
     #[test]
     fn rewrites_non_upgrade_connection_to_close_and_identifies_api_paths() {
-        let req = b"GET /src/App.tsx HTTP/1.1\r\nHost: localhost:5173\r\nConnection: keep-alive\r\n\r\n";
+        let req =
+            b"GET /src/App.tsx HTTP/1.1\r\nHost: localhost:5173\r\nConnection: keep-alive\r\n\r\n";
         let parsed = parse_http_head(req).unwrap();
         assert!(!parsed.is_upgrade);
         assert!(!is_integrated_api(&parsed.path));

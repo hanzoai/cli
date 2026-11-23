@@ -24,7 +24,12 @@ fn hanzo() -> Command {
     cmd.env("NO_COLOR", "1");
     cmd.env("HANZO_NO_ANIMATION", "1");
     cmd.env("HOME", home.path());
-    for v in ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
+    for v in [
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_STATE_HOME",
+    ] {
         cmd.env_remove(v);
     }
     // A machine caller's key is read at the point of use (`Seam::open`), so an
@@ -58,14 +63,22 @@ fn tmp() -> tempfile::TempDir {
 fn config_profile_is_what_gen_reads() {
     let c = tmp();
     let read = |c: &tempfile::TempDir| -> hanzo_gen::Profile {
-        let a = hanzo().args(["config", "profile"]).args(cfg_args(c)).assert().success();
+        let a = hanzo()
+            .args(["config", "profile"])
+            .args(cfg_args(c))
+            .assert()
+            .success();
         serde_json::from_slice(&a.get_output().stdout).expect("a Profile")
     };
     let fresh = read(&c);
     assert!(fresh.link, "a session links by default");
     assert!(fresh.api.starts_with("https://"), "{}", fresh.api);
     assert!(fresh.identities.is_empty() && fresh.provider.is_none());
-    hanzo().args(["config", "set", "code.link", "false"]).args(cfg_args(&c)).assert().success();
+    hanzo()
+        .args(["config", "set", "code.link", "false"])
+        .args(cfg_args(&c))
+        .assert()
+        .success();
     assert!(!read(&c).link, "the opt-out reaches gen");
     let help = hanzo().args(["config", "--help"]).assert().success();
     assert!(!String::from_utf8_lossy(&help.get_output().stdout).contains("profile"));
@@ -110,7 +123,10 @@ fn every_version_spelling_prints_the_one_line() {
 #[test]
 fn one_command_ships_under_one_name() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cargo: toml::Value = std::fs::read_to_string(root.join("Cargo.toml")).unwrap().parse().unwrap();
+    let cargo: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
     let shipped: Vec<&str> = cargo["bin"]
         .as_array()
         .unwrap()
@@ -121,10 +137,20 @@ fn one_command_ships_under_one_name() {
     assert_eq!(shipped, ["hanzo"]);
 
     for package in ["npm/package.json", "npm/hanzo/package.json"] {
-        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join(package)).unwrap()).unwrap();
-        let mut names: Vec<&str> = json["bin"].as_object().unwrap().keys().map(String::as_str).collect();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(package)).unwrap()).unwrap();
+        let mut names: Vec<&str> = json["bin"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         names.sort_unstable();
-        assert_eq!(names, ["hanzo", "hanzo-engine", "hanzo-mcp", "hanzo-node"], "{package}");
+        assert_eq!(
+            names,
+            ["hanzo", "hanzo-engine", "hanzo-mcp", "hanzo-node"],
+            "{package}"
+        );
     }
 }
 
@@ -135,13 +161,19 @@ fn no_screen_names_a_second_product() {
     for args in screens {
         let out = hanzo().args(args).assert().success();
         let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
-        assert!(!text.contains("Hanzo Dev") && !text.contains("hanzo-dev"), "{args:?}:\n{text}");
+        assert!(
+            !text.contains("Hanzo Dev") && !text.contains("hanzo-dev"),
+            "{args:?}:\n{text}"
+        );
     }
     let upgrade = hanzo().args(["upgrade", "--help"]).assert().success();
     assert!(!String::from_utf8_lossy(&upgrade.get_output().stdout).contains("mcp, dev"));
     let refused = hanzo().args(["upgrade", "dev"]).assert().failure();
     let text = String::from_utf8_lossy(&refused.get_output().stderr).to_string();
-    assert!(text.contains("upgradable: hanzo, mcp, gen") && !text.contains(" dev"), "{text}");
+    assert!(
+        text.contains("upgradable: hanzo, mcp, gen") && !text.contains(" dev"),
+        "{text}"
+    );
 }
 
 /// THE DEFECT: there was no `status` command, so `hanzo status` was parsed as the
@@ -153,7 +185,10 @@ fn status_is_a_command_not_a_coding_session() {
         .args(["status", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("unhealthy").and(predicate::str::contains("Usage: hanzo status")));
+        .stdout(
+            predicate::str::contains("unhealthy")
+                .and(predicate::str::contains("Usage: hanzo status")),
+        );
 }
 
 /// `hanzo pull <model>` and `hanzo engine pull <model>` are real commands (never
@@ -201,7 +236,10 @@ fn status_signed_out_refuses_and_never_shows_an_empty_fleet() {
         .args(cfg_args(&cfg))
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not signed in").and(predicate::str::contains("hanzo auth login")))
+        .stderr(
+            predicate::str::contains("not signed in")
+                .and(predicate::str::contains("hanzo auth login")),
+        )
         .stdout(predicate::str::contains("all clear").not());
 }
 
@@ -221,9 +259,18 @@ fn a_bare_hanzo_starts_the_coding_agent() {
         .failure();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
-    assert!(stderr.contains("the `dev` coding agent is not installed"), "{stderr}");
-    assert!(stderr.contains("hanzo.sh"), "the error names the installer: {stderr}");
-    assert!(!stdout.contains("SYNOPSIS"), "a bare hanzo printed the help page: {stdout}");
+    assert!(
+        stderr.contains("the `dev` coding agent is not installed"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("hanzo.sh"),
+        "the error names the installer: {stderr}"
+    );
+    assert!(
+        !stdout.contains("SYNOPSIS"),
+        "a bare hanzo printed the help page: {stdout}"
+    );
 }
 
 /// `hanzo run` is gone: it exits 2 with one line naming `hanzo dev`, and starts
@@ -233,7 +280,10 @@ fn a_bare_hanzo_starts_the_coding_agent() {
 fn the_retired_launchers_name_hanzo_dev() {
     let out = hanzo().args(["code", "claude"]).assert().failure();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(stderr.contains("hanzo dev --claude"), "`hanzo code claude` is `hanzo dev claude`: {stderr}");
+    assert!(
+        stderr.contains("hanzo dev --claude"),
+        "`hanzo code claude` is `hanzo dev claude`: {stderr}"
+    );
     for argv in [
         vec!["run"],
         vec!["run", "claude"],
@@ -242,8 +292,14 @@ fn the_retired_launchers_name_hanzo_dev() {
     ] {
         let out = hanzo().args(&argv).assert().failure().code(2);
         let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-        assert!(stderr.contains("hanzo dev") || argv == ["--no-route"], "{argv:?}: {stderr}");
-        assert!(stderr.lines().filter(|l| l.starts_with("error:")).count() == 1, "{argv:?}: {stderr}");
+        assert!(
+            stderr.contains("hanzo dev") || argv == ["--no-route"],
+            "{argv:?}: {stderr}"
+        );
+        assert!(
+            stderr.lines().filter(|l| l.starts_with("error:")).count() == 1,
+            "{argv:?}: {stderr}"
+        );
     }
 }
 
@@ -254,10 +310,27 @@ fn help_lists_the_resource_nouns() {
     let out = hanzo().arg("--help").assert().success();
     let help = String::from_utf8_lossy(&out.get_output().stdout).to_string();
     for surface in [
-        "agent", "auth", "cluster", "config", "model", "node", "runner", "secret",
-        "serve", "version", "chain", "network", "wallet", "billing", "connector", "usage",
+        "agent",
+        "auth",
+        "cluster",
+        "config",
+        "model",
+        "node",
+        "runner",
+        "secret",
+        "serve",
+        "version",
+        "chain",
+        "network",
+        "wallet",
+        "billing",
+        "connector",
+        "usage",
     ] {
-        assert!(help.contains(surface), "`hanzo --help` must list the `{surface}` resource");
+        assert!(
+            help.contains(surface),
+            "`hanzo --help` must list the `{surface}` resource"
+        );
     }
     // The relocated verbs are not top-level names any more.
     for gone in ["login", "whoami", "switch", "deploy"] {
@@ -278,17 +351,48 @@ fn graph_asks_at_both_times() {
         String::from_utf8_lossy(&out.get_output().stdout).to_string()
     };
     let top = help(&["graph"]);
-    let listed = |verb: &str| top.lines().any(|l| l.split_whitespace().next() == Some(verb));
+    let listed = |verb: &str| {
+        top.lines()
+            .any(|l| l.split_whitespace().next() == Some(verb))
+    };
     for verb in [
-        "create", "get", "search", "resolve", "neighbors", "path", "diff", "communities", "answer",
-        "vocabulary", "extract", "ingest", "erase", "ontology", "entity", "apple", "convo",
-        "local", "sync",
+        "create",
+        "get",
+        "search",
+        "resolve",
+        "neighbors",
+        "path",
+        "diff",
+        "communities",
+        "answer",
+        "vocabulary",
+        "extract",
+        "ingest",
+        "erase",
+        "ontology",
+        "entity",
+        "apple",
+        "convo",
+        "local",
+        "sync",
     ] {
         assert!(listed(verb), "`hanzo graph` does not list `{verb}`:\n{top}");
     }
-    for verb in ["get", "search", "resolve", "neighbors", "path", "communities", "answer", "entity"] {
+    for verb in [
+        "get",
+        "search",
+        "resolve",
+        "neighbors",
+        "path",
+        "communities",
+        "answer",
+        "entity",
+    ] {
         let h = help(&["graph", verb]);
-        assert!(h.contains("--as-of") && h.contains("--as-known"), "`hanzo graph {verb}` lacks a time:\n{h}");
+        assert!(
+            h.contains("--as-of") && h.contains("--as-known"),
+            "`hanzo graph {verb}` lacks a time:\n{h}"
+        );
     }
     let h = help(&["graph", "diff"]);
     for flag in ["--from", "--to", "--from-known", "--to-known"] {
@@ -308,7 +412,11 @@ fn vm_passes_through_to_a_resolved_binary() {
     // First line is the version contract (last token); second proves the args
     // arrived verbatim.
     let fake = bin_dir.join("hanzo-vm");
-    std::fs::write(&fake, "#!/bin/sh\necho \"hanzo-vm 99.0.0\"\necho \"args: $@\"\n").unwrap();
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho \"hanzo-vm 99.0.0\"\necho \"args: $@\"\n",
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -374,12 +482,20 @@ fn network_use_persists_across_invocations() {
 #[test]
 fn network_sandboxes_name_their_own_api() {
     for (name, api, iam) in [
-        ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai"),
+        (
+            "devnet",
+            "https://api-dev.hanzo.ai",
+            "https://id-dev.hanzo.ai",
+        ),
         ("testnet", "https://api-test.hanzo.ai", "https://hanzo.ai"),
         ("mainnet", "https://api.hanzo.ai", "https://hanzo.ai"),
     ] {
         let cfg = tmp();
-        hanzo().args(["network", "use", name]).args(cfg_args(&cfg)).assert().success();
+        hanzo()
+            .args(["network", "use", name])
+            .args(cfg_args(&cfg))
+            .assert()
+            .success();
         hanzo()
             .args(["network", "current"])
             .args(cfg_args(&cfg))
@@ -395,7 +511,11 @@ fn issued(iss: &str, owner: &str, name: &str) -> String {
     use base64::Engine;
     let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
     let claims = format!(r#"{{"iss":"{iss}","owner":"{owner}","name":"{name}","sub":"u-1"}}"#);
-    format!("{}.{}.c2ln", b64(br#"{"alg":"RS256","typ":"JWT"}"#), b64(claims.as_bytes()))
+    format!(
+        "{}.{}.c2ln",
+        b64(br#"{"alg":"RS256","typ":"JWT"}"#),
+        b64(claims.as_bytes())
+    )
 }
 
 /// hanzo files a credential from either issuer it has signed in at, and a
@@ -415,7 +535,9 @@ fn hanzo_files_a_credential_from_hanzo_ai_and_hanzo_id_and_refuses_a_foreign_iss
     login("https://hanzo.id", "id").success();
     login("https://hanzo.evil.example", "evil")
         .failure()
-        .stderr(predicate::str::contains("issued by https://hanzo.evil.example"));
+        .stderr(predicate::str::contains(
+            "issued by https://hanzo.evil.example",
+        ));
 }
 
 /// Identities never cross networks: devnet refuses a hanzo.id credential, holds
@@ -437,31 +559,60 @@ fn identities_never_cross_networks() {
 
     run(&login, Some(&prod)).success();
     run(&["network", "use", "devnet"], None).success();
-    run(&["auth", "token"], None).failure().stderr(predicate::str::contains("not signed in"));
+    run(&["auth", "token"], None)
+        .failure()
+        .stderr(predicate::str::contains("not signed in"));
     run(&login, Some(&prod))
         .failure()
         .stderr(predicate::str::contains("issued by https://hanzo.id"));
     run(&login, Some(&dev)).success();
-    run(&["auth", "token"], None).success().stdout(format!("{dev}\n"));
+    run(&["auth", "token"], None)
+        .success()
+        .stdout(format!("{dev}\n"));
 
     // No other brand signs in on devnet: its API trusts id-dev alone.
-    run(&["auth", "login", "--brand", "lux", "--provider", "hanzo", "--token", "-"], Some(&prod))
-        .failure()
-        .stderr(predicate::str::contains("lux does not sign in"));
+    run(
+        &[
+            "auth",
+            "login",
+            "--brand",
+            "lux",
+            "--provider",
+            "hanzo",
+            "--token",
+            "-",
+        ],
+        Some(&prod),
+    )
+    .failure()
+    .stderr(predicate::str::contains("lux does not sign in"));
 
     run(&["network", "use", "mainnet"], None).success();
-    run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
+    run(&["auth", "token"], None)
+        .success()
+        .stdout(format!("{prod}\n"));
     run(&["network", "use", "testnet"], None).success();
-    run(&["auth", "token"], None).success().stdout(format!("{prod}\n"));
+    run(&["auth", "token"], None)
+        .success()
+        .stdout(format!("{prod}\n"));
 
     // A devnet session's token helper is bound to devnet: selecting another
     // network meanwhile changes nothing it prints, and its realm is refused
     // anywhere but on devnet.
-    let helper = ["auth", "token", "--brand", "hanzo@id-dev.hanzo.ai", "--network", "devnet"];
+    let helper = [
+        "auth",
+        "token",
+        "--brand",
+        "hanzo@id-dev.hanzo.ai",
+        "--network",
+        "devnet",
+    ];
     run(&helper, None).success().stdout(format!("{dev}\n"));
     run(&["auth", "token", "--brand", "hanzo@id-dev.hanzo.ai"], None)
         .failure()
-        .stderr(predicate::str::contains("not a realm of the active network"));
+        .stderr(predicate::str::contains(
+            "not a realm of the active network",
+        ));
 }
 
 /// An unknown network is refused with a useful hint, non-zero.
@@ -473,7 +624,10 @@ fn network_use_unknown_fails_with_hint() {
         .args(cfg_args(&cfg))
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unknown network").and(predicate::str::contains("network add")));
+        .stderr(
+            predicate::str::contains("unknown network")
+                .and(predicate::str::contains("network add")),
+        );
 }
 
 /// `network add` registers a sovereign L1 (chain-id defaults to network-id),
@@ -483,10 +637,15 @@ fn network_add_sovereign_roundtrip() {
     let cfg = tmp();
     hanzo()
         .args([
-            "network", "add", "my-l1",
-            "--network-id", "424242",
-            "--rpc", "https://rpc.my-l1.example",
-            "--api", "https://api.my-l1.example",
+            "network",
+            "add",
+            "my-l1",
+            "--network-id",
+            "424242",
+            "--rpc",
+            "https://rpc.my-l1.example",
+            "--api",
+            "https://api.my-l1.example",
             "--activate",
         ])
         .args(cfg_args(&cfg))
@@ -516,7 +675,8 @@ fn auth_show_signed_out_refuses_with_login_hint() {
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("not signed in").and(predicate::str::contains("hanzo auth login")),
+            predicate::str::contains("not signed in")
+                .and(predicate::str::contains("hanzo auth login")),
         );
 }
 
@@ -526,7 +686,14 @@ fn auth_show_signed_out_refuses_with_login_hint() {
 fn login_refuses_a_literal_token_on_argv() {
     let cfg = tmp();
     hanzo()
-        .args(["auth", "login", "--provider", "hanzo", "--token", "not-a-real-token"])
+        .args([
+            "auth",
+            "login",
+            "--provider",
+            "hanzo",
+            "--token",
+            "not-a-real-token",
+        ])
         .args(cfg_args(&cfg))
         .assert()
         .failure();
@@ -555,7 +722,10 @@ fn wallet_list_empty_state() {
         .args(cfg_args(&cfg))
         .assert()
         .success()
-        .stdout(predicate::str::contains("no wallets").and(predicate::str::contains("hanzo wallet create")));
+        .stdout(
+            predicate::str::contains("no wallets")
+                .and(predicate::str::contains("hanzo wallet create")),
+        );
 }
 
 // ── Live auth flow (gated on HANZO_E2E_TOKEN) ────────────────────────────────
@@ -565,7 +735,9 @@ fn e2e_token() -> Option<String> {
     match std::env::var("HANZO_E2E_TOKEN") {
         Ok(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
         _ => {
-            eprintln!("SKIP: set HANZO_E2E_TOKEN (a real hanzo.id bearer) to run the live auth flow");
+            eprintln!(
+                "SKIP: set HANZO_E2E_TOKEN (a real hanzo.id bearer) to run the live auth flow"
+            );
             None
         }
     }
@@ -602,8 +774,12 @@ fn live_login_whoami_usage_with_env_token() {
         .args(cfg_args(&cfg))
         .assert()
         .success();
-    let summary: serde_json::Value = serde_json::from_slice(&usage.get_output().stdout)
-        .expect("usage summary returns JSON");
-    assert!(summary["scope"]["org"].as_str().is_some_and(|v| !v.is_empty()));
-    assert!(summary["scope"]["user"].as_str().is_some_and(|v| !v.is_empty()));
+    let summary: serde_json::Value =
+        serde_json::from_slice(&usage.get_output().stdout).expect("usage summary returns JSON");
+    assert!(summary["scope"]["org"]
+        .as_str()
+        .is_some_and(|v| !v.is_empty()));
+    assert!(summary["scope"]["user"]
+        .as_str()
+        .is_some_and(|v| !v.is_empty()));
 }

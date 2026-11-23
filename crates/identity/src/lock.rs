@@ -35,7 +35,8 @@ impl Lock {
             .truncate(false)
             .open(&lock)
             .with_context(|| format!("opening lock {}", lock.display()))?;
-        f.lock().with_context(|| format!("locking {}", lock.display()))?;
+        f.lock()
+            .with_context(|| format!("locking {}", lock.display()))?;
         Ok(Self(f))
     }
 }

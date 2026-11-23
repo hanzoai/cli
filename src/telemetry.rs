@@ -33,7 +33,11 @@ pub fn build(config: &Config) -> hanzo_event::Telemetry {
     let bearer = store::active(config, DEFAULT_BRAND)
         .and_then(|id| store::token_for(config, DEFAULT_BRAND, &id).ok().flatten())
         .map(|tokens| tokens.access_token)
-        .or_else(|| std::env::var(hanzo_event::KEY_ENV).ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| {
+            std::env::var(hanzo_event::KEY_ENV)
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
         .or_else(|| Some(DEFAULT_PUBLISHABLE_KEY.to_string()));
     hanzo_event::Telemetry::new(hanzo_event::Config {
         product: "cli".to_string(),

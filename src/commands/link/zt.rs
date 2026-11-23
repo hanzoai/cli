@@ -21,10 +21,22 @@ pub const VERSION: &str = "1.7.4";
 /// is checked against what this build was cut with rather than against a digest
 /// served beside the tarball it vouches for.
 const DIGESTS: &[(&str, &str)] = &[
-    ("darwin-amd64", "d264ed77b6147c70e758c8fcdda88d9dc19b84f88b52a450880f5b06a2761390"),
-    ("darwin-arm64", "3f2205075a76a3b9767e9984ab944f03baf8624273a066a67f170749bc156d2f"),
-    ("linux-amd64", "4a6d2b2f3dc8a581c7c1561df1d0ed2e5d1bdc612be131a177607ebddb96d9ed"),
-    ("linux-arm64", "d107d2d55a2137992db6f94a501d8a86b65dbfe4c59be5d0c497a5028d30bfb7"),
+    (
+        "darwin-amd64",
+        "d264ed77b6147c70e758c8fcdda88d9dc19b84f88b52a450880f5b06a2761390",
+    ),
+    (
+        "darwin-arm64",
+        "3f2205075a76a3b9767e9984ab944f03baf8624273a066a67f170749bc156d2f",
+    ),
+    (
+        "linux-amd64",
+        "4a6d2b2f3dc8a581c7c1561df1d0ed2e5d1bdc612be131a177607ebddb96d9ed",
+    ),
+    (
+        "linux-arm64",
+        "d107d2d55a2137992db6f94a501d8a86b65dbfe4c59be5d0c497a5028d30bfb7",
+    ),
 ];
 
 /// What a tunnel does.
@@ -101,7 +113,10 @@ impl Session {
             .json()
             .await
             .context("decoding the controller's session")?;
-        let token = login["data"]["token"].as_str().context("the controller issued no session")?.to_string();
+        let token = login["data"]["token"]
+            .as_str()
+            .context("the controller issued no session")?
+            .to_string();
         Ok(Some(Session { http, api, token }))
     }
 
@@ -125,7 +140,11 @@ impl Session {
             name: d["name"].as_str().unwrap_or_default().to_string(),
             roles: d["roleAttributes"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|r| r.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default(),
         })
     }
@@ -142,11 +161,18 @@ impl Session {
         let mut out = Vec::new();
         let mut offset = 0;
         loop {
-            let page = self.get(&format!("/services?limit=500&offset={offset}")).await?;
-            let data = page["data"].as_array().map(Vec::as_slice).unwrap_or_default();
+            let page = self
+                .get(&format!("/services?limit=500&offset={offset}"))
+                .await?;
+            let data = page["data"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             out.extend(bound(data));
             offset += data.len();
-            let total = page["meta"]["pagination"]["totalCount"].as_u64().unwrap_or(0) as usize;
+            let total = page["meta"]["pagination"]["totalCount"]
+                .as_u64()
+                .unwrap_or(0) as usize;
             if data.is_empty() || offset >= total {
                 return Ok(out);
             }
@@ -155,13 +181,20 @@ impl Session {
 
     /// How many terminators — live hosts — a service has on the fabric.
     async fn terminators(&self, service_id: &str) -> Result<usize> {
-        let v = self.get(&format!("/services/{service_id}/terminators?limit=500")).await?;
+        let v = self
+            .get(&format!("/services/{service_id}/terminators?limit=500"))
+            .await?;
         Ok(v["data"].as_array().map(Vec::len).unwrap_or(0))
     }
 
     /// Refuse a dial whose identity may host anything — see [`Session::bindable`].
     pub async fn dial_only(&self, who: &str) -> Result<()> {
-        let hosts: Vec<String> = self.bindable().await?.into_iter().map(|(_, name)| name).collect();
+        let hosts: Vec<String> = self
+            .bindable()
+            .await?
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
         if !hosts.is_empty() {
             bail!(
                 "{who} may host {} on Hanzo ZT, and zt's proxy mode hosts whatever its identity may: \
@@ -188,8 +221,17 @@ impl Session {
 fn bound(services: &[Value]) -> Vec<(String, String)> {
     services
         .iter()
-        .filter(|s| s["permissions"].as_array().is_some_and(|p| p.iter().any(|p| p == "Bind")))
-        .filter_map(|s| Some((s["id"].as_str()?.to_string(), s["name"].as_str()?.to_string())))
+        .filter(|s| {
+            s["permissions"]
+                .as_array()
+                .is_some_and(|p| p.iter().any(|p| p == "Bind"))
+        })
+        .filter_map(|s| {
+            Some((
+                s["id"].as_str()?.to_string(),
+                s["name"].as_str()?.to_string(),
+            ))
+        })
         .collect()
 }
 
@@ -202,7 +244,10 @@ pub struct Watch {
 
 impl Watch {
     pub fn new(token_command: &str) -> Watch {
-        Watch { token_command: token_command.to_string(), session: None }
+        Watch {
+            token_command: token_command.to_string(),
+            session: None,
+        }
     }
 
     /// The services this identity may host that have NO terminator right now.
@@ -215,7 +260,11 @@ impl Watch {
     pub async fn unhosted(&mut self) -> Result<Vec<String>> {
         if self.session.is_none() {
             let token = super::network::run_token_command(&self.token_command).await?;
-            self.session = Some(Session::open(&token).await?.context("this identity is not on Hanzo ZT")?);
+            self.session = Some(
+                Session::open(&token)
+                    .await?
+                    .context("this identity is not on Hanzo ZT")?,
+            );
         }
         let session = self.session.as_ref().expect("opened above");
         let read = async {
@@ -253,7 +302,9 @@ pub async fn resolve_or_install() -> Result<PathBuf> {
 }
 
 fn local_bin() -> Result<PathBuf> {
-    Ok(dirs::home_dir().context("no home directory")?.join(".local/bin/zt"))
+    Ok(dirs::home_dir()
+        .context("no home directory")?
+        .join(".local/bin/zt"))
 }
 
 async fn install(dest: &std::path::Path) -> Result<PathBuf> {
@@ -267,9 +318,16 @@ async fn install(dest: &std::path::Path) -> Result<PathBuf> {
     })?;
     let asset = format!("zt-{platform}.tar.gz");
     let url = format!("https://github.com/hanzozt/zt/releases/download/v{VERSION}/{asset}");
-    eprintln!("installing zt v{VERSION} ({platform}) → {} …", dest.display());
+    eprintln!(
+        "installing zt v{VERSION} ({platform}) → {} …",
+        dest.display()
+    );
     let tarball = vm::fetch(&reqwest::Client::new(), &url).await?;
-    vm::verify_sha256(&tarball, digest(platform).expect("every platform has a digest"), &asset)?;
+    vm::verify_sha256(
+        &tarball,
+        digest(platform).expect("every platform has a digest"),
+        &asset,
+    )?;
     let dir = dest.parent().context("zt's install path has no parent")?;
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     vm::extract(&tarball, "zt", dest)?;
@@ -288,7 +346,10 @@ fn platform(os: &str, arch: &str) -> Option<&'static str> {
 }
 
 fn digest(platform: &str) -> Option<&'static str> {
-    DIGESTS.iter().find(|(p, _)| *p == platform).map(|(_, d)| *d)
+    DIGESTS
+        .iter()
+        .find(|(p, _)| *p == platform)
+        .map(|(_, d)| *d)
 }
 
 #[cfg(test)]
@@ -314,9 +375,19 @@ mod tests {
     /// so a proxy names exactly two.
     #[test]
     fn a_proxy_names_the_service_and_its_local_port() {
-        let a = args(&Mode::Proxy { service: "k8s.hanzo".into(), port: 26443 }, "hanzo auth token");
+        let a = args(
+            &Mode::Proxy {
+                service: "k8s.hanzo".into(),
+                port: 26443,
+            },
+            "hanzo auth token",
+        );
         assert_eq!(a[..3], ["tunnel", "proxy", "k8s.hanzo:26443"]);
-        assert_eq!(a.last().unwrap(), "hanzo auth token", "one argument: zt splits it itself");
+        assert_eq!(
+            a.last().unwrap(),
+            "hanzo auth token",
+            "one argument: zt splits it itself"
+        );
     }
 
     /// Only `Bind` makes a host; `Dial` alone is what a dialer may hold.
@@ -328,21 +399,35 @@ mod tests {
             {"id": "3", "name": "engine.hanzo", "permissions": ["Bind"]},
             {"id": "4", "name": "odd.acme"}
         ]);
-        let names: Vec<String> = bound(page.as_array().unwrap()).into_iter().map(|(_, n)| n).collect();
+        let names: Vec<String> = bound(page.as_array().unwrap())
+            .into_iter()
+            .map(|(_, n)| n)
+            .collect();
         assert_eq!(names, ["web.acme", "engine.hanzo"]);
     }
 
     #[test]
     fn the_platform_role_marks_an_identity_a_link_leaves_alone() {
-        let me = |roles: &[&str]| Me { name: "x".into(), roles: roles.iter().map(|r| r.to_string()).collect() };
+        let me = |roles: &[&str]| Me {
+            name: "x".into(),
+            roles: roles.iter().map(|r| r.to_string()).collect(),
+        };
         assert!(me(&["platform"]).platform());
         assert!(!me(&["org-hanzo", "web-host.hanzo"]).platform());
-        assert!(!me(&["platform.hanzo"]).platform(), "a scoped tenant role is not the platform's");
+        assert!(
+            !me(&["platform.hanzo"]).platform(),
+            "a scoped tenant role is not the platform's"
+        );
     }
 
     #[test]
     fn every_platform_zt_ships_has_a_pinned_digest() {
-        for (os, arch) in [("macos", "x86_64"), ("macos", "aarch64"), ("linux", "x86_64"), ("linux", "aarch64")] {
+        for (os, arch) in [
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+            ("linux", "x86_64"),
+            ("linux", "aarch64"),
+        ] {
             let p = platform(os, arch).unwrap();
             let d = digest(p).unwrap();
             assert_eq!(d.len(), 64, "{p}");
@@ -355,8 +440,12 @@ mod tests {
     /// not hash to it is refused.
     #[test]
     fn a_tarball_that_is_not_the_pinned_one_is_refused() {
-        let err = vm::verify_sha256(b"not zt", digest("linux-arm64").unwrap(), "zt-linux-arm64.tar.gz")
-            .unwrap_err();
+        let err = vm::verify_sha256(
+            b"not zt",
+            digest("linux-arm64").unwrap(),
+            "zt-linux-arm64.tar.gz",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("sha256 mismatch"), "{err}");
     }
 }

@@ -25,13 +25,13 @@ use ratatui::{
 };
 use serde::Deserialize;
 
-use hanzo_gen::context::{self, Machine, Metrics, Spec};
-use hanzo_gen::sample::Sampler;
-use hanzo_gen::{target, Root};
 use crate::commands::product::Seam;
 use crate::commands::{network, status};
 use crate::config::Config;
 use crate::iam::{paths, store};
+use hanzo_gen::context::{self, Machine, Metrics, Spec};
+use hanzo_gen::sample::Sampler;
+use hanzo_gen::{target, Root};
 
 /// How often this machine is read.
 const TICK: Duration = Duration::from_secs(2);
@@ -74,7 +74,11 @@ pub enum Update {
     Local(Box<Machine>),
     Fleet(Result<Vec<Target>, String>),
     Networks(Result<Vec<Network>, String>),
-    Accounts { active: Option<String>, all: Vec<String>, api: String },
+    Accounts {
+        active: Option<String>,
+        all: Vec<String>,
+        api: String,
+    },
 }
 
 /// One machine on the page: this one, or a sibling.
@@ -113,7 +117,10 @@ impl History {
                 }
             }
         };
-        put(&mut self.gpu, (!spec.gpus.is_empty()).then_some(m.gpu_util * 100.0));
+        put(
+            &mut self.gpu,
+            (!spec.gpus.is_empty()).then_some(m.gpu_util * 100.0),
+        );
         put(&mut self.cpu, m.cpu_util.map(|c| c * 100.0));
         put(&mut self.gpu_temp, m.gpu_temp);
         put(&mut self.cpu_temp, m.cpu_temp);
@@ -158,7 +165,10 @@ impl Board {
             let local = tx.clone();
             handle.spawn(async move {
                 let mut sampler = Sampler::new();
-                while local.send(Update::Local(Box::new(sampler.machine().await))).is_ok() {
+                while local
+                    .send(Update::Local(Box::new(sampler.machine().await)))
+                    .is_ok()
+                {
                     tokio::time::sleep(TICK).await;
                 }
             });
@@ -169,7 +179,10 @@ impl Board {
                 let api = network::active(&cfg).api.trim_end_matches('/').to_string();
                 let _ = tx.send(Update::Accounts {
                     active: active.as_ref().map(|i| format!("{}/{}", i.owner, i.name)),
-                    all: held.iter().map(|i| format!("{}/{}", i.owner, i.name)).collect(),
+                    all: held
+                        .iter()
+                        .map(|i| format!("{}/{}", i.owner, i.name))
+                        .collect(),
                     api: api.clone(),
                 });
                 let root = Root::user();
@@ -184,7 +197,9 @@ impl Board {
                     )
                 });
                 for tick in 0u64.. {
-                    if tick % NET_EVERY == 0 && tx.send(Update::Networks(networks(&mut cfg).await)).is_err() {
+                    if tick % NET_EVERY == 0
+                        && tx.send(Update::Networks(networks(&mut cfg).await)).is_err()
+                    {
                         break;
                     }
                     if tx.send(Update::Fleet(fleet(&mut cfg).await)).is_err() {
@@ -194,8 +209,14 @@ impl Board {
                 }
             });
         }
-        let host = Root::user().map(|r| context::hostname(&r)).unwrap_or_default();
-        Board { host, rx: Some(rx), ..Default::default() }
+        let host = Root::user()
+            .map(|r| context::hostname(&r))
+            .unwrap_or_default();
+        Board {
+            host,
+            rx: Some(rx),
+            ..Default::default()
+        }
     }
 
     /// Take everything the reader has sent since the last frame.
@@ -212,7 +233,10 @@ impl Board {
     pub fn apply(&mut self, update: Update) {
         match update {
             Update::Local(m) => {
-                self.history.entry("local".into()).or_default().push(&m.spec, &m.metrics);
+                self.history
+                    .entry("local".into())
+                    .or_default()
+                    .push(&m.spec, &m.metrics);
                 self.local = Some(*m);
             }
             Update::Fleet(Ok(targets)) => {
@@ -262,17 +286,27 @@ impl Board {
         // only its newest reading.
         let mut newest: HashMap<&str, &Target> = HashMap::new();
         for t in &self.targets {
-            let key = if t.host.is_empty() { t.id.as_str() } else { t.host.as_str() };
+            let key = if t.host.is_empty() {
+                t.id.as_str()
+            } else {
+                t.host.as_str()
+            };
             if newest.get(key).is_none_or(|n| seen(n) < seen(t)) {
                 newest.insert(key, t);
             }
         }
         let mut rest: Vec<Unit> = newest
             .into_values()
-            .filter(|t| self.local.is_none() || mine.map(|m| m.host.as_str()) != Some(t.host.as_str()))
+            .filter(|t| {
+                self.local.is_none() || mine.map(|m| m.host.as_str()) != Some(t.host.as_str())
+            })
             .map(|t| Unit {
                 key: t.id.clone(),
-                label: if t.label.is_empty() { t.host.clone() } else { t.label.clone() },
+                label: if t.label.is_empty() {
+                    t.host.clone()
+                } else {
+                    t.label.clone()
+                },
                 local: false,
                 online: t.status == "online",
                 at: seen(t),
@@ -281,12 +315,18 @@ impl Board {
             })
             .collect();
         rest.sort_by(|a, b| {
-            (!a.online, a.spec.gpus.is_empty(), a.label.as_str(), std::cmp::Reverse(a.at)).cmp(&(
-                !b.online,
-                b.spec.gpus.is_empty(),
-                b.label.as_str(),
-                std::cmp::Reverse(b.at),
-            ))
+            (
+                !a.online,
+                a.spec.gpus.is_empty(),
+                a.label.as_str(),
+                std::cmp::Reverse(a.at),
+            )
+                .cmp(&(
+                    !b.online,
+                    b.spec.gpus.is_empty(),
+                    b.label.as_str(),
+                    std::cmp::Reverse(b.at),
+                ))
         });
         out.extend(rest);
         out
@@ -317,18 +357,26 @@ fn seen(t: &Target) -> Option<i64> {
 
 async fn fleet(cfg: &mut Config) -> Result<Vec<Target>, String> {
     let rows = read(cfg, "/v1/agent/targets", "targets").await?;
-    Ok(rows.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect())
 }
 
 async fn networks(cfg: &mut Config) -> Result<Vec<Network>, String> {
     let rows = read(cfg, "/v1/network", "networks").await?;
-    Ok(rows.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect())
 }
 
 /// One list off the cloud through the one authenticated seam `hanzo status` reads by.
 async fn read(cfg: &mut Config, path: &str, key: &str) -> Result<Vec<serde_json::Value>, String> {
     let call = async {
-        let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await.map_err(|e| format!("{e:#}"))?;
+        let seam = Seam::open(cfg, paths::DEFAULT_BRAND)
+            .await
+            .map_err(|e| format!("{e:#}"))?;
         status::read(&seam, path, key).await
     };
     tokio::time::timeout(PATIENCE, call)
@@ -408,7 +456,11 @@ fn gpu_name(spec: &Spec) -> String {
         None => "—".into(),
         Some(g) => {
             let model = product(&g.model);
-            let name = if model.is_empty() { g.vendor.clone() } else { model };
+            let name = if model.is_empty() {
+                g.vendor.clone()
+            } else {
+                model
+            };
             if spec.gpus.len() > 1 {
                 format!("{}× {name}", spec.gpus.len())
             } else {
@@ -423,11 +475,19 @@ fn gpu_name(spec: &Spec) -> String {
 /// "AMD/ATI Device 1586". A plain name ("GB10") is itself.
 fn product(model: &str) -> String {
     let m = model.trim();
-    if let Some(inner) = m.strip_suffix(']').and_then(|h| h.rsplit_once('[')).map(|(_, p)| p) {
+    if let Some(inner) = m
+        .strip_suffix(']')
+        .and_then(|h| h.rsplit_once('['))
+        .map(|(_, p)| p)
+    {
         return inner.trim().to_string();
     }
     match m.split_once('[') {
-        Some((_, rest)) => rest.replace(']', "").split_whitespace().collect::<Vec<_>>().join(" "),
+        Some((_, rest)) => rest
+            .replace(']', "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
         None => m.to_string(),
     }
 }
@@ -439,8 +499,14 @@ pub fn spark(values: &VecDeque<f64>, width: usize, max: Option<f64>) -> String {
     if values.len() < 2 {
         return " ".repeat(width);
     }
-    let tail: Vec<f64> = values.iter().skip(values.len().saturating_sub(width)).copied().collect();
-    let top = max.unwrap_or_else(|| tail.iter().copied().fold(0.0, f64::max)).max(f64::EPSILON);
+    let tail: Vec<f64> = values
+        .iter()
+        .skip(values.len().saturating_sub(width))
+        .copied()
+        .collect();
+    let top = max
+        .unwrap_or_else(|| tail.iter().copied().fold(0.0, f64::max))
+        .max(f64::EPSILON);
     let line: String = tail
         .iter()
         .map(|v| TICKS[((v / top).clamp(0.0, 1.0) * 7.0).round() as usize])
@@ -492,7 +558,12 @@ pub fn cpu_temp_color(t: f64) -> Color {
 }
 
 fn label(s: &str) -> Span<'static> {
-    Span::styled(format!("{s:<7}"), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+    Span::styled(
+        format!("{s:<7}"),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 fn dim(s: impl Into<String>) -> Span<'static> {
@@ -500,7 +571,10 @@ fn dim(s: impl Into<String>) -> Span<'static> {
 }
 
 fn val(s: impl Into<String>, c: Color) -> Span<'static> {
-    Span::styled(s.into(), Style::default().fg(c).add_modifier(Modifier::BOLD))
+    Span::styled(
+        s.into(),
+        Style::default().fg(c).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn none() -> Span<'static> {
@@ -519,7 +593,11 @@ pub fn render(f: &mut Frame, area: Rect, board: &Board) {
     };
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(9), Constraint::Length(charts), Constraint::Min(5)])
+        .constraints([
+            Constraint::Length(9),
+            Constraint::Length(charts),
+            Constraint::Min(5),
+        ])
         .split(area);
     match units.get(board.selected) {
         Some(u) => {
@@ -532,7 +610,10 @@ pub fn render(f: &mut Frame, area: Rect, board: &Board) {
         }
         None => {
             let block = panel(" this machine ".into());
-            f.render_widget(Paragraph::new(dim("  reading this machine…")).block(block), rows[0]);
+            f.render_widget(
+                Paragraph::new(dim("  reading this machine…")).block(block),
+                rows[0],
+            );
         }
     }
     let cols = Layout::default()
@@ -548,7 +629,12 @@ fn panel(title: String) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))
 }
 
 fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
@@ -578,7 +664,10 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
     let halves = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(Rect { height: inner.height.min(5), ..inner });
+        .split(Rect {
+            height: inner.height.min(5),
+            ..inner
+        });
     let w = TAIL;
 
     let mut left = Vec::new();
@@ -590,13 +679,19 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
         left.push(Line::from(vec![
             label("GPU"),
             dim("util "),
-            Span::styled(spark(&h.gpu, w, Some(100.0)), Style::default().fg(load_color(util))),
+            Span::styled(
+                spark(&h.gpu, w, Some(100.0)),
+                Style::default().fg(load_color(util)),
+            ),
             val(format!(" {util:>3.0}%"), load_color(util)),
         ]));
         let mut temp = vec![label(""), dim("temp ")];
         match m.gpu_temp {
             Some(t) => {
-                temp.push(Span::styled(spark(&h.gpu_temp, w, Some(100.0)), Style::default().fg(gpu_temp_color(t))));
+                temp.push(Span::styled(
+                    spark(&h.gpu_temp, w, Some(100.0)),
+                    Style::default().fg(gpu_temp_color(t)),
+                ));
                 temp.push(val(format!(" {t:>3.0}°C"), gpu_temp_color(t)));
             }
             None => temp.push(none()),
@@ -604,7 +699,10 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
         if let Some(p) = m.gpu_power {
             temp.push(dim("  power "));
             temp.push(val(format!("{p:.1} W"), Color::White));
-            temp.push(dim(m.gpu_power_limit.map(|l| format!(" / {l:.0} W")).unwrap_or_default()));
+            temp.push(dim(m
+                .gpu_power_limit
+                .map(|l| format!(" / {l:.0} W"))
+                .unwrap_or_default()));
         }
         left.push(Line::from(temp));
     }
@@ -625,7 +723,10 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
     let mut ct = vec![label(""), dim("temp ")];
     match m.cpu_temp {
         Some(t) => {
-            ct.push(Span::styled(spark(&h.cpu_temp, w, Some(100.0)), Style::default().fg(cpu_temp_color(t))));
+            ct.push(Span::styled(
+                spark(&h.cpu_temp, w, Some(100.0)),
+                Style::default().fg(cpu_temp_color(t)),
+            ));
             ct.push(val(format!(" {t:>3.0}°C"), cpu_temp_color(t)));
         }
         None => ct.push(none()),
@@ -644,7 +745,13 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
     f.render_widget(Paragraph::new(left), halves[0]);
 
     let mut right = Vec::new();
-    let used_frac = |used: i64, total: i64| if total > 0 { used as f64 / total as f64 } else { 0.0 };
+    let used_frac = |used: i64, total: i64| {
+        if total > 0 {
+            used as f64 / total as f64
+        } else {
+            0.0
+        }
+    };
     if s.memory > 0 && m.mem_used > 0 {
         let pct = used_frac(m.mem_used, s.memory) * 100.0;
         if unified(s, m) {
@@ -659,8 +766,16 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
             let gpu = m.gpu_mem_used.unwrap_or(0);
             right.push(Line::from(vec![
                 label(""),
-                val(format!("{} / {}", gib(m.mem_used), gib(s.memory)), Color::White),
-                dim(format!("  gpu {} · cpu {} · avail {}", num(gpu), num((m.mem_used - gpu).max(0)), gib(m.mem_free))),
+                val(
+                    format!("{} / {}", gib(m.mem_used), gib(s.memory)),
+                    Color::White,
+                ),
+                dim(format!(
+                    "  gpu {} · cpu {} · avail {}",
+                    num(gpu),
+                    num((m.mem_used - gpu).max(0)),
+                    gib(m.mem_free)
+                )),
             ]));
         } else {
             right.push(Line::from(vec![
@@ -699,15 +814,28 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
         _ => right.push(Line::from(vec![label("DISK"), none()])),
     }
     right.push(match (m.disk_read, m.disk_write) {
-        (Some(r), Some(w)) => Line::from(vec![label(""), dim("read "), val(rate(r), Color::White), dim("   write "), val(rate(w), Color::White)]),
+        (Some(r), Some(w)) => Line::from(vec![
+            label(""),
+            dim("read "),
+            val(rate(r), Color::White),
+            dim("   write "),
+            val(rate(w), Color::White),
+        ]),
         _ => Line::from(""),
     });
     f.render_widget(Paragraph::new(right), halves[1]);
 
-    let serve_area = Rect { y: inner.y + 5, height: inner.height.saturating_sub(5), ..inner };
+    let serve_area = Rect {
+        y: inner.y + 5,
+        height: inner.height.saturating_sub(5),
+        ..inner
+    };
     let serve = match &m.model {
         Some(model) => {
-            let rate = |v: Option<f64>| v.map(|v| format!("{} tok/s", tokens(v))).unwrap_or_else(|| "—".into());
+            let rate = |v: Option<f64>| {
+                v.map(|v| format!("{} tok/s", tokens(v)))
+                    .unwrap_or_else(|| "—".into())
+            };
             vec![
                 Line::from(vec![
                     label("SERVE"),
@@ -722,19 +850,39 @@ fn render_unit(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
                 Line::from(vec![
                     label(""),
                     dim("ttft "),
-                    m.ttft.map(|t| val(seconds(t), Color::White)).unwrap_or_else(none),
+                    m.ttft
+                        .map(|t| val(seconds(t), Color::White))
+                        .unwrap_or_else(none),
                     dim("   run "),
-                    m.running.map(|r| val(r.to_string(), Color::White)).unwrap_or_else(none),
+                    m.running
+                        .map(|r| val(r.to_string(), Color::White))
+                        .unwrap_or_else(none),
                     dim(" · wait "),
-                    m.waiting.map(|r| val(r.to_string(), Color::White)).unwrap_or_else(none),
+                    m.waiting
+                        .map(|r| val(r.to_string(), Color::White))
+                        .unwrap_or_else(none),
                     dim(" · kv "),
                     m.kv_cache
-                        .map(|k| val(format!("{:.1}%", k * 100.0), if k >= 0.8 { Color::Red } else if k >= 0.5 { Color::Yellow } else { Color::Green }))
+                        .map(|k| {
+                            val(
+                                format!("{:.1}%", k * 100.0),
+                                if k >= 0.8 {
+                                    Color::Red
+                                } else if k >= 0.5 {
+                                    Color::Yellow
+                                } else {
+                                    Color::Green
+                                },
+                            )
+                        })
                         .unwrap_or_else(none),
                 ]),
             ]
         }
-        None => vec![Line::from(vec![label("SERVE"), dim("no model server answering /metrics")])],
+        None => vec![Line::from(vec![
+            label("SERVE"),
+            dim("no model server answering /metrics"),
+        ])],
     };
     f.render_widget(Paragraph::new(serve), serve_area);
 }
@@ -748,18 +896,48 @@ fn render_charts(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
     let gpu = !u.spec.gpus.is_empty();
     let cells: [(String, &VecDeque<f64>, Option<f64>, Color); 4] = [
         if gpu {
-            (format!(" GPU util  {} ", pct(Some(m.gpu_util * 100.0))), &h.gpu, Some(100.0), load_color(m.gpu_util * 100.0))
+            (
+                format!(" GPU util  {} ", pct(Some(m.gpu_util * 100.0))),
+                &h.gpu,
+                Some(100.0),
+                load_color(m.gpu_util * 100.0),
+            )
         } else {
-            (format!(" CPU util  {} ", pct(m.cpu_util.map(|c| c * 100.0))), &h.cpu, Some(100.0), ACCENT)
+            (
+                format!(" CPU util  {} ", pct(m.cpu_util.map(|c| c * 100.0))),
+                &h.cpu,
+                Some(100.0),
+                ACCENT,
+            )
         },
         if gpu {
-            (format!(" GPU temp  {} ", deg(m.gpu_temp)), &h.gpu_temp, Some(100.0), m.gpu_temp.map(gpu_temp_color).unwrap_or(DIM))
+            (
+                format!(" GPU temp  {} ", deg(m.gpu_temp)),
+                &h.gpu_temp,
+                Some(100.0),
+                m.gpu_temp.map(gpu_temp_color).unwrap_or(DIM),
+            )
         } else {
-            (format!(" CPU temp  {} ", deg(m.cpu_temp)), &h.cpu_temp, Some(100.0), m.cpu_temp.map(cpu_temp_color).unwrap_or(DIM))
+            (
+                format!(" CPU temp  {} ", deg(m.cpu_temp)),
+                &h.cpu_temp,
+                Some(100.0),
+                m.cpu_temp.map(cpu_temp_color).unwrap_or(DIM),
+            )
         },
-        (format!(" memory  {} ", pct(mem_pct(&u.spec, m))), &h.mem, Some(100.0), mem_pct(&u.spec, m).map(load_color).unwrap_or(DIM)),
         (
-            format!(" decode  {} ", m.decode.map(|d| format!("{} tok/s", tokens(d))).unwrap_or_else(|| "—".into())),
+            format!(" memory  {} ", pct(mem_pct(&u.spec, m))),
+            &h.mem,
+            Some(100.0),
+            mem_pct(&u.spec, m).map(load_color).unwrap_or(DIM),
+        ),
+        (
+            format!(
+                " decode  {} ",
+                m.decode
+                    .map(|d| format!("{} tok/s", tokens(d)))
+                    .unwrap_or_else(|| "—".into())
+            ),
             &h.decode,
             None,
             ACCENT,
@@ -774,11 +952,26 @@ fn render_charts(f: &mut Frame, area: Rect, u: &Unit, h: &History) {
         let inner = block.inner(cols[i]);
         f.render_widget(block, cols[i]);
         let width = inner.width as usize;
-        let tail: Vec<f64> = series.iter().skip(series.len().saturating_sub(width)).copied().collect();
-        let top = max.unwrap_or_else(|| tail.iter().copied().fold(0.0, f64::max)).max(1.0);
+        let tail: Vec<f64> = series
+            .iter()
+            .skip(series.len().saturating_sub(width))
+            .copied()
+            .collect();
+        let top = max
+            .unwrap_or_else(|| tail.iter().copied().fold(0.0, f64::max))
+            .max(1.0);
         let mut data = vec![0u64; width - tail.len()];
-        data.extend(tail.iter().map(|v| (v.clamp(0.0, top) * 100.0 / top).round() as u64));
-        f.render_widget(Sparkline::default().data(&data).max(100).style(Style::default().fg(color)), inner);
+        data.extend(
+            tail.iter()
+                .map(|v| (v.clamp(0.0, top) * 100.0 / top).round() as u64),
+        );
+        f.render_widget(
+            Sparkline::default()
+                .data(&data)
+                .max(100)
+                .style(Style::default().fg(color)),
+            inner,
+        );
     }
 }
 
@@ -792,7 +985,14 @@ fn render_machines(f: &mut Frame, area: Rect, board: &Board, units: &[Unit]) {
     let inner = area.width.saturating_sub(2) as usize;
     let wide = inner >= 93;
     let gw = if inner >= 71 || wide { 18 } else { 12 };
-    let row = |name: &str, gpu: &str, util: &str, temp: &str, mem: &str, tps: &str, model: &str, when: &str| {
+    let row = |name: &str,
+               gpu: &str,
+               util: &str,
+               temp: &str,
+               mem: &str,
+               tps: &str,
+               model: &str,
+               when: &str| {
         let mut s = format!("{name:<14}{gpu:<gw$}{util:>6}{temp:>7}{mem:>6}{tps:>9}");
         if wide {
             s.push_str(&format!("  {model:<22}"));
@@ -801,39 +1001,79 @@ fn render_machines(f: &mut Frame, area: Rect, board: &Board, units: &[Unit]) {
         s
     };
     let head = Line::from(Span::styled(
-        format!("  {}", row("MACHINE", "GPU", "UTIL", "TEMP", "MEM", "TOK/S", "MODEL", "SEEN")),
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        format!(
+            "  {}",
+            row("MACHINE", "GPU", "UTIL", "TEMP", "MEM", "TOK/S", "MODEL", "SEEN")
+        ),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
     ));
     let mut lines = vec![head];
     for (i, u) in units.iter().enumerate() {
         let m = &u.metrics;
         let fresh = u.local || u.online;
         let dot = if i == board.selected {
-            Span::styled("▶ ", Style::default().fg(if fresh { Color::Cyan } else { Color::DarkGray }))
+            Span::styled(
+                "▶ ",
+                Style::default().fg(if fresh { Color::Cyan } else { Color::DarkGray }),
+            )
         } else if fresh {
             Span::styled("● ", Style::default().fg(Color::Green))
         } else {
             dim("○ ")
         };
-        let util = if u.spec.gpus.is_empty() || !fresh { "—".into() } else { format!("{:.0}%", m.gpu_util * 100.0) };
-        let temp = m.gpu_temp.filter(|_| fresh).map(|t| format!("{t:.0}°C")).unwrap_or_else(|| "—".into());
-        let mem = mem_pct(&u.spec, m).filter(|_| fresh).map(|p| format!("{p:.0}%")).unwrap_or_else(|| "—".into());
-        let tps = m.decode.filter(|_| fresh).map(tokens).unwrap_or_else(|| "—".into());
-        let model: String = m.model.clone().unwrap_or_else(|| "—".into()).chars().take(21).collect();
-        let when = if u.local { "live".into() } else { u.at.map(|a| age(now() - a)).unwrap_or_else(|| "—".into()) };
+        let util = if u.spec.gpus.is_empty() || !fresh {
+            "—".into()
+        } else {
+            format!("{:.0}%", m.gpu_util * 100.0)
+        };
+        let temp = m
+            .gpu_temp
+            .filter(|_| fresh)
+            .map(|t| format!("{t:.0}°C"))
+            .unwrap_or_else(|| "—".into());
+        let mem = mem_pct(&u.spec, m)
+            .filter(|_| fresh)
+            .map(|p| format!("{p:.0}%"))
+            .unwrap_or_else(|| "—".into());
+        let tps = m
+            .decode
+            .filter(|_| fresh)
+            .map(tokens)
+            .unwrap_or_else(|| "—".into());
+        let model: String = m
+            .model
+            .clone()
+            .unwrap_or_else(|| "—".into())
+            .chars()
+            .take(21)
+            .collect();
+        let when = if u.local {
+            "live".into()
+        } else {
+            u.at.map(|a| age(now() - a)).unwrap_or_else(|| "—".into())
+        };
         let name: String = u.label.chars().take(13).collect();
         let gpu: String = gpu_name(&u.spec).chars().take(gw - 1).collect();
         let text = row(&name, &gpu, &util, &temp, &mem, &tps, &model, &when);
         let mut style = Style::default().fg(if fresh { Color::White } else { Color::DarkGray });
         if i == board.selected {
-            style = style.bg(Color::Rgb(40, 44, 58)).add_modifier(Modifier::BOLD);
+            style = style
+                .bg(Color::Rgb(40, 44, 58))
+                .add_modifier(Modifier::BOLD);
         }
         lines.push(Line::from(vec![dot, Span::styled(text, style)]));
     }
     match &board.fleet {
         Reading::Pending => lines.push(Line::from(dim("  reading the org's machines…"))),
-        Reading::Failed(e) => lines.push(Line::from(vec![Span::styled("  cloud: ", Style::default().fg(Color::Yellow)), dim(e.clone())])),
-        Reading::Ok if board.targets.is_empty() => lines.push(Line::from(dim("  no other machines linked — `hanzo link` on one"))),
+        Reading::Failed(e) => lines.push(Line::from(vec![
+            Span::styled("  cloud: ", Style::default().fg(Color::Yellow)),
+            dim(e.clone()),
+        ])),
+        Reading::Ok if board.targets.is_empty() => lines.push(Line::from(dim(
+            "  no other machines linked — `hanzo link` on one",
+        ))),
         Reading::Ok => {}
     }
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -842,26 +1082,45 @@ fn render_machines(f: &mut Frame, area: Rect, board: &Board, units: &[Unit]) {
 fn render_side(f: &mut Frame, area: Rect, board: &Board) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(board.accounts.len().max(1) as u16 + 2)])
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(board.accounts.len().max(1) as u16 + 2),
+        ])
         .split(area);
 
     let mut nets = Vec::new();
     match &board.net {
         Reading::Pending => nets.push(Line::from(dim(" reading…"))),
         Reading::Failed(e) => nets.push(Line::from(dim(format!(" {e}")))),
-        Reading::Ok if board.networks.is_empty() => nets.push(Line::from(dim(" none — `hanzo link`"))),
+        Reading::Ok if board.networks.is_empty() => {
+            nets.push(Line::from(dim(" none — `hanzo link`")))
+        }
         Reading::Ok => {
             for n in &board.networks {
                 let up = matches!(n.status.as_str(), "active" | "online" | "up" | "ready");
                 nets.push(Line::from(vec![
-                    if up { Span::styled(" ● ", Style::default().fg(Color::Green)) } else { dim(" ○ ") },
-                    val(if n.name.is_empty() { n.id.clone() } else { n.name.clone() }, Color::White),
+                    if up {
+                        Span::styled(" ● ", Style::default().fg(Color::Green))
+                    } else {
+                        dim(" ○ ")
+                    },
+                    val(
+                        if n.name.is_empty() {
+                            n.id.clone()
+                        } else {
+                            n.name.clone()
+                        },
+                        Color::White,
+                    ),
                     dim(format!("  {} · {} nodes", n.status, n.nodes)),
                 ]));
             }
         }
     }
-    f.render_widget(Paragraph::new(nets).block(panel(" networks · zero trust ".into())), rows[0]);
+    f.render_widget(
+        Paragraph::new(nets).block(panel(" networks · zero trust ".into())),
+        rows[0],
+    );
 
     let mut accts = Vec::new();
     if board.accounts.is_empty() {
@@ -870,11 +1129,18 @@ fn render_side(f: &mut Frame, area: Rect, board: &Board) {
     for a in &board.accounts {
         let active = board.account.as_deref() == Some(a.as_str());
         accts.push(Line::from(vec![
-            if active { Span::styled(" * ", Style::default().fg(ACCENT)) } else { dim("   ") },
+            if active {
+                Span::styled(" * ", Style::default().fg(ACCENT))
+            } else {
+                dim("   ")
+            },
             val(a.clone(), if active { Color::White } else { DIM }),
         ]));
     }
-    f.render_widget(Paragraph::new(accts).block(panel(" accounts ".into())), rows[1]);
+    f.render_widget(
+        Paragraph::new(accts).block(panel(" accounts ".into())),
+        rows[1],
+    );
 }
 
 fn now() -> i64 {
@@ -894,7 +1160,11 @@ mod tests {
                 arch: "aarch64".into(),
                 cpus: 20,
                 memory: 124610 * 1048576,
-                gpus: vec![Gpu { vendor: "nvidia".into(), model: "GB10".into(), memory: 0 }],
+                gpus: vec![Gpu {
+                    vendor: "nvidia".into(),
+                    model: "GB10".into(),
+                    memory: 0,
+                }],
             },
             metrics: Metrics {
                 load1: 3.2,
@@ -940,7 +1210,10 @@ mod tests {
 
     #[test]
     fn this_machine_leads_and_replaces_its_own_target() {
-        let mut b = Board { host: "dgx".into(), ..Default::default() };
+        let mut b = Board {
+            host: "dgx".into(),
+            ..Default::default()
+        };
         b.apply(Update::Local(Box::new(spark_machine())));
         b.apply(Update::Fleet(Ok(vec![
             target("tgt_old", "evo", "offline", "2026-09-08T04:51:59Z"),
@@ -950,10 +1223,17 @@ mod tests {
         ])));
         let units = b.units();
         let names: Vec<&str> = units.iter().map(|u| u.label.as_str()).collect();
-        assert_eq!(names, ["dgx", "rig", "evo"], "local first, online before offline, own target folded in");
+        assert_eq!(
+            names,
+            ["dgx", "rig", "evo"],
+            "local first, online before offline, own target folded in"
+        );
         assert!(units[0].local && units[0].metrics.model.is_some());
         assert!(!units[2].online);
-        assert_eq!(units[2].key, "tgt_old", "a re-registered host shows its newest target");
+        assert_eq!(
+            units[2].key, "tgt_old",
+            "a re-registered host shows its newest target"
+        );
     }
 
     #[test]
@@ -962,12 +1242,20 @@ mod tests {
         let t = target("tgt_1", "rig", "online", "2026-09-23T07:00:00Z");
         b.apply(Update::Fleet(Ok(vec![t.clone()])));
         b.apply(Update::Fleet(Ok(vec![t.clone()])));
-        assert_eq!(b.history["tgt_1"].gpu.len(), 1, "the same reading is not a new point");
+        assert_eq!(
+            b.history["tgt_1"].gpu.len(),
+            1,
+            "the same reading is not a new point"
+        );
         let mut later = t;
         later.metrics_at = Some("2026-09-23T07:00:30Z".into());
         b.apply(Update::Fleet(Ok(vec![later])));
         assert_eq!(b.history["tgt_1"].gpu.len(), 2);
-        assert_eq!(b.history["tgt_1"].cpu_temp.len(), 0, "an absent reading is no point, not a zero");
+        assert_eq!(
+            b.history["tgt_1"].cpu_temp.len(),
+            0,
+            "an absent reading is no point, not a zero"
+        );
     }
 
     #[test]
@@ -976,7 +1264,10 @@ mod tests {
         assert!(unified(&m.spec, &m.metrics));
         let t = target("t", "rig", "online", "2026-09-23T07:00:00Z");
         assert!(!unified(&t.spec, &t.metrics));
-        assert!(!unified(&Spec::default(), &Metrics::default()), "no GPU is not unified memory");
+        assert!(
+            !unified(&Spec::default(), &Metrics::default()),
+            "no GPU is not unified memory"
+        );
     }
 
     #[test]
@@ -993,28 +1284,75 @@ mod tests {
         assert_eq!(age(15 * 86_400), "15d");
         let q: VecDeque<f64> = [0.0, 50.0, 100.0].into_iter().collect();
         assert_eq!(spark(&q, 5, Some(100.0)), "  ▁▅█");
-        assert_eq!(spark(&VecDeque::from([7.0]), 3, None), "   ", "one point is no line");
+        assert_eq!(
+            spark(&VecDeque::from([7.0]), 3, None),
+            "   ",
+            "one point is no line"
+        );
         assert_eq!(bar(0.5, 4), "██░░");
-        assert_eq!((gpu_temp_color(70.0), cpu_temp_color(70.0)), (Color::Yellow, ACCENT));
+        assert_eq!(
+            (gpu_temp_color(70.0), cpu_temp_color(70.0)),
+            (Color::Yellow, ACCENT)
+        );
         assert_eq!(load_color(90.0), Color::Red);
-        assert_eq!(product("Advanced Micro Devices, Inc. [AMD/ATI] Strix [Radeon 8060S]"), "Radeon 8060S");
-        assert_eq!(product("Advanced Micro Devices, Inc. [AMD/ATI] Device 1586"), "AMD/ATI Device 1586");
+        assert_eq!(
+            product("Advanced Micro Devices, Inc. [AMD/ATI] Strix [Radeon 8060S]"),
+            "Radeon 8060S"
+        );
+        assert_eq!(
+            product("Advanced Micro Devices, Inc. [AMD/ATI] Device 1586"),
+            "AMD/ATI Device 1586"
+        );
         assert_eq!(product("GB10"), "GB10");
     }
 
     #[test]
     fn renders_the_home_page() {
-        let mut b = Board { host: "dgx".into(), ..Default::default() };
+        let mut b = Board {
+            host: "dgx".into(),
+            ..Default::default()
+        };
         for _ in 0..3 {
             b.apply(Update::Local(Box::new(spark_machine())));
         }
-        b.apply(Update::Fleet(Ok(vec![target("tgt_old", "evo", "offline", "2026-09-08T04:51:59Z")])));
+        b.apply(Update::Fleet(Ok(vec![target(
+            "tgt_old",
+            "evo",
+            "offline",
+            "2026-09-08T04:51:59Z",
+        )])));
         b.apply(Update::Networks(Ok(vec![])));
-        b.apply(Update::Accounts { active: Some("hanzo/z".into()), all: vec!["hanzo/z".into()], api: "https://api.hanzo.ai".into() });
+        b.apply(Update::Accounts {
+            active: Some("hanzo/z".into()),
+            all: vec!["hanzo/z".into()],
+            api: "https://api.hanzo.ai".into(),
+        });
         let mut term = Terminal::new(TestBackend::new(136, 32)).unwrap();
         term.draw(|f| render(f, f.area(), &b)).unwrap();
-        let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-        for want in ["dgx · GB10", "this machine", "unified", "gpu 71.4 · cpu", "qwen3.8-flash-next", "41.2 tok/s", "210 ms", "kv 12.0%", "evo", "RTX 4090", "machines · hanzo/z", "zero trust", "hanzo/z", "GPU util", "decode  41.2 tok/s"] {
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        for want in [
+            "dgx · GB10",
+            "this machine",
+            "unified",
+            "gpu 71.4 · cpu",
+            "qwen3.8-flash-next",
+            "41.2 tok/s",
+            "210 ms",
+            "kv 12.0%",
+            "evo",
+            "RTX 4090",
+            "machines · hanzo/z",
+            "zero trust",
+            "hanzo/z",
+            "GPU util",
+            "decode  41.2 tok/s",
+        ] {
             assert!(text.contains(want), "missing {want:?}");
         }
     }

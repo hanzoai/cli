@@ -92,13 +92,19 @@ const SERVED_AT: &[(&str, &str)] = &[("/v1/completions", "/v1/chat/completions")
 
 /// The address a request for `path` is sent to.
 pub fn served_at(path: &str) -> &str {
-    SERVED_AT.iter().find(|(alias, _)| *alias == path).map_or(path, |(_, canonical)| canonical)
+    SERVED_AT
+        .iter()
+        .find(|(alias, _)| *alias == path)
+        .map_or(path, |(_, canonical)| canonical)
 }
 
 /// The command a curated product's operations are absorbed under, if any.
 pub fn under(product: &str) -> Option<&'static str> {
     match curated(product) {
-        Some(Curated { instead: Instead::Under(parent), .. }) => Some(parent),
+        Some(Curated {
+            instead: Instead::Under(parent),
+            ..
+        }) => Some(parent),
         _ => None,
     }
 }
@@ -143,7 +149,11 @@ mod tests {
                 "{}: `why` must be a sentence, not a label — got {why:?}",
                 c.product
             );
-            assert!(!why.eq_ignore_ascii_case(c.product), "{}: `why` restates the product name", c.product);
+            assert!(
+                !why.eq_ignore_ascii_case(c.product),
+                "{}: `why` restates the product name",
+                c.product
+            );
         }
     }
 
@@ -153,7 +163,11 @@ mod tests {
     fn an_absorbed_product_lands_somewhere_else() {
         for c in CURATED {
             if let Instead::Under(parent) = c.instead {
-                assert!(!parent.is_empty() && parent != c.product, "{}: absorbed into {parent:?}", c.product);
+                assert!(
+                    !parent.is_empty() && parent != c.product,
+                    "{}: absorbed into {parent:?}",
+                    c.product
+                );
                 assert!(under(c.product) == Some(parent) && !dropped(c.product));
             }
         }

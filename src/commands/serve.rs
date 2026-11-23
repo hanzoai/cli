@@ -457,14 +457,13 @@ pub fn build_project(root: &Path, out_dir: &Path, production: bool) -> Result<Bu
                 copy_dir_recursive(&public_dir, out_dir)?;
             }
 
-            let (js_bundle, css_bundle, bundler) =
-                if let Some(esbuild) = find_esbuild(root) {
-                    let (js, css) = run_esbuild(&esbuild, root, entry, out_dir, production)?;
-                    (Some(js), css, "esbuild")
-                } else {
-                    let (js, css) = bundle_builtin_ts(root, entry, &assets_dir)?;
-                    (Some(js), css, "hanzo-builtin")
-                };
+            let (js_bundle, css_bundle, bundler) = if let Some(esbuild) = find_esbuild(root) {
+                let (js, css) = run_esbuild(&esbuild, root, entry, out_dir, production)?;
+                (Some(js), css, "esbuild")
+            } else {
+                let (js, css) = bundle_builtin_ts(root, entry, &assets_dir)?;
+                (Some(js), css, "hanzo-builtin")
+            };
 
             let raw_html = std::fs::read_to_string(root.join("index.html"))
                 .context("read project index.html")?;
@@ -496,7 +495,10 @@ pub fn build_project(root: &Path, out_dir: &Path, production: bool) -> Result<Bu
                 }
                 std::fs::create_dir_all(out_dir)?;
                 copy_dir_recursive(root, out_dir)?;
-                if production && out_dir.join("index.html").is_file() && !out_dir.join("404.html").exists() {
+                if production
+                    && out_dir.join("index.html").is_file()
+                    && !out_dir.join("404.html").exists()
+                {
                     std::fs::copy(out_dir.join("index.html"), out_dir.join("404.html"))?;
                 }
             }
@@ -510,7 +512,11 @@ pub fn build_project(root: &Path, out_dir: &Path, production: bool) -> Result<Bu
         }
         ProjectKind::GoZip => {
             std::fs::create_dir_all(out_dir)?;
-            let bin_name = if cfg!(windows) { "server.exe" } else { "server" };
+            let bin_name = if cfg!(windows) {
+                "server.exe"
+            } else {
+                "server"
+            };
             let bin_out = out_dir.join(bin_name);
             let status = std::process::Command::new("go")
                 .current_dir(root)
@@ -540,7 +546,11 @@ enum EsbuildCommand {
 }
 
 fn find_esbuild(project_dir: &Path) -> Option<EsbuildCommand> {
-    let bin_name = if cfg!(windows) { "esbuild.cmd" } else { "esbuild" };
+    let bin_name = if cfg!(windows) {
+        "esbuild.cmd"
+    } else {
+        "esbuild"
+    };
 
     // 1. Walk `project_dir` and ancestor `node_modules/.bin/esbuild`.
     let mut cursor: Option<&Path> = Some(project_dir);
@@ -614,9 +624,9 @@ fn run_esbuild(
     let mut cmd = match esbuild {
         EsbuildCommand::Binary(bin) => {
             let is_cmd = cfg!(windows)
-                && bin
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+                && bin.extension().is_some_and(|e| {
+                    e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat")
+                });
             if is_cmd {
                 let mut c = std::process::Command::new("cmd");
                 c.arg("/C").arg(bin);
@@ -638,7 +648,11 @@ fn run_esbuild(
         }
     };
 
-    let mode = if production { "production" } else { "development" };
+    let mode = if production {
+        "production"
+    } else {
+        "development"
+    };
     let prod_bool = if production { "true" } else { "false" };
     let dev_bool = if production { "false" } else { "true" };
 
@@ -762,10 +776,7 @@ fn bundle_builtin_ts(
         &mut css_chunks,
     )?;
 
-    let js_source = format!(
-        "(function() {{\n{}\n}})();\n",
-        js_chunks.join("\n")
-    );
+    let js_source = format!("(function() {{\n{}\n}})();\n", js_chunks.join("\n"));
     let js_hash = short_sha256(js_source.as_bytes());
     let js_name = format!("main-{js_hash}.js");
     std::fs::write(assets_dir.join(&js_name), js_source.as_bytes())
@@ -908,11 +919,7 @@ fn strip_ts_line(line: &str) -> String {
                             .chars()
                             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
                     {
-                        out = format!(
-                            "{}{kw}{ident} ={}",
-                            &out[..pos],
-                            &after[eq_idx + 1..]
-                        );
+                        out = format!("{}{kw}{ident} ={}", &out[..pos], &after[eq_idx + 1..]);
                     }
                 }
             }
@@ -1316,8 +1323,7 @@ async fn proxy_to_upstream(
     req: &ParsedRequest,
 ) -> Result<()> {
     let url = format!("{}{}", state.upstream_api, req.target);
-    let method = reqwest::Method::from_bytes(req.method.as_bytes())
-        .unwrap_or(reqwest::Method::GET);
+    let method = reqwest::Method::from_bytes(req.method.as_bytes()).unwrap_or(reqwest::Method::GET);
     let mut builder = state.client.request(method, &url);
 
     for (k, v) in &req.headers {
@@ -1398,7 +1404,10 @@ async fn serve_static_or_spa(
             stream,
             405,
             "Method Not Allowed",
-            &[("Content-Type".to_string(), "text/plain; charset=utf-8".to_string())],
+            &[(
+                "Content-Type".to_string(),
+                "text/plain; charset=utf-8".to_string(),
+            )],
             b"Method Not Allowed",
             None,
         )
@@ -1410,7 +1419,10 @@ async fn serve_static_or_spa(
             stream,
             400,
             "Bad Request",
-            &[("Content-Type".to_string(), "text/plain; charset=utf-8".to_string())],
+            &[(
+                "Content-Type".to_string(),
+                "text/plain; charset=utf-8".to_string(),
+            )],
             b"Bad Request",
             None,
         )
@@ -1442,7 +1454,10 @@ async fn serve_static_or_spa(
             stream,
             404,
             "Not Found",
-            &[("Content-Type".to_string(), "text/plain; charset=utf-8".to_string())],
+            &[(
+                "Content-Type".to_string(),
+                "text/plain; charset=utf-8".to_string(),
+            )],
             b"Not Found",
             None,
         )
@@ -1549,7 +1564,8 @@ async fn write_http_response(
     explicit_len: Option<usize>,
 ) -> Result<()> {
     let len = explicit_len.unwrap_or(body.len());
-    let mut head = format!("HTTP/1.1 {status} {reason}\r\nContent-Length: {len}\r\nConnection: close\r\n");
+    let mut head =
+        format!("HTTP/1.1 {status} {reason}\r\nContent-Length: {len}\r\nConnection: close\r\n");
     for (k, v) in headers {
         head.push_str(k);
         head.push_str(": ");
@@ -1694,8 +1710,7 @@ mod tests {
         assert!(!dev_html.contains("/src/main.tsx"));
         assert!(dev_html.contains("/__hanzo_hmr"));
 
-        let prod_html =
-            rewrite_index_html(src, Some("main-ABCD.js"), Some("main-1234.css"), false);
+        let prod_html = rewrite_index_html(src, Some("main-ABCD.js"), Some("main-1234.css"), false);
         assert!(prod_html.contains("/assets/main-ABCD.js"));
         assert!(prod_html.contains("/assets/main-1234.css"));
         assert!(!prod_html.contains("/__hanzo_hmr"));
@@ -1785,10 +1800,7 @@ mod tests {
                             &mut sock,
                             200,
                             "OK",
-                            &[(
-                                "Content-Type".to_string(),
-                                "application/json".to_string(),
-                            )],
+                            &[("Content-Type".to_string(), "application/json".to_string())],
                             body.as_bytes(),
                             None,
                         )
@@ -1800,7 +1812,11 @@ mod tests {
 
         let dist = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dist.path().join("assets")).unwrap();
-        std::fs::write(dist.path().join("index.html"), "<!doctype html><title>SPA</title>").unwrap();
+        std::fs::write(
+            dist.path().join("index.html"),
+            "<!doctype html><title>SPA</title>",
+        )
+        .unwrap();
         std::fs::write(dist.path().join("assets/app.js"), "console.log(1);").unwrap();
 
         let app_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1836,7 +1852,9 @@ mod tests {
 
         // `/v1/*` proxies to upstream preserving Authorization and query string.
         let api_res = client
-            .get(format!("http://{app_addr}/v1/social/posts?status=published"))
+            .get(format!(
+                "http://{app_addr}/v1/social/posts?status=published"
+            ))
             .header("Authorization", "Bearer tok_123")
             .send()
             .await
@@ -1853,7 +1871,15 @@ mod tests {
         for argv in [
             vec!["hanzo", "serve"],
             vec!["hanzo", "serve", "--port", "3300"],
-            vec!["hanzo", "serve", "--port", "3300", "--api", "https://api.hanzo.ai", "./app"],
+            vec![
+                "hanzo",
+                "serve",
+                "--port",
+                "3300",
+                "--api",
+                "https://api.hanzo.ai",
+                "./app",
+            ],
             vec!["hanzo", "serve", "build"],
             vec!["hanzo", "serve", "build", "./app", "--out", "dist"],
             vec!["hanzo", "serve", "preview", "--port", "3300"],

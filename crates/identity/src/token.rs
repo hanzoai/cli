@@ -58,7 +58,10 @@ impl std::fmt::Debug for TokenSet {
         f.debug_struct("TokenSet")
             .field("access_token", &"<redacted>")
             .field("token_type", &self.token_type)
-            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "<redacted>"))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
             .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
             .field("expires_in", &self.expires_in)
             .field("scope", &self.scope)
@@ -107,7 +110,9 @@ impl FileVault {
         let dir = dirs::data_local_dir()
             .ok_or_else(|| anyhow::anyhow!("no data directory for the credential store"))?
             .join("hanzo");
-        Ok(Self { path: dir.join("credentials") })
+        Ok(Self {
+            path: dir.join("credentials"),
+        })
     }
 
     /// The file this store reads and writes. A test that seeds the store under a
@@ -327,7 +332,10 @@ mod tests {
         };
         let shown = format!("{held:?} {:?}", Some(&held));
         assert!(!shown.contains("secret"), "{shown}");
-        assert!(shown.contains("<redacted>") && shown.contains("3600"), "{shown}");
+        assert!(
+            shown.contains("<redacted>") && shown.contains("3600"),
+            "{shown}"
+        );
     }
 
     #[test]
@@ -420,7 +428,10 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(!dir.exists(), "the store's parent dir must be absent to start");
+        assert!(
+            !dir.exists(),
+            "the store's parent dir must be absent to start"
+        );
 
         let path = dir.join("credentials");
         let v = FileVault::at(path.clone());
@@ -438,7 +449,10 @@ mod tests {
         assert_eq!(v.get("k").unwrap().as_deref(), Some("secret-value"));
         assert!(v.remove("k").unwrap(), "remove reports it existed");
         assert!(v.get("k").unwrap().is_none());
-        assert!(!v.remove("k").unwrap(), "removing what is gone is not an error");
+        assert!(
+            !v.remove("k").unwrap(),
+            "removing what is gone is not an error"
+        );
         let _ = std::fs::remove_file(&p);
     }
 
@@ -479,11 +493,20 @@ mod tests {
         let org = Identity::from_access_token(&jwt("hanzo", "z")).unwrap();
         store(&v, "hanzo", &admin, &tokens("ADMIN_AT")).unwrap();
         store(&v, "hanzo", &org, &tokens("ORG_AT")).unwrap();
-        assert_eq!(load(&v, "hanzo", &admin).unwrap().unwrap().access_token, "ADMIN_AT");
-        assert_eq!(load(&v, "hanzo", &org).unwrap().unwrap().access_token, "ORG_AT");
+        assert_eq!(
+            load(&v, "hanzo", &admin).unwrap().unwrap().access_token,
+            "ADMIN_AT"
+        );
+        assert_eq!(
+            load(&v, "hanzo", &org).unwrap().unwrap().access_token,
+            "ORG_AT"
+        );
         assert!(take(&v, "hanzo", &admin).unwrap().is_some());
         assert!(load(&v, "hanzo", &admin).unwrap().is_none());
-        assert_eq!(load(&v, "hanzo", &org).unwrap().unwrap().access_token, "ORG_AT");
+        assert_eq!(
+            load(&v, "hanzo", &org).unwrap().unwrap().access_token,
+            "ORG_AT"
+        );
         let _ = std::fs::remove_file(&p);
     }
 
@@ -500,7 +523,9 @@ mod tests {
             for i in 0..WRITERS {
                 let p = p.clone();
                 s.spawn(move || {
-                    FileVault::at(p).set(&format!("hanzo/org{i}/z"), &format!("AT{i}")).unwrap();
+                    FileVault::at(p)
+                        .set(&format!("hanzo/org{i}/z"), &format!("AT{i}"))
+                        .unwrap();
                 });
             }
         });
@@ -514,7 +539,6 @@ mod tests {
         }
         let _ = std::fs::remove_file(&p);
     }
-
 
     /// THE hourly-re-login bug, as a deadlock rather than a 401.
     ///
@@ -544,9 +568,15 @@ mod tests {
             let _ = tx.send(FileVault::at(c).get("hanzo/hanzo/z").unwrap());
         });
         match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-            Ok(v) => assert_eq!(v.as_deref(), Some("AT"), "the refreshed credential was not saved"),
-            Err(_) => panic!("DEADLOCK: a vault write blocked on the refresh lock \
-                              — a refresh would spend its token and never save the successor"),
+            Ok(v) => assert_eq!(
+                v.as_deref(),
+                Some("AT"),
+                "the refreshed credential was not saved"
+            ),
+            Err(_) => panic!(
+                "DEADLOCK: a vault write blocked on the refresh lock \
+                              — a refresh would spend its token and never save the successor"
+            ),
         }
     }
 

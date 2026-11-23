@@ -431,7 +431,9 @@ async fn checkout(seam: &Seam, id: &str) -> Result<()> {
     git(&["check-ref-format", "--branch", branch])?;
     git(&["fetch", "origin", &format!("refs/heads/{branch}")])?;
     git(&["switch", "--create", &format!("cloud/{id}"), "FETCH_HEAD"])?;
-    println!("Checked out cloud/{id}.\nTranscript: https://hanzo.ai/tabs/{id}\nContinue locally: hanzo");
+    println!(
+        "Checked out cloud/{id}.\nTranscript: https://hanzo.ai/tabs/{id}\nContinue locally: hanzo"
+    );
     Ok(())
 }
 

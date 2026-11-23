@@ -162,9 +162,17 @@ pub enum GraphCommands {
 pub struct AppleTriple {
     pub subject: String,
     pub predicate: String,
-    #[serde(rename = "relationshipId", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "relationshipId",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub relationship_id: String,
-    #[serde(rename = "relationshipPredicate", default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "relationshipPredicate",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
     pub relationship_predicate: String,
     pub object: String,
     #[serde(default)]
@@ -358,8 +366,8 @@ fn sqlite_json_query(db_path: &Path, sql: &str) -> Result<Vec<BTreeMap<String, V
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-    let rows: Vec<BTreeMap<String, Value>> =
-        serde_json::from_str(trimmed).with_context(|| format!("parse sqlite3 json output from {}", db_path.display()))?;
+    let rows: Vec<BTreeMap<String, Value>> = serde_json::from_str(trimmed)
+        .with_context(|| format!("parse sqlite3 json output from {}", db_path.display()))?;
     Ok(rows)
 }
 
@@ -414,7 +422,11 @@ fn query_graph_triples(db_path: &Path, table: &str, limit: usize) -> Result<Vec<
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let rel_id_raw = val_to_string(row.get("relationshipId"));
-        let rel_id = if rel_id_raw == "0" { String::new() } else { rel_id_raw };
+        let rel_id = if rel_id_raw == "0" {
+            String::new()
+        } else {
+            rel_id_raw
+        };
         out.push(AppleTriple {
             subject: val_to_string(row.get("subject")),
             predicate: val_to_string(row.get("predicate")),
@@ -433,7 +445,9 @@ fn query_graph_triples(db_path: &Path, table: &str, limit: usize) -> Result<Vec<
 fn find_entity_tagging_db(dir: &Path) -> Option<PathBuf> {
     let candidates = [
         dir.join("entityTagging.db"),
-        dir.join("Artifacts").join("entityTagging").join("entityTagging.db"),
+        dir.join("Artifacts")
+            .join("entityTagging")
+            .join("entityTagging.db"),
     ];
     candidates.into_iter().find(|p| p.is_file())
 }
@@ -459,7 +473,16 @@ fn query_scorecards(dir: &Path) -> Result<Vec<AppleScorecard>> {
         };
         for row in rows {
             let mut entity = String::new();
-            for id_col in ["mdid", "entity", "entity_id", "entityId", "person_id", "personId", "subject", "id"] {
+            for id_col in [
+                "mdid",
+                "entity",
+                "entity_id",
+                "entityId",
+                "person_id",
+                "personId",
+                "subject",
+                "id",
+            ] {
                 let candidate = val_to_string(row.get(id_col));
                 if !candidate.is_empty() {
                     entity = candidate;
@@ -514,15 +537,16 @@ pub fn read_local_apple_store(
 
     let mut entities_map: BTreeMap<String, LocalEntityView> = BTreeMap::new();
     let ensure_entity = |map: &mut BTreeMap<String, LocalEntityView>, id: &str| {
-        map.entry(id.to_string()).or_insert_with(|| LocalEntityView {
-            id: id.to_string(),
-            class_id: String::new(),
-            class_label: "entity".to_string(),
-            name: String::new(),
-            attributes: BTreeMap::new(),
-            edges: Vec::new(),
-            scorecard: BTreeMap::new(),
-        });
+        map.entry(id.to_string())
+            .or_insert_with(|| LocalEntityView {
+                id: id.to_string(),
+                class_id: String::new(),
+                class_label: "entity".to_string(),
+                name: String::new(),
+                attributes: BTreeMap::new(),
+                edges: Vec::new(),
+                scorecard: BTreeMap::new(),
+            });
     };
 
     #[derive(Default)]
@@ -542,7 +566,11 @@ pub fn read_local_apple_store(
         ensure_entity(&mut entities_map, &t.subject);
         if !t.relationship_id.is_empty() {
             let g = rel_groups
-                .entry((t.subject.clone(), t.predicate.clone(), t.relationship_id.clone()))
+                .entry((
+                    t.subject.clone(),
+                    t.predicate.clone(),
+                    t.relationship_id.clone(),
+                ))
                 .or_insert_with(|| RelGroup {
                     subject: t.subject.clone(),
                     predicate: t.predicate.clone(),
@@ -613,7 +641,9 @@ pub fn read_local_apple_store(
 
     let mut classes_breakdown: BTreeMap<String, usize> = BTreeMap::new();
     for ent in entities_map.values() {
-        *classes_breakdown.entry(ent.class_label.clone()).or_default() += 1;
+        *classes_breakdown
+            .entry(ent.class_label.clone())
+            .or_default() += 1;
     }
 
     let mut entities: Vec<LocalEntityView> = entities_map
@@ -628,8 +658,14 @@ pub fn read_local_apple_store(
         .collect();
 
     entities.sort_by(|a, b| {
-        let score_a = a.edges.len() * 3 + a.scorecard.len() * 2 + a.attributes.len() + usize::from(!a.name.is_empty());
-        let score_b = b.edges.len() * 3 + b.scorecard.len() * 2 + b.attributes.len() + usize::from(!b.name.is_empty());
+        let score_a = a.edges.len() * 3
+            + a.scorecard.len() * 2
+            + a.attributes.len()
+            + usize::from(!a.name.is_empty());
+        let score_b = b.edges.len() * 3
+            + b.scorecard.len() * 2
+            + b.attributes.len()
+            + usize::from(!b.name.is_empty());
         score_b.cmp(&score_a).then_with(|| a.id.cmp(&b.id))
     });
 
@@ -709,19 +745,34 @@ fn print_local_snapshot(snap: &LocalAppleSnapshot, max_entities: usize) {
                 .iter()
                 .map(|(k, v)| format!("{k}={v:.2}"))
                 .collect();
-            println!("      {}: {}", "kinship scorecard".magenta(), scores.join(", "));
+            println!(
+                "      {}: {}",
+                "kinship scorecard".magenta(),
+                scores.join(", ")
+            );
         }
     }
 }
 
 pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
     match cmd {
-        GraphCommands::Local { dir, entity, limit, json } => {
+        GraphCommands::Local {
+            dir,
+            entity,
+            limit,
+            json,
+        } => {
             let path = match dir {
                 Some(d) => d,
                 None => default_intelligence_platform_dir()?,
             };
-            let snap = read_local_apple_store(&path, "me", "apple/intelligenceplatform", limit, entity.as_deref())?;
+            let snap = read_local_apple_store(
+                &path,
+                "me",
+                "apple/intelligenceplatform",
+                limit,
+                entity.as_deref(),
+            )?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&snap)?);
                 return Ok(());
@@ -729,7 +780,13 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
             print_local_snapshot(&snap, 15);
             Ok(())
         }
-        GraphCommands::Sync { dir, owner, source, limit, dry_run } => {
+        GraphCommands::Sync {
+            dir,
+            owner,
+            source,
+            limit,
+            dry_run,
+        } => {
             let path = match dir {
                 Some(d) => d,
                 None => default_intelligence_platform_dir()?,
@@ -785,13 +842,25 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
             )
             .await
         }
-        GraphCommands::Entity { entity, as_of, as_known, local, dir } => {
+        GraphCommands::Entity {
+            entity,
+            as_of,
+            as_known,
+            local,
+            dir,
+        } => {
             if local {
                 let path = match dir {
                     Some(d) => d,
                     None => default_intelligence_platform_dir()?,
                 };
-                let snap = read_local_apple_store(&path, "me", "apple/intelligenceplatform", 0, Some(&entity))?;
+                let snap = read_local_apple_store(
+                    &path,
+                    "me",
+                    "apple/intelligenceplatform",
+                    0,
+                    Some(&entity),
+                )?;
                 print_local_snapshot(&snap, 10);
                 return Ok(());
             }
@@ -813,7 +882,14 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
             )
             .await
         }
-        GraphCommands::Apple { dir, owner, source, at, limit, dry_run } => {
+        GraphCommands::Apple {
+            dir,
+            owner,
+            source,
+            at,
+            limit,
+            dry_run,
+        } => {
             let path = match dir {
                 Some(d) => d,
                 None => default_intelligence_platform_dir()?,
@@ -838,7 +914,15 @@ pub async fn run(cmd: GraphCommands, cfg: &mut Config) -> Result<()> {
             )
             .await
         }
-        GraphCommands::Convo { text, turns, speaker, partner, source, at, dry_run } => {
+        GraphCommands::Convo {
+            text,
+            turns,
+            speaker,
+            partner,
+            source,
+            at,
+            dry_run,
+        } => {
             let now = at.unwrap_or_else(|| Utc::now().to_rfc3339());
             let turns_val = if !turns.is_empty() {
                 let mut parsed = Vec::new();
@@ -934,7 +1018,11 @@ mod tests {
         assert_eq!(snap.expired_triples_total, 1);
         assert_eq!(snap.scorecards_total, 1);
         assert_eq!(snap.entities_total, 2);
-        let me = snap.entities.iter().find(|e| e.id == "9100000000007919").expect("me entity");
+        let me = snap
+            .entities
+            .iter()
+            .find(|e| e.id == "9100000000007919")
+            .expect("me entity");
         assert_eq!(me.name, "Zach Kelling");
         assert_eq!(me.class_label, "person");
         assert_eq!(me.edges.len(), 1);

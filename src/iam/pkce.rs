@@ -30,7 +30,10 @@ fn random_base64url(byte_len: usize) -> String {
 pub fn generate_pkce() -> Pkce {
     let verifier = random_base64url(ENTROPY_BYTES);
     let challenge = challenge_for(&verifier);
-    Pkce { verifier, challenge }
+    Pkce {
+        verifier,
+        challenge,
+    }
 }
 
 /// Compute the S256 challenge for a given verifier (split out for testing

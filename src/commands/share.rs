@@ -14,9 +14,9 @@
 //! `HANZO_ZROK_BIN`); every credential + endpoint it needs comes from the cloud,
 //! so the user never touches zrok directly.
 
+use crate::commands::network;
 use crate::config::Config;
 use crate::iam::{paths, store};
-use crate::commands::network;
 use anyhow::{anyhow, bail, Context, Result};
 use colored::*;
 use reqwest::Client;
@@ -425,7 +425,11 @@ fn enable_outcome(success: bool, said: &str) -> Result<()> {
     if success || said.contains("already have an enabled environment") {
         return Ok(());
     }
-    let lines: Vec<&str> = said.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = said
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     if lines.is_empty() {
         bail!("zrok enable failed with no output");
     }
@@ -550,8 +554,14 @@ mod tests {
     #[test]
     fn resolves_targets() {
         assert_eq!(resolve_target("3000").unwrap(), "http://localhost:3000");
-        assert_eq!(resolve_target("localhost:8080").unwrap(), "http://localhost:8080");
-        assert_eq!(resolve_target("https://x.local").unwrap(), "https://x.local");
+        assert_eq!(
+            resolve_target("localhost:8080").unwrap(),
+            "http://localhost:8080"
+        );
+        assert_eq!(
+            resolve_target("https://x.local").unwrap(),
+            "https://x.local"
+        );
         assert!(resolve_target("0").is_err());
         assert!(resolve_target("").is_err());
     }
@@ -562,10 +572,18 @@ mod tests {
     // by learning the hostname.
     #[test]
     fn a_published_share_names_the_person_it_is_for() {
-        let args = owner_args(&Owner { provider: "hanzo", email: "z@hanzo.ai" });
+        let args = owner_args(&Owner {
+            provider: "hanzo",
+            email: "z@hanzo.ai",
+        });
         assert_eq!(
             args,
-            ["--oauth-provider", "hanzo", "--oauth-email-domain", "z@hanzo.ai"]
+            [
+                "--oauth-provider",
+                "hanzo",
+                "--oauth-email-domain",
+                "z@hanzo.ai"
+            ]
         );
     }
 
@@ -643,7 +661,9 @@ mod tests {
         assert!(refused_sign_in(
             "zrok did not announce a share url; it last said: [ERROR]: unable to run share (error listening: failed to listen: no apiSession, authentication attempt failed)"
         ));
-        assert!(refused_sign_in("authenticate?method=cert: x509: certificate signed by unknown authority"));
+        assert!(refused_sign_in(
+            "authenticate?method=cert: x509: certificate signed by unknown authority"
+        ));
         assert!(!refused_sign_in("zrok did not announce a share url; it last said: [ERROR]: bind: address already in use"));
     }
 
@@ -657,10 +677,20 @@ mod tests {
     #[test]
     fn only_an_environment_on_our_controller_is_ours_to_make_again() {
         let root = scratch("ours");
-        assert!(!ours(&root, "https://zrok-api.example.test"), "no environment is not ours");
-        std::fs::write(root.join("environment.json"), r#"{"api_endpoint":"https://zrok-api.example.test/"}"#).unwrap();
+        assert!(
+            !ours(&root, "https://zrok-api.example.test"),
+            "no environment is not ours"
+        );
+        std::fs::write(
+            root.join("environment.json"),
+            r#"{"api_endpoint":"https://zrok-api.example.test/"}"#,
+        )
+        .unwrap();
         assert!(ours(&root, "https://zrok-api.example.test"));
-        assert!(!ours(&root, "https://api.zrok.io"), "another controller's environment is the person's own");
+        assert!(
+            !ours(&root, "https://api.zrok.io"),
+            "another controller's environment is the person's own"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -688,7 +718,10 @@ mod tests {
             let log = root.join("calls");
             std::fs::write(
                 &p,
-                format!("#!/bin/sh\necho \"$1 $ZROK2_API_ENDPOINT\" >> {}\nexit {status}\n", log.display()),
+                format!(
+                    "#!/bin/sh\necho \"$1 $ZROK2_API_ENDPOINT\" >> {}\nexit {status}\n",
+                    log.display()
+                ),
             )
             .unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -696,13 +729,26 @@ mod tests {
         };
         std::fs::write(identity_file(&root), "{}").unwrap();
 
-        reset(&helper(0), "https://zrok-api.example.test", &root).await.unwrap();
-        assert!(identity_file(&root).exists(), "a disable the helper did cleared nothing of its own");
+        reset(&helper(0), "https://zrok-api.example.test", &root)
+            .await
+            .unwrap();
+        assert!(
+            identity_file(&root).exists(),
+            "a disable the helper did cleared nothing of its own"
+        );
 
-        reset(&helper(1), "https://zrok-api.example.test", &root).await.unwrap();
-        assert!(!identity_file(&root).exists(), "a disable the controller refused left the files");
+        reset(&helper(1), "https://zrok-api.example.test", &root)
+            .await
+            .unwrap();
+        assert!(
+            !identity_file(&root).exists(),
+            "a disable the controller refused left the files"
+        );
         let calls = std::fs::read_to_string(root.join("calls")).unwrap();
-        assert_eq!(calls.lines().collect::<Vec<_>>(), ["disable https://zrok-api.example.test"; 2]);
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            ["disable https://zrok-api.example.test"; 2]
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

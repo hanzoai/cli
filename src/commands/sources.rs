@@ -126,29 +126,45 @@ pub struct SourceProvider {
 pub async fn run(cfg: &mut Config, args: SourcesArgs) -> Result<()> {
     match args.command.unwrap_or(SourcesCommand::List { json: false }) {
         SourcesCommand::List { json } => list(cfg, json).await,
-        SourcesCommand::Link { name, zap, share_providers, once, json } => {
-            link(cfg, name, zap, share_providers, once, json).await
-        }
+        SourcesCommand::Link {
+            name,
+            zap,
+            share_providers,
+            once,
+            json,
+        } => link(cfg, name, zap, share_providers, once, json).await,
         SourcesCommand::Revoke { id } => revoke(cfg, &id).await,
-        SourcesCommand::Accounts { command } => match command.unwrap_or(AccountsCommand::List { json: false }) {
-            AccountsCommand::List { json } => list_accounts(cfg, json).await,
-            AccountsCommand::Add { provider, label, key, json } => {
-                add_account(cfg, &provider, &label, &key, json).await
+        SourcesCommand::Accounts { command } => {
+            match command.unwrap_or(AccountsCommand::List { json: false }) {
+                AccountsCommand::List { json } => list_accounts(cfg, json).await,
+                AccountsCommand::Add {
+                    provider,
+                    label,
+                    key,
+                    json,
+                } => add_account(cfg, &provider, &label, &key, json).await,
+                AccountsCommand::Rm { id } => delete_account(cfg, &id).await,
             }
-            AccountsCommand::Rm { id } => delete_account(cfg, &id).await,
-        },
+        }
         SourcesCommand::Usage { by, from, to, json } => usage(cfg, &by, from, to, json).await,
     }
 }
 
 async fn list(cfg: &mut Config, as_json: bool) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
-    let val = expect_ok(seam.send(Method::GET, "/v1/sources", &[], None).await?, "list sources")?;
+    let val = expect_ok(
+        seam.send(Method::GET, "/v1/sources", &[], None).await?,
+        "list sources",
+    )?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
     }
-    let sources = val.get("sources").and_then(Value::as_array).cloned().unwrap_or_default();
+    let sources = val
+        .get("sources")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     if sources.is_empty() {
         println!("no linked sources — run `hanzo sources link` to link this machine");
         return Ok(());
@@ -219,7 +235,8 @@ async fn link(
     }
 
     let linked = expect_ok(
-        seam.send(Method::POST, "/v1/sources", &[], Some(link_body)).await?,
+        seam.send(Method::POST, "/v1/sources", &[], Some(link_body))
+            .await?,
         "link source",
     )?;
     let id = linked
@@ -227,11 +244,16 @@ async fn link(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("cloud did not return a source id"))?
         .to_string();
-    let interval_secs = linked.get("interval").and_then(Value::as_u64).unwrap_or(30).max(5);
+    let interval_secs = linked
+        .get("interval")
+        .and_then(Value::as_u64)
+        .unwrap_or(30)
+        .max(5);
     let effective_zap = zap.unwrap_or_else(|| format!("https://zap.hanzo.ai/v1/dev/zap/{id}"));
 
     let providers = discover_local_providers(share_providers);
-    let beat_reply = send_heartbeat(&seam, &kp, &id, &version, &effective_zap, &providers, 0).await?;
+    let beat_reply =
+        send_heartbeat(&seam, &kp, &id, &version, &effective_zap, &providers, 0).await?;
 
     if as_json {
         println!(
@@ -309,8 +331,13 @@ async fn send_heartbeat(
         "sig": sig,
     });
     expect_ok(
-        seam.send(Method::POST, &format!("/v1/sources/{id}/heartbeat"), &[], Some(body))
-            .await?,
+        seam.send(
+            Method::POST,
+            &format!("/v1/sources/{id}/heartbeat"),
+            &[],
+            Some(body),
+        )
+        .await?,
         "source heartbeat",
     )
 }
@@ -318,7 +345,8 @@ async fn send_heartbeat(
 async fn revoke(cfg: &mut Config, id: &str) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     expect_ok(
-        seam.send(Method::DELETE, &format!("/v1/sources/{id}"), &[], None).await?,
+        seam.send(Method::DELETE, &format!("/v1/sources/{id}"), &[], None)
+            .await?,
         "revoke source",
     )?;
     println!("{} revoked source {id}", "✓".green());
@@ -328,14 +356,19 @@ async fn revoke(cfg: &mut Config, id: &str) -> Result<()> {
 async fn list_accounts(cfg: &mut Config, as_json: bool) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     let val = expect_ok(
-        seam.send(Method::GET, "/v1/sources/accounts", &[], None).await?,
+        seam.send(Method::GET, "/v1/sources/accounts", &[], None)
+            .await?,
         "list provider accounts",
     )?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
     }
-    let accounts = val.get("accounts").and_then(Value::as_array).cloned().unwrap_or_default();
+    let accounts = val
+        .get("accounts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     if accounts.is_empty() {
         println!("no unified provider accounts yet — run `hanzo sources link --share-providers` or `hanzo sources accounts add`");
         return Ok(());
@@ -386,7 +419,8 @@ async fn add_account(
         "value": value,
     });
     let val = expect_ok(
-        seam.send(Method::POST, "/v1/sources/accounts", &[], Some(body)).await?,
+        seam.send(Method::POST, "/v1/sources/accounts", &[], Some(body))
+            .await?,
         "add provider account",
     )?;
     if as_json {
@@ -395,15 +429,23 @@ async fn add_account(
     }
     let id = val.get("id").and_then(Value::as_str).unwrap_or("");
     let fp = val.get("fingerprint").and_then(Value::as_str).unwrap_or("");
-    println!("{} sealed {provider_name} key '{label}' ({id}, fp {fp})", "✓".green());
+    println!(
+        "{} sealed {provider_name} key '{label}' ({id}, fp {fp})",
+        "✓".green()
+    );
     Ok(())
 }
 
 async fn delete_account(cfg: &mut Config, id: &str) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     expect_ok(
-        seam.send(Method::DELETE, &format!("/v1/sources/accounts/{id}"), &[], None)
-            .await?,
+        seam.send(
+            Method::DELETE,
+            &format!("/v1/sources/accounts/{id}"),
+            &[],
+            None,
+        )
+        .await?,
         "delete provider account",
     )?;
     println!("{} removed provider account {id}", "✓".green());
@@ -426,7 +468,8 @@ async fn usage(
         query.push(format!("to={t}"));
     }
     let val = expect_ok(
-        seam.send(Method::GET, "/v1/sources/usage", &query, None).await?,
+        seam.send(Method::GET, "/v1/sources/usage", &query, None)
+            .await?,
         "sources usage",
     )?;
     if as_json {
@@ -442,7 +485,13 @@ fn expect_ok(reply: Reply, action: &str) -> Result<Value> {
         return Ok(reply.body);
     }
     let detail = envelope_error(&reply.body)
-        .or_else(|| reply.body.get("detail").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            reply
+                .body
+                .get("detail")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| reply.body.to_string());
     bail!("{action} failed ({}): {detail}", reply.status)
 }
@@ -665,7 +714,8 @@ mod tests {
         assert_eq!(kp1.public_key().as_ref(), kp2.public_key().as_ref());
         assert_eq!(kp1.public_key().as_ref().len(), 32);
 
-        let msg = heartbeat_signing_message("src_test", "2026-11-22T05:00:00Z", "8.5.1336", "", 0, &[]);
+        let msg =
+            heartbeat_signing_message("src_test", "2026-11-22T05:00:00Z", "8.5.1336", "", 0, &[]);
         let sig = kp1.sign(msg.as_bytes());
         let pubkey = UnparsedPublicKey::new(&ED25519, kp2.public_key().as_ref());
         pubkey.verify(msg.as_bytes(), sig.as_ref()).unwrap();

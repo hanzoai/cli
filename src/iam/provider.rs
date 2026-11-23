@@ -155,13 +155,28 @@ mod tests {
     fn detect_maps_prefixes_to_providers() {
         // Hanzo mints {pk|sk}-{live|test}-{32 hex}; these are the keys the
         // fleet issues TODAY, and they must not read as OpenAI.
-        assert_eq!(Provider::detect("sk-live-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
-        assert_eq!(Provider::detect("sk-test-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
-        assert_eq!(Provider::detect("pk-live-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
-        assert_eq!(Provider::detect("pk-test-0123456789abcdef0123456789abcdef"), Some(Provider::Hanzo));
+        assert_eq!(
+            Provider::detect("sk-live-0123456789abcdef0123456789abcdef"),
+            Some(Provider::Hanzo)
+        );
+        assert_eq!(
+            Provider::detect("sk-test-0123456789abcdef0123456789abcdef"),
+            Some(Provider::Hanzo)
+        );
+        assert_eq!(
+            Provider::detect("pk-live-0123456789abcdef0123456789abcdef"),
+            Some(Provider::Hanzo)
+        );
+        assert_eq!(
+            Provider::detect("pk-test-0123456789abcdef0123456789abcdef"),
+            Some(Provider::Hanzo)
+        );
         // Retired, still ours: a stale key must fail as Hanzo, not misroute.
         assert_eq!(Provider::detect("hk-abc123"), Some(Provider::Hanzo));
-        assert_eq!(Provider::detect("sk-ant-api03-xyz"), Some(Provider::Anthropic));
+        assert_eq!(
+            Provider::detect("sk-ant-api03-xyz"),
+            Some(Provider::Anthropic)
+        );
         assert_eq!(Provider::detect("sk-proj-abc"), Some(Provider::OpenAI));
         assert_eq!(Provider::detect("sk-abc"), Some(Provider::OpenAI));
         // sk-ant- is tested BEFORE the looser sk- so Anthropic never reads as OpenAI.
@@ -208,22 +223,40 @@ mod tests {
     #[test]
     fn key_roundtrips_through_the_vault_seam() {
         let v = MemVault::new();
-        assert!(key_in(&v, Provider::Anthropic).unwrap().is_none(), "absent key reads None");
+        assert!(
+            key_in(&v, Provider::Anthropic).unwrap().is_none(),
+            "absent key reads None"
+        );
 
         set_key_in(&v, Provider::Anthropic, "  sk-ant-secret  ").unwrap(); // trimmed on store
-        assert_eq!(key_in(&v, Provider::Anthropic).unwrap().as_deref(), Some("sk-ant-secret"));
+        assert_eq!(
+            key_in(&v, Provider::Anthropic).unwrap().as_deref(),
+            Some("sk-ant-secret")
+        );
         // A different provider is a different slot — no clobber.
         set_key_in(&v, Provider::OpenAI, "sk-openai").unwrap();
-        assert_eq!(key_in(&v, Provider::OpenAI).unwrap().as_deref(), Some("sk-openai"));
-        assert_eq!(key_in(&v, Provider::Anthropic).unwrap().as_deref(), Some("sk-ant-secret"));
+        assert_eq!(
+            key_in(&v, Provider::OpenAI).unwrap().as_deref(),
+            Some("sk-openai")
+        );
+        assert_eq!(
+            key_in(&v, Provider::Anthropic).unwrap().as_deref(),
+            Some("sk-ant-secret")
+        );
 
         assert_eq!(v.keys(), vec!["provider/anthropic", "provider/openai"]);
 
         assert!(clear_in(&v, Provider::Anthropic).unwrap());
         assert!(key_in(&v, Provider::Anthropic).unwrap().is_none());
-        assert!(!clear_in(&v, Provider::Anthropic).unwrap(), "clearing what is gone is not an error");
+        assert!(
+            !clear_in(&v, Provider::Anthropic).unwrap(),
+            "clearing what is gone is not an error"
+        );
         // Clearing one provider leaves the other intact.
-        assert_eq!(key_in(&v, Provider::OpenAI).unwrap().as_deref(), Some("sk-openai"));
+        assert_eq!(
+            key_in(&v, Provider::OpenAI).unwrap().as_deref(),
+            Some("sk-openai")
+        );
     }
 
     #[test]
@@ -235,6 +268,9 @@ mod tests {
         set_key_in(&v, Provider::OpenAI, "sk-openai").unwrap();
         assert_eq!(v.get("hanzo/admin/z").unwrap().as_deref(), Some("IDENTITY"));
         assert_eq!(v.get("wallet:0xabc").unwrap().as_deref(), Some("WALLET"));
-        assert_eq!(key_in(&v, Provider::OpenAI).unwrap().as_deref(), Some("sk-openai"));
+        assert_eq!(
+            key_in(&v, Provider::OpenAI).unwrap().as_deref(),
+            Some("sk-openai")
+        );
     }
 }

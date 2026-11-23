@@ -93,17 +93,32 @@ pub enum SessionCommand {
 }
 
 pub async fn run(cfg: &mut Config, args: DaemonArgs) -> Result<()> {
-    match args.command.unwrap_or(DaemonCommand::Status { json: false }) {
+    match args
+        .command
+        .unwrap_or(DaemonCommand::Status { json: false })
+    {
         DaemonCommand::Status { json } => status(cfg, json).await,
-        DaemonCommand::Sessions { command } => match command.unwrap_or(SessionCommand::List { json: false }) {
-            SessionCommand::List { json } => list_sessions(cfg, json).await,
-            SessionCommand::New { label, workspace, model, json } => {
-                create_session(cfg, label, workspace, model, json).await
+        DaemonCommand::Sessions { command } => {
+            match command.unwrap_or(SessionCommand::List { json: false }) {
+                SessionCommand::List { json } => list_sessions(cfg, json).await,
+                SessionCommand::New {
+                    label,
+                    workspace,
+                    model,
+                    json,
+                } => create_session(cfg, label, workspace, model, json).await,
+                SessionCommand::Show { id, json } => show_session(cfg, &id, json).await,
+                SessionCommand::Rm { id } => delete_session(cfg, &id).await,
             }
-            SessionCommand::Show { id, json } => show_session(cfg, &id, json).await,
-            SessionCommand::Rm { id } => delete_session(cfg, &id).await,
-        },
-        DaemonCommand::Dev { prompt, session, workspace, model, label, json } => {
+        }
+        DaemonCommand::Dev {
+            prompt,
+            session,
+            workspace,
+            model,
+            label,
+            json,
+        } => {
             let text = prompt.join(" ").trim().to_string();
             if text.is_empty() {
                 bail!("a prompt is required: `hanzo daemon dev \"summarize this repo\"`");
@@ -153,7 +168,10 @@ pub async fn run_turn(
     }
 
     let turn_id = val.get("turn_id").and_then(Value::as_u64).unwrap_or(0);
-    let outcome = val.get("outcome").and_then(Value::as_str).unwrap_or("unknown");
+    let outcome = val
+        .get("outcome")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     eprintln!(
         "{} session {} · turn {} · {}",
         "hanzod".cyan().bold(),
@@ -186,8 +204,14 @@ pub async fn run_turn(
 
 async fn status(cfg: &mut Config, as_json: bool) -> Result<()> {
     let token = bearer(cfg).await?;
-    let info = expect_ok(call(&Method::GET, "/v1/hanzod", &token, None).await?, "hanzod info")?;
-    let dev = expect_ok(call(&Method::GET, "/v1/dev/health", &token, None).await?, "hanzod dev health")?;
+    let info = expect_ok(
+        call(&Method::GET, "/v1/hanzod", &token, None).await?,
+        "hanzod info",
+    )?;
+    let dev = expect_ok(
+        call(&Method::GET, "/v1/dev/health", &token, None).await?,
+        "hanzod dev health",
+    )?;
     let catalog = call(&Method::GET, "/v1/engine/catalog", &token, None)
         .await
         .ok()
@@ -206,10 +230,19 @@ async fn status(cfg: &mut Config, as_json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let version = info.get("version").and_then(Value::as_str).unwrap_or("unknown");
-    let runtime = dev.get("runtime").and_then(Value::as_str).unwrap_or("unknown");
+    let version = info
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let runtime = dev
+        .get("runtime")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     let sessions = dev.get("sessions").and_then(Value::as_u64).unwrap_or(0);
-    let active = dev.get("active_sessions").and_then(Value::as_u64).unwrap_or(0);
+    let active = dev
+        .get("active_sessions")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let sqlite = dev.get("sqlite_path").and_then(Value::as_str).unwrap_or("");
 
     println!("{} hanzod v{version} ({runtime})", "●".green());
@@ -228,7 +261,11 @@ async fn status(cfg: &mut Config, as_json: bool) -> Result<()> {
             let prefix = r.get("prefix").and_then(Value::as_str).unwrap_or("");
             let name = r.get("name").and_then(Value::as_str).unwrap_or("");
             let running = r.get("running").and_then(Value::as_bool).unwrap_or(false);
-            let dot = if running { "●".green() } else { "○".dimmed() };
+            let dot = if running {
+                "●".green()
+            } else {
+                "○".dimmed()
+            };
             println!("    {dot} {prefix:<20} {name}");
         }
     }
@@ -237,12 +274,19 @@ async fn status(cfg: &mut Config, as_json: bool) -> Result<()> {
 
 async fn list_sessions(cfg: &mut Config, as_json: bool) -> Result<()> {
     let token = bearer(cfg).await?;
-    let val = expect_ok(call(&Method::GET, "/v1/dev/sessions", &token, None).await?, "list sessions")?;
+    let val = expect_ok(
+        call(&Method::GET, "/v1/dev/sessions", &token, None).await?,
+        "list sessions",
+    )?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
     }
-    let sessions = val.get("sessions").and_then(Value::as_array).cloned().unwrap_or_default();
+    let sessions = val
+        .get("sessions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     if sessions.is_empty() {
         println!("no local hanzod sessions — start one with `hanzo dev --daemon \"<task>\"`");
         return Ok(());
@@ -267,7 +311,10 @@ async fn create_session(
     let token = bearer(cfg).await?;
     let ws = resolve_workspace(workspace)?;
     let body = create_session_body(label, &ws, model.as_deref());
-    let val = expect_ok(call(&Method::POST, "/v1/dev/sessions", &token, Some(body)).await?, "create session")?;
+    let val = expect_ok(
+        call(&Method::POST, "/v1/dev/sessions", &token, Some(body)).await?,
+        "create session",
+    )?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
@@ -280,7 +327,13 @@ async fn create_session(
 async fn show_session(cfg: &mut Config, id: &str, as_json: bool) -> Result<()> {
     let token = bearer(cfg).await?;
     let val = expect_ok(
-        call(&Method::GET, &format!("/v1/dev/sessions/{id}"), &token, None).await?,
+        call(
+            &Method::GET,
+            &format!("/v1/dev/sessions/{id}"),
+            &token,
+            None,
+        )
+        .await?,
         "show session",
     )?;
     if as_json {
@@ -294,7 +347,13 @@ async fn show_session(cfg: &mut Config, id: &str, as_json: bool) -> Result<()> {
 async fn delete_session(cfg: &mut Config, id: &str) -> Result<()> {
     let token = bearer(cfg).await?;
     expect_ok(
-        call(&Method::DELETE, &format!("/v1/dev/sessions/{id}"), &token, None).await?,
+        call(
+            &Method::DELETE,
+            &format!("/v1/dev/sessions/{id}"),
+            &token,
+            None,
+        )
+        .await?,
         "delete session",
     )?;
     println!("{} deleted session {id}", "✓".green());
@@ -339,7 +398,13 @@ fn expect_ok(reply: Reply, action: &str) -> Result<Value> {
         return Ok(reply.body);
     }
     let detail = envelope_error(&reply.body)
-        .or_else(|| reply.body.get("error").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            reply
+                .body
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| reply.body.to_string());
     bail!("{action} failed ({}): {detail}", reply.status)
 }
@@ -353,7 +418,11 @@ fn resolve_workspace(workspace: Option<PathBuf>) -> Result<String> {
     Ok(canonical.to_string_lossy().into_owned())
 }
 
-pub(crate) fn create_session_body(label: Option<String>, workspace: &str, model: Option<&str>) -> Value {
+pub(crate) fn create_session_body(
+    label: Option<String>,
+    workspace: &str,
+    model: Option<&str>,
+) -> Value {
     let mut obj = json!({ "workspace": workspace });
     if let Some(l) = label.filter(|s| !s.trim().is_empty()) {
         obj["label"] = json!(l);
@@ -383,14 +452,20 @@ mod tests {
     #[test]
     fn expect_ok_accepts_201_created_and_surfaces_error_body() {
         let ok = expect_ok(
-            Reply { status: 201, body: json!({ "id": "dev_1" }) },
+            Reply {
+                status: 201,
+                body: json!({ "id": "dev_1" }),
+            },
             "create",
         )
         .unwrap();
         assert_eq!(ok["id"], "dev_1");
 
         let err = expect_ok(
-            Reply { status: 401, body: json!({ "error": "a bearer is required" }) },
+            Reply {
+                status: 401,
+                body: json!({ "error": "a bearer is required" }),
+            },
             "create",
         )
         .unwrap_err();

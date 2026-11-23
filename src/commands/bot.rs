@@ -77,7 +77,8 @@ fn probe_live_model_id(engine_url: &str, requested: &str) -> String {
     let Some(addr) = addrs.next() else {
         return wanted.to_string();
     };
-    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)) else {
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400))
+    else {
         return wanted.to_string();
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
@@ -120,7 +121,11 @@ fn probe_live_model_id(engine_url: &str, requested: &str) -> String {
 
 /// Ensure `~/.hanzo/bot-local` holds a valid `bot.json` and compact workspace wired to
 /// the local `hanzo-engine` OpenAI-compatible endpoint (`http://127.0.0.1:1234/v1`).
-pub fn ensure_local_bot_state(model: &str, engine_url: &str, gateway_port: u16) -> Result<(PathBuf, PathBuf, String)> {
+pub fn ensure_local_bot_state(
+    model: &str,
+    engine_url: &str,
+    gateway_port: u16,
+) -> Result<(PathBuf, PathBuf, String)> {
     let resolved_model = probe_live_model_id(model_engine_url(engine_url), model);
     let state_dir = dirs::home_dir()
         .context("no home directory")?
@@ -286,7 +291,10 @@ pub async fn ask(message: String, model: String, engine_url: String, json_out: b
     }
 
     let reply = res.get("reply").and_then(Value::as_str).unwrap_or("");
-    let model_id = res.get("model").and_then(Value::as_str).unwrap_or("zenlm/zen-nano-0.6b");
+    let model_id = res
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("zenlm/zen-nano-0.6b");
     let ms = res.get("durationMs").and_then(Value::as_u64).unwrap_or(0);
     println!(
         "{} {} {}",
@@ -333,7 +341,9 @@ pub async fn gateway(port: u16, model: String, engine_url: String, force: bool) 
     if force {
         cmd.arg("--force");
     }
-    let status = cmd.status().with_context(|| format!("running {}", bin.display()))?;
+    let status = cmd
+        .status()
+        .with_context(|| format!("running {}", bin.display()))?;
     if !status.success() {
         bail!("hanzo-bot gateway exited with {status}");
     }
@@ -368,24 +378,22 @@ pub fn browser(args: Vec<String>) -> Result<()> {
 /// `hanzo bot status` — inspect local HanzoBot binary, gateway listener, and local LLM engine.
 pub async fn status(engine_url: String, port: u16) -> Result<()> {
     let bin = bot_bin();
-    let gw_up = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok();
+    let gw_up = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .is_ok();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(1200))
         .build()?;
     let models_url = format!("{}/v1/models", engine_url.trim_end_matches('/'));
     let engine_model = match client.get(&models_url).send().await {
-        Ok(r) if r.status().is_success() => r
-            .json::<Value>()
-            .await
-            .ok()
-            .and_then(|v| {
-                v.get("data")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(|m| m.get("id")?.as_str())
-                    .find(|id| *id != "default")
-                    .map(String::from)
-            }),
+        Ok(r) if r.status().is_success() => r.json::<Value>().await.ok().and_then(|v| {
+            v.get("data")?
+                .as_array()?
+                .iter()
+                .filter_map(|m| m.get("id")?.as_str())
+                .find(|id| *id != "default")
+                .map(String::from)
+        }),
         _ => None,
     };
 
@@ -420,7 +428,9 @@ pub async fn status(engine_url: String, port: u16) -> Result<()> {
 /// or inside a hardware-virtualized `hanzo-vm` Linux microVM (`--vm`).
 pub async fn sandbox_exec(use_vm: bool, cd: Option<PathBuf>, command: Vec<String>) -> Result<()> {
     if command.is_empty() {
-        bail!("supply a command to execute inside the sandbox, e.g. `hanzo sandbox exec -- uname -a`");
+        bail!(
+            "supply a command to execute inside the sandbox, e.g. `hanzo sandbox exec -- uname -a`"
+        );
     }
     if use_vm {
         let vm_bin = vm::resolve_or_install().await?;
@@ -453,11 +463,7 @@ pub async fn sandbox_exec(use_vm: bool, cd: Option<PathBuf>, command: Vec<String
 /// `hanzo sandbox computer <URL>` — sandboxed headless Chromium computer-use session:
 /// renders `<URL>` in an ephemeral isolated profile, captures a Retina PNG screenshot +
 /// hydrated DOM, and audits the live page with the local `zen-nano` LLM.
-pub async fn sandbox_computer(
-    url: String,
-    out: Option<PathBuf>,
-    engine_url: String,
-) -> Result<()> {
+pub async fn sandbox_computer(url: String, out: Option<PathBuf>, engine_url: String) -> Result<()> {
     let chrome = chrome_bin().ok_or_else(|| {
         anyhow!("Chrome/Chromium not found for computer-use capture (set HANZO_CHROME_BIN)")
     })?;
@@ -601,7 +607,10 @@ fn strip_html_tags(s: &str) -> String {
             in_script_or_style = true;
         }
         if in_script_or_style {
-            if let Some(end_s) = lower[i..].find("</script>").or_else(|| lower[i..].find("</style>")) {
+            if let Some(end_s) = lower[i..]
+                .find("</script>")
+                .or_else(|| lower[i..].find("</style>"))
+            {
                 let close_gt = lower[i + end_s..].find('>').unwrap_or(0);
                 i += end_s + close_gt + 1;
                 in_script_or_style = false;

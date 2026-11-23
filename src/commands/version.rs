@@ -94,7 +94,9 @@ pub fn run() {
 
 /// Locate `hanzo-cli` on PATH and decide what it is relative to us.
 fn twin() -> Twin {
-    let Some(path) = which(DELEGATE) else { return Twin::Absent };
+    let Some(path) = which(DELEGATE) else {
+        return Twin::Absent;
+    };
 
     // Same inode (a hardlink) or same resolved target (a symlink, or literally
     // us) is the healthy install: one build, two names. Compare canonically so
@@ -142,13 +144,17 @@ fn which(name: &str) -> Option<PathBuf> {
 }
 
 fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
-    std::env::split_paths(path).map(|dir| dir.join(name)).find(|p| is_executable(p))
+    std::env::split_paths(path)
+        .map(|dir| dir.join(name))
+        .find(|p| is_executable(p))
 }
 
 #[cfg(unix)]
 fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 #[cfg(not(unix))]
@@ -159,7 +165,10 @@ fn is_executable(p: &Path) -> bool {
 /// Ask a binary its version. `--version` prints `hanzo <semver>`; take the last
 /// whitespace-separated token so a differently-worded build still parses.
 fn version_of(bin: &Path) -> Option<String> {
-    let out = std::process::Command::new(bin).arg("--version").output().ok()?;
+    let out = std::process::Command::new(bin)
+        .arg("--version")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -204,7 +213,9 @@ mod tests {
     /// Write a stub that prints `body`, then ask it its version — the write and
     /// the exec under one lock, so no sibling test can fork between them.
     fn probe(body: &str) -> Option<String> {
-        let g = EXEC.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let d = tempfile::tempdir().unwrap();
         let v = version_of(&stub(d.path(), "twin", body));
         drop(g);
@@ -237,15 +248,26 @@ mod tests {
     /// never on a system that will not say which executable we are.
     #[test]
     fn a_different_file_holding_our_name_is_reported_and_our_own_is_not() {
-        let (us, them) = (PathBuf::from("/home/z/.local/bin/hanzo"), PathBuf::from("/usr/local/bin/hanzo"));
+        let (us, them) = (
+            PathBuf::from("/home/z/.local/bin/hanzo"),
+            PathBuf::from("/usr/local/bin/hanzo"),
+        );
 
         assert_eq!(
             shadow(Some(them.clone()), Some(us.clone())),
             Some((them, us.clone())),
             "the PATH winner and us are named, in that order"
         );
-        assert_eq!(shadow(Some(us.clone()), Some(us.clone())), None, "one file, no skew");
-        assert_eq!(shadow(None, Some(us.clone())), None, "nothing on PATH is not a skew");
+        assert_eq!(
+            shadow(Some(us.clone()), Some(us.clone())),
+            None,
+            "one file, no skew"
+        );
+        assert_eq!(
+            shadow(None, Some(us.clone())),
+            None,
+            "nothing on PATH is not a skew"
+        );
         assert_eq!(shadow(Some(us), None), None, "unknown self is never a skew");
     }
 
@@ -253,7 +275,9 @@ mod tests {
     /// be exec'd — the precedence that let a stale build hide.
     #[test]
     fn which_finds_the_first_on_path() {
-        let _g = EXEC.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let d = tempfile::tempdir().unwrap();
         let (early, late) = (d.path().join("early"), d.path().join("late"));
         std::fs::create_dir_all(&early).unwrap();
@@ -264,6 +288,10 @@ mod tests {
         let joined = std::env::join_paths([&early, &late]).unwrap();
         let found = which_in(DELEGATE, &joined).expect("finds the delegate");
 
-        assert_eq!(version_of(&found).as_deref(), Some("1.0.0"), "the earlier PATH entry wins");
+        assert_eq!(
+            version_of(&found).as_deref(),
+            Some("1.0.0"),
+            "the earlier PATH entry wins"
+        );
     }
 }

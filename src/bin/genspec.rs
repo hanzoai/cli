@@ -141,18 +141,30 @@ fn is_compat(op: &Value) -> bool {
 /// description. Empty means the op is undescribed — a missing Go doc comment in
 /// hanzoai/cloud, which `genproduct` refuses to paper over.
 fn prose(op: &Value) -> Option<String> {
-    let take = |v: &Value| v.as_str().map(|x| x.lines().next().unwrap_or("").trim().to_string());
+    let take = |v: &Value| {
+        v.as_str()
+            .map(|x| x.lines().next().unwrap_or("").trim().to_string())
+    };
     op.get("summary")
         .and_then(take)
         .filter(|x| !x.is_empty())
-        .or_else(|| op.get("description").and_then(take).filter(|x| !x.is_empty()))
+        .or_else(|| {
+            op.get("description")
+                .and_then(take)
+                .filter(|x| !x.is_empty())
+        })
 }
 
 impl Registry {
     fn read(doc: &Value) -> Self {
         let mut ops: BTreeMap<(String, String), Value> = BTreeMap::new();
         let mut doors = BTreeSet::new();
-        for (path, item) in doc.get("paths").and_then(Value::as_object).into_iter().flatten() {
+        for (path, item) in doc
+            .get("paths")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             let s = segs(path);
             // The bare `/v1/*` is the global fallthrough; a parameterised first
             // segment is that fallthrough wearing a longer path. Neither names a
@@ -175,17 +187,28 @@ impl Registry {
             .cloned()
             .unwrap_or_default();
         let mut products = BTreeMap::new();
-        for t in doc.get("tags").and_then(Value::as_array).into_iter().flatten() {
-            if let (Some(n), Some(d)) =
-                (t.get("name").and_then(Value::as_str), t.get("description").and_then(Value::as_str))
-            {
+        for t in doc
+            .get("tags")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(n), Some(d)) = (
+                t.get("name").and_then(Value::as_str),
+                t.get("description").and_then(Value::as_str),
+            ) {
                 let d = d.trim();
                 if !d.is_empty() {
                     products.insert(n.to_string(), d.to_string());
                 }
             }
         }
-        Registry { ops, schemas, products, doors }
+        Registry {
+            ops,
+            schemas,
+            products,
+            doors,
+        }
     }
 }
 
@@ -202,12 +225,17 @@ impl Registry {
 /// a parameter here is counted as a door in `Registry::read`.
 fn catch_all(s: &[&str]) -> Option<String> {
     let w = s.len() - 1;
-    (w > 2 && is_wild(s[w])).then(|| s[w].trim_start_matches('{').trim_end_matches('}').to_string())
+    (w > 2 && is_wild(s[w])).then(|| {
+        s[w].trim_start_matches('{')
+            .trim_end_matches('}')
+            .to_string()
+    })
 }
 
 /// An operation's query/path parameters, if it declares any.
 fn params(op: &Value) -> Option<&Value> {
-    op.get("parameters").filter(|v| !v.as_array().is_none_or(|a| a.is_empty()))
+    op.get("parameters")
+        .filter(|v| !v.as_array().is_none_or(|a| a.is_empty()))
 }
 /// An operation's JSON request-body schema, if it declares one.
 fn body(op: &Value) -> Option<&Value> {
@@ -231,7 +259,10 @@ fn prune(op: &Value, rest: Option<String>, summary: Option<String>) -> Value {
         out.insert("parameters".into(), p.clone());
     }
     if let Some(schema) = body(op) {
-        out.insert("requestBody".into(), json!({"content": {"application/json": {"schema": schema}}}));
+        out.insert(
+            "requestBody".into(),
+            json!({"content": {"application/json": {"schema": schema}}}),
+        );
     }
     Value::Object(out)
 }
@@ -245,7 +276,10 @@ fn reachable(paths: &Map<String, Value>, schemas: &Map<String, Value>) -> BTreeS
             Value::Object(m) => {
                 for (k, x) in m {
                     if k == "$ref" {
-                        if let Some(n) = x.as_str().and_then(|r| r.strip_prefix("#/components/schemas/")) {
+                        if let Some(n) = x
+                            .as_str()
+                            .and_then(|r| r.strip_prefix("#/components/schemas/"))
+                        {
                             out.push(n.to_string());
                         }
                     }
@@ -291,7 +325,10 @@ fn args() -> Args {
             i += 1;
             continue;
         }
-        let val = argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{flag} needs a value"));
+        let val = argv
+            .get(i + 1)
+            .cloned()
+            .unwrap_or_else(|| panic!("{flag} needs a value"));
         match flag.as_str() {
             "--registry" => registry = Some(val),
             "--out" => out = PathBuf::from(val),
@@ -313,7 +350,11 @@ fn args() -> Args {
              which deploy a capture describes."
         )
     });
-    Args { registry, out, check }
+    Args {
+        registry,
+        out,
+        check,
+    }
 }
 
 /// Read the document: a path is the normal case (a release's `openapi.yaml`,
@@ -392,17 +433,25 @@ async fn main() {
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .expect("path item")
-            .insert(method.to_ascii_lowercase(), prune(op, catch_all(&s), prose(op)));
+            .insert(
+                method.to_ascii_lowercase(),
+                prune(op, catch_all(&s), prose(op)),
+            );
     }
 
     let keep = reachable(&paths, &reg.schemas);
-    let components: Map<String, Value> =
-        keep.iter().filter_map(|n| reg.schemas.get(n).map(|s| (n.clone(), s.clone()))).collect();
+    let components: Map<String, Value> = keep
+        .iter()
+        .filter_map(|n| reg.schemas.get(n).map(|s| (n.clone(), s.clone())))
+        .collect();
 
     // The OpenAPI-native place for per-product prose: a `tags` entry per product
     // that actually has operations in this spec AND a description in the
     // document. `genproduct` turns these into the product groups' help lines.
-    let present: BTreeSet<&str> = paths.keys().filter_map(|p| segs(p).get(1).copied()).collect();
+    let present: BTreeSet<&str> = paths
+        .keys()
+        .filter_map(|p| segs(p).get(1).copied())
+        .collect();
     let tags: Vec<Value> = reg
         .products
         .iter()
@@ -437,7 +486,9 @@ async fn main() {
         "components": {"schemas": components},
     });
     if !tags.is_empty() {
-        doc.as_object_mut().expect("doc").insert("tags".into(), json!(tags));
+        doc.as_object_mut()
+            .expect("doc")
+            .insert("tags".into(), json!(tags));
     }
 
     let bytes = serde_json::to_vec(&doc).expect("encode");
@@ -465,7 +516,8 @@ async fn main() {
         reg.doors.iter().cloned().collect::<Vec<_>>().join(" ")
     );
     if a.check {
-        let have = std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display()));
+        let have =
+            std::fs::read(&a.out).unwrap_or_else(|e| panic!("read {}: {e}", a.out.display()));
         if have == bytes {
             eprintln!(
                 "genspec --check: {} is current with {} ({} bytes)",
@@ -477,7 +529,12 @@ async fn main() {
         }
         let ops = |v: &Value| -> BTreeSet<(String, String)> {
             let mut s = BTreeSet::new();
-            for (p, item) in v.get("paths").and_then(Value::as_object).into_iter().flatten() {
+            for (p, item) in v
+                .get("paths")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
                 for m in item.as_object().into_iter().flatten().map(|(m, _)| m) {
                     s.insert((m.to_ascii_uppercase(), p.clone()));
                 }
@@ -485,7 +542,9 @@ async fn main() {
             s
         };
         let now = ops(&doc);
-        let then = serde_json::from_slice::<Value>(&have).map(|v| ops(&v)).unwrap_or_default();
+        let then = serde_json::from_slice::<Value>(&have)
+            .map(|v| ops(&v))
+            .unwrap_or_default();
         for (m, p) in now.difference(&then).take(20) {
             eprintln!("  + {m} {p}");
         }
@@ -513,7 +572,6 @@ async fn main() {
         a.out.display(),
         bytes.len()
     );
-
 }
 
 #[cfg(test)]
@@ -532,7 +590,11 @@ mod tests {
         }});
         let reg = Registry::read(&doc);
         let commands: Vec<&String> = reg.ops.keys().map(|(_, p)| p).collect();
-        assert_eq!(commands, vec!["/v1/thing"], "the legacy spelling became a command");
+        assert_eq!(
+            commands,
+            vec!["/v1/thing"],
+            "the legacy spelling became a command"
+        );
     }
 
     /// The tag is read off the operation, not guessed from the path shape: a
@@ -570,9 +632,15 @@ mod tests {
             "/v1/kms/secrets/{wildcard1}":      {"get": {"summary": "Read one secret", "tags": ["kms"]}},
         }});
         let reg = Registry::read(&doc);
-        assert_eq!(reg.doors.iter().cloned().collect::<Vec<_>>(), vec!["dns".to_string()]);
+        assert_eq!(
+            reg.doors.iter().cloned().collect::<Vec<_>>(),
+            vec!["dns".to_string()]
+        );
         assert_eq!(catch_all(&segs("/v1/dns/{wildcard1}")), None);
-        assert_eq!(catch_all(&segs("/v1/kms/secrets/{wildcard1}")), Some("wildcard1".into()));
+        assert_eq!(
+            catch_all(&segs("/v1/kms/secrets/{wildcard1}")),
+            Some("wildcard1".into())
+        );
     }
 
     /// The global fallthrough is not a product, and neither is it wearing a longer
@@ -586,7 +654,12 @@ mod tests {
             "/v1/kv":                   {"get": {"summary": "List keys", "tags": ["kv"]}},
         }});
         let reg = Registry::read(&doc);
-        assert_eq!(reg.ops.len(), 1, "the fallthrough became a command: {:?}", reg.ops.keys());
+        assert_eq!(
+            reg.ops.len(),
+            1,
+            "the fallthrough became a command: {:?}",
+            reg.ops.keys()
+        );
         assert!(reg.doors.is_empty());
     }
 }

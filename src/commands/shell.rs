@@ -207,7 +207,10 @@ async fn daemon(cfg: &Config) -> Result<()> {
         // process too. The configuration index holds no credential secrets.
         let current = std::fs::read(&config_path).ok();
         if beat.is_none() || current != previous {
-            if let (Ok(fresh), Ok(root)) = (Config::load(Some(config_path.clone())), hanzo_gen::Root::need()) {
+            if let (Ok(fresh), Ok(root)) = (
+                Config::load(Some(config_path.clone())),
+                hanzo_gen::Root::need(),
+            ) {
                 let api = crate::commands::network::active(&fresh).api;
                 let host = crate::commands::dev::Store::host(fresh);
                 beat = Some(hanzo_gen::target::beat_and_serve(

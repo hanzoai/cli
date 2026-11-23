@@ -60,7 +60,8 @@ pub fn secret_source(token: Option<&str>, stdin_tty: bool) -> SecretSource {
 /// This is the reader the `kms secrets create` value uses.
 pub fn read_secret<R: Read>(mut r: R) -> Result<String> {
     let mut v = String::new();
-    r.read_to_string(&mut v).context("reading the secret value from stdin")?;
+    r.read_to_string(&mut v)
+        .context("reading the secret value from stdin")?;
     if let Some(s) = v.strip_suffix('\n') {
         v = s.strip_suffix('\r').unwrap_or(s).to_string();
     }
@@ -121,8 +122,14 @@ mod tests {
         assert_eq!(secret_source(Some("-"), true), SecretSource::Stdin);
         assert_eq!(secret_source(Some("-"), false), SecretSource::Stdin);
         // A literal on the command line is ALWAYS refused, TTY or not.
-        assert_eq!(secret_source(Some("sk-ant-literal"), true), SecretSource::ArgvRefused);
-        assert_eq!(secret_source(Some("sk-ant-literal"), false), SecretSource::ArgvRefused);
+        assert_eq!(
+            secret_source(Some("sk-ant-literal"), true),
+            SecretSource::ArgvRefused
+        );
+        assert_eq!(
+            secret_source(Some("sk-ant-literal"), false),
+            SecretSource::ArgvRefused
+        );
         // No flag: a pipe feeds stdin; an interactive terminal prompts.
         assert_eq!(secret_source(None, false), SecretSource::Stdin);
         assert_eq!(secret_source(None, true), SecretSource::Prompt);
@@ -151,10 +158,18 @@ mod tests {
     /// empty.
     #[test]
     fn read_trimmed_trims_and_rejects_empty() {
-        assert_eq!(read_trimmed(std::io::Cursor::new("  sk-ant-xyz\n")).unwrap(), "sk-ant-xyz");
-        assert_eq!(read_trimmed(std::io::Cursor::new("hk-abc")).unwrap(), "hk-abc");
-        assert!(read_trimmed(std::io::Cursor::new("   \n ")).is_err(), "whitespace-only is empty");
+        assert_eq!(
+            read_trimmed(std::io::Cursor::new("  sk-ant-xyz\n")).unwrap(),
+            "sk-ant-xyz"
+        );
+        assert_eq!(
+            read_trimmed(std::io::Cursor::new("hk-abc")).unwrap(),
+            "hk-abc"
+        );
+        assert!(
+            read_trimmed(std::io::Cursor::new("   \n ")).is_err(),
+            "whitespace-only is empty"
+        );
         assert!(read_trimmed(std::io::Cursor::new("")).is_err());
     }
-
 }

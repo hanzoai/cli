@@ -253,7 +253,9 @@ fn node_count(c: &Value) -> Option<usize> {
     // this tree re-derives: a cluster can report a total with its pools elided,
     // and summing an absent `nodePools` would answer UNKNOWN about a count we
     // were just handed.
-    let stated = ["/nodeCount", "/node_count"].iter().find_map(|p| c.pointer(p));
+    let stated = ["/nodeCount", "/node_count"]
+        .iter()
+        .find_map(|p| c.pointer(p));
     if let Some(n) = stated.and_then(Value::as_u64) {
         return Some(n as usize);
     }
@@ -286,7 +288,12 @@ fn verdict(a: &Value) -> String {
 
 /// Join the parts a host actually reported, dropping the ones it did not.
 fn join(parts: &[String]) -> String {
-    parts.iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" · ")
+    parts
+        .iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 // ---- the page ----------------------------------------------------------------
@@ -310,14 +317,19 @@ fn render(clusters: &SurfaceReading, apps: &SurfaceReading, nodes: &SurfaceReadi
     // line, so a fleet that deploys constantly does not read as a fleet on fire.
     let drifted = drift(apps);
     if drifted > 0 {
-        println!("{} — {drifted} serving an older tag than declared", "drift".yellow().bold());
+        println!(
+            "{} — {drifted} serving an older tag than declared",
+            "drift".yellow().bold()
+        );
     }
 
     println!();
     head("clusters", clusters);
     if let Ok(s) = clusters {
         for c in &s.rows {
-            let count = node_count(c).map(|n| format!("{n} nodes")).unwrap_or_default();
+            let count = node_count(c)
+                .map(|n| format!("{n} nodes"))
+                .unwrap_or_default();
             println!(
                 "  {:<28} {}",
                 first(c, &["/name", "/id"], "unnamed"),
@@ -361,26 +373,42 @@ fn head(label: &str, r: &SurfaceReading) {
 /// One BYO machine, in the detail shape the fleet view has always used.
 fn node(n: &Value) {
     let status = first(n, &["/status"], "unknown");
-    let dot = if status == "online" { "●".green() } else { "●".red() };
-    println!("{} {}", dot, first(n, &["/hostname", "/id"], "unnamed").bold());
+    let dot = if status == "online" {
+        "●".green()
+    } else {
+        "●".red()
+    };
+    println!(
+        "{} {}",
+        dot,
+        first(n, &["/hostname", "/id"], "unnamed").bold()
+    );
 
     row("status", format!("{status}{}", provider(n)));
     row(
         "cpu",
         join(&[
-            num(n, "/cpus").map(|c| format!("{c} cores")).unwrap_or_default(),
+            num(n, "/cpus")
+                .map(|c| format!("{c} cores"))
+                .unwrap_or_default(),
             first(n, &["/arch"], ""),
             first(n, &["/cpuModel"], ""),
         ]),
     );
     row("memory", num(n, "/memory").map(gib).unwrap_or_default());
-    let gpus: &[Value] = n.pointer("/gpus").and_then(Value::as_array).map_or(&[], Vec::as_slice);
+    let gpus: &[Value] = n
+        .pointer("/gpus")
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice);
     for (i, g) in gpus.iter().enumerate() {
         let mem = match first(g, &["/memoryTotal"], "") {
             m if m.is_empty() => String::new(),
             m => format!(" ({m})"),
         };
-        row(&format!("gpu[{i}]"), format!("{}{mem}", first(g, &["/name"], "unnamed")));
+        row(
+            &format!("gpu[{i}]"),
+            format!("{}{mem}", first(g, &["/name"], "unnamed")),
+        );
     }
     row("engine", engine(n));
     row("heartbeat", first(n, &["/lastHeartbeat"], ""));
@@ -402,7 +430,9 @@ fn provider(n: &Value) -> String {
 
 /// The local engine a host is serving, as it reported it.
 fn engine(n: &Value) -> String {
-    let Some(e) = n.pointer("/engine") else { return String::new() };
+    let Some(e) = n.pointer("/engine") else {
+        return String::new();
+    };
     let (url, st) = (first(e, &["/url"], ""), first(e, &["/status"], ""));
     let head = match (url.is_empty(), st.is_empty()) {
         (false, false) => format!("{url} — {st}"),
@@ -419,7 +449,10 @@ fn engine(n: &Value) -> String {
 
 /// Bytes as the whole GiB a person reads.
 fn gib(bytes: u64) -> String {
-    format!("{} GiB", (bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round())
+    format!(
+        "{} GiB",
+        (bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round()
+    )
 }
 
 /// One detail row — printed ONLY when the host actually reported the value.
@@ -445,12 +478,20 @@ fn is_healthy_cluster_state(s: &str) -> bool {
     s.eq_ignore_ascii_case("running") || s.eq_ignore_ascii_case("attached")
 }
 
-fn problems(clusters: &SurfaceReading, apps: &SurfaceReading, nodes: &SurfaceReading) -> Vec<Problem> {
+fn problems(
+    clusters: &SurfaceReading,
+    apps: &SurfaceReading,
+    nodes: &SurfaceReading,
+) -> Vec<Problem> {
     let mut out: Vec<Problem> = Vec::new();
     if let Ok(s) = apps {
         for a in &s.rows {
             if first(a, &["/status/health/status"], "Unknown") != "Healthy" {
-                out.push(("application", first(a, &["/metadata/name"], "unnamed"), verdict(a)));
+                out.push((
+                    "application",
+                    first(a, &["/metadata/name"], "unnamed"),
+                    verdict(a),
+                ));
             }
         }
         for (src, why) in &s.degraded {
@@ -521,11 +562,18 @@ mod tests {
     /// a heading, so the page is collapsed to one clipped line, marked as clipped.
     #[test]
     fn an_html_error_page_is_clipped_to_one_marked_line() {
-        let page = Value::String(format!("<html>\n  <body>{}</body>\n</html>", "x".repeat(500)));
+        let page = Value::String(format!(
+            "<html>\n  <body>{}</body>\n</html>",
+            "x".repeat(500)
+        ));
         let r = reason(404, &page);
         assert!(r.starts_with("404 <html> <body>xxx"), "{r}");
         assert!(r.ends_with('…'), "a clip must be visible: {r}");
-        assert!(r.chars().count() <= 126, "one line, not a page: {} chars", r.chars().count());
+        assert!(
+            r.chars().count() <= 126,
+            "one line, not a page: {} chars",
+            r.chars().count()
+        );
     }
 
     /// An empty 200 is the server SAYING empty — a different fact from a refusal,
@@ -534,7 +582,10 @@ mod tests {
     fn an_empty_200_is_rows_and_a_missing_list_is_not() {
         // The three live shapes, exactly as the routes answer them.
         assert_eq!(rows(&json!({"clusters": []}), "clusters"), Ok(vec![]));
-        assert_eq!(rows(&json!({"kind": "ApplicationList", "items": []}), "items"), Ok(vec![]));
+        assert_eq!(
+            rows(&json!({"kind": "ApplicationList", "items": []}), "items"),
+            Ok(vec![])
+        );
         // A shape with no list at all is UNREADABLE, never an empty fleet.
         assert!(rows(&json!({"unexpected": "shape"}), "workers").is_err());
     }
@@ -542,7 +593,10 @@ mod tests {
     /// The `/v1` envelope, when a plane wraps its payload in one.
     #[test]
     fn an_enveloped_payload_is_read_through_data() {
-        assert_eq!(rows(&json!({"status":"ok","data":{"workers":[1]}}), "workers"), Ok(vec![json!(1)]));
+        assert_eq!(
+            rows(&json!({"status":"ok","data":{"workers":[1]}}), "workers"),
+            Ok(vec![json!(1)])
+        );
     }
 
     fn ok_rows(rows: Vec<Value>) -> SurfaceReading {
@@ -642,9 +696,18 @@ mod tests {
     /// that states neither a total nor pools is UNKNOWN — never a zero.
     #[test]
     fn a_cluster_reports_its_own_node_total() {
-        assert_eq!(node_count(&json!({"nodeCount": 21, "nodePools": []})), Some(21));
-        assert_eq!(node_count(&json!({"nodePools": [{"count": 3}, {"count": 2}]})), Some(5));
-        assert_eq!(node_count(&json!({"nodePools": [{"nodes": [{}, {}]}]})), Some(2));
+        assert_eq!(
+            node_count(&json!({"nodeCount": 21, "nodePools": []})),
+            Some(21)
+        );
+        assert_eq!(
+            node_count(&json!({"nodePools": [{"count": 3}, {"count": 2}]})),
+            Some(5)
+        );
+        assert_eq!(
+            node_count(&json!({"nodePools": [{"nodes": [{}, {}]}]})),
+            Some(2)
+        );
         assert_eq!(node_count(&json!({"name": "silent"})), None);
     }
 
@@ -670,7 +733,10 @@ mod tests {
     fn an_unstated_verdict_is_unknown_and_never_healthy() {
         let apps = ok_rows(vec![json!({"metadata": {"name": "mystery"}})]);
         let p = problems(&ok_rows(vec![]), &apps, &ok_rows(vec![]));
-        assert_eq!(p, vec![("application", "mystery".into(), "Unknown / Unknown".into())]);
+        assert_eq!(
+            p,
+            vec![("application", "mystery".into(), "Unknown / Unknown".into())]
+        );
         assert_eq!(state(&json!({"name": "x"})), "unknown");
     }
 
@@ -678,7 +744,11 @@ mod tests {
     /// and inventing failures is the mirror of inventing health.
     #[test]
     fn an_unavailable_surface_is_not_a_problem_and_not_a_zero() {
-        let out = problems(&Err("403 nope".into()), &Err("403 nope".into()), &ok_rows(vec![]));
+        let out = problems(
+            &Err("403 nope".into()),
+            &Err("403 nope".into()),
+            &ok_rows(vec![]),
+        );
         assert!(out.is_empty());
     }
 
@@ -696,10 +766,15 @@ mod tests {
             "engine": {"url": "http://localhost:1234", "status": "ready", "models": ["a", "b"]},
             "lastHeartbeat": "2026-08-01T18:35:09Z"
         });
-        assert_eq!(format!("{}{}", first(&n, &["/status"], ""), provider(&n)), "online (byo)");
+        assert_eq!(
+            format!("{}{}", first(&n, &["/status"], ""), provider(&n)),
+            "online (byo)"
+        );
         assert_eq!(
             join(&[
-                num(&n, "/cpus").map(|c| format!("{c} cores")).unwrap_or_default(),
+                num(&n, "/cpus")
+                    .map(|c| format!("{c} cores"))
+                    .unwrap_or_default(),
                 first(&n, &["/arch"], ""),
                 first(&n, &["/cpuModel"], ""),
             ]),
@@ -707,7 +782,10 @@ mod tests {
         );
         assert_eq!(gib(133_622_599_680), "124 GiB");
         assert_eq!(engine(&n), "http://localhost:1234 — ready · 2 models");
-        assert_eq!(node_count(&json!({"nodePools": [{"count": 3}, {"nodes": [1, 2]}]})), Some(5));
+        assert_eq!(
+            node_count(&json!({"nodePools": [{"count": 3}, {"nodes": [1, 2]}]})),
+            Some(5)
+        );
         // A cluster that never stated its pools has an UNKNOWN node count, which
         // prints as nothing — never as "0 nodes".
         assert_eq!(node_count(&json!({"name": "x"})), None);
@@ -746,10 +824,22 @@ mod tests {
         .expect("sandboxes list");
         let lines = format_sandbox_table(&org_rows);
         assert_eq!(lines.len(), 2);
-        assert!(lines[1].contains("m_af4b4e5a5c8fdce4b32fbb4f"), "{}", lines[1]);
+        assert!(
+            lines[1].contains("m_af4b4e5a5c8fdce4b32fbb4f"),
+            "{}",
+            lines[1]
+        );
         assert!(lines[1].contains("guided-growth"), "{}", lines[1]);
-        for demo in ["hanzo-bot-1", "claude-workspace", "qwen3-eval", "lux-dex-prover"] {
-            assert!(!lines.join("\n").contains(demo), "must not contain sample fixture {demo}");
+        for demo in [
+            "hanzo-bot-1",
+            "claude-workspace",
+            "qwen3-eval",
+            "lux-dex-prover",
+        ] {
+            assert!(
+                !lines.join("\n").contains(demo),
+                "must not contain sample fixture {demo}"
+            );
         }
     }
 }

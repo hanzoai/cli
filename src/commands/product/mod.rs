@@ -45,9 +45,9 @@ use std::io::{IsTerminal, Read};
 
 use crate::commands::host::{self, Origin};
 use crate::config::Config;
+use crate::iam::{paths, store};
 #[cfg(unix)]
 use crate::zap;
-use crate::iam::{paths, store};
 
 mod generated;
 pub(crate) use generated::{OPS, PRODUCTS};
@@ -70,7 +70,10 @@ pub use op::{Field, Op, Ty};
 pub(crate) fn mounted(cmd: &Command) -> Vec<&'static str> {
     let taken: std::collections::HashSet<&str> =
         cmd.get_subcommands().map(clap::Command::get_name).collect();
-    product_names().into_iter().filter(|p| !taken.contains(p)).collect()
+    product_names()
+        .into_iter()
+        .filter(|p| !taken.contains(p))
+        .collect()
 }
 
 /// THE COLLISION LAW, and it is one law applied at every level: a LOCAL command
@@ -144,9 +147,13 @@ fn absorb(local: Command, product: &'static str) -> Command {
         .children
         .iter()
         .filter(|(name, _)| !owned.contains(**name))
-        .fold(local, |c, (name, node)| c.subcommand(to_command(name, node)));
+        .fold(local, |c, (name, node)| {
+            c.subcommand(to_command(name, node))
+        });
     match runnable {
-        true => merged.args_conflicts_with_subcommands(true).subcommand_negates_reqs(true),
+        true => merged
+            .args_conflicts_with_subcommands(true)
+            .subcommand_negates_reqs(true),
         false => merged,
     }
 }
@@ -154,7 +161,10 @@ fn absorb(local: Command, product: &'static str) -> Command {
 /// Distinct product names in `OPS`, stable order.
 fn product_names() -> Vec<&'static str> {
     let mut seen = std::collections::HashSet::new();
-    OPS.iter().map(|o| o.product).filter(|p| seen.insert(*p)).collect()
+    OPS.iter()
+        .map(|o| o.product)
+        .filter(|p| seen.insert(*p))
+        .collect()
 }
 
 /// Every generated product with its one-line prose, for the root man page —
@@ -223,7 +233,9 @@ fn to_command(name: &'static str, node: &Node) -> Command {
         // args are mutually exclusive with the subcommands (so `kv list push k`
         // does not demand the collection GET's flags).
         (Some(op), false) => {
-            let mut c = leaf(op).subcommand_required(false).args_conflicts_with_subcommands(true);
+            let mut c = leaf(op)
+                .subcommand_required(false)
+                .args_conflicts_with_subcommands(true);
             for (child, sub) in &node.children {
                 c = c.subcommand(to_command(child, sub));
             }
@@ -267,7 +279,11 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
         .about(op.sum)
         .long_about(format!("{}\n\n{} {}", op.sum, op.method, op.path));
     for &p in op.params {
-        c = c.arg(Arg::new(p).required(true).help(format!("path parameter {{{p}}}")));
+        c = c.arg(
+            Arg::new(p)
+                .required(true)
+                .help(format!("path parameter {{{p}}}")),
+        );
     }
     for f in op.fields {
         // A secret field is DELIBERATELY not an argument: it has no flag and no
@@ -282,7 +298,11 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
     if op.is_write() && !op.fields.iter().any(|f| f.flag == "data") {
         // An op with no typed body takes `--data`; one with a typed body takes flags, and `--data` is
         // parsed (hidden) only so that using it is refused by name (see [`flags_not_data`]).
-        c = c.arg(if has_body { data_arg().hide(true) } else { data_arg() });
+        c = c.arg(if has_body {
+            data_arg().hide(true)
+        } else {
+            data_arg()
+        });
     }
     c.arg(output_arg())
 }
@@ -306,11 +326,14 @@ fn output_arg() -> Arg {
 
 /// The `-o` a command line gave, if it gave one.
 fn output_of(m: &ArgMatches) -> Option<Output> {
-    m.try_get_one::<String>("output").ok().flatten().map(|name| match name.as_str() {
-        "table" => Output::Table,
-        "yaml" => Output::Yaml,
-        _ => Output::Json,
-    })
+    m.try_get_one::<String>("output")
+        .ok()
+        .flatten()
+        .map(|name| match name.as_str() {
+            "table" => Output::Table,
+            "yaml" => Output::Yaml,
+            _ => Output::Json,
+        })
 }
 
 /// The refusal for `--data` on an operation that types its body: the flags it takes, by name.
@@ -337,10 +360,17 @@ fn flags_not_data(op: &'static Op) -> String {
 fn field_arg(f: &'static Field) -> Arg {
     // The clap id is namespaced; the value placeholder shows the TYPE, so the id
     // (`field.act`) never leaks into `--help`.
-    let mut a = Arg::new(f.id).long(field_flag(f)).required(f.required).help(field_help(f));
+    let mut a = Arg::new(f.id)
+        .long(field_flag(f))
+        .required(f.required)
+        .help(field_help(f));
     match f.ty {
         Ty::Int => a = a.value_parser(clap::value_parser!(i64)).value_name("INT"),
-        Ty::Num => a = a.value_parser(clap::value_parser!(f64)).value_name("NUMBER"),
+        Ty::Num => {
+            a = a
+                .value_parser(clap::value_parser!(f64))
+                .value_name("NUMBER")
+        }
         // An array of booleans still takes a VALUE — `--f --f` could not say
         // `[true,false]` — so only a scalar bool is a bare presence flag.
         Ty::Bool if !f.repeat => a = a.action(ArgAction::SetTrue),
@@ -350,7 +380,9 @@ fn field_arg(f: &'static Field) -> Arg {
         Ty::Str => a = a.value_name("STRING"),
     }
     if !f.choices.is_empty() {
-        a = a.value_parser(clap::builder::PossibleValuesParser::new(f.choices)).value_name("ENUM");
+        a = a
+            .value_parser(clap::builder::PossibleValuesParser::new(f.choices))
+            .value_name("ENUM");
     }
     // An ARRAY property is a repeatable flag, one element per occurrence. The
     // element keeps its own parser, so `--port 1 --port two` is a named type
@@ -401,7 +433,11 @@ fn field_help(f: &Field) -> String {
     };
     // The two facts a caller needs beyond the type, and they compose: an array of
     // enums is "one of: … (repeatable)".
-    let t = if f.repeat { format!("{t} (repeatable)") } else { t };
+    let t = if f.repeat {
+        format!("{t} (repeatable)")
+    } else {
+        t
+    };
     if f.required {
         format!("{t} (required)")
     } else {
@@ -511,7 +547,13 @@ fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
     } else {
         LeafBody::None
     };
-    Resolved::Leaf { op, values, body, query: typed_query(op, m), output: output_of(m) }
+    Resolved::Leaf {
+        op,
+        values,
+        body,
+        query: typed_query(op, m),
+        output: output_of(m),
+    }
 }
 
 /// Assemble the JSON body from the BODY flags actually provided — nothing else.
@@ -569,7 +611,9 @@ fn insert_path(map: &mut Map<String, Value>, key: &str, value: Value) {
             cur.insert(p.to_string(), value);
             return;
         }
-        let slot = cur.entry(p.to_string()).or_insert_with(|| Value::Object(Map::new()));
+        let slot = cur
+            .entry(p.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
         if !slot.is_object() {
             *slot = Value::Object(Map::new());
         }
@@ -585,7 +629,9 @@ fn typed_query(op: &Op, m: &ArgMatches) -> Vec<String> {
     let mut out = Vec::new();
     for f in op.fields.iter().filter(|f| f.query) {
         match field_value(f, m) {
-            Some(Value::Array(vs)) => out.extend(vs.iter().map(|v| format!("{}={}", f.key, scalar(v)))),
+            Some(Value::Array(vs)) => {
+                out.extend(vs.iter().map(|v| format!("{}={}", f.key, scalar(v))))
+            }
             Some(v) => out.push(format!("{}={}", f.key, scalar(&v))),
             None => {}
         }
@@ -613,7 +659,8 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
         return None;
     }
     let nodes = &chain[1..chain.len() - 1];
-    OPS.iter().find(|o| o.product == product && o.verb == verb && o.nodes == nodes)
+    OPS.iter()
+        .find(|o| o.product == product && o.verb == verb && o.nodes == nodes)
 }
 
 /// Bind the resolved call to a concrete request and send it through the one seam.
@@ -621,7 +668,13 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 /// never asked; all other params are the user's positionals. The bearer + origin
 /// are `call`'s to resolve.
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
-    let Resolved::Leaf { op, values, body, query, output } = resolved;
+    let Resolved::Leaf {
+        op,
+        values,
+        body,
+        query,
+        output,
+    } = resolved;
     let owner = store::acting(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
     let path = fill_path(op.path, op.rest, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
@@ -646,7 +699,8 @@ pub(crate) fn request_id() -> String {
 fn named(op: &Op, mut body: Value) -> Value {
     if op.fields.iter().any(|f| f.key == "requestId" && !f.query) {
         if let Some(map) = body.as_object_mut() {
-            map.entry("requestId").or_insert_with(|| json!(request_id()));
+            map.entry("requestId")
+                .or_insert_with(|| json!(request_id()));
         }
     }
     body
@@ -666,19 +720,27 @@ fn named(op: &Op, mut body: Value) -> Value {
 fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
     use crate::iam::secret;
     let mut secrets = op.fields.iter().filter(|f| f.secret);
-    let Some(f) = secrets.next() else { return Ok(body) };
+    let Some(f) = secrets.next() else {
+        return Ok(body);
+    };
     if secrets.next().is_some() {
-        anyhow::bail!("{} declares more than one secret field — an op reads stdin once", op.path);
+        anyhow::bail!(
+            "{} declares more than one secret field — an op reads stdin once",
+            op.path
+        );
     }
     // A secret field has no flag, so `None` is the only question that can be
     // asked: nothing could have carried a literal here for the law to refuse.
     let value = match secret::secret_source(None, secret::stdin_is_tty()) {
-        secret::SecretSource::Prompt => {
-            secret::prompt(&format!("{} for `hanzo {} {}`", f.flag, op.product, op.verb))?
-        }
+        secret::SecretSource::Prompt => secret::prompt(&format!(
+            "{} for `hanzo {} {}`",
+            f.flag, op.product, op.verb
+        ))?,
         _ => secret::read_secret(std::io::stdin().lock())?,
     };
-    let obj = body.as_object_mut().ok_or_else(|| anyhow!("a typed body must be a JSON object"))?;
+    let obj = body
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("a typed body must be a JSON object"))?;
     insert_path(obj, f.key, Value::String(value));
     Ok(body)
 }
@@ -705,10 +767,13 @@ fn fill_path(
             Some(name) => {
                 let prev = if i > 0 { raw[i - 1] } else { "" };
                 if prev == "orgs" {
-                    let o = owner.ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
+                    let o =
+                        owner.ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
                     out.push_str(&enc(o));
                 } else {
-                    let v = it.next().ok_or_else(|| anyhow!("missing value for {{{name}}}"))?;
+                    let v = it
+                        .next()
+                        .ok_or_else(|| anyhow!("missing value for {{{name}}}"))?;
                     // A MULTI-SEGMENT (catch-all) param keeps its slashes raw so the
                     // server route resolves; a single-segment one `%2F`-escapes them.
                     if rest.contains(&name) {
@@ -751,7 +816,9 @@ fn enc(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -853,7 +920,13 @@ impl Seam {
         // default. Without it a box answered `not signed in`, and a box signed in as a
         // person read none of the sessions its key had opened (404).
         if let Some(token) = machine_key(std::env::var_os("HANZO_API_KEY")) {
-            return Ok(Self { origin, token, hint: None, org: cfg.org.clone(), wire: Http::default() });
+            return Ok(Self {
+                origin,
+                token,
+                hint: None,
+                org: cfg.org.clone(),
+                wire: Http::default(),
+            });
         }
 
         // WHO. A local host may have no IAM to sign in to, so a missing credential
@@ -865,9 +938,17 @@ impl Seam {
         // signed-out call goes out anonymously; a protected route answers 401 and
         // the error says how to sign in.
         let held = store::list(cfg, brand);
-        let hint = identity.as_ref().and_then(|(id, _)| store::refusal_hint(id, &held));
+        let hint = identity
+            .as_ref()
+            .and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
-        Ok(Self { origin, token, hint, org: cfg.org.clone(), wire: Http::default() })
+        Ok(Self {
+            origin,
+            token,
+            hint,
+            org: cfg.org.clone(),
+            wire: Http::default(),
+        })
     }
 
     pub(crate) fn is_http_origin(&self) -> bool {
@@ -887,7 +968,8 @@ impl Seam {
     ) -> Result<Reply> {
         let target = target(path, query)?;
         let base = base_url.trim_end_matches('/');
-        self.over_http(&format!("{base}{target}"), method, body).await
+        self.over_http(&format!("{base}{target}"), method, body)
+            .await
     }
 
     /// Send one request over whichever wire the origin named. The STATUS is
@@ -907,8 +989,14 @@ impl Seam {
                 zap::send(sock, &method, &target, &self.token, body.as_ref()).await
             }
             #[cfg(not(unix))]
-            Origin::Local(base) => self.over_http(&format!("{base}{target}"), method, body).await,
-            Origin::Http(base) => self.over_http(&format!("{base}{target}"), method, body).await,
+            Origin::Local(base) => {
+                self.over_http(&format!("{base}{target}"), method, body)
+                    .await
+            }
+            Origin::Http(base) => {
+                self.over_http(&format!("{base}{target}"), method, body)
+                    .await
+            }
         }
     }
 
@@ -955,7 +1043,9 @@ fn read_body(data: Option<String>, method: &Method) -> Result<Option<Value>> {
     }
     let raw = if d == "-" {
         let mut s = String::new();
-        std::io::stdin().read_to_string(&mut s).context("reading --data from stdin")?;
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .context("reading --data from stdin")?;
         s
     } else {
         d
@@ -992,7 +1082,9 @@ fn target(path: &str, query: &[String]) -> Result<String> {
 
 /// The keys a `/v1` envelope carries: `{status,msg,data}`, IAM's `sub`, `name` and
 /// `data2`, and the bare `error`/`code` form.
-const ENVELOPE: &[&str] = &["status", "msg", "data", "data2", "sub", "name", "error", "code"];
+const ENVELOPE: &[&str] = &[
+    "status", "msg", "data", "data2", "sub", "name", "error", "code",
+];
 
 /// Read the cloud `/v1` envelope (`{status,msg,data}`) for an error the HTTP status
 /// did not carry. Some planes (IAM) answer a refusal with HTTP 200 and
@@ -1031,8 +1123,10 @@ pub(crate) fn envelope_error(body: &Value) -> Option<String> {
         // error; a raw body (an array, or an object that IS the data) is not.
         None => {
             let has_data = obj.get("data").is_some_and(|d| !d.is_null());
-            let bare_error =
-                obj.get("error").and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty());
+            let bare_error = obj
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty());
             (bare_error && !has_data).then(message)
         }
     }
@@ -1061,13 +1155,20 @@ fn render(v: &Value, output: Output, width: usize) -> Option<String> {
         (Value::Null, _) => None,
         (Value::String(s), _) => Some(s.clone()),
         (v, Output::Table) => Some(table(v, width)),
-        (v, Output::Yaml) => Some(serde_norway::to_string(v).unwrap_or_else(|_| v.to_string()).trim_end().to_string()),
+        (v, Output::Yaml) => Some(
+            serde_norway::to_string(v)
+                .unwrap_or_else(|_| v.to_string())
+                .trim_end()
+                .to_string(),
+        ),
         (v, Output::Json) => Some(pretty(v)),
     }
 }
 
 fn terminal_width() -> usize {
-    crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(usize::MAX)
+    crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(usize::MAX)
 }
 
 /// The list an answer is: the array itself, or the one array an object carries (`{"models":[…]}`).
@@ -1128,7 +1229,11 @@ fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
     if keys.is_empty() {
         return None;
     }
-    keys.sort_by_key(|key| LEAD.iter().position(|lead| lead == key).unwrap_or(LEAD.len()));
+    keys.sort_by_key(|key| {
+        LEAD.iter()
+            .position(|lead| lead == key)
+            .unwrap_or(LEAD.len())
+    });
     let grid = list
         .iter()
         .map(|item| {
@@ -1142,7 +1247,10 @@ fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
 
 /// One object's header and rows: a field and its value, for each field that is a scalar.
 fn fields(o: &Map<String, Value>) -> (Vec<String>, Vec<Vec<String>>) {
-    let grid = o.iter().filter_map(|(key, value)| Some(vec![key.clone(), cell(value)?])).collect();
+    let grid = o
+        .iter()
+        .filter_map(|(key, value)| Some(vec![key.clone(), cell(value)?]))
+        .collect();
     (vec!["FIELD".into(), "VALUE".into()], grid)
 }
 
@@ -1150,7 +1258,13 @@ fn fields(o: &Map<String, Value>) -> (Vec<String>, Vec<Vec<String>>) {
 /// `width` (the first always; one too wide is left out and the narrower ones after it are kept).
 fn lay(header: &[String], grid: &[Vec<String>], width: usize) -> String {
     let widths: Vec<usize> = (0..header.len())
-        .map(|i| grid.iter().map(|row| row[i].chars().count()).chain([header[i].chars().count()]).max().unwrap_or(0))
+        .map(|i| {
+            grid.iter()
+                .map(|row| row[i].chars().count())
+                .chain([header[i].chars().count()])
+                .max()
+                .unwrap_or(0)
+        })
         .collect();
     let mut keep: Vec<usize> = Vec::new();
     let mut used = 0;
@@ -1162,10 +1276,16 @@ fn lay(header: &[String], grid: &[Vec<String>], width: usize) -> String {
         }
     }
     let line = |cells: &[String]| {
-        let padded: Vec<String> = keep.iter().map(|&i| format!("{:<w$}", cells[i], w = widths[i])).collect();
+        let padded: Vec<String> = keep
+            .iter()
+            .map(|&i| format!("{:<w$}", cells[i], w = widths[i]))
+            .collect();
         padded.join("  ").trim_end().to_string()
     };
-    std::iter::once(line(header)).chain(grid.iter().map(|row| line(row.as_slice()))).collect::<Vec<_>>().join("\n")
+    std::iter::once(line(header))
+        .chain(grid.iter().map(|row| line(row.as_slice())))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

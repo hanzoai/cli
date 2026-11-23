@@ -401,13 +401,16 @@ pub fn scrub_text(input: &str) -> String {
             return;
         }
         // Scrub /Users/<name>/... or /home/<name>/...
-        if let Some(rest) = word.strip_prefix("/Users/").or_else(|| word.strip_prefix("/home/")) {
+        if let Some(rest) = word
+            .strip_prefix("/Users/")
+            .or_else(|| word.strip_prefix("/home/"))
+        {
             if let Some(idx) = rest.find('/') {
-                dst.push_str("~");
+                dst.push('~');
                 dst.push_str(&rest[idx..]);
                 return;
             }
-            dst.push_str("~");
+            dst.push('~');
             return;
         }
         dst.push_str(word);
@@ -415,7 +418,8 @@ pub fn scrub_text(input: &str) -> String {
     while let Some(c) = chars.next() {
         if c.is_whitespace() {
             if !buf.is_empty() {
-                let is_bearer = buf.eq_ignore_ascii_case("bearer") || buf.eq_ignore_ascii_case("basic");
+                let is_bearer =
+                    buf.eq_ignore_ascii_case("bearer") || buf.eq_ignore_ascii_case("basic");
                 flush_word(&buf, &mut out);
                 buf.clear();
                 out.push(c);
@@ -718,7 +722,10 @@ mod tests {
         let msg = wire["error"]["message"].as_str().unwrap();
         assert!(!msg.contains("alice"), "path/email scrubbed: {msg}");
         assert!(!msg.contains("tok_secret123"), "bearer scrubbed: {msg}");
-        assert!(!msg.contains("sk-live-abcdef123456"), "api key scrubbed: {msg}");
+        assert!(
+            !msg.contains("sk-live-abcdef123456"),
+            "api key scrubbed: {msg}"
+        );
         assert!(msg.contains("~/secret.txt"), "home dir normalized: {msg}");
     }
 }

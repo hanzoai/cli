@@ -36,7 +36,12 @@ pub async fn login(
 
 /// `hanzo auth logout [IDENTITY] [--all]` — sign out one identity (default: the
 /// active one) or all of them, removing the credential.
-pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
+pub async fn logout(
+    cfg: &mut Config,
+    brand: &str,
+    identity: Option<String>,
+    all: bool,
+) -> Result<()> {
     iam::logout(cfg, brand, identity, all).await
 }
 
@@ -72,14 +77,18 @@ pub fn use_identity(cfg: &mut Config, brand: &str, identity: Option<String>) -> 
 pub async fn token(cfg: &mut Config, brand: &str) -> Result<()> {
     store::pin(cfg, brand)?;
     store::within(cfg, brand)?;
-    let (id, tok) = store::active_token(cfg, brand).await?
+    let (id, tok) = store::active_token(cfg, brand)
+        .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;
     // What prints here is forwarded by another program (Codex's `auth.command`,
     // Claude Code's `apiKeyHelper`, hanzo-mcp) to a server that refuses a spent
     // token with a 401 that program cannot explain. A session that could not be
     // refreshed ends here instead, saying how to sign in again.
     if store::spent(&tok.access_token) {
-        bail!("the {id} session has ended; sign in again: {}", store::relogin(brand, &id));
+        bail!(
+            "the {id} session has ended; sign in again: {}",
+            store::relogin(brand, &id)
+        );
     }
     println!("{}", tok.access_token);
     Ok(())

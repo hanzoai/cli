@@ -91,7 +91,10 @@ pub async fn served(origin: &str, org: Option<&str>) -> Result<bool> {
         },
     };
     if let Some(org) = org.filter(|org| *org != app.organization) {
-        bail!("IAM's `{id}` application signs in to org `{}`, not `{org}`", app.organization);
+        bail!(
+            "IAM's `{id}` application signs in to org `{}`, not `{org}`",
+            app.organization
+        );
     }
     Ok(app.grants.iter().any(|grant| grant == DEVICE_GRANT_TYPE))
 }
@@ -218,7 +221,8 @@ pub async fn login(brand: &str, org: Option<&str>, open: bool, ask: &Ask) -> Res
     let port = listener.local_addr()?.port();
     let redirect_uri = format!("http://127.0.0.1:{port}/callback");
 
-    let authorize_url = build_authorize_url(origin, org, &redirect_uri, &pkce.challenge, &state, ask)?;
+    let authorize_url =
+        build_authorize_url(origin, org, &redirect_uri, &pkce.challenge, &state, ask)?;
 
     // Print the link BEFORE asking the OS to open it. `open` on this machine
     // can sit there until a browser answers, and that wait used to be the
@@ -247,7 +251,16 @@ pub async fn login(brand: &str, org: Option<&str>, open: bool, ask: &Ask) -> Res
     // answering before that is how the tab could only say "signed in" with no
     // one attached to it.
     let mut keyboard = Keyboard::open();
-    let arrived = arrive(&listener, &state, origin, org, &redirect_uri, &pkce.verifier, &mut keyboard).await?;
+    let arrived = arrive(
+        &listener,
+        &state,
+        origin,
+        org,
+        &redirect_uri,
+        &pkce.verifier,
+        &mut keyboard,
+    )
+    .await?;
     drop(keyboard);
     let (stream, code) = match arrived {
         Arrived::Pasted(tokens) => return Ok(Done::Pasted(tokens)),
@@ -313,8 +326,17 @@ pub(crate) async fn finish<T>(
     // for it is what made Safari abandon the tab before any byte arrived.
     let who = shown_account(tokens);
     let kept = active.map(Identity::to_string);
-    let page = html_ok(&signed_in_page(&held.origin, who.as_ref(), kept.as_deref(), again));
-    let Held { listener, mut waiting, .. } = held;
+    let page = html_ok(&signed_in_page(
+        &held.origin,
+        who.as_ref(),
+        kept.as_deref(),
+        again,
+    ));
+    let Held {
+        listener,
+        mut waiting,
+        ..
+    } = held;
     for stream in &mut waiting {
         reply(stream, &page).await;
     }
@@ -332,32 +354,35 @@ pub(crate) async fn finish<T>(
 }
 
 async fn answer_held(stream: &mut TcpStream, page: &str) {
-    let request = match tokio::time::timeout(
-        std::time::Duration::from_millis(400),
-        read_request(stream),
-    )
-    .await
+    let request =
+        match tokio::time::timeout(std::time::Duration::from_millis(400), read_request(stream))
+            .await
+        {
+            Ok(Ok(body)) => body,
+            _ => {
+                let _ = stream.shutdown().await;
+                return;
+            }
+        };
+    if request_target(&request)
+        .unwrap_or("")
+        .starts_with("/callback")
     {
-        Ok(Ok(body)) => body,
-        _ => {
-            let _ = stream.shutdown().await;
-            return;
-        }
-    };
-    if request_target(&request).unwrap_or("").starts_with("/callback") {
         reply(stream, page).await;
     } else {
         reply(stream, EMPTY_OK).await;
     }
 }
 
-
 /// The account a token belongs to, from the token's own claims. No network:
 /// the browser tab is waiting on the socket this returns for.
 fn shown_account(tokens: &TokenSet) -> Option<Shown> {
     let id = Identity::from_access_token(&tokens.access_token).ok()?;
     let label = account_label(tokens, &id);
-    Some(Shown { label, id: id.to_string() })
+    Some(Shown {
+        label,
+        id: id.to_string(),
+    })
 }
 
 /// What a person recognises this token as: its email, else its display name,
@@ -372,18 +397,16 @@ fn account_label(tokens: &TokenSet, id: &Identity) -> String {
 /// login redirect is held so the signed-in page can be written on it. Anything
 /// else (the favicon) is answered now so the tab can stop spinning.
 async fn hold_for_page(stream: &mut TcpStream) -> bool {
-    let request = match tokio::time::timeout(
-        std::time::Duration::from_millis(400),
-        read_request(stream),
-    )
-    .await
-    {
-        Ok(Ok(body)) if !body.is_empty() => body,
-        _ => {
-            let _ = stream.shutdown().await;
-            return false;
-        }
-    };
+    let request =
+        match tokio::time::timeout(std::time::Duration::from_millis(400), read_request(stream))
+            .await
+        {
+            Ok(Ok(body)) if !body.is_empty() => body,
+            _ => {
+                let _ = stream.shutdown().await;
+                return false;
+            }
+        };
     let target = request_target(&request).unwrap_or("");
     if target.starts_with("/callback") {
         return true;
@@ -436,7 +459,8 @@ fn build_authorize_url(
         Some(hint) => q.push(("login_hint", hint)),
         None => q.push(("prompt", "select_account")),
     }
-    Url::parse_with_params(&paths::endpoint(origin, AUTHORIZE), &q).context("building authorize URL")
+    Url::parse_with_params(&paths::endpoint(origin, AUTHORIZE), &q)
+        .context("building authorize URL")
 }
 
 /// Exchange an authorization code for tokens (RFC 6749 §4.1.3 + PKCE §4.5),
@@ -693,7 +717,10 @@ impl Keyboard {
         // own thread, and `_stop` ends it the moment this is dropped.
         let (tx, lines) = tokio::sync::mpsc::unbounded_channel();
         std::thread::spawn(move || typed(&stop, &tx));
-        Keyboard { lines: Some(lines), _stop }
+        Keyboard {
+            lines: Some(lines),
+            _stop,
+        }
     }
 
     /// The next pasted callback that carries a code for this sign-in.
@@ -714,7 +741,9 @@ impl Keyboard {
             // verifier never left here, so a code lifted from someone else's
             // login cannot be spent by us and ours cannot be spent by them.
             if cb.state.as_deref().is_some_and(|got| got != state) {
-                println!("That URL belongs to a different sign-in. Paste the one this browser lands on.");
+                println!(
+                    "That URL belongs to a different sign-in. Paste the one this browser lands on."
+                );
                 continue;
             }
             if let Some(why) = cb.denied() {
@@ -765,7 +794,11 @@ fn typed(stop: &AtomicBool, tx: &tokio::sync::mpsc::UnboundedSender<String>) {
 /// Whether stdin has a line to read within `wait`.
 #[cfg(unix)]
 fn waiting(wait: std::time::Duration) -> bool {
-    let mut fd = libc::pollfd { fd: libc::STDIN_FILENO, events: libc::POLLIN, revents: 0 };
+    let mut fd = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     // SAFETY: one pollfd on the stack, for the length we pass.
     unsafe { libc::poll(&mut fd, 1, wait.as_millis() as libc::c_int) > 0 }
 }
@@ -861,7 +894,12 @@ async fn capture_callback(
         // A connection that never sends a request (a speculative socket) must
         // not sit here for the life of the login. Drop it and keep waiting
         // for the redirect.
-        let request = match tokio::time::timeout(std::time::Duration::from_secs(3), read_request(&mut stream)).await {
+        let request = match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            read_request(&mut stream),
+        )
+        .await
+        {
             Ok(Ok(body)) => body,
             _ => {
                 let _ = stream.shutdown().await;
@@ -1031,7 +1069,9 @@ fn page(origin: &str, title: &str, account: &str, heading: &str, detail: &str) -
 /// changes anything and it calls nothing: the port closes when the command
 /// returns, and `hanzo auth use` is the one way to switch.
 fn signed_in_page(origin: &str, who: Option<&Shown>, kept: Option<&str>, again: &str) -> String {
-    let account = who.map(|who| account_face(who, kept, again)).unwrap_or_default();
+    let account = who
+        .map(|who| account_face(who, kept, again))
+        .unwrap_or_default();
     let detail = match (who, kept) {
         (Some(who), Some(kept)) => format!(
             "Added {}. The terminal still uses {}.<br><code>hanzo auth use {}</code> switches.",
@@ -1072,9 +1112,21 @@ fn account_face(who: &Shown, kept: Option<&str>, again: &str) -> String {
         .find(|c| c.is_alphanumeric())
         .map(|c| c.to_uppercase().to_string())
         .unwrap_or_else(|| "?".to_string());
-    let name = who.id.split_once('/').map(|(_, name)| name).unwrap_or(who.id.as_str());
-    let title = if who.label == who.id { name } else { who.label.as_str() };
-    let owner = who.id.split_once('/').map(|(owner, _)| owner).unwrap_or(who.id.as_str());
+    let name = who
+        .id
+        .split_once('/')
+        .map(|(_, name)| name)
+        .unwrap_or(who.id.as_str());
+    let title = if who.label == who.id {
+        name
+    } else {
+        who.label.as_str()
+    };
+    let owner = who
+        .id
+        .split_once('/')
+        .map(|(owner, _)| owner)
+        .unwrap_or(who.id.as_str());
     let uses = match kept {
         Some(kept) => format!(
             "<b>{}</b><br><span style=\"color:#a1a1aa\"><code>hanzo --as {} …</code> uses {}</span>",
@@ -1151,7 +1203,12 @@ const SIGN_OUT_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
 /// closes the port. Without one it prints the URL. Returns whether the
 /// browser confirmed.
 pub async fn end_session(origin: &str, client: &str, open: bool) -> Result<bool> {
-    let host = origin.trim_end_matches('/').split("://").nth(1).unwrap_or(origin).to_string();
+    let host = origin
+        .trim_end_matches('/')
+        .split("://")
+        .nth(1)
+        .unwrap_or(origin)
+        .to_string();
     if !open {
         let url = end_session_url(origin, client, None)?;
         println!("To sign out of {host} in a browser too, open:\n  {url}");
@@ -1160,7 +1217,10 @@ pub async fn end_session(origin: &str, client: &str, open: bool) -> Result<bool>
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .context("binding loopback sign-out server")?;
-    let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr()?.port());
+    let redirect = format!(
+        "http://127.0.0.1:{}/callback",
+        listener.local_addr()?.port()
+    );
     let state = pkce::generate_state();
     let url = end_session_url(origin, client, Some((redirect.as_str(), state.as_str())))?;
     println!("Signing out of {host} in your browser...");
@@ -1182,8 +1242,15 @@ pub async fn end_session(origin: &str, client: &str, open: bool) -> Result<bool>
 /// False only when the listener itself fails.
 async fn signed_out(listener: &TcpListener, state: &str, origin: &str) -> bool {
     loop {
-        let Ok((mut stream, _)) = listener.accept().await else { return false };
-        let request = match tokio::time::timeout(std::time::Duration::from_secs(3), read_request(&mut stream)).await {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return false;
+        };
+        let request = match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            read_request(&mut stream),
+        )
+        .await
+        {
             Ok(Ok(body)) => body,
             _ => {
                 let _ = stream.shutdown().await;
@@ -1221,7 +1288,9 @@ mod tests {
     /// A credential `client` was issued, holding `refresh_token`.
     fn issued_to(client: &str, refresh_token: &str) -> TokenSet {
         TokenSet {
-            access_token: claims_jwt(&format!(r#"{{"owner":"admin","name":"z","azp":"{client}"}}"#)),
+            access_token: claims_jwt(&format!(
+                r#"{{"owner":"admin","name":"z","azp":"{client}"}}"#
+            )),
             token_type: "Bearer".into(),
             refresh_token: Some(refresh_token.into()),
             id_token: None,
@@ -1240,7 +1309,9 @@ mod tests {
         let record = Arc::clone(&seen);
         tokio::spawn(async move {
             loop {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let req = read_http(&mut stream).await;
                 record.lock().unwrap().push(req.clone());
                 let (status, body) = answer(&req);
@@ -1258,7 +1329,11 @@ mod tests {
 
     /// A descriptor as IAM serves it: the client's org and its grants.
     fn described(org: &str, device: bool) -> String {
-        let device = if device { r#","urn:ietf:params:oauth:grant-type:device_code""# } else { "" };
+        let device = if device {
+            r#","urn:ietf:params:oauth:grant-type:device_code""#
+        } else {
+            ""
+        };
         format!(
             r#"{{"status":"ok","msg":"","data":{{"organization":"{org}","grantTypes":["authorization_code","refresh_token"{device}]}}}}"#
         )
@@ -1271,7 +1346,11 @@ mod tests {
     async fn wire_an_org_without_its_own_cli_is_refused_before_sign_in() {
         let (origin, seen) = stand(|req| {
             if req.contains("clientId=admin-cli") {
-                ("400 Bad Request", r#"{"status":"error","msg":"the application does not exist","data":null}"#.into())
+                (
+                    "400 Bad Request",
+                    r#"{"status":"error","msg":"the application does not exist","data":null}"#
+                        .into(),
+                )
             } else if req.contains("clientId=lux-cli") {
                 ("200 OK", described("lux", false))
             } else if req.contains("clientId=hanzo-cli") || req.contains("clientId=odd-cli") {
@@ -1282,20 +1361,40 @@ mod tests {
         })
         .await;
 
-        let err = served(&origin, Some("admin")).await.unwrap_err().to_string();
+        let err = served(&origin, Some("admin"))
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("IAM has no `admin-cli` application"), "{err}");
         assert!(err.contains("`--as admin` has no admin sign-in"), "{err}");
-        assert!(!served(&origin, Some("lux")).await.unwrap(), "lux-cli grants no device code");
-        assert!(served(&origin, None).await.unwrap(), "hanzo-cli grants the device code");
+        assert!(
+            !served(&origin, Some("lux")).await.unwrap(),
+            "lux-cli grants no device code"
+        );
+        assert!(
+            served(&origin, None).await.unwrap(),
+            "hanzo-cli grants the device code"
+        );
         let err = served(&origin, Some("odd")).await.unwrap_err().to_string();
-        assert!(err.contains("`odd-cli` application signs in to org `hanzo`, not `odd`"), "{err}");
+        assert!(
+            err.contains("`odd-cli` application signs in to org `hanzo`, not `odd`"),
+            "{err}"
+        );
         let err = served(&origin, Some("html")).await.unwrap_err().to_string();
         assert!(err.contains("unreadable"), "{err}");
 
         let seen = seen.lock().unwrap();
-        assert!(seen[0].starts_with("GET /v1/iam/auth/application?"), "{}", seen[0]);
+        assert!(
+            seen[0].starts_with("GET /v1/iam/auth/application?"),
+            "{}",
+            seen[0]
+        );
         assert!(seen[0].contains("clientId=admin-cli") && seen[0].contains("responseType=code"));
-        assert!(seen[1].contains("clientId=lux-cli"), "admin fell back to another client: {}", seen[1]);
+        assert!(
+            seen[1].contains("clientId=lux-cli"),
+            "admin fell back to another client: {}",
+            seen[1]
+        );
     }
 
     /// The code is exchanged through `--as`'s client, and a token for another
@@ -1303,24 +1402,46 @@ mod tests {
     #[tokio::test]
     async fn wire_the_exchange_runs_as_the_orgs_client_and_checks_the_owner() {
         let (origin, seen) = stand(|req| {
-            let owner = if req.contains("code=wrong") { "hanzo" } else { "admin" };
+            let owner = if req.contains("code=wrong") {
+                "hanzo"
+            } else {
+                "admin"
+            };
             let token = jwt(owner, "z");
-            ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-1"}}"#))
+            (
+                "200 OK",
+                format!(
+                    r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-1"}}"#
+                ),
+            )
         })
         .await;
         let redirect = "http://127.0.0.1:1/callback";
 
-        let tokens = exchange_code(&origin, Some("admin"), "right", redirect, "v").await.unwrap();
-        assert_eq!(Identity::from_access_token(&tokens.access_token).unwrap().to_string(), "admin/z");
+        let tokens = exchange_code(&origin, Some("admin"), "right", redirect, "v")
+            .await
+            .unwrap();
+        assert_eq!(
+            Identity::from_access_token(&tokens.access_token)
+                .unwrap()
+                .to_string(),
+            "admin/z"
+        );
         let err = exchange_code(&origin, Some("admin"), "wrong", redirect, "v")
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("IAM returned hanzo/z, which is not in admin"), "{err}");
+        assert!(
+            err.contains("IAM returned hanzo/z, which is not in admin"),
+            "{err}"
+        );
 
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
-        assert!(seen.iter().all(|req| req.contains("client_id=admin-cli")), "{seen:?}");
+        assert!(
+            seen.iter().all(|req| req.contains("client_id=admin-cli")),
+            "{seen:?}"
+        );
     }
 
     /// Refresh and revocation present the client the credential was issued to,
@@ -1333,12 +1454,21 @@ mod tests {
                 return ("200 OK", String::new());
             }
             let token = jwt("admin", "z");
-            ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-2"}}"#))
+            (
+                "200 OK",
+                format!(
+                    r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-2"}}"#
+                ),
+            )
         })
         .await;
 
-        refresh(&origin, &issued_to("admin-cli", "rt-1")).await.unwrap();
-        revoke(&origin, &issued_to("admin-cli", "rt-1")).await.unwrap();
+        refresh(&origin, &issued_to("admin-cli", "rt-1"))
+            .await
+            .unwrap();
+        revoke(&origin, &issued_to("admin-cli", "rt-1"))
+            .await
+            .unwrap();
         let aud = TokenSet {
             access_token: claims_jwt(r#"{"owner":"lux","name":"z","aud":["lux-cli"]}"#),
             ..issued_to("", "rt-lux")
@@ -1347,19 +1477,44 @@ mod tests {
         {
             let seen = seen.lock().unwrap();
             assert_eq!(seen.len(), 3);
-            assert!(seen[0].contains("grant_type=refresh_token") && seen[0].contains("client_id=admin-cli"));
-            assert!(seen[1].contains("/v1/iam/oauth/revoke") && seen[1].contains("client_id=admin-cli"));
-            assert!(seen[2].contains("refresh_token=rt-lux") && seen[2].contains("client_id=lux-cli"));
-            assert!(seen.iter().all(|req| !req.contains("hanzo-cli")), "{seen:?}");
+            assert!(
+                seen[0].contains("grant_type=refresh_token")
+                    && seen[0].contains("client_id=admin-cli")
+            );
+            assert!(
+                seen[1].contains("/v1/iam/oauth/revoke") && seen[1].contains("client_id=admin-cli")
+            );
+            assert!(
+                seen[2].contains("refresh_token=rt-lux") && seen[2].contains("client_id=lux-cli")
+            );
+            assert!(
+                seen.iter().all(|req| !req.contains("hanzo-cli")),
+                "{seen:?}"
+            );
         }
 
-        let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
+        let nameless = TokenSet {
+            access_token: jwt("admin", "z"),
+            ..issued_to("", "rt-x")
+        };
         let err = refresh(&origin, &nameless).await.unwrap_err().to_string();
         assert!(err.contains("names no client"), "{err}");
         let err = revoke(&origin, &nameless).await.unwrap_err().to_string();
         assert!(err.contains("names no client"), "{err}");
-        revoke(&origin, &TokenSet { refresh_token: None, ..nameless }).await.unwrap();
-        assert_eq!(seen.lock().unwrap().len(), 3, "a credential naming no client was sent anyway");
+        revoke(
+            &origin,
+            &TokenSet {
+                refresh_token: None,
+                ..nameless
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            3,
+            "a credential naming no client was sent anyway"
+        );
     }
 
     /// A refresh IAM refuses is `Spent` (sign in again); one it never answered,
@@ -1376,25 +1531,44 @@ mod tests {
             } else if req.contains("refresh_token=rt-denied") {
                 ("403 Forbidden", String::new())
             } else {
-                ("400 Bad Request", r#"{"error":"invalid_grant","error_description":"refresh token expired"}"#.into())
+                (
+                    "400 Bad Request",
+                    r#"{"error":"invalid_grant","error_description":"refresh token expired"}"#
+                        .into(),
+                )
             }
         })
         .await;
-        let refused = refresh(&origin, &issued_to("admin-cli", "rt-old")).await.unwrap_err();
+        let refused = refresh(&origin, &issued_to("admin-cli", "rt-old"))
+            .await
+            .unwrap_err();
         assert!(refused.is::<Spent>(), "{refused}");
-        assert!(refused.to_string().contains("refresh token expired"), "{refused}");
-        let nameless = TokenSet { access_token: jwt("admin", "z"), ..issued_to("", "rt-x") };
+        assert!(
+            refused.to_string().contains("refresh token expired"),
+            "{refused}"
+        );
+        let nameless = TokenSet {
+            access_token: jwt("admin", "z"),
+            ..issued_to("", "rt-x")
+        };
         assert!(refresh(&origin, &nameless).await.unwrap_err().is::<Spent>());
-        let denied = refresh(&origin, &issued_to("admin-cli", "rt-denied")).await.unwrap_err();
+        let denied = refresh(&origin, &issued_to("admin-cli", "rt-denied"))
+            .await
+            .unwrap_err();
         assert!(denied.is::<Spent>(), "{denied}");
         for transient in ["rt-down", "rt-busy", "rt-slow"] {
-            let err = refresh(&origin, &issued_to("admin-cli", transient)).await.unwrap_err();
+            let err = refresh(&origin, &issued_to("admin-cli", transient))
+                .await
+                .unwrap_err();
             assert!(!err.is::<Spent>(), "{transient}: {err}");
         }
         let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let gone = format!("http://{}", closed.local_addr().unwrap());
         drop(closed);
-        assert!(!refresh(&gone, &issued_to("admin-cli", "rt")).await.unwrap_err().is::<Spent>());
+        assert!(!refresh(&gone, &issued_to("admin-cli", "rt"))
+            .await
+            .unwrap_err()
+            .is::<Spent>());
     }
 
     /// A refresh that may have been processed is sent once. IAM rotates the token
@@ -1403,7 +1577,12 @@ mod tests {
     /// (throttled before it was read, or no connection) is made again.
     #[tokio::test]
     async fn wire_only_a_refresh_that_never_arrived_is_sent_again() {
-        for (status, sent) in [("502 Bad Gateway", 1), ("500 Internal Server Error", 1), ("503 Service Unavailable", 1), ("429 Too Many Requests", 2)] {
+        for (status, sent) in [
+            ("502 Bad Gateway", 1),
+            ("500 Internal Server Error", 1),
+            ("503 Service Unavailable", 1),
+            ("429 Too Many Requests", 2),
+        ] {
             let (origin, seen) = stand(match status {
                 "502 Bad Gateway" => |_| ("502 Bad Gateway", String::new()),
                 "500 Internal Server Error" => |_| ("500 Internal Server Error", String::new()),
@@ -1411,21 +1590,35 @@ mod tests {
                 _ => |_| ("429 Too Many Requests", String::new()),
             })
             .await;
-            let err = spend(&origin, &issued_to("admin-cli", "rt-once")).await.unwrap_err();
+            let err = spend(&origin, &issued_to("admin-cli", "rt-once"))
+                .await
+                .unwrap_err();
             assert!(!err.is::<Spent>(), "{status}: {err}");
-            assert_eq!(seen.lock().unwrap().len(), sent, "{status}: the refresh token was sent {} times", seen.lock().unwrap().len());
+            assert_eq!(
+                seen.lock().unwrap().len(),
+                sent,
+                "{status}: the refresh token was sent {} times",
+                seen.lock().unwrap().len()
+            );
         }
     }
 
     fn admin(req: &str) -> (&'static str, String) {
-        let token = claims_jwt(r#"{"owner":"admin","name":"z","sub":"u-1","azp":"admin-cli","aud":["admin-cli"]}"#);
+        let token = claims_jwt(
+            r#"{"owner":"admin","name":"z","sub":"u-1","azp":"admin-cli","aud":["admin-cli"]}"#,
+        );
         if req.starts_with("GET /v1/iam/auth/application") {
             return ("200 OK", described("admin", false));
         }
         if req.contains("/v1/iam/oauth/revoke") {
             return ("200 OK", String::new());
         }
-        ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-admin"}}"#))
+        (
+            "200 OK",
+            format!(
+                r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-admin"}}"#
+            ),
+        )
     }
 
     /// `hanzo --as admin auth login` end to end over the wire, as it runs where
@@ -1440,22 +1633,49 @@ mod tests {
         let (origin, seen) = stand(admin).await;
         let org = Some("admin");
 
-        assert!(!served(&origin, org).await.unwrap(), "admin-cli must not grant the device code");
-        let url = build_authorize_url(&origin, org, "http://127.0.0.1:1/callback", "C", "S", &Ask::default()).unwrap();
+        assert!(
+            !served(&origin, org).await.unwrap(),
+            "admin-cli must not grant the device code"
+        );
+        let url = build_authorize_url(
+            &origin,
+            org,
+            "http://127.0.0.1:1/callback",
+            "C",
+            "S",
+            &Ask::default(),
+        )
+        .unwrap();
         let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "admin-cli");
-        let tokens = exchange_code(&origin, org, "pasted", "http://127.0.0.1:1/callback", "V").await.unwrap();
+        let tokens = exchange_code(&origin, org, "pasted", "http://127.0.0.1:1/callback", "V")
+            .await
+            .unwrap();
         let fresh = refresh(&origin, &tokens).await.unwrap();
         revoke(&origin, &fresh).await.unwrap();
 
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 4, "{seen:?}");
         assert!(seen[0].contains("clientId=admin-cli"), "{}", seen[0]);
-        assert!(seen[1].contains("grant_type=authorization_code") && seen[1].contains("code=pasted"));
-        assert!(seen[2].contains("grant_type=refresh_token") && seen[2].contains("refresh_token=rt-admin"));
+        assert!(
+            seen[1].contains("grant_type=authorization_code") && seen[1].contains("code=pasted")
+        );
+        assert!(
+            seen[2].contains("grant_type=refresh_token")
+                && seen[2].contains("refresh_token=rt-admin")
+        );
         assert!(seen[3].contains("/v1/iam/oauth/revoke"));
-        assert!(seen[1..].iter().all(|req| req.contains("client_id=admin-cli")), "{seen:?}");
-        assert!(seen.iter().all(|req| !req.contains("hanzo-cli") && !req.contains("oauth/device")), "{seen:?}");
+        assert!(
+            seen[1..]
+                .iter()
+                .all(|req| req.contains("client_id=admin-cli")),
+            "{seen:?}"
+        );
+        assert!(
+            seen.iter()
+                .all(|req| !req.contains("hanzo-cli") && !req.contains("oauth/device")),
+            "{seen:?}"
+        );
     }
 
     fn lux(req: &str) -> (&'static str, String) {
@@ -1469,7 +1689,12 @@ mod tests {
             );
         }
         let token = claims_jwt(r#"{"owner":"lux","name":"z","sub":"u-1","azp":"lux-cli"}"#);
-        ("200 OK", format!(r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-lux"}}"#))
+        (
+            "200 OK",
+            format!(
+                r#"{{"access_token":"{token}","token_type":"Bearer","refresh_token":"rt-lux"}}"#
+            ),
+        )
     }
 
     /// A client whose descriptor grants the device code signs in by it where no
@@ -1478,14 +1703,19 @@ mod tests {
     async fn wire_a_client_granted_the_device_code_signs_in_by_it_as_itself() {
         let (origin, seen) = stand(lux).await;
         assert!(served(&origin, Some("lux")).await.unwrap());
-        let tokens = crate::iam::device::login(&origin, "hanzo", Some("lux"), None).await.unwrap();
+        let tokens = crate::iam::device::login(&origin, "hanzo", Some("lux"), None)
+            .await
+            .unwrap();
         owned(&tokens, Some("lux")).unwrap();
 
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 3, "{seen:?}");
         assert!(seen[1].contains("/v1/iam/oauth/device") && seen[1].contains("client_id=lux-cli"));
         assert!(seen[2].contains("device_code=dc-1") && seen[2].contains("client_id=lux-cli"));
-        assert!(seen.iter().all(|req| !req.contains("hanzo-cli")), "{seen:?}");
+        assert!(
+            seen.iter().all(|req| !req.contains("hanzo-cli")),
+            "{seen:?}"
+        );
     }
 
     /// Where no browser opens and stdin is not a terminal, nothing can paste
@@ -1532,7 +1762,10 @@ mod tests {
         assert_eq!(q["state"], "STATE");
         assert_eq!(q["scope"], SCOPE);
         assert_eq!(q["redirect_uri"], "http://127.0.0.1:54321/callback");
-        assert_eq!(q["prompt"], "select_account", "a plain login asks which account");
+        assert_eq!(
+            q["prompt"], "select_account",
+            "a plain login asks which account"
+        );
         assert!(!q.contains_key("login_hint"));
 
         let chosen = build_authorize_url(
@@ -1546,7 +1779,10 @@ mod tests {
         .unwrap();
         let q: HashMap<_, _> = chosen.query_pairs().into_owned().collect();
         assert_eq!(q["prompt"], "select_account");
-        assert_eq!(q["client_id"], "admin-cli", "--as admin signs in through admin's own client");
+        assert_eq!(
+            q["client_id"], "admin-cli",
+            "--as admin signs in through admin's own client"
+        );
 
         // `--account`: the hint, and no chooser, since the account is named.
         let named = build_authorize_url(
@@ -1555,7 +1791,9 @@ mod tests {
             "http://127.0.0.1:1/callback",
             "C",
             "S",
-            &Ask { hint: Some("z@hanzo.ai".into()) },
+            &Ask {
+                hint: Some("z@hanzo.ai".into()),
+            },
         )
         .unwrap();
         let q: HashMap<_, _> = named.query_pairs().into_owned().collect();
@@ -1582,9 +1820,17 @@ mod tests {
         };
         owned(&held("hanzo"), None).unwrap();
         owned(&held("admin"), Some("admin")).unwrap();
-        let err = owned(&held("hanzo"), Some("admin")).unwrap_err().to_string();
-        assert!(err.contains("hanzo/z") && err.contains("admin-cli"), "{err}");
-        assert!(err.contains("not in admin") && err.contains("nothing was stored"), "{err}");
+        let err = owned(&held("hanzo"), Some("admin"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("hanzo/z") && err.contains("admin-cli"),
+            "{err}"
+        );
+        assert!(
+            err.contains("not in admin") && err.contains("nothing was stored"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1613,9 +1859,17 @@ mod tests {
             Some("authorization denied: invalid_request (the identity provider returned no code)")
         );
         let bare = parse_callback("/callback?error=access_denied").unwrap();
-        assert_eq!(bare.denied().as_deref(), Some("authorization denied: access_denied"));
-        let pasted = parse_pasted("http://127.0.0.1:1/callback?error=invalid_request&error_description=PKCE+is+required");
-        assert_eq!(pasted.denied().as_deref(), Some("authorization denied: invalid_request (PKCE is required)"));
+        assert_eq!(
+            bare.denied().as_deref(),
+            Some("authorization denied: access_denied")
+        );
+        let pasted = parse_pasted(
+            "http://127.0.0.1:1/callback?error=invalid_request&error_description=PKCE+is+required",
+        );
+        assert_eq!(
+            pasted.denied().as_deref(),
+            Some("authorization denied: invalid_request (PKCE is required)")
+        );
     }
 
     // Drive the real loopback server over a TCP socket. The redirect is answered
@@ -1662,10 +1916,17 @@ mod tests {
         assert!(!response.contains("Location:"), "got: {response}");
         assert!(response.contains("You're signed in"), "got: {response}");
         assert!(response.contains("Hanzo AI"), "got: {response}");
-        assert_eq!(response.matches("href=\"https://hanzo.ai\"").count(), 2, "got: {response}");
+        assert_eq!(
+            response.matches("href=\"https://hanzo.ai\"").count(),
+            2,
+            "got: {response}"
+        );
         assert!(!response.contains("Hanzo ID"), "got: {response}");
         assert!(response.contains("top:24px;left:24px"), "got: {response}");
-        assert!(response.contains("M22.21 67V44.6369H0V67H22.21Z"), "got: {response}");
+        assert!(
+            response.contains("M22.21 67V44.6369H0V67H22.21Z"),
+            "got: {response}"
+        );
         assert!(!response.contains("<circle"), "got: {response}");
         assert!(response.contains("background:#070709"), "got: {response}");
     }
@@ -1679,35 +1940,88 @@ mod tests {
             id: "hanzo/z".into(),
         };
         let page = signed_in_page("https://hanzo.id", Some(&who), None, "hanzo auth login");
-        assert!(page.contains("The terminal continues as hanzo/z."), "{page}");
+        assert!(
+            page.contains("The terminal continues as hanzo/z."),
+            "{page}"
+        );
         assert!(page.contains("z@hanzo.ai"), "{page}");
         assert!(page.contains("top:16px;right:16px"), "{page}");
-        assert_eq!(page.matches("href=\"https://hanzo.ai\"").count(), 2, "{page}");
+        assert_eq!(
+            page.matches("href=\"https://hanzo.ai\"").count(),
+            2,
+            "{page}"
+        );
         // The chip opens a panel: who signed in, who the terminal uses, and the
         // command that asks which account. It calls nothing and switches nothing.
-        assert!(page.contains("<details") && page.contains("<summary"), "{page}");
-        assert!(page.contains("The terminal uses</div><div><b>hanzo/z</b>"), "{page}");
+        assert!(
+            page.contains("<details") && page.contains("<summary"),
+            "{page}"
+        );
+        assert!(
+            page.contains("The terminal uses</div><div><b>hanzo/z</b>"),
+            "{page}"
+        );
         assert!(page.contains("Use a different account"), "{page}");
         assert!(page.contains("data-c=\"hanzo auth login\""), "{page}");
-        for gone in ["/switch", "/remove", "/add", "Add account", "fetch(", "XMLHttpRequest", "<form", "<script"] {
+        for gone in [
+            "/switch",
+            "/remove",
+            "/add",
+            "Add account",
+            "fetch(",
+            "XMLHttpRequest",
+            "<form",
+            "<script",
+        ] {
             assert!(!page.contains(gone), "{gone}: {page}");
         }
 
-        let kept = signed_in_page("https://hanzo.id", Some(&who), Some("hanzo/grundy"), "hanzo auth login");
-        assert!(kept.contains("Added hanzo/z. The terminal still uses hanzo/grundy."), "{kept}");
-        assert!(kept.contains("<code>hanzo auth use hanzo/z</code>"), "{kept}");
-        assert!(kept.contains("The terminal uses</div><div><b>hanzo/grundy</b>"), "{kept}");
-        assert!(kept.contains("<code>hanzo --as hanzo …</code> uses hanzo/z"), "{kept}");
+        let kept = signed_in_page(
+            "https://hanzo.id",
+            Some(&who),
+            Some("hanzo/grundy"),
+            "hanzo auth login",
+        );
+        assert!(
+            kept.contains("Added hanzo/z. The terminal still uses hanzo/grundy."),
+            "{kept}"
+        );
+        assert!(
+            kept.contains("<code>hanzo auth use hanzo/z</code>"),
+            "{kept}"
+        );
+        assert!(
+            kept.contains("The terminal uses</div><div><b>hanzo/grundy</b>"),
+            "{kept}"
+        );
+        assert!(
+            kept.contains("<code>hanzo --as hanzo …</code> uses hanzo/z"),
+            "{kept}"
+        );
 
         let bare = signed_in_page("https://hanzo.id", None, None, "");
-        assert!(!bare.contains("<details") && !bare.contains("Use a different account"), "{bare}");
+        assert!(
+            !bare.contains("<details") && !bare.contains("Use a different account"),
+            "{bare}"
+        );
 
         let hostile = Shown {
             label: "<b>x</b>".into(),
             id: "hanzo/<i>".into(),
         };
-        let page = signed_in_page("https://hanzo.id", Some(&hostile), Some("hanzo/<s>"), "hanzo \"<u>\"");
-        assert!(!page.contains("<b>x") && !page.contains("<i>") && !page.contains("<s>") && !page.contains("<u>"), "{page}");
+        let page = signed_in_page(
+            "https://hanzo.id",
+            Some(&hostile),
+            Some("hanzo/<s>"),
+            "hanzo \"<u>\"",
+        );
+        assert!(
+            !page.contains("<b>x")
+                && !page.contains("<i>")
+                && !page.contains("<s>")
+                && !page.contains("<u>"),
+            "{page}"
+        );
     }
 
     // The first write is not the tab's only try. Safari retries the redirect,
@@ -1747,7 +2061,10 @@ mod tests {
         tab.read_to_end(&mut page).await.unwrap();
         let page = String::from_utf8_lossy(&page);
         assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
-        assert!(page.contains("The terminal continues as hanzo/z."), "{page}");
+        assert!(
+            page.contains("The terminal continues as hanzo/z."),
+            "{page}"
+        );
 
         let mut retry = TcpStream::connect(addr).await.unwrap();
         retry
@@ -1795,7 +2112,10 @@ mod tests {
         assert_eq!(url.path(), "/v1/iam/oauth/logout");
         let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["client_id"], "hanzo-cli");
-        assert_eq!(q["post_logout_redirect_uri"], "http://127.0.0.1:5123/callback");
+        assert_eq!(
+            q["post_logout_redirect_uri"],
+            "http://127.0.0.1:5123/callback"
+        );
         assert_eq!(q["state"], "S-1");
         assert!(!q.contains_key("id_token_hint"));
 
@@ -1812,7 +2132,8 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { signed_out(&listener, "mine", "https://hanzo.id").await });
+        let server =
+            tokio::spawn(async move { signed_out(&listener, "mine", "https://hanzo.id").await });
 
         for target in ["/favicon.ico", "/callback?state=other", "/callback"] {
             let mut stray = TcpStream::connect(addr).await.unwrap();
@@ -1822,7 +2143,10 @@ mod tests {
                 .unwrap();
             let mut answer = Vec::new();
             stray.read_to_end(&mut answer).await.unwrap();
-            assert!(String::from_utf8_lossy(&answer).starts_with("HTTP/1.1 204"), "{target}");
+            assert!(
+                String::from_utf8_lossy(&answer).starts_with("HTTP/1.1 204"),
+                "{target}"
+            );
         }
         assert!(!server.is_finished());
 
@@ -1921,14 +2245,25 @@ mod tests {
         // The sender lives on, as a terminal does: an ended keyboard would
         // leave the race to the socket alone.
         std::mem::forget(tx);
-        Keyboard { lines: Some(rx), _stop: Stop(Arc::new(AtomicBool::new(false))) }
+        Keyboard {
+            lines: Some(rx),
+            _stop: Stop(Arc::new(AtomicBool::new(false))),
+        }
     }
 
     fn refuses_nope(req: &str) -> (&'static str, String) {
         if req.contains("code=nope") {
-            return ("400 Bad Request", r#"{"error":"invalid_grant","error_description":"invalid authorization code"}"#.into());
+            return (
+                "400 Bad Request",
+                r#"{"error":"invalid_grant","error_description":"invalid authorization code"}"#
+                    .into(),
+            );
         }
-        ("200 OK", r#"{"access_token":"header.payload.sig","token_type":"Bearer","refresh_token":"rt"}"#.into())
+        (
+            "200 OK",
+            r#"{"access_token":"header.payload.sig","token_type":"Bearer","refresh_token":"rt"}"#
+                .into(),
+        )
     }
 
     /// The sign-in that ended on a pasted `curl` line: what follows the login
@@ -1943,13 +2278,24 @@ mod tests {
             "nope",
             "good",
         ]);
-        let arrived = arrive(&listener, "S", &origin, None, "http://127.0.0.1:1/callback", "V", &mut keyboard)
-            .await
-            .unwrap();
+        let arrived = arrive(
+            &listener,
+            "S",
+            &origin,
+            None,
+            "http://127.0.0.1:1/callback",
+            "V",
+            &mut keyboard,
+        )
+        .await
+        .unwrap();
         assert!(matches!(arrived, Arrived::Pasted(_)));
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 2, "{seen:?}");
-        assert!(seen[0].contains("code=nope") && seen[1].contains("code=good"), "{seen:?}");
+        assert!(
+            seen[0].contains("code=nope") && seen[1].contains("code=good"),
+            "{seen:?}"
+        );
     }
 
     /// After a refused paste the browser can still come home: the port stays open.
@@ -1962,15 +2308,25 @@ mod tests {
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             let mut tab = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-            tab.write_all(b"GET /callback?code=from-browser&state=S HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
-                .await
-                .unwrap();
+            tab.write_all(
+                b"GET /callback?code=from-browser&state=S HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
             let mut sink = Vec::new();
             let _ = tab.read_to_end(&mut sink).await;
         });
-        let arrived = arrive(&listener, "S", &origin, None, "http://127.0.0.1:1/callback", "V", &mut keyboard)
-            .await
-            .unwrap();
+        let arrived = arrive(
+            &listener,
+            "S",
+            &origin,
+            None,
+            "http://127.0.0.1:1/callback",
+            "V",
+            &mut keyboard,
+        )
+        .await
+        .unwrap();
         match arrived {
             Arrived::Browser(_, code) => assert_eq!(code, "from-browser"),
             Arrived::Pasted(_) => panic!("the refused paste signed in"),
@@ -2029,7 +2385,9 @@ mod tests {
         let origin = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move {
             loop {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let req = read_http(&mut stream).await;
                 let (status, body) = iam_answer(&req);
                 let response = format!(
@@ -2055,22 +2413,38 @@ mod tests {
             .to_string();
         assert!(garbled.contains("parsing token response"), "{garbled}");
 
-        let tokens = exchange_code(&origin, None, "the-code", "http://127.0.0.1/callback", "the-verifier")
-            .await
-            .unwrap();
+        let tokens = exchange_code(
+            &origin,
+            None,
+            "the-code",
+            "http://127.0.0.1/callback",
+            "the-verifier",
+        )
+        .await
+        .unwrap();
         assert!(tokens.access_token.contains('.'), "{}", tokens.access_token);
         assert_eq!(tokens.refresh_token.as_deref(), Some("rt-next"));
 
-        let spent = refresh(&origin, &issued_to("hanzo-cli", "nope")).await.unwrap_err().to_string();
+        let spent = refresh(&origin, &issued_to("hanzo-cli", "nope"))
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(spent.contains("token refresh refused"), "{spent}");
 
-        let fresh = refresh(&origin, &issued_to("hanzo-cli", "rt-1")).await.unwrap();
+        let fresh = refresh(&origin, &issued_to("hanzo-cli", "rt-1"))
+            .await
+            .unwrap();
         assert_eq!(fresh.refresh_token.as_deref(), Some("rt-2"));
         assert!(!fresh.access_token.is_empty());
 
-        let revoked = revoke(&origin, &issued_to("hanzo-cli", "nope")).await.unwrap_err().to_string();
+        let revoked = revoke(&origin, &issued_to("hanzo-cli", "nope"))
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(revoked.contains("revocation failed"), "{revoked}");
-        revoke(&origin, &issued_to("hanzo-cli", "rt-1")).await.unwrap();
+        revoke(&origin, &issued_to("hanzo-cli", "rt-1"))
+            .await
+            .unwrap();
     }
 
     /// Nothing is listening: each call fails as a transport error, before it
@@ -2086,9 +2460,18 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string(),
-            refresh(&origin, &issued_to("hanzo-cli", "rt")).await.unwrap_err().to_string(),
-            revoke(&origin, &issued_to("hanzo-cli", "rt")).await.unwrap_err().to_string(),
-            served(&origin, Some("admin")).await.unwrap_err().to_string(),
+            refresh(&origin, &issued_to("hanzo-cli", "rt"))
+                .await
+                .unwrap_err()
+                .to_string(),
+            revoke(&origin, &issued_to("hanzo-cli", "rt"))
+                .await
+                .unwrap_err()
+                .to_string(),
+            served(&origin, Some("admin"))
+                .await
+                .unwrap_err()
+                .to_string(),
         ] {
             assert!(err.contains("calling IAM"), "{err}");
         }
@@ -2098,11 +2481,9 @@ mod tests {
         let mut buf = Vec::new();
         let mut tmp = [0u8; 2048];
         loop {
-            let Ok(n) = tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                stream.read(&mut tmp),
-            )
-            .await
+            let Ok(n) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), stream.read(&mut tmp))
+                    .await
             else {
                 break;
             };

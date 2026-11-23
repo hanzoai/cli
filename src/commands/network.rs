@@ -140,8 +140,16 @@ fn all(cfg: &Config) -> Vec<StoredNetwork> {
 }
 
 fn print_row(n: &StoredNetwork, active_name: &str) {
-    let marker = if n.name == active_name { "*".green().bold() } else { " ".normal() };
-    let sovereign = if n.network_id == n.chain_id { "sovereign".dimmed() } else { "".normal() };
+    let marker = if n.name == active_name {
+        "*".green().bold()
+    } else {
+        " ".normal()
+    };
+    let sovereign = if n.network_id == n.chain_id {
+        "sovereign".dimmed()
+    } else {
+        "".normal()
+    };
     println!(
         "{} {:<10} {:<16} net={:<7} chain={:<7} {}",
         marker,
@@ -158,7 +166,9 @@ fn print_row(n: &StoredNetwork, active_name: &str) {
 
 /// The issuer a network signs in at, or what naming none means.
 fn issuer(n: &StoredNetwork) -> String {
-    n.iam.clone().unwrap_or_else(|| "none — no credential is sent".to_string())
+    n.iam
+        .clone()
+        .unwrap_or_else(|| "none — no credential is sent".to_string())
 }
 
 /// `hanzo network list`
@@ -206,7 +216,12 @@ pub fn use_network(cfg: &mut Config, name: String) -> Result<()> {
         Ok(())
     })?;
     let n = resolve(cfg, &name).expect("resolved above");
-    println!("{} active network {} ({})", "✓".green(), name.cyan().bold(), n.label);
+    println!(
+        "{} active network {} ({})",
+        "✓".green(),
+        name.cyan().bold(),
+        n.label
+    );
     Ok(())
 }
 
@@ -225,7 +240,10 @@ pub fn add(
     set_active: bool,
 ) -> Result<()> {
     if is_builtin(&name) {
-        bail!("{:?} is a built-in network name — pick another for a custom network.", name);
+        bail!(
+            "{:?} is a built-in network name — pick another for a custom network.",
+            name
+        );
     }
     // Refused here, where it was typed, rather than at the first sign-in.
     if let Some(iam) = &iam {
@@ -254,9 +272,20 @@ pub fn add(
         Ok(())
     })?;
     if network_id == chain_id {
-        println!("{} added sovereign network {} (network_id == chain_id == {})", "✓".green(), name.cyan().bold(), chain_id);
+        println!(
+            "{} added sovereign network {} (network_id == chain_id == {})",
+            "✓".green(),
+            name.cyan().bold(),
+            chain_id
+        );
     } else {
-        println!("{} added network {} (network_id {}, chain_id {})", "✓".green(), name.cyan().bold(), network_id, chain_id);
+        println!(
+            "{} added network {} (network_id {}, chain_id {})",
+            "✓".green(),
+            name.cyan().bold(),
+            network_id,
+            chain_id
+        );
     }
     if set_active {
         println!("  {} now active", name.cyan());
@@ -278,10 +307,30 @@ mod tests {
     #[test]
     fn each_network_signs_in_at_the_issuer_its_api_trusts() {
         for (name, api, iam, realm_name) in [
-            ("mainnet", "https://api.hanzo.ai", "https://hanzo.ai", "hanzo"),
-            ("testnet", "https://api-test.hanzo.ai", "https://hanzo.ai", "hanzo"),
-            ("devnet", "https://api-dev.hanzo.ai", "https://id-dev.hanzo.ai", "hanzo@id-dev.hanzo.ai"),
-            ("local", "http://localhost:3690", "https://hanzo.ai", "hanzo"),
+            (
+                "mainnet",
+                "https://api.hanzo.ai",
+                "https://hanzo.ai",
+                "hanzo",
+            ),
+            (
+                "testnet",
+                "https://api-test.hanzo.ai",
+                "https://hanzo.ai",
+                "hanzo",
+            ),
+            (
+                "devnet",
+                "https://api-dev.hanzo.ai",
+                "https://id-dev.hanzo.ai",
+                "hanzo@id-dev.hanzo.ai",
+            ),
+            (
+                "local",
+                "http://localhost:3690",
+                "https://hanzo.ai",
+                "hanzo",
+            ),
         ] {
             let n = builtin(name);
             assert_eq!(n.api, api, "{name}");
@@ -308,7 +357,10 @@ mod tests {
             explorer: None,
         });
         let n = resolve(&cfg, "devnet").unwrap();
-        assert_eq!((n.rpc.as_str(), n.label.as_str()), ("https://rpc.example", "mine"));
+        assert_eq!(
+            (n.rpc.as_str(), n.label.as_str()),
+            ("https://rpc.example", "mine")
+        );
         assert_eq!(n.api, "https://api-dev.hanzo.ai");
         assert_eq!(n.iam.as_deref(), Some("https://id-dev.hanzo.ai"));
     }

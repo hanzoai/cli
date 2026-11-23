@@ -6,15 +6,15 @@
 //! (IAM tokens, local wallet keys) live in the OS keychain via `keyring`, never
 //! here. See `iam::token` and `commands::wallet`.
 
-use hanzo_gen::private;
 use anyhow::{Context, Result};
+use hanzo_gen::private;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub(crate) use hanzo_identity::lock::Lock;
 #[cfg(test)]
 pub(crate) use hanzo_identity::lock::lock_path;
+pub(crate) use hanzo_identity::lock::Lock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

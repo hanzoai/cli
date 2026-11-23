@@ -34,7 +34,10 @@ const FONT: &[u8] = include_bytes!("../../assets/term/font.woff2");
 /// beyond the socket it already holds.
 pub fn page() -> String {
     INDEX
-        .replace("__FONT__", &base64::engine::general_purpose::STANDARD.encode(FONT))
+        .replace(
+            "__FONT__",
+            &base64::engine::general_purpose::STANDARD.encode(FONT),
+        )
         .replace("/*__XTERM_CSS__*/", XTERM_CSS)
         .replace("/*__XTERM_JS__*/", XTERM_JS)
         .replace("/*__FIT_JS__*/", FIT_JS)
@@ -64,7 +67,13 @@ mod tests {
     #[test]
     fn the_page_has_no_holes_left_in_it() {
         let p = page();
-        for hole in ["__FONT__", "__XTERM_CSS__", "__XTERM_JS__", "__FIT_JS__", "__CLIENT_JS__"] {
+        for hole in [
+            "__FONT__",
+            "__XTERM_CSS__",
+            "__XTERM_JS__",
+            "__FIT_JS__",
+            "__CLIENT_JS__",
+        ] {
             assert!(!p.contains(hole), "{hole} was never substituted");
         }
     }
@@ -75,14 +84,27 @@ mod tests {
     #[test]
     fn the_face_travels_inside_the_page() {
         let p = page();
-        assert!(p.contains("url('data:font/woff2;base64,"), "Zen Mono must be embedded, not looked up");
-        assert!(p.contains("font-family: 'Zen Mono'"), "the embedded @font-face must declare Zen Mono");
-        assert!(!p.contains("Geist Mono"), "Geist Mono must not appear anywhere in the terminal page");
+        assert!(
+            p.contains("url('data:font/woff2;base64,"),
+            "Zen Mono must be embedded, not looked up"
+        );
+        assert!(
+            p.contains("font-family: 'Zen Mono'"),
+            "the embedded @font-face must declare Zen Mono"
+        );
+        assert!(
+            !p.contains("Geist Mono"),
+            "Geist Mono must not appear anywhere in the terminal page"
+        );
         assert!(
             p.contains("clearTextureAtlas") && p.contains("document.fonts.load"),
             "xterm.js must clear its glyph atlas and re-measure after Zen Mono finishes loading",
         );
-        assert_eq!(FONT.len(), 71_396, "term/font.woff2 must match @hanzo/font ZenMono-Variable.woff2");
+        assert_eq!(
+            FONT.len(),
+            71_396,
+            "term/font.woff2 must match @hanzo/font ZenMono-Variable.woff2"
+        );
     }
 
     /// The library is really inlined, not referenced — ttyd serves ONE document
@@ -93,8 +115,14 @@ mod tests {
         let p = page();
         assert!(p.contains("Terminal"), "xterm itself must be in the page");
         assert!(p.contains("FitAddon"), "and the fit addon");
-        assert!(!p.contains("src=\"./"), "no relative asset may be referenced");
-        assert!(!p.contains("src=\"http"), "and nothing may be fetched remotely");
+        assert!(
+            !p.contains("src=\"./"),
+            "no relative asset may be referenced"
+        );
+        assert!(
+            !p.contains("src=\"http"),
+            "and nothing may be fetched remotely"
+        );
         assert!(
             !p.contains("cdn.jsdelivr") && !p.contains("unpkg.com"),
             "a terminal must not depend on a CDN being up",
@@ -107,9 +135,18 @@ mod tests {
     #[test]
     fn only_the_workspace_chord_is_intercepted() {
         let js = CLIENT_JS;
-        assert!(js.contains("!e.ctrlKey || !e.altKey"), "the chord is ctrl+alt, and nothing else is taken");
-        assert!(js.contains("AltGraph"), "AltGr reports as ctrl+alt and must be excluded");
-        assert!(js.contains("return true"), "everything else reaches the pty");
+        assert!(
+            js.contains("!e.ctrlKey || !e.altKey"),
+            "the chord is ctrl+alt, and nothing else is taken"
+        );
+        assert!(
+            js.contains("AltGraph"),
+            "AltGr reports as ctrl+alt and must be excluded"
+        );
+        assert!(
+            js.contains("return true"),
+            "everything else reaches the pty"
+        );
     }
 
     /// The page ANNOUNCES itself to whoever framed it. A parent cannot work this
@@ -120,7 +157,10 @@ mod tests {
     #[test]
     fn the_terminal_tells_its_parent_it_is_really_there() {
         let js = CLIENT_JS;
-        assert!(js.contains("hanzo-term"), "the workspace listens for exactly this source");
+        assert!(
+            js.contains("hanzo-term"),
+            "the workspace listens for exactly this source"
+        );
         assert!(js.contains("postMessage"), "and it has to actually be sent");
         assert!(
             js.contains("window.parent !== window"),
@@ -136,7 +176,13 @@ mod tests {
         for k in ["esc", "tab", "ctrl", "^C"] {
             assert!(js.contains(k), "the key row must carry `{k}`");
         }
-        assert!(js.contains("pointer: coarse"), "and only where there is no keyboard");
-        assert!(js.contains("visualViewport"), "docked above the software keyboard");
+        assert!(
+            js.contains("pointer: coarse"),
+            "and only where there is no keyboard"
+        );
+        assert!(
+            js.contains("visualViewport"),
+            "docked above the software keyboard"
+        );
     }
 }

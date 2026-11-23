@@ -19,10 +19,10 @@ use std::io::IsTerminal;
 
 use crate::config::Config;
 
-use hanzo_gen::native::{self, NativeAgent};
 use super::provider::{self, Provider};
 use super::secret::{read_trimmed, secret_source, SecretSource};
 use super::{login, oauth};
+use hanzo_gen::native::{self, NativeAgent};
 
 // ---- terminal capability (the piped/CI + NO_COLOR gate) --------------------
 
@@ -234,7 +234,12 @@ fn confirm_provider(provider: Provider) {
 
 /// Sign in as a Hanzo IDENTITY (the OIDC browser flow, or a supplied token), and
 /// record `hanzo` as the active provider so model routing uses the gateway.
-async fn hanzo_login(cfg: &mut Config, brand: &str, token: Option<String>, account: Option<&str>) -> Result<()> {
+async fn hanzo_login(
+    cfg: &mut Config,
+    brand: &str,
+    token: Option<String>,
+    account: Option<&str>,
+) -> Result<()> {
     oauth::server_url(brand)?; // reject an unknown brand before any I/O
     match token {
         Some(t) => {
@@ -410,7 +415,10 @@ pub async fn run_login(
     if let Some(p) = provider {
         if let Some(agent) = native::find(&p) {
             if hanzo {
-                bail!("--account picks a Hanzo account; `--provider {p}` signs in to {}", agent.title);
+                bail!(
+                    "--account picks a Hanzo account; `--provider {p}` signs in to {}",
+                    agent.title
+                );
             }
             return native_login(cfg, agent).await;
         }
@@ -418,7 +426,10 @@ pub async fn run_login(
         return match provider {
             Provider::Hanzo => hanzo_login(cfg, brand, token, account.as_deref()).await,
             Provider::OpenAI | Provider::Anthropic if hanzo => {
-                bail!("--account picks a Hanzo account; `--provider {p}` stores a {} key", provider.label())
+                bail!(
+                    "--account picks a Hanzo account; `--provider {p}` stores a {} key",
+                    provider.label()
+                )
             }
             Provider::OpenAI | Provider::Anthropic => {
                 provider_key_login(cfg, provider, token).await

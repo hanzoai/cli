@@ -65,9 +65,13 @@ impl DashboardView {
     pub fn subtitle(&self) -> &'static str {
         match self {
             DashboardView::Sandboxes => "Run coding agents in isolated environments safely",
-            DashboardView::Compute => "This machine and its siblings: GPU, memory, disk, network, serving",
+            DashboardView::Compute => {
+                "This machine and its siblings: GPU, memory, disk, network, serving"
+            }
             DashboardView::LocalModels => "Local LLMs, Zen engines & accelerated model runtimes",
-            DashboardView::CloudServices => "Unified cloud subsystems, microVMs & zero-trust transport",
+            DashboardView::CloudServices => {
+                "Unified cloud subsystems, microVMs & zero-trust transport"
+            }
             DashboardView::Usage => "Resource consumption, inference tokens & quota limits",
             DashboardView::Savings => "Usage and savings, measured vs estimated",
         }
@@ -301,7 +305,10 @@ impl App {
         let mut sandboxes = live_agents;
         let seeded = Self::seed_sandboxes();
         for s in seeded {
-            if !sandboxes.iter().any(|existing| existing.path == s.path || existing.name == s.name) {
+            if !sandboxes
+                .iter()
+                .any(|existing| existing.path == s.path || existing.name == s.name)
+            {
                 sandboxes.push(s);
             }
         }
@@ -331,8 +338,8 @@ impl App {
         let evo_online = Self::probe_addr("127.0.0.1:8731")
             || Self::probe_addr("192.168.77.1:8731")
             || Self::probe_addr("10.0.0.21:8731");
-        let router_online = Self::probe_addr("127.0.0.1:1235")
-            || Self::probe_addr("10.0.0.19:1235");
+        let router_online =
+            Self::probe_addr("127.0.0.1:1235") || Self::probe_addr("10.0.0.19:1235");
         let coderouter_online = Self::probe_addr("127.0.0.1:8088");
         (spark_online, evo_online, router_online, coderouter_online)
     }
@@ -358,7 +365,8 @@ impl App {
         self.evo_online = evo_live;
         self.router_online = router_live;
 
-        self.local_models = Self::build_local_models(Some(&telem), spark_live, evo_live, router_live);
+        self.local_models =
+            Self::build_local_models(Some(&telem), spark_live, evo_live, router_live);
         self.usage_items = Self::build_usage_items(Some(&telem));
         self.cloud_services = Self::seed_cloud_services(router_live);
         self.cluster_telemetry = Some(telem);
@@ -426,13 +434,18 @@ impl App {
             let etime = parts[3].to_string();
             let cmd = parts[4..].join(" ");
 
-            let is_claude = (cmd.contains("claude -c") || cmd.contains("claude --dangerously") || cmd.contains("/claude/versions/"))
+            let is_claude = (cmd.contains("claude -c")
+                || cmd.contains("claude --dangerously")
+                || cmd.contains("/claude/versions/"))
                 && !cmd.contains("/opt/homebrew/bin/zsh");
             let is_codex = cmd.contains("codex -c") || cmd.contains("features.code_mode_host");
-            let is_hanzo = cmd.contains("hanzo dev")
-                && !cmd.contains("hanzo sbx") && !cmd.contains("grep");
+            let is_hanzo =
+                cmd.contains("hanzo dev") && !cmd.contains("hanzo sbx") && !cmd.contains("grep");
 
-            if (is_claude || is_codex || is_hanzo) && !cmd.contains("python3") && !cmd.contains("node scripts/serve.mjs") {
+            if (is_claude || is_codex || is_hanzo)
+                && !cmd.contains("python3")
+                && !cmd.contains("node scripts/serve.mjs")
+            {
                 let agent_kind = if is_codex {
                     "Codex"
                 } else if is_hanzo {
@@ -477,16 +490,28 @@ impl App {
                 if cols.len() >= 9 && line.contains("->") {
                     let pid = cols[1];
                     if let Some(target) = line.split("->").nth(1) {
-                        let host_port = target.split_whitespace().next().unwrap_or(target).split('(').next().unwrap_or(target).trim();
+                        let host_port = target
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or(target)
+                            .split('(')
+                            .next()
+                            .unwrap_or(target)
+                            .trim();
                         if !host_port.is_empty() {
-                            net_map.entry(pid.to_string()).or_default().push(host_port.to_string());
+                            net_map
+                                .entry(pid.to_string())
+                                .or_default()
+                                .push(host_port.to_string());
                         }
                     }
                 }
             }
         }
 
-        let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "~".to_string());
+        let home = dirs::home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "~".to_string());
         type Seen = (String, u64, f32, String, String, String, Vec<String>);
         let mut seen_cwds: HashMap<(String, String), Seen> = HashMap::new();
 
@@ -504,10 +529,32 @@ impl App {
                 let hosts = net_map.get(pid).cloned().unwrap_or_default();
                 if let Some(existing) = seen_cwds.get(&key) {
                     if *rss_kb > existing.1 {
-                        seen_cwds.insert(key, (pid.clone(), *rss_kb, *cpu, etime.clone(), agent_name.clone(), raw_cwd, hosts));
+                        seen_cwds.insert(
+                            key,
+                            (
+                                pid.clone(),
+                                *rss_kb,
+                                *cpu,
+                                etime.clone(),
+                                agent_name.clone(),
+                                raw_cwd,
+                                hosts,
+                            ),
+                        );
                     }
                 } else {
-                    seen_cwds.insert(key, (pid.clone(), *rss_kb, *cpu, etime.clone(), agent_name.clone(), raw_cwd, hosts));
+                    seen_cwds.insert(
+                        key,
+                        (
+                            pid.clone(),
+                            *rss_kb,
+                            *cpu,
+                            etime.clone(),
+                            agent_name.clone(),
+                            raw_cwd,
+                            hosts,
+                        ),
+                    );
                 }
             }
         }
@@ -525,7 +572,11 @@ impl App {
             } else if raw_cwd == "/" {
                 format!("codex-agent [pid:{pid}]")
             } else {
-                let prefix = if agent_name == "Claude Code" { "claude" } else { "hanzo" };
+                let prefix = if agent_name == "Claude Code" {
+                    "claude"
+                } else {
+                    "hanzo"
+                };
                 format!("{prefix}-{dir_name} [pid:{pid}]")
             };
 
@@ -556,7 +607,11 @@ impl App {
             }
 
             if logs.is_empty() {
-                let default_host = if agent_name == "Codex" { "api.openai.com" } else { "api.anthropic.com" };
+                let default_host = if agent_name == "Codex" {
+                    "api.openai.com"
+                } else {
+                    "api.anthropic.com"
+                };
                 logs.push(NetworkLogEntry {
                     date: now_time.clone(),
                     host: default_host.into(),
@@ -815,8 +870,10 @@ impl App {
         let dgx = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "dgx"));
         let evo = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "evo"));
 
-        let total_prefill = dgx.map(|d| d.prefill_tok_s).unwrap_or(0.0) + evo.map(|e| e.prefill_tok_s).unwrap_or(0.0);
-        let total_decode = dgx.map(|d| d.decode_tok_s).unwrap_or(0.0) + evo.map(|e| e.decode_tok_s).unwrap_or(0.0);
+        let total_prefill = dgx.map(|d| d.prefill_tok_s).unwrap_or(0.0)
+            + evo.map(|e| e.prefill_tok_s).unwrap_or(0.0);
+        let total_decode =
+            dgx.map(|d| d.decode_tok_s).unwrap_or(0.0) + evo.map(|e| e.decode_tok_s).unwrap_or(0.0);
 
         let router_speed = if total_prefill > 0.0 || total_decode > 0.0 {
             format!("{:.0} prefill / {:.1} gen t/s", total_prefill, total_decode)
@@ -826,7 +883,10 @@ impl App {
 
         let dgx_speed = if let Some(d) = dgx {
             if d.prefill_tok_s > 0.0 || d.decode_tok_s > 0.0 {
-                format!("{:.0} t/s prefill · {:.1} t/s dec", d.prefill_tok_s, d.decode_tok_s)
+                format!(
+                    "{:.0} t/s prefill · {:.1} t/s dec",
+                    d.prefill_tok_s, d.decode_tok_s
+                )
             } else {
                 "2,772 t/s prefill · 4.1 t/s dec".into()
             }
@@ -836,7 +896,10 @@ impl App {
 
         let evo_speed = if let Some(e) = evo {
             if e.prefill_tok_s > 0.0 || e.decode_tok_s > 0.0 {
-                format!("{:.0} t/s prefill · {:.1} t/s dec", e.prefill_tok_s, e.decode_tok_s)
+                format!(
+                    "{:.0} t/s prefill · {:.1} t/s dec",
+                    e.prefill_tok_s, e.decode_tok_s
+                )
             } else {
                 "1,134 t/s prefill · 15.5 t/s dec".into()
             }
@@ -846,7 +909,10 @@ impl App {
 
         let dgx_status = if let Some(d) = dgx {
             if d.online {
-                format!("● Active ({:.1}% KV · {:.0}% hit)", d.kv_usage_pct, d.prefix_hit_rate)
+                format!(
+                    "● Active ({:.1}% KV · {:.0}% hit)",
+                    d.kv_usage_pct, d.prefix_hit_rate
+                )
             } else {
                 "○ Standby".into()
             }
@@ -879,8 +945,16 @@ impl App {
                 context_window: "32,768 / 262k Tokens".into(),
                 quantization: "2-bit Affine MLX".into(),
                 memory: "1.2 GB Unified GPU".into(),
-                speed: if engine_live { "198 prefill · 35 t/s".into() } else { "—".into() },
-                status: if engine_live { "● Loaded (Active)".into() } else { "○ Standby".into() },
+                speed: if engine_live {
+                    "198 prefill · 35 t/s".into()
+                } else {
+                    "—".into()
+                },
+                status: if engine_live {
+                    "● Loaded (Active)".into()
+                } else {
+                    "○ Standby".into()
+                },
                 endpoint: "http://127.0.0.1:1234/v1".into(),
                 is_active: engine_live,
             },
@@ -893,7 +967,11 @@ impl App {
                 quantization: "NVFP4 + Halogen W4B".into(),
                 memory: "DGX 24GB + Evo 76GB".into(),
                 speed: router_speed,
-                status: if router_live { "● Active (Cluster Mesh)".into() } else { "○ Standby".into() },
+                status: if router_live {
+                    "● Active (Cluster Mesh)".into()
+                } else {
+                    "○ Standby".into()
+                },
                 endpoint: "http://127.0.0.1:1235/v1".into(),
                 is_active: router_live,
             },
@@ -952,7 +1030,11 @@ impl App {
         ]
     }
 
-    pub fn seed_local_models(spark_live: bool, evo_live: bool, router_live: bool) -> Vec<LocalModel> {
+    pub fn seed_local_models(
+        spark_live: bool,
+        evo_live: bool,
+        router_live: bool,
+    ) -> Vec<LocalModel> {
         Self::build_local_models(None, spark_live, evo_live, router_live)
     }
 
@@ -1009,7 +1091,11 @@ impl App {
                 port_or_socket: "10.0.0.19:1235".into(),
                 protocol: "HTTP / ZAP".into(),
                 latency: "0.5 ms".into(),
-                status: if router_live { "● Healthy".into() } else { "○ Standby".into() },
+                status: if router_live {
+                    "● Healthy".into()
+                } else {
+                    "○ Standby".into()
+                },
                 description: "Spark edge proxy routing LLM and cluster traffic".into(),
             },
             CloudService {
@@ -1024,7 +1110,9 @@ impl App {
         ]
     }
 
-    pub fn build_usage_items(telem: Option<&crate::commands::monitor::ClusterTelemetry>) -> Vec<UsageItem> {
+    pub fn build_usage_items(
+        telem: Option<&crate::commands::monitor::ClusterTelemetry>,
+    ) -> Vec<UsageItem> {
         let dgx = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "dgx"));
         let evo = telem.and_then(|t| t.nodes.iter().find(|n| n.name == "evo"));
 
@@ -1045,13 +1133,20 @@ impl App {
         let router_routes = telem.map(|t| t.router_routes).unwrap_or(0);
 
         let dgx_prefix_desc = if dgx_prefix_queries > 0 {
-            format!("Prefix KV cache hit rate ({:.1}M queries)", dgx_prefix_queries as f64 / 1_000_000.0)
+            format!(
+                "Prefix KV cache hit rate ({:.1}M queries)",
+                dgx_prefix_queries as f64 / 1_000_000.0
+            )
         } else {
             "Prefix KV cache hit rate (Live vLLM)".into()
         };
 
         let dgx_prefix_consumed = if dgx_prefix_hits > 0 {
-            format!("{}% ({:.1}M hits)", dgx_hit_pct, dgx_prefix_hits as f64 / 1_000_000.0)
+            format!(
+                "{}% ({:.1}M hits)",
+                dgx_hit_pct,
+                dgx_prefix_hits as f64 / 1_000_000.0
+            )
         } else {
             format!("{}%", dgx_hit_pct)
         };
@@ -1063,7 +1158,10 @@ impl App {
         };
 
         let evo_draft_desc = if evo_draft_total > 0 {
-            format!("Strix Halo draft acceptance ({} draft tokens)", evo_draft_total)
+            format!(
+                "Strix Halo draft acceptance ({} draft tokens)",
+                evo_draft_total
+            )
         } else {
             "Strix Halo draft acceptance rate".into()
         };
@@ -1075,7 +1173,11 @@ impl App {
                 consumed: dgx_prefix_consumed,
                 quota: "100% (Instant TTFT)".into(),
                 percentage: dgx_hit_pct.min(100),
-                trend: if dgx.map(|d| d.online).unwrap_or(false) { "active".into() } else { "offline".into() },
+                trend: if dgx.map(|d| d.online).unwrap_or(false) {
+                    "active".into()
+                } else {
+                    "offline".into()
+                },
             },
             UsageItem {
                 category: "DGX Speculative MTP".into(),
@@ -1087,15 +1189,25 @@ impl App {
             },
             UsageItem {
                 category: "DGX KV Cache VRAM".into(),
-                metric: format!("vLLM FP8 cache usage ({}/{} tokens)", dgx_kv_tokens, dgx_kv_total),
+                metric: format!(
+                    "vLLM FP8 cache usage ({}/{} tokens)",
+                    dgx_kv_tokens, dgx_kv_total
+                ),
                 consumed: format!("{}% ({} tokens)", dgx_kv_pct, dgx_kv_tokens),
                 quota: "1,000,000 tokens (1M)".into(),
                 percentage: dgx_kv_pct.min(100),
-                trend: if dgx_kv_pct > 80 { "near cap".into() } else { "healthy".into() },
+                trend: if dgx_kv_pct > 80 {
+                    "near cap".into()
+                } else {
+                    "healthy".into()
+                },
             },
             UsageItem {
                 category: "Evo Unified Memory".into(),
-                metric: format!("Halogen FP16 KV pool ({}/{} tokens)", evo_kv_tokens, evo_kv_total),
+                metric: format!(
+                    "Halogen FP16 KV pool ({}/{} tokens)",
+                    evo_kv_tokens, evo_kv_total
+                ),
                 consumed: format!("{}% ({} tokens)", evo_kv_pct, evo_kv_tokens),
                 quota: "262,144 tokens (262K)".into(),
                 percentage: evo_kv_pct.min(100),
@@ -1115,7 +1227,11 @@ impl App {
                 consumed: format!("{} active routes", router_routes),
                 quota: "64 routes max".into(),
                 percentage: ((router_routes as f64 / 64.0) * 100.0).round() as u32,
-                trend: if telem.map(|t| t.router_online).unwrap_or(false) { "balanced".into() } else { "offline".into() },
+                trend: if telem.map(|t| t.router_online).unwrap_or(false) {
+                    "balanced".into()
+                } else {
+                    "offline".into()
+                },
             },
         ]
     }
@@ -1128,18 +1244,22 @@ impl App {
 
     #[allow(dead_code)]
     fn load_persisted(&self) -> Result<Vec<Sandbox>> {
-        let Some(path) = &self.store else { return Ok(Vec::new()) };
+        let Some(path) = &self.store else {
+            return Ok(Vec::new());
+        };
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let data = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let data =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let list: Vec<Sandbox> = serde_json::from_str(&data)?;
         Ok(list)
     }
 
     pub fn save_persisted(&self) -> Result<()> {
-        let Some(path) = &self.store else { return Ok(()) };
+        let Some(path) = &self.store else {
+            return Ok(());
+        };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -1170,13 +1290,19 @@ impl App {
 
     pub fn next_view(&mut self) {
         let all = DashboardView::all();
-        let idx = all.iter().position(|v| *v == self.current_view).unwrap_or(0);
+        let idx = all
+            .iter()
+            .position(|v| *v == self.current_view)
+            .unwrap_or(0);
         self.set_view(all[(idx + 1) % all.len()]);
     }
 
     pub fn previous_view(&mut self) {
         let all = DashboardView::all();
-        let idx = all.iter().position(|v| *v == self.current_view).unwrap_or(0);
+        let idx = all
+            .iter()
+            .position(|v| *v == self.current_view)
+            .unwrap_or(0);
         let new_idx = if idx == 0 { all.len() - 1 } else { idx - 1 };
         self.set_view(all[new_idx]);
     }
@@ -1229,17 +1355,20 @@ impl App {
             DashboardView::Savings => {}
             DashboardView::LocalModels => {
                 if !self.local_models.is_empty() {
-                    self.selected_model_row = (self.selected_model_row + 1) % self.local_models.len();
+                    self.selected_model_row =
+                        (self.selected_model_row + 1) % self.local_models.len();
                 }
             }
             DashboardView::CloudServices => {
                 if !self.cloud_services.is_empty() {
-                    self.selected_service_row = (self.selected_service_row + 1) % self.cloud_services.len();
+                    self.selected_service_row =
+                        (self.selected_service_row + 1) % self.cloud_services.len();
                 }
             }
             DashboardView::Usage => {
                 if !self.usage_items.is_empty() {
-                    self.selected_usage_row = (self.selected_usage_row + 1) % self.usage_items.len();
+                    self.selected_usage_row =
+                        (self.selected_usage_row + 1) % self.usage_items.len();
                 }
             }
         }
@@ -1330,7 +1459,9 @@ impl App {
 
     pub fn toggle_start_stop(&mut self) {
         let (name, new_status) = {
-            let Some(sbx) = self.current_sandbox_mut() else { return };
+            let Some(sbx) = self.current_sandbox_mut() else {
+                return;
+            };
             match sbx.status {
                 SandboxStatus::Running => {
                     sbx.status = SandboxStatus::Stopped;
@@ -1372,7 +1503,9 @@ impl App {
         match self.active_tab {
             DetailTab::NetworkLog => {
                 let row_idx = self.selected_network_row;
-                let Some(sbx) = self.current_sandbox_mut() else { return };
+                let Some(sbx) = self.current_sandbox_mut() else {
+                    return;
+                };
                 if let Some(entry) = sbx.network_logs.get_mut(row_idx) {
                     entry.status = match entry.status {
                         NetworkStatus::Allowed => NetworkStatus::Blocked,
@@ -1425,7 +1558,11 @@ impl App {
         let new_sbx = Sandbox {
             id: format!("sbx-{}", self.sandboxes.len() + 1),
             name: name.clone(),
-            agent: if self.sandboxes.len().is_multiple_of(2) { "Hanzo".into() } else { "Claude Code".into() },
+            agent: if self.sandboxes.len().is_multiple_of(2) {
+                "Hanzo".into()
+            } else {
+                "Claude Code".into()
+            },
             path: format!("{home}/work/sandbox-{}", self.sandboxes.len() + 1),
             runtime: "microvm".into(),
             status: SandboxStatus::Running,
@@ -1472,7 +1609,9 @@ impl App {
             let model_id = m.id.clone();
             let node = self.target_node.clone();
             m.status = "↓ Downloading...".into();
-            self.set_status(format!("↓ Downloading {model_id} to {node} via `hf download` (17.8 GB)"));
+            self.set_status(format!(
+                "↓ Downloading {model_id} to {node} via `hf download` (17.8 GB)"
+            ));
         }
     }
 
@@ -1537,7 +1676,12 @@ impl App {
         self.evo_online = evo_live;
         self.router_online = router_live;
         self.coderouter_online = coderouter_live;
-        self.local_models = Self::build_local_models(self.cluster_telemetry.as_ref(), spark_live, evo_live, router_live);
+        self.local_models = Self::build_local_models(
+            self.cluster_telemetry.as_ref(),
+            spark_live,
+            evo_live,
+            router_live,
+        );
         self.cloud_services = Self::seed_cloud_services(router_live);
         self.usage_items = Self::build_usage_items(self.cluster_telemetry.as_ref());
         self.set_status("✓ Telemetry refreshed: discovered live host agents & fleet");
@@ -1655,10 +1799,7 @@ impl App {
                 }
                 DashboardView::CloudServices => {
                     if let Some(svc) = self.cloud_services.get(self.selected_service_row) {
-                        self.set_status(format!(
-                            "→ Probed service {}: {}",
-                            svc.name, svc.status
-                        ));
+                        self.set_status(format!("→ Probed service {}: {}", svc.name, svc.status));
                     }
                 }
                 _ => {}
@@ -1799,13 +1940,18 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             "Hanzo Sandboxes",
             "Run coding agents in isolated microVMs & workspaces safely",
         ),
-        _ => ("Hanzo Console & Operations Dashboard", app.current_view.subtitle()),
+        _ => (
+            "Hanzo Console & Operations Dashboard",
+            app.current_view.subtitle(),
+        ),
     };
 
     let title_line = Line::from(vec![
         Span::styled(
             title_str,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("   "),
         Span::styled(subtitle_str, Style::default().fg(Color::Rgb(140, 145, 155))),
@@ -1814,17 +1960,30 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 
     if app.current_view == DashboardView::Compute {
         let c = &app.compute;
-        let api = c.api.trim_start_matches("https://").trim_start_matches("http://");
+        let api = c
+            .api
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
         let right_line = Line::from(vec![
             Span::styled(
                 c.account.clone().unwrap_or_else(|| "not signed in".into()),
-                Style::default().fg(if c.account.is_some() { Color::Cyan } else { Color::DarkGray }),
+                Style::default().fg(if c.account.is_some() {
+                    Color::Cyan
+                } else {
+                    Color::DarkGray
+                }),
             ),
             Span::styled(format!("  {api}"), Style::default().fg(Color::DarkGray)),
             Span::raw("   "),
-            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                concat!("v", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]);
-        f.render_widget(Paragraph::new(right_line).alignment(Alignment::Right), header_chunks[1]);
+        f.render_widget(
+            Paragraph::new(right_line).alignment(Alignment::Right),
+            header_chunks[1],
+        );
         f.render_widget(header_block, area);
         return;
     }
@@ -1860,7 +2019,10 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("   "),
         Span::styled(iam_status, Style::default().fg(iam_color)),
         Span::raw("   "),
-        Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            concat!("v", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(Color::DarkGray),
+        ),
     ]);
 
     f.render_widget(
@@ -1940,7 +2102,13 @@ fn render_sandboxes_pane(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let mut current_y = inner.y;
-    for (idx, sbx) in app.sandboxes.iter().enumerate().skip(start_idx).take(max_visible) {
+    for (idx, sbx) in app
+        .sandboxes
+        .iter()
+        .enumerate()
+        .skip(start_idx)
+        .take(max_visible)
+    {
         let is_selected = idx == app.selected_sandbox;
 
         if current_y + card_height > inner.y + inner.height {
@@ -1975,9 +2143,17 @@ fn render_sandbox_card(
     };
 
     let (badge_text, bg_col, fg_col) = if sbx.runtime.contains("runc") {
-        (" runc (native GPU) ", Color::Rgb(30, 65, 50), Color::Rgb(120, 240, 180))
+        (
+            " runc (native GPU) ",
+            Color::Rgb(30, 65, 50),
+            Color::Rgb(120, 240, 180),
+        )
     } else {
-        (" microvm ", Color::Rgb(65, 45, 110), Color::Rgb(215, 190, 255))
+        (
+            " microvm ",
+            Color::Rgb(65, 45, 110),
+            Color::Rgb(215, 190, 255),
+        )
     };
 
     let status_glyph = match sbx.status {
@@ -2021,20 +2197,24 @@ fn render_sandbox_card(
         Span::styled(
             &sbx.name,
             if is_selected {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             },
         ),
     ]);
 
-    let line2 = Line::from(vec![
-        Span::styled(&sbx.agent, Style::default().fg(Color::Rgb(200, 205, 215))),
-    ]);
+    let line2 = Line::from(vec![Span::styled(
+        &sbx.agent,
+        Style::default().fg(Color::Rgb(200, 205, 215)),
+    )]);
 
-    let line3 = Line::from(vec![
-        Span::styled(&sbx.path, Style::default().fg(Color::Rgb(120, 125, 140))),
-    ]);
+    let line3 = Line::from(vec![Span::styled(
+        &sbx.path,
+        Style::default().fg(Color::Rgb(120, 125, 140)),
+    )]);
 
     let line4 = match sbx.status {
         SandboxStatus::Running => Line::from(vec![
@@ -2052,21 +2232,32 @@ fn render_sandbox_card(
             Span::raw("   "),
             Span::styled("● run", Style::default().fg(Color::Rgb(90, 230, 180))),
         ]),
-        SandboxStatus::Stopped => Line::from(vec![
-            Span::styled("stopped", Style::default().fg(Color::Rgb(180, 90, 90))),
-        ]),
+        SandboxStatus::Stopped => Line::from(vec![Span::styled(
+            "stopped",
+            Style::default().fg(Color::Rgb(180, 90, 90)),
+        )]),
     };
 
     let line5 = match sbx.status {
         SandboxStatus::Running => Line::from(vec![
-            Span::styled("stop", Style::default().fg(Color::Rgb(255, 185, 70)).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "stop",
+                Style::default()
+                    .fg(Color::Rgb(255, 185, 70))
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("  "),
             Span::styled("exec", Style::default().fg(Color::Rgb(190, 195, 205))),
             Span::raw("  "),
             Span::styled("remove", Style::default().fg(Color::Rgb(255, 95, 125))),
         ]),
         SandboxStatus::Stopped => Line::from(vec![
-            Span::styled("start", Style::default().fg(Color::Rgb(90, 230, 150)).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "start",
+                Style::default()
+                    .fg(Color::Rgb(90, 230, 150))
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("  "),
             Span::styled("exec", Style::default().fg(Color::Rgb(140, 145, 155))),
             Span::raw("  "),
@@ -2107,12 +2298,12 @@ fn render_detail_pane(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(inner);
 
-    let title_line = Line::from(vec![
-        Span::styled(
-            &sbx.name,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        ),
-    ]);
+    let title_line = Line::from(vec![Span::styled(
+        &sbx.name,
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )]);
     f.render_widget(Paragraph::new(title_line), chunks[0]);
 
     let tab_titles = vec![
@@ -2136,8 +2327,12 @@ fn render_detail_pane(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(tabs, chunks[1]);
 
     match app.active_tab {
-        DetailTab::NetworkLog => render_network_log_tab(f, chunks[2], chunks[3], chunks[4], sbx, app, is_focused),
-        DetailTab::GlobalRules => render_global_rules_tab(f, chunks[2], chunks[3], chunks[4], app, is_focused),
+        DetailTab::NetworkLog => {
+            render_network_log_tab(f, chunks[2], chunks[3], chunks[4], sbx, app, is_focused)
+        }
+        DetailTab::GlobalRules => {
+            render_global_rules_tab(f, chunks[2], chunks[3], chunks[4], app, is_focused)
+        }
     }
 }
 
@@ -2155,18 +2350,36 @@ fn render_network_log_tab(
         Span::styled(format!("{total}"), Style::default().fg(Color::White)),
         Span::styled(" total  ·  ", Style::default().fg(Color::DarkGray)),
         Span::styled("● ", Style::default().fg(Color::Rgb(90, 240, 150))),
-        Span::styled(format!("{allowed} allowed"), Style::default().fg(Color::Rgb(90, 240, 150))),
+        Span::styled(
+            format!("{allowed} allowed"),
+            Style::default().fg(Color::Rgb(90, 240, 150)),
+        ),
         Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
         Span::styled("● ", Style::default().fg(Color::Rgb(255, 80, 120))),
-        Span::styled(format!("{blocked} blocked"), Style::default().fg(Color::Rgb(255, 80, 120))),
+        Span::styled(
+            format!("{blocked} blocked"),
+            Style::default().fg(Color::Rgb(255, 80, 120)),
+        ),
     ]);
     f.render_widget(Paragraph::new(summary), summary_area);
 
     let header = Row::new(vec![
-        Cell::from(Span::styled("Date ↑", Style::default().fg(Color::Rgb(140, 145, 155)))),
-        Cell::from(Span::styled("Host", Style::default().fg(Color::Rgb(140, 145, 155)))),
-        Cell::from(Span::styled("Hits", Style::default().fg(Color::Rgb(140, 145, 155)))),
-        Cell::from(Span::styled("Status", Style::default().fg(Color::Rgb(140, 145, 155)))),
+        Cell::from(Span::styled(
+            "Date ↑",
+            Style::default().fg(Color::Rgb(140, 145, 155)),
+        )),
+        Cell::from(Span::styled(
+            "Host",
+            Style::default().fg(Color::Rgb(140, 145, 155)),
+        )),
+        Cell::from(Span::styled(
+            "Hits",
+            Style::default().fg(Color::Rgb(140, 145, 155)),
+        )),
+        Cell::from(Span::styled(
+            "Status",
+            Style::default().fg(Color::Rgb(140, 145, 155)),
+        )),
     ])
     .bottom_margin(1);
 
@@ -2198,17 +2411,33 @@ fn render_network_log_tab(
 
             let host_span = if is_row_selected {
                 Line::from(vec![
-                    Span::styled(&entry.host, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        &entry.host,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw("  "),
                     match entry.status {
-                        NetworkStatus::Allowed => Span::styled("block", Style::default().fg(Color::Rgb(255, 95, 140)).add_modifier(Modifier::BOLD)),
-                        NetworkStatus::Blocked => Span::styled("allow", Style::default().fg(Color::Rgb(90, 240, 150)).add_modifier(Modifier::BOLD)),
+                        NetworkStatus::Allowed => Span::styled(
+                            "block",
+                            Style::default()
+                                .fg(Color::Rgb(255, 95, 140))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        NetworkStatus::Blocked => Span::styled(
+                            "allow",
+                            Style::default()
+                                .fg(Color::Rgb(90, 240, 150))
+                                .add_modifier(Modifier::BOLD),
+                        ),
                     },
                 ])
             } else {
-                Line::from(vec![
-                    Span::styled(&entry.host, Style::default().fg(Color::Rgb(220, 225, 235))),
-                ])
+                Line::from(vec![Span::styled(
+                    &entry.host,
+                    Style::default().fg(Color::Rgb(220, 225, 235)),
+                )])
             };
 
             let row_style = if is_row_selected {
@@ -2220,7 +2449,10 @@ fn render_network_log_tab(
             Row::new(vec![
                 Cell::from(date_span),
                 Cell::from(host_span),
-                Cell::from(Span::styled(entry.hits.to_string(), Style::default().fg(Color::Rgb(160, 165, 175)))),
+                Cell::from(Span::styled(
+                    entry.hits.to_string(),
+                    Style::default().fg(Color::Rgb(160, 165, 175)),
+                )),
                 Cell::from(Span::styled(status_text, Style::default().fg(status_color))),
             ])
             .style(row_style)
@@ -2234,15 +2466,14 @@ fn render_network_log_tab(
         Constraint::Length(10),
     ];
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .column_spacing(2);
+    let table = Table::new(rows, widths).header(header).column_spacing(2);
 
     f.render_widget(table, table_area);
 
-    let summary_bottom = Line::from(vec![
-        Span::styled(format!("{allowed} allowed entries  ·  {blocked} blocked entries"), Style::default().fg(Color::DarkGray)),
-    ]);
+    let summary_bottom = Line::from(vec![Span::styled(
+        format!("{allowed} allowed entries  ·  {blocked} blocked entries"),
+        Style::default().fg(Color::DarkGray),
+    )]);
     f.render_widget(Paragraph::new(summary_bottom), hint_area);
 }
 
@@ -2255,10 +2486,15 @@ fn render_global_rules_tab(
     is_focused: bool,
 ) {
     let summary = Line::from(vec![
-        Span::styled("Default egress policy: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "Default egress policy: ",
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::styled(
             "ZERO-TRUST DENY",
-            Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             " · Only allowlisted outbound endpoints are reachable",
@@ -2297,7 +2533,9 @@ fn render_global_rules_tab(
                 Span::styled(
                     &rule.pattern,
                     if is_row_selected {
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     },
@@ -2305,7 +2543,9 @@ fn render_global_rules_tab(
                 Span::styled(&rule.rule_type, Style::default().fg(Color::Cyan)),
                 Span::styled(
                     action_text,
-                    Style::default().fg(action_color).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(action_color)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(rule.hits.to_string(), Style::default().fg(Color::Gray)),
             ])
@@ -2320,19 +2560,27 @@ fn render_global_rules_tab(
         Constraint::Length(8),
     ];
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .column_spacing(2);
+    let table = Table::new(rows, widths).header(header).column_spacing(2);
 
     f.render_widget(table, table_area);
 
     let hint = Line::from(vec![
-        Span::styled("[b]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[b]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             " toggle rule allow/block   ",
             Style::default().fg(Color::DarkGray),
         ),
-        Span::styled("[n]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[n]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" switch tab", Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(hint), hint_area);
@@ -2371,16 +2619,42 @@ fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let speed_summary = format!("{:.0} prefill · {:.1} gen t/s", total_prefill, total_decode);
-    render_kpi_card(f, kpi_chunks[0], "Active Model", "qwen3.8-flash-next", Color::Green);
-    render_kpi_card(f, kpi_chunks[1], "Context Length", "1,000,000 (1M) / 262k", Color::Cyan);
-    render_kpi_card(f, kpi_chunks[2], "Inference Engines", "vLLM NVFP4 + Halogen ROCm", Color::Yellow);
-    render_kpi_card(f, kpi_chunks[3], "Cluster Speed", &speed_summary, Color::White);
+    render_kpi_card(
+        f,
+        kpi_chunks[0],
+        "Active Model",
+        "qwen3.8-flash-next",
+        Color::Green,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[1],
+        "Context Length",
+        "1,000,000 (1M) / 262k",
+        Color::Cyan,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[2],
+        "Inference Engines",
+        "vLLM NVFP4 + Halogen ROCm",
+        Color::Yellow,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[3],
+        "Cluster Speed",
+        &speed_summary,
+        Color::White,
+    );
 
     // Models Table
     let model_block = Block::default()
         .title(Span::styled(
             " Local Models Inventory (OpenAI-compatible & Zen Endpoints) ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -2412,11 +2686,24 @@ fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::White)
             };
 
-            let status_color = if m.is_active { Color::Green } else { Color::DarkGray };
-            let node_color = if m.target_node.contains("spark") { Color::Cyan } else { Color::Yellow };
+            let status_color = if m.is_active {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
+            let node_color = if m.target_node.contains("spark") {
+                Color::Cyan
+            } else {
+                Color::Yellow
+            };
 
             Row::new(vec![
-                Span::styled(&m.id, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &m.id,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&m.backend, Style::default().fg(Color::Cyan)),
                 Span::styled(&m.target_node, Style::default().fg(node_color)),
                 Span::styled(&m.parameters, Style::default().fg(Color::Gray)),
@@ -2452,7 +2739,9 @@ fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
     let diag_block = Block::default()
         .title(Span::styled(
             " Zen Engine Specifications & Deployment Controls ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -2507,15 +2796,41 @@ fn render_cloud_services_view(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(chunks[0]);
 
-    render_kpi_card(f, kpi_chunks[0], "Cloud Services", "7 Services Online", Color::Green);
-    render_kpi_card(f, kpi_chunks[1], "Wire Protocol", "Native ZAP + HTTP/2", Color::Cyan);
-    render_kpi_card(f, kpi_chunks[2], "Container Engine", "Hanzo MicroVM (k3s)", Color::Yellow);
-    render_kpi_card(f, kpi_chunks[3], "Average Latency", "0.58 ms (loopback)", Color::White);
+    render_kpi_card(
+        f,
+        kpi_chunks[0],
+        "Cloud Services",
+        "7 Services Online",
+        Color::Green,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[1],
+        "Wire Protocol",
+        "Native ZAP + HTTP/2",
+        Color::Cyan,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[2],
+        "Container Engine",
+        "Hanzo MicroVM (k3s)",
+        Color::Yellow,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[3],
+        "Average Latency",
+        "0.58 ms (loopback)",
+        Color::White,
+    );
 
     let svc_block = Block::default()
         .title(Span::styled(
             " Hanzo Open AI Cloud Subsystems & Unified Runtimes ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -2545,7 +2860,12 @@ fn render_cloud_services_view(f: &mut Frame, area: Rect, app: &App) {
             };
 
             Row::new(vec![
-                Span::styled(&svc.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &svc.name,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&svc.subsystem, Style::default().fg(Color::Cyan)),
                 Span::styled(&svc.port_or_socket, Style::default().fg(Color::DarkGray)),
                 Span::styled(&svc.protocol, Style::default().fg(Color::Gray)),
@@ -2605,18 +2925,48 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
     } else {
         format!("{} Tokens (Total)", total_tokens)
     };
-    let billing_meter = telem.map(|t| t.billing_meter.as_str()).unwrap_or("Local GPU Mesh");
-    let billing_credits = telem.map(|t| t.billing_credits.as_str()).unwrap_or("Unmetered (Zero Cloud Cost)");
+    let billing_meter = telem
+        .map(|t| t.billing_meter.as_str())
+        .unwrap_or("Local GPU Mesh");
+    let billing_credits = telem
+        .map(|t| t.billing_credits.as_str())
+        .unwrap_or("Unmetered (Zero Cloud Cost)");
 
-    render_kpi_card(f, kpi_chunks[0], "Cluster Inferences", &reqs_str, Color::Green);
-    render_kpi_card(f, kpi_chunks[1], "Tokens Consumed", &tokens_str, Color::Cyan);
-    render_kpi_card(f, kpi_chunks[2], "Billing Meter", billing_meter, Color::Yellow);
-    render_kpi_card(f, kpi_chunks[3], "Credits Remaining", billing_credits, Color::White);
+    render_kpi_card(
+        f,
+        kpi_chunks[0],
+        "Cluster Inferences",
+        &reqs_str,
+        Color::Green,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[1],
+        "Tokens Consumed",
+        &tokens_str,
+        Color::Cyan,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[2],
+        "Billing Meter",
+        billing_meter,
+        Color::Yellow,
+    );
+    render_kpi_card(
+        f,
+        kpi_chunks[3],
+        "Credits Remaining",
+        billing_credits,
+        Color::White,
+    );
 
     let usage_block = Block::default()
         .title(Span::styled(
             " Subsystem Quotas & Consumption Metrics ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -2646,14 +2996,31 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
 
             let bar_filled = (u.percentage as usize / 5).min(20);
             let bar_empty = 20usize.saturating_sub(bar_filled);
-            let bar = format!("[{}{}] {}%", "█".repeat(bar_filled), "░".repeat(bar_empty), u.percentage);
+            let bar = format!(
+                "[{}{}] {}%",
+                "█".repeat(bar_filled),
+                "░".repeat(bar_empty),
+                u.percentage
+            );
 
             Row::new(vec![
-                Span::styled(&u.category, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &u.category,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&u.metric, Style::default().fg(Color::DarkGray)),
                 Span::styled(&u.consumed, Style::default().fg(Color::Cyan)),
                 Span::styled(&u.quota, Style::default().fg(Color::Gray)),
-                Span::styled(bar, Style::default().fg(if u.percentage > 80 { Color::Red } else { Color::Green })),
+                Span::styled(
+                    bar,
+                    Style::default().fg(if u.percentage > 80 {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    }),
+                ),
                 Span::styled(&u.trend, Style::default().fg(Color::DarkGray)),
             ])
             .style(row_style)
@@ -2677,7 +3044,9 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
     let perf_block = Block::default()
         .title(Span::styled(
             " Realtime Throughput & SLA Metrics ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -2693,7 +3062,10 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
     let queued = telem.map(|t| t.total_queued).unwrap_or(0);
 
     let throughput_str = if prefill_spd > 0.0 || decode_spd > 0.0 {
-        format!("{:.0} tok/s prefill · {:.1} tok/s dec", prefill_spd, decode_spd)
+        format!(
+            "{:.0} tok/s prefill · {:.1} tok/s dec",
+            prefill_spd, decode_spd
+        )
     } else {
         "idle (ready)".to_string()
     };
@@ -2702,7 +3074,12 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
     let perf_lines = vec![
         Line::from(vec![
             Span::styled("Cluster Speed:      ", Style::default().fg(Color::DarkGray)),
-            Span::styled(throughput_str, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                throughput_str,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("   "),
             Span::styled("P50 Latency: ", Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{:.1} ms", p50), Style::default().fg(Color::White)),
@@ -2715,10 +3092,20 @@ fn render_usage_view(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("Cluster Workload:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(inflight_str, Style::default().fg(if inflight > 0 { Color::Cyan } else { Color::Green })),
+            Span::styled(
+                inflight_str,
+                Style::default().fg(if inflight > 0 {
+                    Color::Cyan
+                } else {
+                    Color::Green
+                }),
+            ),
             Span::raw("   "),
             Span::styled("Zero-Copy Overlays: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Active (.pleo token-addressed memory mesh)", Style::default().fg(Color::LightCyan)),
+            Span::styled(
+                "Active (.pleo token-addressed memory mesh)",
+                Style::default().fg(Color::LightCyan),
+            ),
         ]),
     ];
     f.render_widget(Paragraph::new(perf_lines), perf_inner);
@@ -2737,7 +3124,10 @@ fn render_kpi_card(f: &mut Frame, area: Rect, label: &str, value: &str, val_colo
     f.render_widget(block, area);
 
     let text = vec![
-        Line::from(vec![Span::styled(label, Style::default().fg(Color::DarkGray))]),
+        Line::from(vec![Span::styled(
+            label,
+            Style::default().fg(Color::DarkGray),
+        )]),
         Line::from(vec![Span::styled(
             value,
             Style::default().fg(val_color).add_modifier(Modifier::BOLD),
@@ -2840,14 +3230,16 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Line::from(keys)), footer_chunks[0]);
 
     let right_widget = if let Some(msg) = app.current_status() {
-        Paragraph::new(Line::from(vec![
-            Span::styled(msg, Style::default().fg(Color::Yellow)),
-        ]))
+        Paragraph::new(Line::from(vec![Span::styled(
+            msg,
+            Style::default().fg(Color::Yellow),
+        )]))
         .alignment(Alignment::Right)
     } else {
-        Paragraph::new(Line::from(vec![
-            Span::styled(concat!("v", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
-        ]))
+        Paragraph::new(Line::from(vec![Span::styled(
+            concat!("v", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(Color::DarkGray),
+        )]))
         .alignment(Alignment::Right)
     };
 
@@ -2863,11 +3255,24 @@ mod tests {
     #[test]
     fn test_app_initialization() {
         let app = App::new(None);
-        assert!(!app.sandboxes.is_empty(), "seed sandboxes should be present");
-        assert!(!app.local_models.is_empty(), "local models should be present");
-        assert!(!app.cloud_services.is_empty(), "cloud services should be present");
+        assert!(
+            !app.sandboxes.is_empty(),
+            "seed sandboxes should be present"
+        );
+        assert!(
+            !app.local_models.is_empty(),
+            "local models should be present"
+        );
+        assert!(
+            !app.cloud_services.is_empty(),
+            "cloud services should be present"
+        );
         assert!(!app.usage_items.is_empty(), "usage items should be present");
-        assert_eq!(app.current_view, DashboardView::Compute, "compute is the home page");
+        assert_eq!(
+            app.current_view,
+            DashboardView::Compute,
+            "compute is the home page"
+        );
         assert_eq!(app.selected_sandbox, 0);
         assert_eq!(app.active_tab, DetailTab::NetworkLog);
         assert_eq!(app.focused_pane, FocusedPane::Sandboxes);
@@ -2912,13 +3317,28 @@ mod tests {
         app.set_view(DashboardView::Savings);
         let mut terminal = Terminal::new(TestBackend::new(136, 36)).unwrap();
         terminal.draw(|f| ui(f, &app)).unwrap();
-        let text: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-        for want in ["6: Savings", "hanzo cloud · 24h", "local kai-gateway", " range ", " refresh"] {
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        for want in [
+            "6: Savings",
+            "hanzo cloud · 24h",
+            "local kai-gateway",
+            " range ",
+            " refresh",
+        ] {
             assert!(text.contains(want), "missing {want:?}");
         }
         assert_eq!(app.savings.range, 0);
         app.savings.cycle();
-        assert_eq!(crate::commands::up::savings::RANGES[app.savings.range], "7d");
+        assert_eq!(
+            crate::commands::up::savings::RANGES[app.savings.range],
+            "7d"
+        );
     }
 
     #[test]
@@ -3039,7 +3459,10 @@ mod tests {
     fn test_all_agents_running() {
         let mut app = App::new(None);
         app.start_all_agents();
-        assert!(app.sandboxes.iter().all(|s| s.status == SandboxStatus::Running));
+        assert!(app
+            .sandboxes
+            .iter()
+            .all(|s| s.status == SandboxStatus::Running));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Claude Code"));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Hanzo"));
         assert!(app.sandboxes.iter().any(|s| s.agent == "Codex"));
@@ -3056,18 +3479,27 @@ mod tests {
         assert_eq!(app.target_node, initial_node);
 
         app.download_selected_model();
-        assert_eq!(app.local_models[app.selected_model_row].status, "↓ Downloading...");
+        assert_eq!(
+            app.local_models[app.selected_model_row].status,
+            "↓ Downloading..."
+        );
 
         app.launch_selected_model();
         assert!(app.local_models[app.selected_model_row].is_active);
-        assert_eq!(app.local_models[app.selected_model_row].status, "● Loaded (Active)");
+        assert_eq!(
+            app.local_models[app.selected_model_row].status,
+            "● Loaded (Active)"
+        );
 
         let initial_count = app.sandboxes.len();
         app.launch_container_sandbox();
         assert_eq!(app.sandboxes.len(), initial_count + 1);
 
         app.explore_catalog();
-        assert!(app.current_status().unwrap_or_default().contains("Catalog:"));
+        assert!(app
+            .current_status()
+            .unwrap_or_default()
+            .contains("Catalog:"));
     }
 
     #[test]
@@ -3166,7 +3598,8 @@ mod tests {
         std::fs::write(out.path().join("sbx_models_dump.json"), model_json).unwrap();
         for dump in ["sbx_tui_dump.json", "sbx_models_dump.json"] {
             let rows: Vec<Vec<serde_json::Value>> =
-                serde_json::from_str(&std::fs::read_to_string(out.path().join(dump)).unwrap()).unwrap();
+                serde_json::from_str(&std::fs::read_to_string(out.path().join(dump)).unwrap())
+                    .unwrap();
             assert_eq!(rows.len(), height as usize, "{dump} is the whole screen");
         }
     }
@@ -3206,7 +3639,13 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text.contains('▶'), "Sandboxes TUI should render ▶ indicator");
-        assert!(!text.contains("v§"), "Sandboxes TUI must not render broken v§ glyph");
+        assert!(
+            text.contains('▶'),
+            "Sandboxes TUI should render ▶ indicator"
+        );
+        assert!(
+            !text.contains("v§"),
+            "Sandboxes TUI must not render broken v§ glyph"
+        );
     }
 }

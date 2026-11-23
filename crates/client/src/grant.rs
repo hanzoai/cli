@@ -52,7 +52,11 @@ pub struct Grant {
 
 impl Grant {
     pub fn new(subject: impl Into<String>, issuer: impl Into<String>) -> Self {
-        Grant { subject: subject.into(), issuer: issuer.into(), held: Mutex::new(None) }
+        Grant {
+            subject: subject.into(),
+            issuer: issuer.into(),
+            held: Mutex::new(None),
+        }
     }
 
     pub fn subject(&self) -> &str {
@@ -82,17 +86,23 @@ impl Grant {
 
     async fn mint<T: Transport>(&self, wire: &T, key: &str) -> Result<String, Error> {
         let url = url(&self.issuer, &self.subject)?;
-        let reply = wire.send(Request::new(Method::POST, url).token(key)).await?;
+        let reply = wire
+            .send(Request::new(Method::POST, url).token(key))
+            .await?;
         let status = reply.status;
         let issued: Issued = serde_json::from_value(reply.ok()?)
             .map_err(|source| Error::Decode { status, source })?;
         let token = issued
             .access_token
             .filter(|t| !t.is_empty())
-            .ok_or_else(|| Error::Auth { subject: self.subject.clone() })?;
+            .ok_or_else(|| Error::Auth {
+                subject: self.subject.clone(),
+            })?;
         let life = issued.expires_in.map_or(TTL, Duration::from_secs);
-        *self.held.lock().unwrap() =
-            Some(Minted { token: token.clone(), expires: Instant::now() + life });
+        *self.held.lock().unwrap() = Some(Minted {
+            token: token.clone(),
+            expires: Instant::now() + life,
+        });
         Ok(token)
     }
 }
@@ -101,8 +111,10 @@ impl Grant {
 /// subject holding `&` or a space cannot forge a second parameter.
 fn url(issuer: &str, subject: &str) -> Result<String, Error> {
     let base = format!("{}{ISSUE}", issuer.trim_end_matches('/'));
-    let mut url = reqwest::Url::parse(&base)
-        .map_err(|e| Error::Wire { url: base.clone(), cause: e.to_string() })?;
+    let mut url = reqwest::Url::parse(&base).map_err(|e| Error::Wire {
+        url: base.clone(),
+        cause: e.to_string(),
+    })?;
     url.query_pairs_mut().append_pair("id", subject);
     Ok(url.to_string())
 }

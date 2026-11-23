@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
+use super::cloud_sessions::SessionArgs;
 use anyhow::Result;
 use hanzo_gen::host::Pending;
 use hanzo_gen::{Account, Host, Profile, Provider, Root};
-use super::cloud_sessions::SessionArgs;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
@@ -36,13 +36,20 @@ impl Store {
         let network = network::active(&cfg);
         cfg.network.bound = Some(network.name.clone());
         let hanzo_keys = hanzo_keys(&cfg);
-        Arc::new(Store { cfg: Mutex::new(cfg), network, hanzo_keys })
+        Arc::new(Store {
+            cfg: Mutex::new(cfg),
+            network,
+            hanzo_keys,
+        })
     }
 
     /// The realm `brand` has on the session's network, as it started.
     fn realm(&self, brand: &str) -> Result<String> {
         let Some(issuer) = self.network.iam.as_deref() else {
-            anyhow::bail!("the network {} names no issuer, so no credential is sent to it", self.network.name);
+            anyhow::bail!(
+                "the network {} names no issuer, so no credential is sent to it",
+                self.network.name
+            );
         };
         paths::realm(brand, issuer)
     }
@@ -76,7 +83,12 @@ fn profile_of(cfg: &Config) -> Profile {
         api: net.api,
         org: cfg.org.clone(),
         provider: cfg.auth.provider.clone(),
-        identities: cfg.auth.identities.iter().map(|i| (i.owner.clone(), i.name.clone())).collect(),
+        identities: cfg
+            .auth
+            .identities
+            .iter()
+            .map(|i| (i.owner.clone(), i.name.clone()))
+            .collect(),
         link: cfg.code.link,
         theme: cfg.code.theme.clone(),
     }
@@ -94,19 +106,26 @@ impl Host for Store {
             // meanwhile must not hand this session another issuer's credential.
             let realm = self.realm(brand)?;
             if store::realm(&cfg, brand)? != realm {
-                anyhow::bail!("the network {} changed since this session started; start it again", self.network.name);
+                anyhow::bail!(
+                    "the network {} changed since this session started; start it again",
+                    self.network.name
+                );
             }
-            Ok(store::active_token(&mut cfg, &realm).await?.map(|(id, t)| Account {
-                owner: id.owner,
-                name: id.name,
-                token: t.access_token,
-            }))
+            Ok(store::active_token(&mut cfg, &realm)
+                .await?
+                .map(|(id, t)| Account {
+                    owner: id.owner,
+                    name: id.name,
+                    token: t.access_token,
+                }))
         })
     }
 
     fn refresh(&self, brand: &str) -> Vec<String> {
         // This build, not whichever `hanzo` PATH finds first.
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "hanzo".into());
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "hanzo".into());
         self.helper(exe, brand)
     }
 
@@ -121,7 +140,11 @@ impl Host for Store {
         })
     }
 
-    fn meter<'a>(&'a self, brand: &'a str, query: &'a [String]) -> Pending<'a, std::result::Result<Value, String>> {
+    fn meter<'a>(
+        &'a self,
+        brand: &'a str,
+        query: &'a [String],
+    ) -> Pending<'a, std::result::Result<Value, String>> {
         Box::pin(async move {
             let mut cfg = self.cfg.lock().await;
             savings::summary(&mut cfg, brand, query).await
@@ -234,7 +257,15 @@ mod network_tests {
         };
         assert_eq!(
             store.helper("hanzo".into(), "hanzo"),
-            ["hanzo", "auth", "token", "--brand", "hanzo@id-dev.hanzo.ai", "--network", "devnet"]
+            [
+                "hanzo",
+                "auth",
+                "token",
+                "--brand",
+                "hanzo@id-dev.hanzo.ai",
+                "--network",
+                "devnet"
+            ]
         );
     }
 }

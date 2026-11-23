@@ -32,9 +32,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use vm_measure::{Log, Measurement};
 
-use crate::commands::vm::{self, alive, Rpc};
 use crate::commands::host::{self, key};
 use crate::commands::link;
+use crate::commands::vm::{self, alive, Rpc};
 use crate::config::Config;
 use crate::image;
 
@@ -161,7 +161,10 @@ fn running(dir: &Path, who: &str) -> Option<i32> {
 /// find a colleague's on a shared machine, and killing that is not a repair.
 #[cfg(unix)]
 fn stop(pid: i32, grace: Duration) -> bool {
-    for (sig, patience) in [(libc::SIGTERM, grace), (libc::SIGKILL, Duration::from_secs(2))] {
+    for (sig, patience) in [
+        (libc::SIGTERM, grace),
+        (libc::SIGKILL, Duration::from_secs(2)),
+    ] {
         vm::signal(pid, sig);
         let deadline = Instant::now() + patience;
         while alive(pid) && Instant::now() < deadline {
@@ -198,7 +201,9 @@ fn write_state(dir: &Path, s: &str) {
 }
 
 fn read_state(dir: &Path) -> Option<String> {
-    std::fs::read_to_string(dir.join("state")).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(dir.join("state"))
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 // ---- what the vm is asked to do ----------------------------------------------
@@ -651,8 +656,7 @@ pub async fn supervise(cfg: &mut Config, boot: Boot) -> Result<()> {
     // The same one resolver `hanzo up` used — by now the binary exists, but a
     // supervisor started by hand on a bare box bootstraps identically.
     let bin = vm::resolve_or_install().await?;
-    let pull_secret =
-        image::pull_secret_for(&reqwest::Client::new(), &boot.cloud, cfg).await;
+    let pull_secret = image::pull_secret_for(&reqwest::Client::new(), &boot.cloud, cfg).await;
     let out = drive(&dir, &boot, &bin, pull_secret.as_deref());
     if let Err(e) = &out {
         write_state(&dir, &format!("error: {e:#}"));
@@ -700,7 +704,10 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Resu
             Err(_) => {}
         }
         if Instant::now() >= deadline {
-            bail!("k3s reported no Ready node within {}s", READY_TIMEOUT.as_secs());
+            bail!(
+                "k3s reported no Ready node within {}s",
+                READY_TIMEOUT.as_secs()
+            );
         }
         std::thread::sleep(Duration::from_secs(3));
     }
@@ -757,15 +764,26 @@ pub async fn up(
                 }
             }
         }
-        let verb = if existed { "already running" } else { "started" };
-        println!("{} local cloud {verb} at {}", "✓".green(), format!("http://{addr}").cyan());
+        let verb = if existed {
+            "already running"
+        } else {
+            "started"
+        };
+        println!(
+            "{} local cloud {verb} at {}",
+            "✓".green(),
+            format!("http://{addr}").cyan()
+        );
         endpoints()?;
         return finish_link(cfg, link).await;
     }
 
     if let Some(pid) = running(&dir, SUPERVISOR) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
-        println!("{} already running (supervisor pid {pid}, {state})", "●".green());
+        println!(
+            "{} already running (supervisor pid {pid}, {state})",
+            "●".green()
+        );
         endpoints()?;
         let res = finish_link(cfg, link).await;
         if ui || (!no_ui && std::io::stdout().is_terminal()) {
@@ -778,7 +796,9 @@ pub async fn up(
     // ours and nothing is watching it, so collect it rather than fail on a port
     // conflict whose cause is invisible.
     if let Some(pid) = running(&dir, VM) {
-        crate::warn(&format!("collecting an orphaned vm (pid {pid}) from an earlier boot"));
+        crate::warn(&format!(
+            "collecting an orphaned vm (pid {pid}) from an earlier boot"
+        ));
         if !stop(pid, Duration::from_secs(10)) {
             bail!("an earlier vm (pid {pid}) is still running — `hanzo down` first");
         }
@@ -804,7 +824,10 @@ pub async fn up(
     write_state(&dir, "starting");
     spawn_supervisor(&dir, &boot, cfg.org.as_deref())?;
     wait_ready_state(&dir)?;
-    println!("{} k3s is up — API at https://127.0.0.1:{K3S_PORT}", "✓".green());
+    println!(
+        "{} k3s is up — API at https://127.0.0.1:{K3S_PORT}",
+        "✓".green()
+    );
     host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await?;
     endpoints()?;
     let res = finish_link(cfg, link).await;
@@ -867,7 +890,9 @@ fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>) -> Result<u32> {
         "supervise",
     ])
     .stdin(Stdio::null())
-    .stdout(Stdio::from(log.try_clone().context("duplicating the log handle")?))
+    .stdout(Stdio::from(
+        log.try_clone().context("duplicating the log handle")?,
+    ))
     .stderr(Stdio::from(log));
     #[cfg(unix)]
     {
@@ -891,7 +916,11 @@ fn wait_ready_state(dir: &Path) -> Result<()> {
             _ => {}
         }
         if Instant::now() >= deadline {
-            bail!("k3s did not come up within {}s — see {}", UP_TIMEOUT.as_secs(), log.display());
+            bail!(
+                "k3s did not come up within {}s — see {}",
+                UP_TIMEOUT.as_secs(),
+                log.display()
+            );
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -901,11 +930,17 @@ fn wait_ready_state(dir: &Path) -> Result<()> {
 /// service is published and the caller's identity takes its host role.
 /// `hanzo link host` on this machine carries it.
 async fn finish_link(cfg: &mut Config, cluster: Option<String>) -> Result<()> {
-    let Some(cluster) = cluster else { return Ok(()) };
+    let Some(cluster) = cluster else {
+        return Ok(());
+    };
     let caller = link::Caller::sign_in(cfg, None).await?;
     let target = format!("127.0.0.1:{K3S_PORT}");
     let dns = link::publish(&caller, &format!("k8s-{cluster}"), &target).await?;
-    println!("{} {} → {target} — `hanzo link host --install` carries it", "✓".green(), dns.cyan().bold());
+    println!(
+        "{} {} → {target} — `hanzo link host --install` carries it",
+        "✓".green(),
+        dns.cyan().bold()
+    );
     Ok(())
 }
 
@@ -917,7 +952,10 @@ pub async fn status() -> Result<()> {
         let addr = format!("127.0.0.1:{LOCAL_PORT}");
         if host::healthy(&addr).await {
             match host::running_pid() {
-                Some(pid) => println!("{} local cloud running at http://{addr} (pid {pid})", "●".green()),
+                Some(pid) => println!(
+                    "{} local cloud running at http://{addr} (pid {pid})",
+                    "●".green()
+                ),
                 None => println!("{} local cloud running at http://{addr}", "●".green()),
             }
             let kc = kubeconfig_path()?;
@@ -941,7 +979,10 @@ pub async fn status() -> Result<()> {
         // A vm with no supervisor is the one state worth naming: it is running
         // and nothing is driving it.
         if let Some(vm) = running(&dir, VM) {
-            println!("{} a vm (pid {vm}) is running with no supervisor — `hanzo down`", "●".yellow());
+            println!(
+                "{} a vm (pid {vm}) is running with no supervisor — `hanzo down`",
+                "●".yellow()
+            );
         } else {
             println!("{} not running", "○".dimmed());
         }
@@ -949,7 +990,10 @@ pub async fn status() -> Result<()> {
     };
     let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
     println!("{} supervisor running (pid {pid}, {state})", "●".green());
-    println!("  logs {}", dir.join("supervisor.log").display().to_string().dimmed());
+    println!(
+        "  logs {}",
+        dir.join("supervisor.log").display().to_string().dimmed()
+    );
     let kc = kubeconfig_path()?;
     if !kc.exists() {
         println!("  no kubeconfig yet ({})", kc.display());
@@ -1061,9 +1105,21 @@ mod tests {
         assert_eq!(
             run_args(&boot()),
             [
-                "run", "--stdio", "--allow-net", "--cpus", "4", "--memory", "4096",
-                "--disk-size", "16384", "-p", "6443:6443", "-p", "36930:30080",
-                "--from", cp.as_str(),
+                "run",
+                "--stdio",
+                "--allow-net",
+                "--cpus",
+                "4",
+                "--memory",
+                "4096",
+                "--disk-size",
+                "16384",
+                "-p",
+                "6443:6443",
+                "-p",
+                "36930:30080",
+                "--from",
+                cp.as_str(),
             ]
         );
     }
@@ -1076,11 +1132,18 @@ mod tests {
     #[test]
     fn the_workload_deploys_the_pinned_image_on_the_forwarded_port() {
         let y = workload("ghcr.io/hanzoai/cloud@sha256:c10d");
-        assert!(y.contains("image: ghcr.io/hanzoai/cloud@sha256:c10d"), "{y}");
+        assert!(
+            y.contains("image: ghcr.io/hanzoai/cloud@sha256:c10d"),
+            "{y}"
+        );
         assert!(y.contains("nodePort: 30080"), "{y}");
         assert!(y.contains("containerPort: 8080"), "{y}");
         assert!(y.contains("namespace: hanzo"), "{y}");
-        for env in ["CLOUD_HEALTH_LISTEN", "ZIP_RUNTIME_DIR", "CLOUD_MEMORY_REQUEST_MIB"] {
+        for env in [
+            "CLOUD_HEALTH_LISTEN",
+            "ZIP_RUNTIME_DIR",
+            "CLOUD_MEMORY_REQUEST_MIB",
+        ] {
             assert!(y.contains(env), "{env} missing from\n{y}");
         }
         // The at-rest key is referenced, never inlined.
@@ -1095,7 +1158,10 @@ mod tests {
         let (a, b) = (key(), key());
         assert_ne!(a, b);
         assert_eq!(
-            base64::engine::general_purpose::STANDARD.decode(&a).unwrap().len(),
+            base64::engine::general_purpose::STANDARD
+                .decode(&a)
+                .unwrap()
+                .len(),
             32
         );
     }
@@ -1109,7 +1175,10 @@ mod tests {
         let y = ground();
         assert!(y.contains("kind: Namespace"), "{y}");
         for leak in ["Secret", "stringData", "master:"] {
-            assert!(!y.contains(leak), "the ground must not carry `{leak}`:\n{y}");
+            assert!(
+                !y.contains(leak),
+                "the ground must not carry `{leak}`:\n{y}"
+            );
         }
         // The ground is applied first, so its filename sorts before the workload's.
         assert!(GROUND < WORKLOAD, "{GROUND} must sort before {WORKLOAD}");
@@ -1130,7 +1199,10 @@ mod tests {
         for flag in ["--data-dir", "--write-kubeconfig"] {
             assert!(argv.contains(&flag), "{flag} is not passed: {argv:?}");
         }
-        assert!(argv.contains(&DATA) && argv.contains(&KUBECONFIG), "{argv:?}");
+        assert!(
+            argv.contains(&DATA) && argv.contains(&KUBECONFIG),
+            "{argv:?}"
+        );
     }
 
     /// Neither file k3s applies may contain the key, whatever the key is. The
@@ -1150,7 +1222,10 @@ mod tests {
         assert!(KEYFILE.starts_with("/dev/shm/"), "{KEYFILE}");
         assert!(KEYFILE_FALLBACK.starts_with("/run/"), "{KEYFILE_FALLBACK}");
         assert!(PULLFILE.starts_with("/dev/shm/"), "{PULLFILE}");
-        assert!(PULLFILE_FALLBACK.starts_with("/run/"), "{PULLFILE_FALLBACK}");
+        assert!(
+            PULLFILE_FALLBACK.starts_with("/run/"),
+            "{PULLFILE_FALLBACK}"
+        );
         assert_eq!(CLOUD, "ghcr.io/hanzoai/cloud-oss:main");
     }
 
@@ -1161,7 +1236,11 @@ mod tests {
     fn the_workload_register_covers_the_image_and_the_manifest() {
         let one = deployed("ghcr.io/hanzoai/cloud@sha256:aa", "kind: Deployment");
         let same = deployed("ghcr.io/hanzoai/cloud@sha256:aa", "kind: Deployment");
-        assert_eq!(one.register(), same.register(), "same inputs, same register");
+        assert_eq!(
+            one.register(),
+            same.register(),
+            "same inputs, same register"
+        );
 
         let other_image = deployed("ghcr.io/hanzoai/cloud@sha256:bb", "kind: Deployment");
         assert_ne!(one.register(), other_image.register());
@@ -1194,7 +1273,10 @@ mod tests {
     fn the_checkpoint_installs_k3s_for_this_architecture() {
         let cp = checkpoint();
         let args = vm::checkpoint_args(&cp, &install_cmd());
-        assert_eq!(&args[..5], ["checkpoint", "create", cp.as_str(), "--allow-net", "--"]);
+        assert_eq!(
+            &args[..5],
+            ["checkpoint", "create", cp.as_str(), "--allow-net", "--"]
+        );
         let cmd = args.last().unwrap();
         assert!(cmd.contains("k3s-io/k3s/releases/latest/download"), "{cmd}");
         assert!(cmd.contains(k3s_asset()), "{cmd}");
@@ -1210,9 +1292,15 @@ mod tests {
     /// must not count, `Ready,SchedulingDisabled` must.
     #[test]
     fn a_node_is_ready_when_its_status_says_so() {
-        assert!(node_ready("k3s-node   Ready    control-plane   30s   v1.30.0\n"));
-        assert!(node_ready("n1   Ready,SchedulingDisabled   worker   1m   v1.30.0\n"));
-        assert!(!node_ready("k3s-node   NotReady   control-plane   5s   v1.30.0\n"));
+        assert!(node_ready(
+            "k3s-node   Ready    control-plane   30s   v1.30.0\n"
+        ));
+        assert!(node_ready(
+            "n1   Ready,SchedulingDisabled   worker   1m   v1.30.0\n"
+        ));
+        assert!(!node_ready(
+            "k3s-node   NotReady   control-plane   5s   v1.30.0\n"
+        ));
         assert!(!node_ready(""));
     }
 
@@ -1221,11 +1309,17 @@ mod tests {
     fn the_kubeconfig_is_pointed_at_the_forwarded_port() {
         let yaml = "apiVersion: v1\nclusters:\n- cluster:\n    server: https://10.0.2.15:6443\n    certificate-authority-data: AAA\n";
         let out = rewrite_server(yaml);
-        assert!(out.contains("    server: https://127.0.0.1:6443\n"), "{out}");
+        assert!(
+            out.contains("    server: https://127.0.0.1:6443\n"),
+            "{out}"
+        );
         assert!(!out.contains("10.0.2.15"), "{out}");
         assert!(out.contains("certificate-authority-data: AAA"), "{out}");
         // A comment naming server: elsewhere in the line is not an address.
-        assert_eq!(rewrite_server("# the server: line\n"), "# the server: line\n");
+        assert_eq!(
+            rewrite_server("# the server: line\n"),
+            "# the server: line\n"
+        );
     }
 
     /// The kubeconfig carries the cluster's keys: filed owner-only.
@@ -1260,7 +1354,10 @@ mod tests {
         use std::os::unix::process::CommandExt;
         let child = dir.join("child");
         let mut leader = Command::new("sh")
-            .args(["-c", &format!("sleep 60 & echo $! > {}; wait", child.display())])
+            .args([
+                "-c",
+                &format!("sleep 60 & echo $! > {}; wait", child.display()),
+            ])
             .process_group(0)
             .spawn()
             .expect("sh runs");
@@ -1270,7 +1367,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let read = std::fs::read_to_string(&child).ok();
-            if let Some(c) = read.and_then(|s| s.trim().parse().ok()).filter(|c| alive(*c)) {
+            if let Some(c) = read
+                .and_then(|s| s.trim().parse().ok())
+                .filter(|c| alive(*c))
+            {
                 return (pid, c);
             }
             assert!(Instant::now() < deadline, "the group never started");
@@ -1293,7 +1393,11 @@ mod tests {
         assert_eq!(read_pid(dir.path(), VM), None);
 
         assert!(stop(pid, Duration::from_secs(5)));
-        assert_eq!(running(dir.path(), SUPERVISOR), None, "stopped is not running");
+        assert_eq!(
+            running(dir.path(), SUPERVISOR),
+            None,
+            "stopped is not running"
+        );
 
         clear_pid(dir.path(), SUPERVISOR);
         assert_eq!(read_pid(dir.path(), SUPERVISOR), None);
@@ -1372,7 +1476,10 @@ mod tests {
 
         let m = measured(dir.path()).unwrap();
         assert_eq!(m.launch, launched());
-        assert_eq!(m.workload.register(), deployed(&boot().cloud, &manifest).register());
+        assert_eq!(
+            m.workload.register(),
+            deployed(&boot().cloud, &manifest).register()
+        );
         assert_eq!(m.hardware.platform, "none");
         assert!(m.hardware.report.is_none());
 

@@ -130,7 +130,11 @@ fn upsert_saved(cfg: &mut Config, w: StoredWallet, set_active: bool) -> Result<(
 /// The active wallet, if one is configured.
 pub fn active(cfg: &Config) -> Option<StoredWallet> {
     let addr = cfg.wallet.active.as_deref()?;
-    cfg.wallet.wallets.iter().find(|w| w.address == addr).cloned()
+    cfg.wallet
+        .wallets
+        .iter()
+        .find(|w| w.address == addr)
+        .cloned()
 }
 
 // ---- cloud custody (KMS/MPC, PQ) -----------------------------------------
@@ -145,9 +149,13 @@ pub fn active(cfg: &Config) -> Option<StoredWallet> {
 async fn cloud_provision(cfg: &mut Config, name: &str, custody: &str) -> Result<StoredWallet> {
     let net = network::active(cfg);
     let api = net.api.trim_end_matches('/');
-    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND).await?.ok_or_else(|| {
-        anyhow!("not signed in — run `hanzo auth login` first (or `hanzo wallet create --local`)")
-    })?;
+    let (_id, tok) = store::active_token(cfg, paths::DEFAULT_BRAND)
+        .await?
+        .ok_or_else(|| {
+            anyhow!(
+                "not signed in — run `hanzo auth login` first (or `hanzo wallet create --local`)"
+            )
+        })?;
     let client = reqwest::Client::new();
 
     // 1) Ensure an account exists (the wallet owner).
@@ -220,12 +228,23 @@ pub async fn create(
             Ok(w) => {
                 let addr = w.address.clone();
                 upsert_saved(cfg, w, true)?;
-                println!("{} created {}-custody wallet {}", "✓".green(), custody, addr.cyan().bold());
-                println!("  {} keys held server-side (KMS/MPC) — never on this machine", "PQ".dimmed());
+                println!(
+                    "{} created {}-custody wallet {}",
+                    "✓".green(),
+                    custody,
+                    addr.cyan().bold()
+                );
+                println!(
+                    "  {} keys held server-side (KMS/MPC) — never on this machine",
+                    "PQ".dimmed()
+                );
                 return Ok(());
             }
             Err(e) => {
-                eprintln!("{} cloud custody unavailable ({e}); creating a LOCAL wallet instead", "!".yellow());
+                eprintln!(
+                    "{} cloud custody unavailable ({e}); creating a LOCAL wallet instead",
+                    "!".yellow()
+                );
             }
         }
     }
@@ -246,8 +265,15 @@ pub async fn create(
         },
         true,
     )?;
-    println!("{} created local wallet {}", "✓".green(), address.cyan().bold());
-    println!("  {} mnemonic stored in the OS keychain — it is NOT printed and NOT on disk", "secret".dimmed());
+    println!(
+        "{} created local wallet {}",
+        "✓".green(),
+        address.cyan().bold()
+    );
+    println!(
+        "  {} mnemonic stored in the OS keychain — it is NOT printed and NOT on disk",
+        "secret".dimmed()
+    );
     Ok(())
 }
 
@@ -268,7 +294,10 @@ pub async fn import(cfg: &mut Config, secret: String, name: Option<String>) -> R
         true,
     )?;
     println!("{} imported wallet {}", "✓".green(), address.cyan().bold());
-    println!("  {} key stored in the OS keychain (never on disk, never printed)", "secret".dimmed());
+    println!(
+        "  {} key stored in the OS keychain (never on disk, never printed)",
+        "secret".dimmed()
+    );
     Ok(())
 }
 
@@ -276,7 +305,10 @@ pub async fn import(cfg: &mut Config, secret: String, name: Option<String>) -> R
 pub fn show(cfg: &Config) -> Result<()> {
     match active(cfg) {
         None => {
-            println!("{}", "no active wallet — create one with `hanzo wallet create`".dimmed());
+            println!(
+                "{}",
+                "no active wallet — create one with `hanzo wallet create`".dimmed()
+            );
         }
         Some(w) => {
             println!("{}", w.address.cyan().bold());
@@ -314,7 +346,10 @@ pub fn address(cfg: &Config) -> Result<()> {
 /// `hanzo wallet list`
 pub fn list(cfg: &Config) -> Result<()> {
     if cfg.wallet.wallets.is_empty() {
-        println!("{}", "no wallets — create one with `hanzo wallet create`".dimmed());
+        println!(
+            "{}",
+            "no wallets — create one with `hanzo wallet create`".dimmed()
+        );
         return Ok(());
     }
     let active = cfg.wallet.active.clone().unwrap_or_default();
