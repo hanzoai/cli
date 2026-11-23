@@ -196,6 +196,7 @@ pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> 
     if args.remote.cloud_execution || args.remote.teleport.is_some() {
         return super::cloud_sessions::run(config, args, target == Target::Desktop).await;
     }
+    let _ = super::prompt::ensure_installed_prompt();
     onboarding::first_run(config, paths::DEFAULT_BRAND).await;
     let mut opts = args.into_options(Root::need()?)?;
     if target == Target::Desktop {

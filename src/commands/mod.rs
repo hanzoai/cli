@@ -31,6 +31,7 @@ pub mod daemon;
 pub mod dev;
 pub mod dev_server;
 pub mod cloud_sessions;
+pub mod prompt;
 pub mod sources;
 
 // Kept resources reachable in the additive model (money, network, provider

@@ -131,11 +131,13 @@ pub fn ensure_local_bot_state(model: &str, engine_url: &str, gateway_port: u16) 
         .with_context(|| format!("creating {}", workspace_dir.display()))?;
 
     let soul_path = workspace_dir.join("SOUL.md");
-    if !soul_path.is_file() {
-        std::fs::write(
-            &soul_path,
-            "# Hanzo Local Bot\n\nYou are Hanzo Bot running 100% locally on Hanzo Engine (Zen Nano). Answer concisely, accurately, and warmly.\n",
-        )?;
+    let canonical_soul = crate::commands::prompt::HANZO_PROMPT;
+    let should_write_soul = match std::fs::read_to_string(&soul_path) {
+        Ok(existing) => existing.starts_with("# Hanzo Local Bot") || !existing.contains("# Hanzo Rules"),
+        Err(_) => true,
+    };
+    if should_write_soul {
+        std::fs::write(&soul_path, canonical_soul)?;
     }
 
     let base_v1 = format!("{}/v1", model_engine_url(engine_url));

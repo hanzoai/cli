@@ -128,6 +128,9 @@ enum Commands {
     #[command(alias = "source")]
     Sources(commands::sources::SourcesArgs),
 
+    /// Canonical unified Hanzo system prompt (`# Hanzo Rules`, `hanzoai/prompt`) & progressive `hanzoskills.com` discovery
+    Prompt(commands::prompt::PromptArgs),
+
     /// Manage identities and credentials
     Auth {
         #[command(subcommand)]
@@ -1114,6 +1117,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Desktop(args) => commands::dev::session(&mut config, args, Target::Desktop).await?,
         Commands::Daemon(args) => commands::daemon::run(&mut config, args).await?,
         Commands::Sources(args) => commands::sources::run(&mut config, args).await?,
+        Commands::Prompt(args) => commands::prompt::run(args).await?,
 
         // `hanzo dev` IS the launcher.
         Commands::Dev(args) => commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?,
