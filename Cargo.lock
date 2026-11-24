@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "hanzo-cli"
-version = "8.5.1339"
+version = "8.5.1340"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -969,7 +969,7 @@ dependencies = [
 [[package]]
 name = "hanzo-gen"
 version = "0.2.0"
-source = "git+https://github.com/hanzoai/gen?rev=04540ad47b956e7cab021cf91f52b34cc7fde6c5#04540ad47b956e7cab021cf91f52b34cc7fde6c5"
+source = "git+https://github.com/hanzoai/gen?rev=be1946c17b05d7beb97e9768345b5969455d67dc#be1946c17b05d7beb97e9768345b5969455d67dc"
 dependencies = [
  "anyhow",
  "base64",

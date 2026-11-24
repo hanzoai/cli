@@ -1,6 +1,6 @@
 [package]
 name = "hanzo-cli"
-version = "8.5.1339"
+version = "8.5.1340"
 edition = "2021"
 authors = ["Hanzo AI"]
 description = "Unified CLI for Hanzo AI development tools"
@@ -56,7 +56,7 @@ members = ["crates/event", "crates/client", "crates/identity"]
 # One pin for every crate that links the harness: two revs are two copies of it.
 # Pinned by commit; a Gen release moves it.
 [workspace.dependencies]
-hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "04540ad47b956e7cab021cf91f52b34cc7fde6c5" }
+hanzo-gen = { git = "https://github.com/hanzoai/gen", rev = "be1946c17b05d7beb97e9768345b5969455d67dc" }
 
 [dependencies]
 hanzo-event = { path = "crates/event", version = "0.1.0" }
