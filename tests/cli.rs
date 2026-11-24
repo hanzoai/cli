@@ -783,3 +783,95 @@ fn live_login_whoami_usage_with_env_token() {
         .as_str()
         .is_some_and(|v| !v.is_empty()));
 }
+
+// ── Regression: documented CLI command names (README / man page) ───────────────
+
+/// Each of these documented commands must resolve to a real command (exit 0 on
+/// --help) and print its own help text — never the root "Unified CLI" usage page.
+/// The root page is the flattened coding-session grammar; a real command's help
+/// contains "Usage: hanzo <command> ..." and its own about line.
+#[test]
+fn documented_commands_resolve_and_print_own_help() {
+    let commands = [
+        vec!["billing", "topup"],
+        vec!["billing", "balance"],
+        vec!["provider", "connect"],
+        vec!["connection", "list"],
+        vec!["agent", "run"],
+        vec!["compute", "clusters", "list"],
+        vec!["compute", "fleet", "get"],
+        vec!["graph", "create"],
+    ];
+
+    for args in commands {
+        let mut cmd_args = args.clone();
+        cmd_args.push("--help");
+
+        let out = hanzo().args(&cmd_args).assert().success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+
+        // Must print its own help with command-specific usage (e.g., "Usage: hanzo billing topup")
+        // and must NOT be the root usage page (which starts with "Unified CLI")
+        assert!(
+            !stdout.contains("Unified CLI for Hanzo AI development tools"),
+            "command {:?} printed the root usage page:\n{}",
+            cmd_args,
+            stdout
+        );
+        // Check for command-specific usage line: "Usage: hanzo <cmd> ..." not the root "Usage: hanzo [OPTIONS] [TASK]..."
+        assert!(
+            stdout.lines().any(|l| l.starts_with("Usage: hanzo ") && !l.contains("[TASK]")),
+            "command {:?} did not print its own command-specific help:\n{}",
+            cmd_args,
+            stdout
+        );
+        // Each command's own about/summary line should appear
+        assert!(
+            stdout.lines().any(|l| !l.trim().is_empty() && !l.starts_with("Usage:") && !l.starts_with("Options:")),
+            "command {:?} help has no about text:\n{}",
+            cmd_args,
+            stdout
+        );
+    }
+}
+
+/// Retired command names must NOT resolve to a real command. They either:
+/// - fail with "unrecognized subcommand" (exit 2), or
+/// - fall through to the bare grammar as a coding-session TASK (which prints the root page).
+/// Either way, they must not print a command-specific help page.
+#[test]
+fn retired_commands_do_not_resolve() {
+    let retired = [
+        vec!["billing", "deposit", "--help"],
+        vec!["agents", "run", "--help"],
+        vec!["cloud", "list", "--help"],
+    ];
+
+    for args in retired {
+        let out = hanzo().args(&args).assert();
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+
+        // Must not print a command-specific help page
+        // A command-specific help has "Usage: hanzo <command> ..." without [TASK]
+        // The root page has "Usage: hanzo [OPTIONS] [TASK] [TASK] [-- <PASSTHROUGH>...]"
+        let has_command_specific_usage = stdout.lines().any(|l| l.starts_with("Usage: hanzo ") && !l.contains("[TASK]"));
+        assert!(
+            !has_command_specific_usage,
+            "retired command {:?} printed a command-specific help page:\n{}",
+            args,
+            stdout
+        );
+
+        // Accept either: explicit "unrecognized subcommand" error, or root usage page
+        let is_unrecognized = stderr.contains("unrecognized subcommand");
+        let is_root_page = stdout.contains("Unified CLI for Hanzo AI development tools");
+        assert!(
+            is_unrecognized || is_root_page,
+            "retired command {:?} had unexpected output:\nstdout:\n{}\nstderr:\n{}",
+            args,
+            stdout,
+            stderr
+        );
+    }
+}
