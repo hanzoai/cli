@@ -22,6 +22,7 @@ pub mod savings;
 pub mod scan;
 pub mod serve;
 pub mod status;
+pub mod telemetry;
 pub mod up;
 pub mod upgrade;
 pub mod version;

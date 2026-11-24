@@ -3,26 +3,62 @@
 //! One handle, built once per run, records the dispatched command (verb, duration,
 //! outcome) and flushes at process exit. Everything is fail-soft and privacy-clean:
 //! the visitor is a per-install [`device_id`](hanzo_event::device_id) (never PII),
-//! the bearer is the active identity's own token when signed in (the server derives
-//! the tenant from it, so an event only lands in your own org), and an opt-out builds
-//! a dead handle that reads no id and touches no network.
+//! the bearer is a write-only publishable key (never a user access token), and an
+//! opt-out builds a dead handle that reads no id and touches no network.
+//!
+//! Telemetry is OPT-IN: disabled by default. Enable with `hanzo config set telemetry.enabled true`,
+//! `HANZO_TELEMETRY=1`, or `HANZO_TELEMETRY=true`. DO_NOT_TRACK and HANZO_TELEMETRY=0 always force off.
+//! CI=true is off unless explicitly enabled by env. No first-run auto-enable and no network
+//! or device-id read while disabled.
 
 use crate::commands::network;
 use crate::config::Config;
-use crate::iam::paths::DEFAULT_BRAND;
-use crate::iam::store;
 use crate::Commands;
 
-/// Write-only Hanzo publishable key fallback when the caller is unsigned and
-/// has not opted out of telemetry (`HANZO_TELEMETRY=0` / `DO_NOT_TRACK`).
+/// Write-only Hanzo publishable key fallback when the caller has not opted out
+/// of telemetry. This is a public write-only key, never a user access token.
 const DEFAULT_PUBLISHABLE_KEY: &str = "pk-CmfLA2K6kvsPflrS9DSkt06H_kSoQB_21sjedt6VJdc";
 
-/// Build the telemetry handle for this run. An opt-out or any resolution error
-/// yields a disabled handle. The bearer read is the NON-mutating index+vault path
-/// (`store::active` then `store::token_for`), so telemetry never migrates or moves
-/// the active identity as a side effect.
+/// Check if telemetry is enabled via config or env.
+/// Opt-in sources (any one enables):
+///   - config.telemetry.enabled == true
+///   - HANZO_TELEMETRY=1 / true / on
+///     Opt-out sources (any one forces off, even if opted in):
+///   - DO_NOT_TRACK (any truthy value)
+///   - HANZO_TELEMETRY=0 / false / no / off
+///   - CI=true (unless explicitly enabled by env)
+fn telemetry_enabled(config: &Config) -> bool {
+    // Explicit opt-out via DO_NOT_TRACK always wins
+    if let Ok(v) = std::env::var(hanzo_event::DO_NOT_TRACK_ENV) {
+        let v = v.trim().to_ascii_lowercase();
+        if !matches!(v.as_str(), "" | "0" | "false" | "no" | "off") {
+            return false;
+        }
+    }
+    // Explicit opt-out via HANZO_TELEMETRY=0/false/no/off
+    if let Ok(v) = std::env::var(hanzo_event::TELEMETRY_ENV) {
+        let v = v.trim().to_ascii_lowercase();
+        if matches!(v.as_str(), "0" | "false" | "no" | "off") {
+            return false;
+        }
+        // Explicit opt-in via HANZO_TELEMETRY=1/true/on
+        if matches!(v.as_str(), "1" | "true" | "on") {
+            return true;
+        }
+    }
+    // CI=true forces off unless explicitly enabled by env
+    if std::env::var("CI").ok().as_deref() == Some("true") {
+        return false;
+    }
+    // Config opt-in
+    config.telemetry.enabled
+}
+
+/// Build the telemetry handle for this run. Disabled handle when opted out or not opted in.
+/// The bearer is ALWAYS a write-only publishable key (env override or built-in),
+/// NEVER a user's access token or any sk- key.
 pub fn build(config: &Config) -> hanzo_event::Telemetry {
-    if hanzo_event::opted_out() {
+    if !telemetry_enabled(config) {
         return hanzo_event::Telemetry::disabled();
     }
     let api = network::active(config).api;
@@ -30,14 +66,9 @@ pub fn build(config: &Config) -> hanzo_event::Telemetry {
         .unwrap_or_else(std::env::temp_dir)
         .join("hanzo");
     let distinct_id = hanzo_event::device_id(&dir);
-    let bearer = store::active(config, DEFAULT_BRAND)
-        .and_then(|id| store::token_for(config, DEFAULT_BRAND, &id).ok().flatten())
-        .map(|tokens| tokens.access_token)
-        .or_else(|| {
-            std::env::var(hanzo_event::KEY_ENV)
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
+    let bearer = std::env::var(hanzo_event::KEY_ENV)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
         .or_else(|| Some(DEFAULT_PUBLISHABLE_KEY.to_string()));
     hanzo_event::Telemetry::new(hanzo_event::Config {
         product: "cli".to_string(),
@@ -51,7 +82,7 @@ pub fn build(config: &Config) -> hanzo_event::Telemetry {
 /// Install a panic hook that forwards unhandled panics (message + file:line,
 /// scrubbed of secrets and home directories) to Hanzo's central `/v1/event`
 /// collector on a short bounded timeout, then invokes the previous panic hook.
-/// No-op when telemetry is disabled or opted out.
+/// No-op when telemetry is disabled.
 pub fn install_panic_hook(telemetry: &hanzo_event::Telemetry) {
     let Some((endpoint, auth, distinct_id, product, version)) = telemetry.crash_target() else {
         return;
@@ -151,5 +182,6 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Share { .. } => "share",
         Commands::Shell { .. } => "shell",
         Commands::Init { .. } => "init",
+        Commands::Telemetry { .. } => "telemetry",
     }
 }

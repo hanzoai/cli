@@ -59,6 +59,10 @@ pub struct Config {
     #[serde(default)]
     pub cluster: ClusterState,
 
+    /// Telemetry state — whether the user has explicitly opted in. Off by default.
+    #[serde(default)]
+    pub telemetry: TelemetryState,
+
     /// Path this config was loaded from; where `save` writes back. Not persisted.
     #[serde(skip)]
     path: PathBuf,
@@ -160,6 +164,16 @@ impl Default for CodeState {
         }
     }
 }
+
+/// Telemetry state — whether the user has explicitly opted in. Off by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+#[derive(Default)]
+pub struct TelemetryState {
+    /// `true` if the user has explicitly enabled telemetry.
+    pub enabled: bool,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkPaths {
@@ -338,6 +352,7 @@ impl Default for Config {
             wallet: WalletState::default(),
             code: CodeState::default(),
             cluster: ClusterState::default(),
+            telemetry: TelemetryState::default(),
             path: PathBuf::new(),
         }
     }

@@ -336,21 +336,12 @@ enum Commands {
     /// applications and the machines on the fleet
     Status {
         /// Show the local GPU inference cluster instead of the cloud
-        #[arg(
-            long,
-            visible_alias = "nodes",
-            visible_alias = "gpu",
-            visible_alias = "telemetry"
-        )]
+        #[arg(long, visible_alias = "nodes", visible_alias = "gpu")]
         infer: bool,
     },
 
     /// Live telemetry inspector and cluster dashboard for GPU inference cluster & models
-    #[command(
-        visible_alias = "top",
-        visible_alias = "gpu",
-        visible_alias = "telemetry"
-    )]
+    #[command(visible_alias = "top", visible_alias = "gpu")]
     Monitor(commands::monitor::Args),
 
     /// Print the CLI version
@@ -462,6 +453,12 @@ enum Commands {
         template: String,
         /// Project name
         name: Option<String>,
+    },
+
+    /// Manage telemetry opt-in/opt-out (off by default)
+    Telemetry {
+        #[command(subcommand)]
+        command: commands::telemetry::TelemetrySubcommand,
     },
 }
 
@@ -1429,6 +1426,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         } => commands::share::run(&mut config, target, backend_mode, name).await?,
         Commands::Graph { command } => commands::graph::run(command, &mut config).await?,
         Commands::Init { template, name } => commands::init::run(template, name).await?,
+        Commands::Telemetry { command } => commands::telemetry::run(&mut config, command).await?,
     }
     Ok(())
 }
