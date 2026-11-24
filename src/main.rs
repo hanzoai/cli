@@ -1675,8 +1675,18 @@ mod tests {
         // Every agent in the table is a flag too, through one rewrite.
         let merged = commands::product::augment(Cli::command());
         for name in [
-            "gemini", "qwen", "opencode", "kilo", "crush", "pi", "copilot", "amp", "grok",
+            "gemini",
+            "qwen",
+            "opencode",
+            "kilo",
+            "crush",
+            "pi",
+            "copilot",
+            "amp",
+            "grok",
             "kilocode",
+            "muse",
+            "muse-code",
         ] {
             let argv: Vec<String> = ["hanzo", "dev", &format!("--{name}"), "fix it"]
                 .iter()
