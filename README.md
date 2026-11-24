@@ -76,8 +76,11 @@ under the name people type first. Builds before it (npm 8.5.156, brew 1.9.57) re
 
 `hanzo dev` is the one launcher. It wraps a local coding agent as a session-aware,
 resumable, portable object: the Hanzo MCP toolset is attached and a signed-in session
-streams live to mission-control. Auto-approve is on by default; the repo's own
-`.mcp.json` is trust-gated off unless you opt in.
+streams live to mission-control. Auto-approve is OFF by default; each action is
+confirmed unless you pass the explicit opt-in flag (--auto) or set
+`autoApprove: true` in `~/.hanzo/settings.json`; `--no-sandbox` is a separate
+explicit per-run escalation. The repo's own `.mcp.json` is trust-gated off
+unless you opt in.
 
 Plain `hanzo dev` (the same as bare `hanzo`) runs Hanzo's own agent — `curl -fsSL https://hanzo.sh | sh`
 installs it. Another tool is a flag: `--claude`, `--codex`, `--cursor` (`--agent`) or
@@ -92,7 +95,8 @@ hanzo dev --claude -- -c                    # args after `--` go to the tool
 hanzo dev --codex --metered "…"             # Codex on Hanzo's metered models
 hanzo dev --model enso-ultra "refactor the auth middleware"
 hanzo dev --resume <session-id>             # continue a prior session
-hanzo dev --ask "…"                         # confirm each action (alias: --safe)
+hanzo dev --ask "…"                         # confirm each action (alias: --safe; now the default)
+hanzo dev --auto "…"                        # opt in to auto-approve for this run
 hanzo dev --no-link "…"                     # keep it local, don't stream to cloud
 ```
 
@@ -243,7 +247,7 @@ hanzo mcp                       # every tool your org can call, in one list
   stored at `~/.config/hanzo/config.toml` (network selection, active identity index,
   custom networks). Never holds token material.
 - `~/.hanzo/settings.json` — coding-agent defaults: `model`, `smallFastModel`,
-  `autoApprove`, `mcp`, `contextWindow`. Every key is optional; an explicit CLI flag
+  `autoApprove` (default: false), `mcp`, `contextWindow`. Every key is optional; an explicit CLI flag
   or process env always wins.
 
 Global flags valid on any subcommand: `--config <file>`, `--verbose`.

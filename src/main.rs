@@ -1587,7 +1587,7 @@ mod tests {
         assert_eq!(cli.code.model.as_deref(), Some("enso"));
         assert_eq!(cli.code.positional.as_deref(), Some("fix the bug"));
 
-        // `--safe` opts out of auto-approve; `--no-sandbox` escalates; they conflict.
+        // `--ask`/`--safe` is the default (confirm each action); `--no-sandbox` escalates; they conflict.
         let cli = Cli::try_parse_from(["hanzo", "--safe"]).expect("parses");
         assert!(cli.code.ask);
         assert!(Cli::try_parse_from(["hanzo", "--ask", "--no-sandbox"]).is_err());
