@@ -122,39 +122,40 @@ pub fn augment(mut cmd: Command) -> Command {
 /// down, and [`resolve`] reads the same tree to route it back to the derive
 /// dispatch. One predicate, both halves; they cannot disagree.
 fn absorb(local: Command, product: &'static str) -> Command {
-    // A local subcommand owns every spelling it answers to, its aliases included:
-    // `resolve` reads the tree through clap's `find_subcommand`, which matches an
-    // alias, so a generated node mounted on a local alias would be a second
-    // command clap refuses (`hanzo post delete` answers to `rm`, and the
-    // document's `DELETE /v1/post/{id}` folds to the verb `rm`).
+    absorb_node(local, &trie(product))
+}
+
+/// Recursively merge a generated trie node into a hand-written local command.
+/// Local terminal subcommands keep their names (including aliases); local groups
+/// descend so generated siblings under the same group remain reachable.
+fn absorb_node(mut local: Command, node: &Node) -> Command {
     let owned: std::collections::HashSet<String> = local
         .get_subcommands()
         .flat_map(|c| std::iter::once(c.get_name()).chain(c.get_all_aliases()))
         .map(str::to_string)
         .collect();
-    // A local command that takes a REQUIRED operand becomes a runnable group the
-    // moment it gains one, and it is governed by the same rule `to_command` gives
-    // every other runnable group: bare it runs itself, with a subcommand it
-    // descends. Without that, `hanzo share` kept demanding its `<TARGET>` while
-    // advertising `enable` and `get` in its own help — two served operations
-    // listed as reachable that no argv could reach.
-    //
-    // A local command with no arguments of its own is a plain group and gains
-    // nothing from that rule — and clap counts a GLOBAL as an argument, so the
-    // rule on a group refused `hanzo auth --as admin login`.
     let runnable = local.get_arguments().next().is_some();
-    let merged = trie(product)
-        .children
-        .iter()
-        .filter(|(name, _)| !owned.contains(**name))
-        .fold(local, |c, (name, node)| {
-            c.subcommand(to_command(name, node))
-        });
+    for (&name, child) in &node.children {
+        if !owned.contains(name) {
+            local = local.subcommand(to_command(name, child));
+        } else if !child.children.is_empty() {
+            let group_name = local
+                .get_subcommands()
+                .find(|c| {
+                    (c.get_name() == name || c.get_all_aliases().any(|a| a == name))
+                        && c.get_subcommands().next().is_some()
+                })
+                .map(|c| c.get_name().to_string());
+            if let Some(g) = group_name {
+                local = local.mut_subcommand(g, |sub| absorb_node(sub, child));
+            }
+        }
+    }
     match runnable {
-        true => merged
+        true => local
             .args_conflicts_with_subcommands(true)
             .subcommand_negates_reqs(true),
-        false => merged,
+        false => local,
     }
 }
 
@@ -513,10 +514,26 @@ pub fn resolve(hand: &Command, matches: &ArgMatches) -> Option<Resolved> {
         chain.push(n);
         m = mm;
     }
-    // Absorbed: the local command owns the name, so a node IT declares is its own
+    // Absorbed: the local command owns every path its hand-written tree declares
     // — including the bare command itself, which `absorb` never gives an op.
-    if let Some(local) = hand.find_subcommand(top) {
-        if local.find_subcommand(*chain.get(1)?).is_some() {
+    // When `absorb_node` descended into a local group and mounted generated
+    // siblings beneath it, stepping off the hand-written tree falls through to
+    // `find_op`.
+    if let Some(mut cursor) = hand.find_subcommand(top) {
+        if chain.len() == 1 {
+            return None;
+        }
+        let mut owned_by_local = true;
+        for seg in &chain[1..] {
+            match cursor.find_subcommand(seg) {
+                Some(next) => cursor = next,
+                None => {
+                    owned_by_local = false;
+                    break;
+                }
+            }
+        }
+        if owned_by_local {
             return None;
         }
     }

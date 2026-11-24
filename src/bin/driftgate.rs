@@ -311,7 +311,10 @@ const AHEAD: usize = 1;
 /// document whose control answers 401 too (an auth wall before routing). Cloud's
 /// live table claims all three. They fall when those prefixes 404 an unwritten
 /// route for an anonymous caller.
-const UNFALSIFIABLE: usize = 67;
+/// 67 -> 70 on @1c63bd3c9 (v8.5.1404): three new literal routes added under
+/// existing auth-walled prefixes (2841 total coordinates, 2771 present, 0 absent,
+/// 157 products served). Nothing previously decidable went blind.
+const UNFALSIFIABLE: usize = 70;
 
 // ---- the live route table ----------------------------------------------------
 
@@ -551,10 +554,17 @@ fn sent(src: &Path) -> BTreeMap<String, String> {
                 }
                 continue;
             }
-            // The generated tree is ruled on above, coordinate by coordinate,
-            // and test code is not wire — a mock serves the routes it invents
-            // and an assertion names paths on purpose.
-            if !name.ends_with(".rs") || name == "generated.rs" || name.contains("test") {
+            // The generated tree is ruled on above, coordinate by coordinate;
+            // `daemon.rs` and `dev_server.rs` serve/talk to local machine sockets
+            // (`hanzod` / Vite dev proxy), not `api.hanzo.ai`; and test code is not
+            // wire — a mock serves the routes it invents and an assertion names paths
+            // on purpose.
+            if !name.ends_with(".rs")
+                || name == "generated.rs"
+                || name == "daemon.rs"
+                || name == "dev_server.rs"
+                || name.contains("test")
+            {
                 continue;
             }
             let text =

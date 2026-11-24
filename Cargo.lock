@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "hanzo-cli"
-version = "8.5.1338"
+version = "8.5.1339"
 dependencies = [
  "anyhow",
  "assert_cmd",

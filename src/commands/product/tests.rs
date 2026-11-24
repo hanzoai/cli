@@ -944,10 +944,18 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
             // check below is that the shadow really is terminal on both sides.
             // A shadowing GROUP would be a different fact: `absorb` descends into
             // one, so an operation losing its route to a group is drift here.
-            let shadow = op.nodes.first().copied().unwrap_or(op.verb);
-            let shadowed = local
-                .find_subcommand(shadow)
-                .is_some_and(|c| c.get_subcommands().next().is_none() && op.nodes.is_empty());
+            let mut cur = local;
+            let mut shadowed = true;
+            for &seg in op.nodes.iter().chain(std::iter::once(&op.verb)) {
+                match cur.find_subcommand(seg) {
+                    Some(next) => cur = next,
+                    None => {
+                        shadowed = false;
+                        break;
+                    }
+                }
+            }
+            let shadowed = shadowed && cur.get_subcommands().next().is_none();
             // `argv` is the GENERATED spelling. A shadow's name belongs to the local
             // command, whose own operands it need not satisfy (`hanzo post create`
             // takes a required `<CONTENT>`), so a shadowed argv may fail to parse:
