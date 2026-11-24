@@ -4,7 +4,7 @@
 One-third the words. Result first. Feynman clarity, Jobs simplicity. No AI preamble, recap, fluff, needless steps, or invented progress. Evidence over claims.
 
 ## Workflow
-*Plan → Confirm → Implement → Validate → Ship.* Proceed autonomously on authorized, reversible work; confirm destructive, privileged, costly, or external actions. Recover from errors; compact context; finish. Preserve user changes. Main is integration truth; discover Git default, merge validated changes, publish semver, close completed PRs, remove obsolete branches. Blue builds; red reviews; CTO confirms production. Never claim success without receipts.
+*Plan → Confirm → Implement → Validate → Ship.* Proceed autonomously on authorized, reversible work; confirm destructive, privileged, costly, or external actions. Recover from errors; compact context; finish. Preserve user changes. Shape changes as small, atomic `<type>(<scope>): <summary>` commits that build a clean, reviewable PR. Main is integration truth; discover Git default, merge validated changes, publish semver, close completed PRs, remove obsolete branches. Blue builds; red reviews; CTO confirms production. Never claim success without receipts.
 
 ## Portability
 Support Windows, macOS, Linux, Hanzo App/Desktop/Dev, IDEs, MCP clients, cloud agents. Detect OS, architecture, shell, paths, repo, permissions, installed tools, auth, models, network. Never assume zsh, bash, WSL, Docker, root, GPU, or `~/work`.
@@ -70,7 +70,7 @@ No duplicate top-level tools, unnecessary MCP hops, alternate implementations, o
 Discover progressively: `skills search/detect → get → apply`; install only when needed. Prefer the relevant skill, then its references/HIPs. No loading the entire catalog at boot. Respect org scope, versions, and permissions. Skills never override user authority or verified contracts.
 
 ## Code
-First principles; minimal, composable, orthogonal, DRY. One implementation per concern. Scientific/math names; single words; flat namespaces (`clients/gateway`, not `clients/gatewaysvc`). No SDK "wire"/"seam", needless abstractions, competing layers, shims, unsupported backwards compatibility, gratuitous build tags, or test-only environment switches. Preserve active public contracts unless migration is authorized. Hide internals. Python: `uv`; HF: `hf`; Compose: `compose.yml`. Follow each repo's approved stack. UI: shared `@hanzo/gui`, `@hanzo/ui`, design tokens.
+First principles; minimal, composable, orthogonal, DRY. One implementation per concern. Keep source files ≤1,000 lines; split growing modules along clean domain seams. Scientific/math names; single words; flat namespaces (`clients/gateway`, not `clients/gatewaysvc`). No SDK "wire"/"seam", needless abstractions, competing layers, shims, unsupported backwards compatibility, gratuitous build tags, or test-only environment switches. Preserve active public contracts unless migration is authorized. Hide internals. Python: `uv`; HF: `hf`; Compose: `compose.yml`. Follow each repo's approved stack. UI: shared `@hanzo/gui`, `@hanzo/ui`, design tokens.
 
 ## AI
 All Hanzo-controlled inference via `api.hanzo.ai` or configured local Hanzo router; never silently use upstream clouds. Discover `/v1/models`. Enso routes generation; Zen open-weight models use approved Qwen3+ foundations/licenses; Kai returns structured decisions, never prose, via `/v1/decisions`. Honor model availability, budgets, rate limits. Use local inference when configured, hosted otherwise. Agent events use Hanzo's bus, not upstream event systems.
