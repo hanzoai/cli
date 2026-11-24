@@ -10,13 +10,14 @@
 //!
 //!  - **fail-soft** — a record or a flush can never block, break, or slow a command
 //!    beyond a tight network budget; every error is swallowed.
-//!  - **opt-out** — `HANZO_TELEMETRY=0` or `DO_NOT_TRACK` disables it entirely, with
-//!    no id read and no network ([`opted_out`]).
+//!  - **opt-in** — `HANZO_TELEMETRY=1`/`true`/`yes`/`on` enables it; `DO_NOT_TRACK`
+//!    and `HANZO_TELEMETRY=0`/`false`/`no`/`off` force disable; `CI=true` disables
+//!    unless explicitly enabled by env. Default is OFF.
 //!  - **no PII** — the visitor is a random per-install [`device_id`]; a command
 //!    reports only its verb, duration, and outcome. Never argv, paths, or free text.
 //!
-//! Auth is one bearer header: a hanzo.id JWT when the caller is signed in, else a
-//! write-only publishable key (`pk_…`) supplied via config or `HANZO_EVENT_KEY`.
+//! Auth is one bearer header: a write-only publishable key (`pk_…`) supplied via
+//! config or `HANZO_EVENT_KEY`. The user's access token is NEVER used.
 //! The `/v1/event` endpoint is fail-closed, so a run with neither credential resolves a
 //! device id but does not transmit — provisioning a `pk_` turns anonymous telemetry
 //! on with no code change.
@@ -33,7 +34,7 @@ use serde_json::{Map, Value};
 /// `@hanzo/event` vocab grammar (`noun_verbpast`, like `signup_completed`).
 pub const COMMAND_COMPLETED: &str = "command_completed";
 
-/// The `HANZO_TELEMETRY` opt-out variable (`0`/`false`/`no`/`off` disables).
+/// The `HANZO_TELEMETRY` opt-in variable (`1`/`true`/`yes`/`on` enables).
 pub const TELEMETRY_ENV: &str = "HANZO_TELEMETRY";
 /// The cross-vendor `DO_NOT_TRACK` opt-out variable (any truthy value disables).
 pub const DO_NOT_TRACK_ENV: &str = "DO_NOT_TRACK";
@@ -91,8 +92,8 @@ pub struct Exception {
 }
 
 /// How to build a [`Telemetry`] handle. The caller resolves the pieces from its own
-/// environment (active network `api`, signed-in bearer, device id) and hands them
-/// over; the handle owns opt-out, endpoint shaping, and the wire.
+/// environment (active network `api`, device id) and hands them
+/// over; the handle owns opt-in, endpoint shaping, and the wire.
 pub struct Config {
     /// Emitting surface — `"cli"` or `"dev"`.
     pub product: String,
@@ -103,8 +104,9 @@ pub struct Config {
     pub api_base: String,
     /// The per-install device id used as `distinctId`.
     pub distinct_id: String,
-    /// A hanzo.id JWT (or a `pk-`/`sk-` key) when one is cheaply available; else the
+    /// A write-only publishable key (`pk_…`) when one is available; else the
     /// handle falls back to [`KEY_ENV`], else it transmits nothing.
+    /// NEVER a hanzo.id JWT or any `sk-` key.
     pub bearer: Option<String>,
 }
 
@@ -123,9 +125,9 @@ pub struct Telemetry {
 
 impl Telemetry {
     /// Build a live handle from [`Config`]. Disabled (a no-op) when the user has
-    /// opted out. Auth is `config.bearer`, else [`KEY_ENV`], else none.
+    /// not opted in. Auth is `config.bearer`, else [`KEY_ENV`], else none.
     pub fn new(config: Config) -> Telemetry {
-        let enabled = !opted_out();
+        let enabled = opted_in();
         let endpoint = std::env::var(URL_ENV)
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -336,16 +338,43 @@ impl Telemetry {
     }
 }
 
-/// Whether telemetry is opted out via the environment: `HANZO_TELEMETRY` is
-/// `0`/`false`/`no`/`off`, or `DO_NOT_TRACK` carries any truthy value.
+/// Whether telemetry is opted IN via the environment: `HANZO_TELEMETRY` is
+/// `1`/`true`/`yes`/`on`, or explicitly enabled via config.
+/// `DO_NOT_TRACK` always forces off. `CI=true` forces off unless explicitly enabled.
+pub fn opted_in() -> bool {
+    // DO_NOT_TRACK always wins
+    if let Some(v) = std::env::var(DO_NOT_TRACK_ENV).ok().as_deref() {
+        let v = v.trim().to_ascii_lowercase();
+        if !matches!(v.as_str(), "" | "0" | "false" | "no" | "off") {
+            return false;
+        }
+    }
+    // HANZO_TELEMETRY explicit enable
+    if let Some(v) = std::env::var(TELEMETRY_ENV).ok().as_deref() {
+        let v = v.trim().to_ascii_lowercase();
+        if matches!(v.as_str(), "1" | "true" | "yes" | "on") {
+            return true;
+        }
+        if matches!(v.as_str(), "0" | "false" | "no" | "off") {
+            return false;
+        }
+    }
+    // CI=true forces off unless explicitly enabled above
+    if std::env::var("CI").ok().as_deref().map(|v| v == "true").unwrap_or(false) {
+        return false;
+    }
+    // Default: opted out (opt-in required)
+    false
+}
+
+/// Whether telemetry is opted out (inverse of opted_in for backward compat).
+/// DO_NOT_TRACK and HANZO_TELEMETRY=0 always force off.
 pub fn opted_out() -> bool {
-    is_opt_out(
-        std::env::var(TELEMETRY_ENV).ok().as_deref(),
-        std::env::var(DO_NOT_TRACK_ENV).ok().as_deref(),
-    )
+    !opted_in()
 }
 
 /// The opt-out decision as a pure function of the two variables' values.
+/// Kept for backward compat with existing tests.
 fn is_opt_out(hanzo_telemetry: Option<&str>, do_not_track: Option<&str>) -> bool {
     if let Some(v) = hanzo_telemetry {
         if matches!(
@@ -518,6 +547,77 @@ mod tests {
         assert!(is_opt_out(None, Some("true")));
         assert!(!is_opt_out(None, Some("0")));
         assert!(!is_opt_out(None, Some("")));
+    }
+
+    #[test]
+    fn opt_in_reads_env_correctly() {
+        // Default is opted out
+        std::env::remove_var("HANZO_TELEMETRY");
+        std::env::remove_var("DO_NOT_TRACK");
+        std::env::remove_var("CI");
+        assert!(!opted_in());
+        assert!(opted_out());
+        
+        // HANZO_TELEMETRY=1 enables
+        std::env::set_var("HANZO_TELEMETRY", "1");
+        assert!(opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "true");
+        assert!(opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "yes");
+        assert!(opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "on");
+        assert!(opted_in());
+        
+        // HANZO_TELEMETRY=0 disables
+        std::env::set_var("HANZO_TELEMETRY", "0");
+        assert!(!opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "false");
+        assert!(!opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "off");
+        assert!(!opted_in());
+        
+        // DO_NOT_TRACK always wins
+        std::env::set_var("HANZO_TELEMETRY", "1");
+        std::env::set_var("DO_NOT_TRACK", "1");
+        assert!(!opted_in());
+        
+        // CI=true forces off unless explicitly enabled
+        std::env::remove_var("DO_NOT_TRACK");
+        std::env::set_var("HANZO_TELEMETRY", "1");
+        std::env::set_var("CI", "true");
+        assert!(opted_in()); // explicit env wins over CI
+        
+        std::env::remove_var("HANZO_TELEMETRY");
+        std::env::set_var("CI", "true");
+        assert!(!opted_in()); // CI forces off when not explicitly enabled
+        
+        // Cleanup
+        std::env::remove_var("HANZO_TELEMETRY");
+        std::env::remove_var("DO_NOT_TRACK");
+        std::env::remove_var("CI");
+    }
+    
+    #[test]
+    fn opted_out_is_inverse_of_opted_in() {
+        std::env::remove_var("HANZO_TELEMETRY");
+        std::env::remove_var("DO_NOT_TRACK");
+        std::env::remove_var("CI");
+        assert_eq!(opted_out(), !opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "1");
+        assert_eq!(opted_out(), !opted_in());
+        
+        std::env::set_var("HANZO_TELEMETRY", "0");
+        assert_eq!(opted_out(), !opted_in());
+        
+        std::env::remove_var("HANZO_TELEMETRY");
+        std::env::remove_var("DO_NOT_TRACK");
+        std::env::remove_var("CI");
     }
 
     #[test]
@@ -727,5 +827,26 @@ mod tests {
             "api key scrubbed: {msg}"
         );
         assert!(msg.contains("~/secret.txt"), "home dir normalized: {msg}");
+    }
+    
+    #[test]
+    fn test_no_user_token_in_serialized_events() {
+        // Verify that serialized events never contain user access tokens (sk-* or JWT)
+        let t = Telemetry::build(
+            true,
+            "http://127.0.0.1:1/v1/event".into(),
+            Some("pk-test".into()),
+            "device-err".into(),
+            "cli".into(),
+            "0.9.0".into(),
+        );
+        t.command("test", Duration::from_millis(5), true);
+        let buf = t.events.lock().unwrap();
+        assert_eq!(buf.len(), 1);
+        let wire = serde_json::to_string(&buf[0]).unwrap();
+        // Should not contain any sk- keys, JWT tokens (eyJ), or access tokens
+        assert!(!wire.contains("sk-"), "serialized event must not contain sk- keys");
+        assert!(!wire.contains("eyJ"), "serialized event must not contain JWT tokens");
+        assert!(!wire.contains("Bearer"), "serialized event must not contain Bearer token");
     }
 }

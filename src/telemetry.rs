@@ -3,26 +3,27 @@
 //! One handle, built once per run, records the dispatched command (verb, duration,
 //! outcome) and flushes at process exit. Everything is fail-soft and privacy-clean:
 //! the visitor is a per-install [`device_id`](hanzo_event::device_id) (never PII),
-//! the bearer is the active identity's own token when signed in (the server derives
-//! the tenant from it, so an event only lands in your own org), and an opt-out builds
+//! the bearer is a write-only publishable key (never the user's access token), and
+//! an opt-in enables it; an opt-out builds
 //! a dead handle that reads no id and touches no network.
 
 use crate::commands::network;
 use crate::config::Config;
-use crate::iam::paths::DEFAULT_BRAND;
-use crate::iam::store;
+
 use crate::Commands;
 
 /// Write-only Hanzo publishable key fallback when the caller is unsigned and
-/// has not opted out of telemetry (`HANZO_TELEMETRY=0` / `DO_NOT_TRACK`).
+/// has not opted in to telemetry.
 const DEFAULT_PUBLISHABLE_KEY: &str = "pk-CmfLA2K6kvsPflrS9DSkt06H_kSoQB_21sjedt6VJdc";
 
 /// Build the telemetry handle for this run. An opt-out or any resolution error
 /// yields a disabled handle. The bearer read is the NON-mutating index+vault path
-/// (`store::active` then `store::token_for`), so telemetry never migrates or moves
-/// the active identity as a side effect.
+/// NEVER uses the user's access token — only the publishable key.
 pub fn build(config: &Config) -> hanzo_event::Telemetry {
-    if hanzo_event::opted_out() {
+    // Check both env var and config setting (config takes precedence when explicitly set)
+    let env_opted_in = hanzo_event::opted_in();
+    let config_opted_in = config.code.telemetry.unwrap_or(false);
+    if !env_opted_in && !config_opted_in {
         return hanzo_event::Telemetry::disabled();
     }
     let api = network::active(config).api;
@@ -30,14 +31,10 @@ pub fn build(config: &Config) -> hanzo_event::Telemetry {
         .unwrap_or_else(std::env::temp_dir)
         .join("hanzo");
     let distinct_id = hanzo_event::device_id(&dir);
-    let bearer = store::active(config, DEFAULT_BRAND)
-        .and_then(|id| store::token_for(config, DEFAULT_BRAND, &id).ok().flatten())
-        .map(|tokens| tokens.access_token)
-        .or_else(|| {
-            std::env::var(hanzo_event::KEY_ENV)
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
+    // NEVER use the user's access token — only the publishable key
+    let bearer = std::env::var(hanzo_event::KEY_ENV)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
         .or_else(|| Some(DEFAULT_PUBLISHABLE_KEY.to_string()));
     hanzo_event::Telemetry::new(hanzo_event::Config {
         product: "cli".to_string(),
@@ -151,5 +148,6 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Share { .. } => "share",
         Commands::Shell { .. } => "shell",
         Commands::Init { .. } => "init",
+        Commands::Telemetry { .. } => "telemetry",
     }
 }

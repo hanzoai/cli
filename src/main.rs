@@ -212,6 +212,16 @@ enum Commands {
         command: ConfigCommands,
     },
 
+    /// Manage telemetry (usage events and error/panic reports)
+    ///
+    /// Telemetry is off by default (opt-in). It reports command verb, duration,
+    /// success, version, OS/arch, and a random device id. Never args, paths,
+    /// or file contents. Uses only a write-only publishable key.
+    Telemetry {
+        #[command(subcommand)]
+        command: TelemetryCommands,
+    },
+
     /// Run AI engines on this machine (`engine serve <model>`)
     Engine {
         #[command(subcommand)]
@@ -540,6 +550,16 @@ enum ConfigCommands {
     /// What a coding session reads off this config, as JSON (for `gen`)
     #[command(hide = true)]
     Profile,
+}
+
+#[derive(Subcommand)]
+enum TelemetryCommands {
+    /// Show telemetry status (enabled/disabled)
+    Status,
+    /// Enable telemetry (opt-in)
+    On,
+    /// Disable telemetry (opt-out)
+    Off,
 }
 
 #[derive(Subcommand)]
@@ -1286,6 +1306,37 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             ConfigCommands::Get { key } => commands::config::get(&config, &key)?,
             ConfigCommands::Set { key, value } => commands::config::set(&mut config, &key, &value)?,
             ConfigCommands::Profile => commands::dev::profile(&config)?,
+        },
+        Commands::Telemetry { command } => match command {
+            TelemetryCommands::Status => {
+                let env_enabled = hanzo_event::opted_in();
+                let config_enabled = config.code.telemetry.unwrap_or(false);
+                let enabled = env_enabled || config_enabled;
+                println!("Telemetry: {}", if enabled { "enabled" } else { "disabled" });
+                if env_enabled {
+                    println!("  (via HANZO_TELEMETRY=1)");
+                }
+                if config_enabled {
+                    println!("  (via config: telemetry = true)");
+                }
+                if !enabled {
+                    println!("  (off by default — run 'hanzo telemetry on' to enable)");
+                }
+            }
+            TelemetryCommands::On => {
+                config.update(|c| {
+                    c.code.telemetry = Some(true);
+                    Ok(())
+                })?;
+                println!("Telemetry enabled (persisted in config)");
+            }
+            TelemetryCommands::Off => {
+                config.update(|c| {
+                    c.code.telemetry = Some(false);
+                    Ok(())
+                })?;
+                println!("Telemetry disabled (persisted in config)");
+            }
         },
         Commands::Runner { command } => match command {
             RunnerCommands::Start => commands::runner::start().await?,

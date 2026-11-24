@@ -149,6 +149,10 @@ pub struct CodeState {
     /// Antigravity, Cursor). A session on that agent keeps the agent's login
     /// instead of sending model calls through the Hanzo gateway.
     pub own_account: bool,
+    /// Telemetry opt-in. Off by default. Set via `hanzo config set telemetry on`
+    /// or `HANZO_TELEMETRY=1`. DO_NOT_TRACK and HANZO_TELEMETRY=0 always force off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<bool>,
 }
 
 impl Default for CodeState {
@@ -157,6 +161,7 @@ impl Default for CodeState {
             link: true,
             theme: "auto".to_string(),
             own_account: false,
+            telemetry: None,
         }
     }
 }

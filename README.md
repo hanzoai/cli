@@ -239,6 +239,8 @@ hanzo mcp                       # every tool your org can call, in one list
 
 ## Configuration
 
+
+
 - `hanzo config list | get <key> | set <key> <value>` — non-secret local settings,
   stored at `~/.config/hanzo/config.toml` (network selection, active identity index,
   custom networks). Never holds token material.
@@ -246,7 +248,63 @@ hanzo mcp                       # every tool your org can call, in one list
   `autoApprove`, `mcp`, `contextWindow`. Every key is optional; an explicit CLI flag
   or process env always wins.
 
+
+
 Global flags valid on any subcommand: `--config <file>`, `--verbose`.
+
+
+
+### Telemetry
+
+
+
+Telemetry is **off by default** (opt-in). When enabled, it reports:
+
+- Command verb (e.g. `network`, `dev`, `up`)
+
+- Duration and success/failure
+
+- CLI version, OS, and architecture
+
+- A random per-install device ID (never PII)
+
+
+
+It **never** collects:
+
+- Command arguments, paths, or file contents
+
+- User identity or credentials
+
+
+
+Data is sent to `https://api.hanzo.ai/v1/event` using only a **write-only publishable key** — the user's access token is never used.
+
+
+
+Control telemetry:
+
+```bash
+
+hanzo telemetry status   # show current state
+
+hanzo telemetry on       # enable (persisted in config)
+
+hanzo telemetry off      # disable (persisted in config)
+
+```
+
+
+
+Environment overrides:
+
+- `HANZO_TELEMETRY=1` (or `true`/`yes`/`on`) — enable
+
+- `HANZO_TELEMETRY=0` (or `false`/`no`/`off`) — force disable
+
+- `DO_NOT_TRACK=1` — force disable (always wins)
+
+- `CI=true` — disable unless explicitly enabled by env
 
 ## Build from source
 
