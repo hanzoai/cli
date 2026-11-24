@@ -88,7 +88,7 @@ command a person types is `hanzo`; bare `hanzo` and `hanzo dev` are the same cod
 session. `Hanzo Dev`, `hanzo-dev` and `hz` are not names of anything: `hz` was never
 shipped by this estate (the npm package of that name is someone else's), and `hanzo-dev`
 was an npm `bin` link, an installer second name and a brew formula, all gone. What
-stays is `dev`, the agent binary hanzoai/dev-v1 publishes and gen execs by that name; it
+stays is `dev`, the agent binary hanzoai/dev publishes (`rust-v*` tags) and gen execs by that name; it
 is the engine behind `hanzo`: hanzo.sh's row for it has no display name, so it is
 installed with `hanzo` (and upgraded with it, `upgrade::with_engine`) and never listed,
 named in help or offered as a tool. `hanzo-mcp`, `hanzo-engine` and `hanzo-node` are other programs. The

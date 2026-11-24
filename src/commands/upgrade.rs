@@ -254,11 +254,8 @@ async fn fetch(
 ) -> Result<PathBuf> {
     use sha2::{Digest, Sha256};
     let asset = format!("{}-{platform}.tar.gz", tool.binary);
-    let url = format!(
-        "{}/{}/releases/latest/download/{asset}",
-        base.trim_end_matches('/'),
-        tool.repo
-    );
+    let base_trimmed = base.trim_end_matches('/');
+    let latest_url = format!("{base_trimmed}/{}/releases/latest/download/{asset}", tool.repo);
     let get = |u: String| async move {
         client
             .get(&u)
@@ -270,7 +267,20 @@ async fn fetch(
             .await
             .with_context(|| format!("reading {u}"))
     };
-    let sum = get(format!("{url}.sha256")).await?;
+    let (url, sum) = match get(format!("{latest_url}.sha256")).await {
+        Ok(sum) => (latest_url, sum),
+        Err(err) if tool.repo == "hanzoai/dev" && tool.binary == "dev" => {
+            let pinned_url = format!(
+                "{base_trimmed}/{}/releases/download/rust-v0.7.26/{asset}",
+                tool.repo
+            );
+            let sum = get(format!("{pinned_url}.sha256"))
+                .await
+                .map_err(|_| err)?;
+            (pinned_url, sum)
+        }
+        Err(err) => return Err(err),
+    };
     let want = String::from_utf8_lossy(&sum)
         .split_whitespace()
         .next()
@@ -591,7 +601,7 @@ mod tests {
 
     #[test]
     fn the_tool_table_is_read_out_of_hanzo_sh() {
-        let script = "#!/bin/sh\nTOOLS='hanzo:Hanzo CLI:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev-v1:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
+        let script = "#!/bin/sh\nTOOLS='hanzo:Hanzo CLI:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
         let t = table(script);
         assert_eq!(
             t.iter()
@@ -605,7 +615,7 @@ mod tests {
             [
                 ("hanzo", "hanzoai/cli", "hanzo", "hanzo-cli"),
                 ("mcp", "hanzoai/mcp", "hanzo-mcp", "mcp"),
-                ("dev", "hanzoai/dev-v1", "dev", ""),
+                ("dev", "hanzoai/dev", "dev", ""),
                 ("zt", "hanzozt/zt", "zt", ""),
             ]
         );
@@ -663,7 +673,7 @@ mod tests {
         use sha2::{Digest, Sha256};
         let tool = Native {
             name: "dev".into(),
-            repo: "hanzoai/dev-v1".into(),
+            repo: "hanzoai/dev".into(),
             binary: "dev".into(),
             alias: String::new(),
         };
@@ -672,7 +682,7 @@ mod tests {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        let path = "/hanzoai/dev-v1/releases/latest/download/dev-windows-amd64.tar.gz";
+        let path = "/hanzoai/dev/releases/latest/download/dev-windows-amd64.tar.gz";
         let base = serve(vec![
             (path.into(), tgz.clone()),
             (

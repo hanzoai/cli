@@ -28,7 +28,7 @@ const REPO = "hanzoai/cli";
 const TOOLS = {
   hanzo:  { repo: "hanzoai/cli",    bin: "hanzo",        alias: "hanzo-cli", versioned: true },
   mcp:    { repo: "hanzoai/mcp",    bin: "hanzo-mcp",    alias: "mcp" },
-  dev:    { repo: "hanzoai/dev-v1",    bin: "dev",          alias: "" },
+  dev:    { repo: "hanzoai/dev",    bin: "dev",          alias: "",          fallbackTag: "rust-v0.7.26" },
   gen:    { repo: "hanzoai/gen",    bin: "gen",          alias: "hanzo-gen" },
   zt:     { repo: "hanzozt/zt",     bin: "zt",           alias: "hanzo-zet" },
   engine: { repo: "hanzoai/engine", bin: "hanzo-engine", alias: "hanzoai",   kind: "engine" },
@@ -254,6 +254,16 @@ async function installOne(name, { key, target, dest, ext, optional }) {
           fellBack = true;
           await fetchStandardTool({
             base: `https://github.com/${tool.repo}/releases/latest/download`,
+            bin: tool.bin,
+            alias: tool.alias,
+            target,
+            dest,
+            ext,
+          });
+        } else if (tool.fallbackTag && String(err.message || err).startsWith("404 ")) {
+          fellBack = true;
+          await fetchStandardTool({
+            base: `https://github.com/${tool.repo}/releases/download/${tool.fallbackTag}`,
             bin: tool.bin,
             alias: tool.alias,
             target,
