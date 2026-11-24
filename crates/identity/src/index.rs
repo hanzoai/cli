@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 
 /// Where the CLI keeps `config.toml`.
 pub fn config_path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("hanzo").join("config.toml")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("hanzo")
+        .join("config.toml")
 }
 
 /// The active identity of `brand` named by the config at `path`, if any.

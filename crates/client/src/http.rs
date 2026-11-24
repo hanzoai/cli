@@ -33,7 +33,13 @@ pub struct Request {
 
 impl Request {
     pub fn new(method: Method, url: impl Into<String>) -> Self {
-        Request { method, url: url.into(), token: None, org: None, body: None }
+        Request {
+            method,
+            url: url.into(),
+            token: None,
+            org: None,
+            body: None,
+        }
     }
 
     /// An empty bearer is no bearer: a local host with no IAM in front of it is
@@ -56,8 +62,13 @@ impl Request {
     /// Whether the request may be made again after a failure that left it possibly processed: any but a
     /// POST or PATCH, and a POST or PATCH that names itself with a `requestId`, which the platform answers once.
     pub(crate) fn repeats(&self) -> bool {
-        let named = self.body.as_ref().and_then(|b| b.get("requestId")).and_then(Value::as_str);
-        !matches!(self.method, Method::POST | Method::PATCH) || named.is_some_and(|id| !id.is_empty())
+        let named = self
+            .body
+            .as_ref()
+            .and_then(|b| b.get("requestId"))
+            .and_then(Value::as_str);
+        !matches!(self.method, Method::POST | Method::PATCH)
+            || named.is_some_and(|id| !id.is_empty())
     }
 }
 
@@ -75,7 +86,10 @@ impl Reply {
         if (200..300).contains(&self.status) {
             Ok(self.body)
         } else {
-            Err(Error::Api { status: self.status, body: self.body })
+            Err(Error::Api {
+                status: self.status,
+                body: self.body,
+            })
         }
     }
 }
@@ -124,12 +138,16 @@ pub fn tls_builder() -> reqwest::ClientBuilder {
 /// client when the build itself fails so a caller never loses the call over
 /// a builder error.
 pub fn tls_client() -> reqwest::Client {
-    tls_builder().build().unwrap_or_else(|_| reqwest::Client::new())
+    tls_builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 impl Default for Http {
     fn default() -> Self {
-        Http { client: tls_client() }
+        Http {
+            client: tls_client(),
+        }
     }
 }
 
@@ -151,7 +169,13 @@ impl Http {
             call = call.json(body);
         }
         let fault = |e: reqwest::Error| {
-            (Error::Wire { url: request.url.clone(), cause: e.to_string() }, retry::passes(&e))
+            (
+                Error::Wire {
+                    url: request.url.clone(),
+                    cause: e.to_string(),
+                },
+                retry::passes(&e),
+            )
         };
         let answer = call.send().await.map_err(fault)?;
         let status = answer.status().as_u16();

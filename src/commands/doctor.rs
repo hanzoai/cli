@@ -67,7 +67,12 @@ async fn verify(path: &Path, binary: &str, repo: &str, signer: &str) -> Result<b
     Ok(digest(path)? == digest(&bin.join(filename))?)
 }
 
-pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool, share: bool) -> Result<()> {
+pub async fn run(
+    cfg: &mut Config,
+    verify_releases: bool,
+    offline: bool,
+    share: bool,
+) -> Result<()> {
     println!("Hanzo installation diagnostics");
     let mut failures = 0;
     for &(name, legacy, repo, signer) in TOOLS {
@@ -171,8 +176,9 @@ pub async fn run(cfg: &mut Config, verify_releases: bool, offline: bool, share: 
 }
 
 pub async fn share_report(args: &[String]) -> Result<()> {
-    let dev_bin = which::which("dev")
-        .context("the Hanzo agent engine is not installed; run: curl -fsSL https://hanzo.sh | sh")?;
+    let dev_bin = which::which("dev").context(
+        "the Hanzo agent engine is not installed; run: curl -fsSL https://hanzo.sh | sh",
+    )?;
     let status = Command::new(dev_bin)
         .arg("report")
         .args(args)

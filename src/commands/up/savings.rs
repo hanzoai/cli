@@ -35,8 +35,8 @@ use serde_json::Value;
 use tokio::sync::Notify;
 
 use crate::commands::savings;
-use hanzo_gen::savings::{int, pct, usd, Llm, Plan};
 use crate::config::Config;
+use hanzo_gen::savings::{int, pct, usd, Llm, Plan};
 
 /// The windows `t` steps through.
 pub const RANGES: [&str; 3] = ["24h", "7d", "30d"];
@@ -145,7 +145,10 @@ impl Board {
     /// runtime (a unit test) it is a board nobody feeds.
     pub fn start() -> Board {
         let (tx, rx) = channel();
-        let live = Arc::new(Live { range: AtomicUsize::new(0), wake: Notify::new() });
+        let live = Arc::new(Live {
+            range: AtomicUsize::new(0),
+            wake: Notify::new(),
+        });
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let (tx_cloud, shared) = (tx.clone(), live.clone());
             handle.spawn(async move {
@@ -153,7 +156,13 @@ impl Board {
                 loop {
                     let range = RANGES[shared.range.load(Ordering::Relaxed) % RANGES.len()];
                     let query = vec![format!("range={range}")];
-                    if tx_cloud.send(Update::Cloud(savings::summary(&mut cfg, crate::iam::paths::DEFAULT_BRAND, &query).await)).is_err() {
+                    if tx_cloud
+                        .send(Update::Cloud(
+                            savings::summary(&mut cfg, crate::iam::paths::DEFAULT_BRAND, &query)
+                                .await,
+                        ))
+                        .is_err()
+                    {
                         break;
                     }
                     tokio::select! {
@@ -164,17 +173,31 @@ impl Board {
             });
             let shared = live.clone();
             handle.spawn(async move {
-                let Ok(client) = reqwest::Client::builder().timeout(Duration::from_millis(800)).build() else { return };
+                let Ok(client) = reqwest::Client::builder()
+                    .timeout(Duration::from_millis(800))
+                    .build()
+                else {
+                    return;
+                };
                 loop {
                     let range = RANGES[shared.range.load(Ordering::Relaxed) % RANGES.len()];
-                    if tx.send(Update::Gateways(scan(&client, since(range, Utc::now())).await)).is_err() {
+                    if tx
+                        .send(Update::Gateways(
+                            scan(&client, since(range, Utc::now())).await,
+                        ))
+                        .is_err()
+                    {
                         break;
                     }
                     tokio::time::sleep(LOCAL).await;
                 }
             });
         }
-        Board { rx: Some(rx), live: Some(live), ..Default::default() }
+        Board {
+            rx: Some(rx),
+            live: Some(live),
+            ..Default::default()
+        }
     }
 
     /// Take everything the readers have sent since the last frame.
@@ -224,7 +247,11 @@ impl Board {
 pub fn since(range: &str, now: DateTime<Utc>) -> String {
     let (n, unit) = range.split_at(range.len() - 1);
     let n: i64 = n.parse().unwrap_or(24);
-    let back = if unit == "d" { chrono::Duration::days(n) } else { chrono::Duration::hours(n) };
+    let back = if unit == "d" {
+        chrono::Duration::days(n)
+    } else {
+        chrono::Duration::hours(n)
+    };
     (now - back).to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
@@ -248,7 +275,12 @@ async fn scan(client: &reqwest::Client, from: String) -> Vec<Gateway> {
 
 async fn probe(client: &reqwest::Client, port: u16, name: &str, from: &str) -> Option<Gateway> {
     let url = format!("http://127.0.0.1:{port}/dashboard/savings");
-    let reply = client.get(url).query(&[("format", "json"), ("from", from)]).send().await.ok()?;
+    let reply = client
+        .get(url)
+        .query(&[("format", "json"), ("from", from)])
+        .send()
+        .await
+        .ok()?;
     let mut g: Gateway = reply.error_for_status().ok()?.json().await.ok()?;
     g.port = port;
     g.client = name.to_string();
@@ -266,7 +298,10 @@ fn dim(s: impl Into<String>) -> Span<'static> {
 }
 
 fn bold(s: impl Into<String>, c: Color) -> Span<'static> {
-    Span::styled(s.into(), Style::default().fg(c).add_modifier(Modifier::BOLD))
+    Span::styled(
+        s.into(),
+        Style::default().fg(c).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn panel(title: String) -> Block<'static> {
@@ -274,12 +309,21 @@ fn panel(title: String) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))
 }
 
 pub fn render(f: &mut Frame, area: Rect, b: &Board) {
     let plans = b.plans();
-    let below = if plans.is_empty() { 0 } else { plans.len().min(6) as u16 + 4 };
+    let below = if plans.is_empty() {
+        0
+    } else {
+        plans.len().min(6) as u16 + 4
+    };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(8), Constraint::Length(below)])
@@ -297,7 +341,10 @@ pub fn render(f: &mut Frame, area: Rect, b: &Board) {
 
 fn render_cloud(f: &mut Frame, area: Rect, b: &Board) {
     let range = match &b.cloud {
-        Some(Ok(doc)) => doc.get("range").and_then(Value::as_str).unwrap_or(RANGES[b.range]),
+        Some(Ok(doc)) => doc
+            .get("range")
+            .and_then(Value::as_str)
+            .unwrap_or(RANGES[b.range]),
         _ => RANGES[b.range],
     };
     let block = panel(format!(" hanzo cloud · {range} "));
@@ -307,7 +354,9 @@ fn render_cloud(f: &mut Frame, area: Rect, b: &Board) {
         Some(Err(why)) => {
             lines.push(Line::from(bold("  unavailable", Color::Red)));
             lines.push(Line::from(dim(format!("  {why}"))));
-            lines.push(Line::from(dim("  nothing here is a zero: the cloud did not answer")));
+            lines.push(Line::from(dim(
+                "  nothing here is a zero: the cloud did not answer",
+            )));
         }
         Some(Ok(doc)) => {
             let llm = Llm::of(doc);
@@ -315,29 +364,55 @@ fn render_cloud(f: &mut Frame, area: Rect, b: &Board) {
                 lines.push(Line::from(dim("  LLM totals: warehouse not connected")));
             }
             for (k, v) in llm.rows() {
-                lines.push(Line::from(vec![bold(format!("  {k:<12}"), Color::White), Span::raw(v)]));
+                lines.push(Line::from(vec![
+                    bold(format!("  {k:<12}"), Color::White),
+                    Span::raw(v),
+                ]));
             }
             if !llm.caches() {
                 lines.push(Line::from(dim("  cache       not reported by this cloud")));
             }
             let spend = doc.get("spend");
-            if spend.and_then(|s| s.get("available")).and_then(Value::as_bool) == Some(true) {
-                let cents = |k: &str| spend.and_then(|s| s.get(k)).and_then(Value::as_f64).map(|c| usd(c / 100.0));
-                let parts: Vec<String> = [("in range", cents("totalCents")), ("month to date", cents("mtdCents"))]
-                    .into_iter()
-                    .filter_map(|(k, v)| v.map(|v| format!("{v} {k}")))
-                    .collect();
+            if spend
+                .and_then(|s| s.get("available"))
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                let cents = |k: &str| {
+                    spend
+                        .and_then(|s| s.get(k))
+                        .and_then(Value::as_f64)
+                        .map(|c| usd(c / 100.0))
+                };
+                let parts: Vec<String> = [
+                    ("in range", cents("totalCents")),
+                    ("month to date", cents("mtdCents")),
+                ]
+                .into_iter()
+                .filter_map(|(k, v)| v.map(|v| format!("{v} {k}")))
+                .collect();
                 if !parts.is_empty() {
-                    lines.push(Line::from(vec![bold("  ledger      ", Color::White), Span::raw(parts.join(" · "))]));
+                    lines.push(Line::from(vec![
+                        bold("  ledger      ", Color::White),
+                        Span::raw(parts.join(" · ")),
+                    ]));
                 }
             }
-            if let (Some(a), Some(z)) = (doc.get("start").and_then(Value::as_str), doc.get("end").and_then(Value::as_str)) {
+            if let (Some(a), Some(z)) = (
+                doc.get("start").and_then(Value::as_str),
+                doc.get("end").and_then(Value::as_str),
+            ) {
                 lines.push(Line::from(""));
                 lines.push(Line::from(dim(format!("  {a} → {z}"))));
             }
         }
     }
-    f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 /// A gateway's measured columns, then its estimate; the two are never summed.
@@ -347,8 +422,12 @@ fn render_local(f: &mut Frame, area: Rect, b: &Board) {
     if !b.scanned {
         lines.push(Line::from(dim("  scanning 127.0.0.1:8787-8793…")));
     } else if b.gateways.is_empty() {
-        lines.push(Line::from(dim("  no kai-gateway answered on 127.0.0.1:8787-8793")));
-        lines.push(Line::from(dim("  kai-claude and kai-codex start one for their client")));
+        lines.push(Line::from(dim(
+            "  no kai-gateway answered on 127.0.0.1:8787-8793",
+        )));
+        lines.push(Line::from(dim(
+            "  kai-claude and kai-codex start one for their client",
+        )));
     } else {
         lines.push(Line::from(dim(format!(
             "  {:<14}{:>6}{:>10}{:>8}{:>9}{:>9}  {}",
@@ -363,7 +442,10 @@ fn render_local(f: &mut Frame, area: Rect, b: &Board) {
                 (n, None) => n.to_string(),
             };
             lines.push(Line::from(vec![
-                bold(format!("  {:<14}", format!("{}:{}", g.client, g.port)), Color::Cyan),
+                bold(
+                    format!("  {:<14}", format!("{}:{}", g.client, g.port)),
+                    Color::Cyan,
+                ),
                 Span::raw(format!(
                     "{:>6}{:>10}{:>8}{:>9}{:>9}  {}",
                     int(m.llm_calls),
@@ -388,22 +470,42 @@ fn render_local(f: &mut Frame, area: Rect, b: &Board) {
             }
             any = true;
             let worth = e.usd.map(|v| format!(" ≈ {}", usd(v))).unwrap_or_default();
-            let net = e.net_usd.map(|v| format!(", {} net of Kai", usd(v))).unwrap_or_default();
+            let net = e
+                .net_usd
+                .map(|v| format!(", {} net of Kai", usd(v)))
+                .unwrap_or_default();
             lines.push(Line::from(Span::styled(
-                format!("  {}:{}  {} call{} answered without an LLM{worth}{net}", g.client, g.port, e.avoided_calls, if e.avoided_calls == 1 { "" } else { "s" }),
+                format!(
+                    "  {}:{}  {} call{} answered without an LLM{worth}{net}",
+                    g.client,
+                    g.port,
+                    e.avoided_calls,
+                    if e.avoided_calls == 1 { "" } else { "s" }
+                ),
                 Style::default().fg(ESTIMATE),
             )));
         }
         if !any {
-            lines.push(Line::from(dim("  no request was answered without an LLM call in this range")));
+            lines.push(Line::from(dim(
+                "  no request was answered without an LLM call in this range",
+            )));
         }
         let unpriced: u64 = b.gateways.iter().map(|g| g.measured.unpriced_calls).sum();
         if unpriced > 0 {
-            lines.push(Line::from(dim(format!("  {unpriced} call(s) went to a model the price list does not name: tokens only"))));
+            lines.push(Line::from(dim(format!(
+                "  {unpriced} call(s) went to a model the price list does not name: tokens only"
+            ))));
         }
-        lines.push(Line::from(dim("  dollars are listed prices (api.hanzo.ai/v1/models), not what a plan charged")));
+        lines.push(Line::from(dim(
+            "  dollars are listed prices (api.hanzo.ai/v1/models), not what a plan charged",
+        )));
     }
-    f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_plans(f: &mut Frame, area: Rect, plans: &[Plan]) {
@@ -419,10 +521,14 @@ fn render_plans(f: &mut Frame, area: Rect, plans: &[Plan]) {
             p.source,
             p.provider,
             p.window,
-            p.used.map(|u| format!("{u:.0}%")).unwrap_or_else(|| "—".into()),
+            p.used
+                .map(|u| format!("{u:.0}%"))
+                .unwrap_or_else(|| "—".into()),
             some(p.requests),
             some(p.tokens),
-            p.cost_cents.map(|c| usd(c / 100.0)).unwrap_or_else(|| "—".into()),
+            p.cost_cents
+                .map(|c| usd(c / 100.0))
+                .unwrap_or_else(|| "—".into()),
         )));
     }
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -455,7 +561,11 @@ mod tests {
         term.draw(|f| render(f, f.area(), b)).unwrap();
         let buf = term.backend().buffer().clone();
         (0..buf.area.height)
-            .map(|y| (0..buf.area.width).map(|x| buf.cell((x, y)).unwrap().symbol().to_string()).collect::<String>())
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -477,7 +587,10 @@ mod tests {
     #[test]
     fn measured_and_estimated_are_shown_apart() {
         let mut b = Board::default();
-        b.apply(Update::Gateways(vec![gateway(8789, "claude"), gateway(8790, "codex")]));
+        b.apply(Update::Gateways(vec![
+            gateway(8789, "claude"),
+            gateway(8790, "codex"),
+        ]));
         b.apply(Update::Cloud(Ok(json!({
             "range": "24h", "start": "2026-10-10T12:00:00Z", "end": "2026-10-11T12:00:00Z",
             "spend": {"available": true, "totalCents": 191, "mtdCents": 5000},
@@ -489,15 +602,28 @@ mod tests {
         }))));
         let text = screen(&b);
         for want in [
-            "hanzo cloud · 24h", "calls", "41", "in 412,310 · out 18,204", "$1.91 metered",
+            "hanzo cloud · 24h",
+            "calls",
+            "41",
+            "in 412,310 · out 18,204",
+            "$1.91 metered",
             "cache       not reported by this cloud",
             "$1.91 in range · $50.00 month to date",
-            "local kai-gateway", "claude:8789", "codex:8790", "78.1%", "$0.20", "$0.43", "2 · 41 ms",
+            "local kai-gateway",
+            "claude:8789",
+            "codex:8790",
+            "78.1%",
+            "$0.20",
+            "$0.43",
+            "2 · 41 ms",
             "estimated: a counterfactual, never added to the above",
             "claude:8789  1 call answered without an LLM ≈ $0.10, $0.10 net of Kai",
             "2 call(s) went to a model the price list does not name",
             "listed prices (api.hanzo.ai/v1/models), not what a plan charged",
-            "linked plans and Hanzo-routed usage", "anthropic", "62%", "430,514",
+            "linked plans and Hanzo-routed usage",
+            "anthropic",
+            "62%",
+            "430,514",
         ] {
             assert!(text.contains(want), "missing {want:?} in:\n{text}");
         }
@@ -510,7 +636,13 @@ mod tests {
             "requests": 9, "cacheReadTokens": 354000, "cacheWriteTokens": 12000, "cachedShare": 0.86, "cacheSavedCents": 40.0,
             "kai": {"decisions": 12, "costCents": 3.5}}}))));
         let text = screen(&b);
-        for want in ["hanzo cloud · 7d", "86.0% of input · read 354,000 · written 12,000", "cache saved", "$0.40", "cost $0.04 · decisions 12"] {
+        for want in [
+            "hanzo cloud · 7d",
+            "86.0% of input · read 354,000 · written 12,000",
+            "cache saved",
+            "$0.40",
+            "cost $0.04 · decisions 12",
+        ] {
             assert!(text.contains(want), "missing {want:?} in:\n{text}");
         }
         assert!(!text.contains("not reported by this cloud"), "{text}");
@@ -529,17 +661,28 @@ mod tests {
         assert!(text.contains("unavailable"), "{text}");
         assert!(text.contains("403 not authorized"), "{text}");
         assert!(text.contains("nothing here is a zero"), "{text}");
-        assert!(text.contains("no kai-gateway answered on 127.0.0.1:8787-8793"), "{text}");
-        assert!(!text.contains("linked plans"), "no plans without an answer: {text}");
+        assert!(
+            text.contains("no kai-gateway answered on 127.0.0.1:8787-8793"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("linked plans"),
+            "no plans without an answer: {text}"
+        );
 
         b.apply(Update::Cloud(Ok(json!({"llm": {"available": false}}))));
         let text = screen(&b);
-        assert!(text.contains("LLM totals: warehouse not connected"), "{text}");
+        assert!(
+            text.contains("LLM totals: warehouse not connected"),
+            "{text}"
+        );
     }
 
     #[test]
     fn a_range_is_counted_back_from_now() {
-        let now = DateTime::parse_from_rfc3339("2026-10-11T12:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-10-11T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(since("24h", now), "2026-10-10T12:00:00Z");
         assert_eq!(since("7d", now), "2026-10-04T12:00:00Z");
         assert_eq!(since("30d", now), "2026-09-11T12:00:00Z");
@@ -565,17 +708,33 @@ mod tests {
                     let mut buf = [0u8; 2048];
                     let n = s.read(&mut buf).await.unwrap_or(0);
                     let req = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let ok = req.starts_with("GET /dashboard/savings?") && req.contains("format=json") && req.contains("from=2026-10-10T12%3A00%3A00Z");
-                    let (status, payload) = if ok { ("200 OK", body) } else { ("404 Not Found", "{}".into()) };
+                    let ok = req.starts_with("GET /dashboard/savings?")
+                        && req.contains("format=json")
+                        && req.contains("from=2026-10-10T12%3A00%3A00Z");
+                    let (status, payload) = if ok {
+                        ("200 OK", body)
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
                     let reply = format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}", payload.len());
                     let _ = s.write_all(reply.as_bytes()).await;
                 });
             }
         });
-        let client = reqwest::Client::builder().timeout(Duration::from_millis(800)).build().unwrap();
-        let found = probe(&client, port, "claude", "2026-10-10T12:00:00Z").await.expect("the gateway answers");
-        assert_eq!((found.port, found.client.as_str(), found.measured.llm_calls), (port, "claude", 3));
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(800))
+            .build()
+            .unwrap();
+        let found = probe(&client, port, "claude", "2026-10-10T12:00:00Z")
+            .await
+            .expect("the gateway answers");
+        assert_eq!(
+            (found.port, found.client.as_str(), found.measured.llm_calls),
+            (port, "claude", 3)
+        );
         // Port 1 has nothing listening.
-        assert!(probe(&client, 1, "default", "2026-10-10T12:00:00Z").await.is_none());
+        assert!(probe(&client, 1, "default", "2026-10-10T12:00:00Z")
+            .await
+            .is_none());
     }
 }

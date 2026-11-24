@@ -99,9 +99,14 @@ fn loopback_addr(origin: &str) -> Option<String> {
     // An IPv6 host arrives spelled with its brackets, which is not what parses as
     // an address. Everything loopback answers here — all of 127.0.0.0/8 and ::1 —
     // so the test is the address's own, not a list of spellings.
-    let host = url.host_str()?.trim_start_matches('[').trim_end_matches(']');
+    let host = url
+        .host_str()?
+        .trim_start_matches('[')
+        .trim_end_matches(']');
     let local = host == "localhost"
-        || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
     local.then(|| format!("127.0.0.1:{}", url.port_or_known_default().unwrap_or(80)))
 }
 
@@ -127,7 +132,8 @@ pub(crate) async fn healthy(addr: &str) -> bool {
     for path in ["/healthz", "/v1/openapi.json"] {
         let url = format!("http://{addr}{path}");
         let probe = http.send(Request::new(Method::GET, url));
-        if matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status)) {
+        if matches!(tokio::time::timeout(PROBE_TIMEOUT, probe).await, Ok(Ok(r)) if (200..300).contains(&r.status))
+        {
             return true;
         }
     }
@@ -150,7 +156,11 @@ pub(crate) async fn ensure(addr: &str) -> Result<()> {
             bail!("hanzod exited ({status}) — see {}", log_path()?.display());
         }
         if Instant::now() >= deadline {
-            bail!("hanzod did not answer within {}s — see {}", READY_TIMEOUT.as_secs(), log_path()?.display());
+            bail!(
+                "hanzod did not answer within {}s — see {}",
+                READY_TIMEOUT.as_secs(),
+                log_path()?.display()
+            );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -161,9 +171,16 @@ pub(crate) async fn ensure(addr: &str) -> Result<()> {
 /// programs whose digest it has pinned, and the same holds for starting it.
 fn binary() -> Result<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
-    let name = if cfg!(windows) { "hanzod.exe" } else { "hanzod" };
+    let name = if cfg!(windows) {
+        "hanzod.exe"
+    } else {
+        "hanzod"
+    };
     let mut candidates = vec![home.join(".hanzo").join("bin").join(name)];
-    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+    {
         candidates.push(dir.join(name));
     }
     for c in &candidates {
@@ -182,13 +199,24 @@ fn binary() -> Result<PathBuf> {
 
 /// Start the daemon detached, logging to the data dir.
 fn spawn(bin: &Path) -> Result<Child> {
-    let log = std::fs::File::create(log_path()?).with_context(|| format!("creating {}", log_path().map(|p| p.display().to_string()).unwrap_or_default()))?;
+    let log = std::fs::File::create(log_path()?).with_context(|| {
+        format!(
+            "creating {}",
+            log_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        )
+    })?;
     let mut cmd = Command::new(bin);
     cmd.stdin(Stdio::null())
-        .stdout(Stdio::from(log.try_clone().context("duplicating the hanzod log handle")?))
+        .stdout(Stdio::from(
+            log.try_clone()
+                .context("duplicating the hanzod log handle")?,
+        ))
         .stderr(Stdio::from(log));
     detach(&mut cmd);
-    cmd.spawn().with_context(|| format!("starting {}", bin.display()))
+    cmd.spawn()
+        .with_context(|| format!("starting {}", bin.display()))
 }
 
 /// Put the daemon in its own process group so the Ctrl-C that interrupts the CLI
@@ -269,7 +297,9 @@ fn retire(dir: &Path, is_shared: fn(&str) -> bool) -> Result<bool> {
 
 /// `${XDG_DATA_HOME}/hanzo` — the daemon's socket, pid and log.
 fn data_dir() -> Result<PathBuf> {
-    let dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("hanzo");
+    let dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("hanzo");
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     Ok(dir)
 }
@@ -280,7 +310,11 @@ fn log_path() -> Result<PathBuf> {
 
 /// The pid hanzod recorded at start, if the process is still alive.
 pub(crate) fn running_pid() -> Option<i32> {
-    let pid: i32 = std::fs::read_to_string(data_dir().ok()?.join("hanzod.pid")).ok()?.trim().parse().ok()?;
+    let pid: i32 = std::fs::read_to_string(data_dir().ok()?.join("hanzod.pid"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
     alive(pid).then_some(pid)
 }
 
@@ -300,7 +334,10 @@ pub(crate) fn win_alive(pid: i32) -> bool {
     Command::new("tasklist")
         .args(["/FI", &filter, "/NH", "/FO", "CSV"])
         .output()
-        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(&format!(",\"{pid}\"")))
+        .is_ok_and(|o| {
+            o.status.success()
+                && String::from_utf8_lossy(&o.stdout).contains(&format!(",\"{pid}\""))
+        })
 }
 
 #[cfg(windows)]
@@ -321,8 +358,17 @@ pub async fn start(cfg: &Config) -> Result<()> {
     let (api, addr) = local_origin(cfg)?;
     let existed = healthy(&addr).await;
     origin(cfg).await?;
-    let verb = if existed { "already running" } else { "started" };
-    println!("{} hanzod {} — local cloud at {}", "✓".green(), verb, api.cyan());
+    let verb = if existed {
+        "already running"
+    } else {
+        "started"
+    };
+    println!(
+        "{} hanzod {} — local cloud at {}",
+        "✓".green(),
+        verb,
+        api.cyan()
+    );
     Ok(())
 }
 
@@ -334,7 +380,11 @@ pub async fn status(cfg: &Config) -> Result<()> {
             Some(pid) => println!("{} running at {} (pid {pid})", "●".green(), api.cyan()),
             // Serving, but not by a process this CLI started — a `make run`, a
             // container, whatever. Reported honestly rather than claimed.
-            None => println!("{} running at {} (started elsewhere)", "●".green(), api.cyan()),
+            None => println!(
+                "{} running at {} (started elsewhere)",
+                "●".green(),
+                api.cyan()
+            ),
         }
         println!("  logs {}", log_path()?.display().to_string().dimmed());
     } else {
@@ -365,7 +415,10 @@ pub async fn stop(cfg: &Config) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     if alive(pid) {
-        bail!("hanzod (pid {pid}) did not exit within {}s", STOP_TIMEOUT.as_secs());
+        bail!(
+            "hanzod (pid {pid}) did not exit within {}s",
+            STOP_TIMEOUT.as_secs()
+        );
     }
     let _ = std::fs::remove_file(data_dir()?.join("hanzod.pid"));
     println!("{} hanzod stopped", "✓".green());
@@ -454,7 +507,11 @@ pub async fn serve(service: String, passthrough: Vec<String>) -> Result<()> {
     if service == "cloud" {
         println!("{} running the Hanzo Cloud API", "→".cyan());
     } else {
-        println!("{} running the {} service", "→".cyan(), service.cyan().bold());
+        println!(
+            "{} running the {} service",
+            "→".cyan(),
+            service.cyan().bold()
+        );
     }
     let mut argv = vec![service];
     argv.extend(passthrough);
@@ -475,7 +532,11 @@ pub async fn register_upstream(addr: Option<&str>) -> Result<()> {
     };
     let r = crate::zap::send(&sock, &method, "/v1/hanzod/upstream", "", body.as_ref()).await?;
     if !(200..300).contains(&r.status) {
-        bail!("hanzod refused the cloud upstream ({}): {}", r.status, r.body);
+        bail!(
+            "hanzod refused the cloud upstream ({}): {}",
+            r.status,
+            r.body
+        );
     }
     Ok(())
 }
@@ -491,15 +552,27 @@ mod tests {
 
     #[test]
     fn loopback_is_recognised_by_every_spelling() {
-        assert_eq!(loopback_addr("http://localhost:3690").as_deref(), Some("127.0.0.1:3690"));
-        assert_eq!(loopback_addr("http://127.0.0.1:3690").as_deref(), Some("127.0.0.1:3690"));
+        assert_eq!(
+            loopback_addr("http://localhost:3690").as_deref(),
+            Some("127.0.0.1:3690")
+        );
+        assert_eq!(
+            loopback_addr("http://127.0.0.1:3690").as_deref(),
+            Some("127.0.0.1:3690")
+        );
         // The host binds tcp4, so a v6 spelling still resolves to the v4 loopback.
-        assert_eq!(loopback_addr("http://[::1]:3690").as_deref(), Some("127.0.0.1:3690"));
+        assert_eq!(
+            loopback_addr("http://[::1]:3690").as_deref(),
+            Some("127.0.0.1:3690")
+        );
     }
 
     #[test]
     fn a_default_port_is_filled_in() {
-        assert_eq!(loopback_addr("http://localhost").as_deref(), Some("127.0.0.1:80"));
+        assert_eq!(
+            loopback_addr("http://localhost").as_deref(),
+            Some("127.0.0.1:80")
+        );
     }
 
     fn scratch(tag: &str) -> PathBuf {

@@ -50,21 +50,44 @@ pub struct Tool {
 
 impl From<&'static Agent> for Tool {
     fn from(a: &'static Agent) -> Tool {
-        Tool { name: a.name, title: a.title, programs: a.programs, upgrade: a.upgrade }
+        Tool {
+            name: a.name,
+            title: a.title,
+            programs: a.programs,
+            upgrade: a.upgrade,
+        }
     }
 }
 
 /// Claude Code, Codex and Open Interpreter have backends of their own rather than
 /// agent files; each updates itself.
 const BACKENDS: &[Tool] = &[
-    Tool { name: "claude", title: "Claude Code", programs: &["claude"], upgrade: Upgrade::Own(&["update"]) },
-    Tool { name: "codex", title: "Codex", programs: &["codex"], upgrade: Upgrade::Own(&["update"]) },
-    Tool { name: "interpreter", title: "Open Interpreter", programs: &["interpreter"], upgrade: Upgrade::Own(&["update"]) },
+    Tool {
+        name: "claude",
+        title: "Claude Code",
+        programs: &["claude"],
+        upgrade: Upgrade::Own(&["update"]),
+    },
+    Tool {
+        name: "codex",
+        title: "Codex",
+        programs: &["codex"],
+        upgrade: Upgrade::Own(&["update"]),
+    },
+    Tool {
+        name: "interpreter",
+        title: "Open Interpreter",
+        programs: &["interpreter"],
+        upgrade: Upgrade::Own(&["update"]),
+    },
 ];
 
 /// Every agent `hanzo upgrade` knows, in the order help lists them.
 fn tools() -> impl Iterator<Item = Tool> {
-    BACKENDS.iter().copied().chain(agents::AGENTS.iter().map(Tool::from))
+    BACKENDS
+        .iter()
+        .copied()
+        .chain(agents::AGENTS.iter().map(Tool::from))
 }
 
 /// The agent a spelling names, by the same resolver `hanzo --<agent>` uses.
@@ -90,9 +113,15 @@ pub struct Plan {
 /// already installed.
 pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan> {
     if names.is_empty() {
-        return Ok(Plan { native: with_engine(NATIVE.iter().map(|s| s.to_string()).collect()), tools: tools().filter(|t| installed(t)).collect() });
+        return Ok(Plan {
+            native: with_engine(NATIVE.iter().map(|s| s.to_string()).collect()),
+            tools: tools().filter(|t| installed(t)).collect(),
+        });
     }
-    let mut p = Plan { native: Vec::new(), tools: Vec::new() };
+    let mut p = Plan {
+        native: Vec::new(),
+        tools: Vec::new(),
+    };
     for n in names {
         let n = n.trim().to_ascii_lowercase();
         let native = match n.as_str() {
@@ -130,7 +159,10 @@ fn with_engine(mut native: Vec<String>) -> Vec<String> {
 /// a self-updating one anywhere, a uv one in uv's tool directory.
 fn installed(root: &Root, t: &Tool) -> bool {
     match t.upgrade {
-        Upgrade::Npm(_) => t.programs.iter().any(|b| agents::prefix(root).join("bin").join(b).is_file()),
+        Upgrade::Npm(_) => t
+            .programs
+            .iter()
+            .any(|b| agents::prefix(root).join("bin").join(b).is_file()),
         Upgrade::Own(_) => agents::find_program(root, t.programs).is_some(),
         Upgrade::Uv(_) => agents::find_program(root, t.programs).is_some_and(|p| by_uv(&p)),
     }
@@ -138,14 +170,22 @@ fn installed(root: &Root, t: &Tool) -> bool {
 
 /// Whether a binary is one `uv tool install` placed: a link into uv's tool directory.
 fn by_uv(bin: &Path) -> bool {
-    bin.canonicalize().is_ok_and(|p| p.components().collect::<Vec<_>>().windows(2).any(|w| w[0].as_os_str() == "uv" && w[1].as_os_str() == "tools"))
+    bin.canonicalize().is_ok_and(|p| {
+        p.components()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|w| w[0].as_os_str() == "uv" && w[1].as_os_str() == "tools")
+    })
 }
 
 /// The directory this binary lives in, which is where its siblings are upgraded.
 fn here() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("finding this binary")?;
     let exe = exe.canonicalize().unwrap_or(exe);
-    Ok(exe.parent().context("this binary has no directory")?.to_path_buf())
+    Ok(exe
+        .parent()
+        .context("this binary has no directory")?
+        .to_path_buf())
 }
 
 /// Where the releases are.
@@ -163,7 +203,9 @@ struct Native {
 /// The tool table out of hanzo.sh itself — supports both legacy 4-column
 /// (`name:repo:binary:alias`) and current 5/6-column (`name:display:repo:binary:alias[:signer]`) rows.
 fn table(script: &str) -> Vec<Native> {
-    let Some(start) = script.find("TOOLS='") else { return Vec::new() };
+    let Some(start) = script.find("TOOLS='") else {
+        return Vec::new();
+    };
     let body = &script[start + 7..];
     let body = &body[..body.find('\'').unwrap_or(body.len())];
     body.lines()
@@ -173,9 +215,19 @@ fn table(script: &str) -> Vec<Native> {
                 return None;
             }
             let (name, repo, binary, alias) = if cols[1].contains('/') {
-                (cols[0], cols[1], cols[2], cols.get(3).copied().unwrap_or(""))
+                (
+                    cols[0],
+                    cols[1],
+                    cols[2],
+                    cols.get(3).copied().unwrap_or(""),
+                )
             } else if cols.len() >= 4 && cols[2].contains('/') {
-                (cols[0], cols[2], cols[3], cols.get(4).copied().unwrap_or(""))
+                (
+                    cols[0],
+                    cols[2],
+                    cols[3],
+                    cols.get(4).copied().unwrap_or(""),
+                )
             } else {
                 return None;
             };
@@ -193,10 +245,20 @@ fn table(script: &str) -> Vec<Native> {
 /// against its `.sha256` before anything is unpacked, then put into `dir` beside
 /// the binary it replaces: a running binary is renamed aside (Windows will not
 /// overwrite one, and lets it be renamed), and the new one moved into its name.
-async fn fetch(client: &reqwest::Client, base: &str, tool: &Native, platform: &str, dir: &Path) -> Result<PathBuf> {
+async fn fetch(
+    client: &reqwest::Client,
+    base: &str,
+    tool: &Native,
+    platform: &str,
+    dir: &Path,
+) -> Result<PathBuf> {
     use sha2::{Digest, Sha256};
     let asset = format!("{}-{platform}.tar.gz", tool.binary);
-    let url = format!("{}/{}/releases/latest/download/{asset}", base.trim_end_matches('/'), tool.repo);
+    let url = format!(
+        "{}/{}/releases/latest/download/{asset}",
+        base.trim_end_matches('/'),
+        tool.repo
+    );
     let get = |u: String| async move {
         client
             .get(&u)
@@ -209,23 +271,41 @@ async fn fetch(client: &reqwest::Client, base: &str, tool: &Native, platform: &s
             .with_context(|| format!("reading {u}"))
     };
     let sum = get(format!("{url}.sha256")).await?;
-    let want = String::from_utf8_lossy(&sum).split_whitespace().next().unwrap_or_default().to_ascii_lowercase();
+    let want = String::from_utf8_lossy(&sum)
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if want.len() != 64 || !want.bytes().all(|b| b.is_ascii_hexdigit()) {
         bail!("{asset}.sha256 is not a SHA-256 digest");
     }
     let tarball = get(url).await?;
-    let got: String = Sha256::digest(&tarball).iter().map(|b| format!("{b:02x}")).collect();
+    let got: String = Sha256::digest(&tarball)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     if got != want {
         bail!("{asset} does not match its checksum (want {want}, got {got})");
     }
-    let exe = if platform.starts_with("windows") { format!("{}.exe", tool.binary) } else { tool.binary.clone() };
+    let exe = if platform.starts_with("windows") {
+        format!("{}.exe", tool.binary)
+    } else {
+        tool.binary.clone()
+    };
     let staged = dir.join(format!(".{exe}.new"));
     let mut found = false;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&tarball[..]));
     for entry in archive.entries().context("reading the tarball")? {
         let mut entry = entry.context("reading the tarball")?;
-        if entry.path().ok().and_then(|p| p.file_name().map(|n| n == exe.as_str())) == Some(true) {
-            entry.unpack(&staged).with_context(|| format!("unpacking {exe}"))?;
+        if entry
+            .path()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n == exe.as_str()))
+            == Some(true)
+        {
+            entry
+                .unpack(&staged)
+                .with_context(|| format!("unpacking {exe}"))?;
             found = true;
             break;
         }
@@ -242,14 +322,20 @@ async fn fetch(client: &reqwest::Client, base: &str, tool: &Native, platform: &s
     let aside = dir.join(format!("{exe}.old"));
     let _ = std::fs::remove_file(&aside);
     if target.exists() {
-        std::fs::rename(&target, &aside).with_context(|| format!("moving {} aside", target.display()))?;
+        std::fs::rename(&target, &aside)
+            .with_context(|| format!("moving {} aside", target.display()))?;
     }
-    std::fs::rename(&staged, &target).with_context(|| format!("installing {}", target.display()))?;
+    std::fs::rename(&staged, &target)
+        .with_context(|| format!("installing {}", target.display()))?;
     // A running binary's old copy cannot be removed on Windows until it exits;
     // the next upgrade removes it.
     let _ = std::fs::remove_file(&aside);
     if !tool.alias.is_empty() && tool.alias != tool.binary {
-        let alias_exe = if platform.starts_with("windows") { format!("{}.exe", tool.alias) } else { tool.alias.clone() };
+        let alias_exe = if platform.starts_with("windows") {
+            format!("{}.exe", tool.alias)
+        } else {
+            tool.alias.clone()
+        };
         let alias_path = dir.join(&alias_exe);
         let alias_aside = dir.join(format!("{alias_exe}.old"));
         let _ = std::fs::remove_file(&alias_aside);
@@ -269,7 +355,12 @@ pub async fn run(names: Vec<String>) -> Result<()> {
 
     if !plan.native.is_empty() {
         let dir = here()?;
-        println!("{} {} → {}", "upgrading".bold(), plan.native.join(", "), dir.display());
+        println!(
+            "{} {} → {}",
+            "upgrading".bold(),
+            plan.native.join(", "),
+            dir.display()
+        );
         let script = reqwest::get(INSTALLER)
             .await
             .and_then(reqwest::Response::error_for_status)
@@ -315,11 +406,25 @@ pub async fn run(names: Vec<String>) -> Result<()> {
     for t in &plan.tools {
         let ok = match t.upgrade {
             Upgrade::Npm(package) => {
-                let npm = hanzo_gen::exe::find("npm").context("installing an agent needs npm (Node.js 20 or newer)")?;
+                let npm = hanzo_gen::exe::find("npm")
+                    .context("installing an agent needs npm (Node.js 20 or newer)")?;
                 npm_used = true;
-                println!("{} {} ({package}) → {}", "upgrading".bold(), t.title, prefix.join("bin").display());
+                println!(
+                    "{} {} ({package}) → {}",
+                    "upgrading".bold(),
+                    t.title,
+                    prefix.join("bin").display()
+                );
                 tokio::process::Command::from(hanzo_gen::exe::command(&npm))
-                    .args(["install", "--global", "--no-audit", "--no-fund", "--no-update-notifier", "--loglevel=error", "--prefix"])
+                    .args([
+                        "install",
+                        "--global",
+                        "--no-audit",
+                        "--no-fund",
+                        "--no-update-notifier",
+                        "--loglevel=error",
+                        "--prefix",
+                    ])
                     .arg(&prefix)
                     .arg(format!("{package}@latest"))
                     .status()
@@ -329,8 +434,19 @@ pub async fn run(names: Vec<String>) -> Result<()> {
             }
             Upgrade::Own(args) => match agents::find_program(&root, t.programs) {
                 Some(bin) => {
-                    println!("{} {} ({} {})", "upgrading".bold(), t.title, bin.display(), args.join(" "));
-                    tokio::process::Command::from(hanzo_gen::exe::command(&bin)).args(args).status().await.with_context(|| format!("running {}", bin.display()))?.success()
+                    println!(
+                        "{} {} ({} {})",
+                        "upgrading".bold(),
+                        t.title,
+                        bin.display(),
+                        args.join(" ")
+                    );
+                    tokio::process::Command::from(hanzo_gen::exe::command(&bin))
+                        .args(args)
+                        .status()
+                        .await
+                        .with_context(|| format!("running {}", bin.display()))?
+                        .success()
                 }
                 None => {
                     println!("  {} {} is not installed: see https://docs.hanzo.ai/docs/guides/coding for its installer", "✗".red(), t.title);
@@ -339,25 +455,52 @@ pub async fn run(names: Vec<String>) -> Result<()> {
             },
             Upgrade::Uv(package) => match hanzo_gen::exe::find("uv") {
                 Some(uv) => {
-                    println!("{} {} (uv tool upgrade {package})", "upgrading".bold(), t.title);
-                    tokio::process::Command::from(hanzo_gen::exe::command(uv)).args(["tool", "upgrade", package]).status().await.context("running uv")?.success()
+                    println!(
+                        "{} {} (uv tool upgrade {package})",
+                        "upgrading".bold(),
+                        t.title
+                    );
+                    tokio::process::Command::from(hanzo_gen::exe::command(uv))
+                        .args(["tool", "upgrade", package])
+                        .status()
+                        .await
+                        .context("running uv")?
+                        .success()
                 }
                 None => {
-                    println!("  {} {} upgrades with uv, which is not installed", "✗".red(), t.title);
+                    println!(
+                        "  {} {} upgrades with uv, which is not installed",
+                        "✗".red(),
+                        t.title
+                    );
                     false
                 }
             },
         };
         match (ok, agents::find_program(&root, t.programs)) {
             (true, Some(bin)) => {
-                let v = hanzo_gen::exe::version(&bin.display().to_string(), hanzo_gen::backend::VERSION_WAIT).unwrap_or_else(|| "?".into());
+                let v = hanzo_gen::exe::version(
+                    &bin.display().to_string(),
+                    hanzo_gen::backend::VERSION_WAIT,
+                )
+                .unwrap_or_else(|| "?".into());
                 println!("  {} {} {v}", "✓".green(), t.name);
             }
             _ => failed.push(t.name.to_string()),
         }
     }
-    if npm_used && std::env::var_os("PATH").is_some_and(|p| !std::env::split_paths(&p).any(|d| d == prefix.join("bin"))) {
-        println!("  {}", format!("hanzo runs them from {} without it on PATH; add it to run them directly", prefix.join("bin").display()).dimmed());
+    if npm_used
+        && std::env::var_os("PATH")
+            .is_some_and(|p| !std::env::split_paths(&p).any(|d| d == prefix.join("bin")))
+    {
+        println!(
+            "  {}",
+            format!(
+                "hanzo runs them from {} without it on PATH; add it to run them directly",
+                prefix.join("bin").display()
+            )
+            .dimmed()
+        );
     }
 
     if !failed.is_empty() {
@@ -378,12 +521,27 @@ mod tests {
     fn nothing_named_is_everything_hanzo_ships_and_the_agents_installed() {
         let p = plan(&[], |t| t.name == "gemini" || t.name == "claude").unwrap();
         assert_eq!(p.native, names(&[NATIVE, &[ENGINE]].concat()));
-        assert_eq!(p.tools.iter().map(|t| t.name).collect::<Vec<_>>(), ["claude", "gemini"]);
+        assert_eq!(
+            p.tools.iter().map(|t| t.name).collect::<Vec<_>>(),
+            ["claude", "gemini"]
+        );
     }
 
     #[test]
     fn a_named_tool_is_sorted_to_the_way_it_upgrades() {
-        let p = plan(&names(&["hanzo-mcp", "qwen-code", "kilocode", "claude-code", "aider", "goose", "oi"]), |_| false).unwrap();
+        let p = plan(
+            &names(&[
+                "hanzo-mcp",
+                "qwen-code",
+                "kilocode",
+                "claude-code",
+                "aider",
+                "goose",
+                "oi",
+            ]),
+            |_| false,
+        )
+        .unwrap();
         assert_eq!(p.native, names(&["mcp"]));
         let got: Vec<(&str, Upgrade)> = p.tools.iter().map(|t| (t.name, t.upgrade)).collect();
         assert_eq!(
@@ -407,8 +565,13 @@ mod tests {
 
     #[test]
     fn the_engine_is_upgraded_with_hanzo_and_is_not_a_name() {
-        assert_eq!(plan(&names(&["hanzo"]), |_| false).unwrap().native, names(&["hanzo", "dev"]));
-        let e = plan(&names(&["hanzo", "dev"]), |_| false).unwrap_err().to_string();
+        assert_eq!(
+            plan(&names(&["hanzo"]), |_| false).unwrap().native,
+            names(&["hanzo", "dev"])
+        );
+        let e = plan(&names(&["hanzo", "dev"]), |_| false)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("upgradable: hanzo, mcp, gen"), "{e}");
     }
 
@@ -430,12 +593,22 @@ mod tests {
     fn the_tool_table_is_read_out_of_hanzo_sh() {
         let script = "#!/bin/sh\nTOOLS='hanzo:Hanzo CLI:hanzoai/cli:hanzo:hanzo-cli\nmcp:hanzoai/mcp:hanzo-mcp:mcp\ndev:hanzoai/dev-v1:dev:\nzt:hanzozt/zt:zt:'\nrest\n";
         let t = table(script);
-        assert_eq!(t.iter().map(|n| (n.name.as_str(), n.repo.as_str(), n.binary.as_str(), n.alias.as_str())).collect::<Vec<_>>(), [
-            ("hanzo", "hanzoai/cli", "hanzo", "hanzo-cli"),
-            ("mcp", "hanzoai/mcp", "hanzo-mcp", "mcp"),
-            ("dev", "hanzoai/dev-v1", "dev", ""),
-            ("zt", "hanzozt/zt", "zt", ""),
-        ]);
+        assert_eq!(
+            t.iter()
+                .map(|n| (
+                    n.name.as_str(),
+                    n.repo.as_str(),
+                    n.binary.as_str(),
+                    n.alias.as_str()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("hanzo", "hanzoai/cli", "hanzo", "hanzo-cli"),
+                ("mcp", "hanzoai/mcp", "hanzo-mcp", "mcp"),
+                ("dev", "hanzoai/dev-v1", "dev", ""),
+                ("zt", "hanzozt/zt", "zt", ""),
+            ]
+        );
         assert!(table("#!/bin/sh\necho no table\n").is_empty());
     }
 
@@ -446,15 +619,24 @@ mod tests {
         let base = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move {
             loop {
-                let Ok((mut c, _)) = l.accept().await else { return };
+                let Ok((mut c, _)) = l.accept().await else {
+                    return;
+                };
                 let files = files.clone();
                 tokio::spawn(async move {
                     let mut buf = vec![0u8; 4096];
                     let n = c.read(&mut buf).await.unwrap_or(0);
                     let req = String::from_utf8_lossy(&buf[..n]);
                     let path = req.split_whitespace().nth(1).unwrap_or("").to_string();
-                    let (status, body) = files.iter().find(|(p, _)| *p == path).map(|(_, b)| ("200 OK", b.clone())).unwrap_or(("404 Not Found", Vec::new()));
-                    let head = format!("HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
+                    let (status, body) = files
+                        .iter()
+                        .find(|(p, _)| *p == path)
+                        .map(|(_, b)| ("200 OK", b.clone()))
+                        .unwrap_or(("404 Not Found", Vec::new()));
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                        body.len()
+                    );
                     let _ = c.write_all(head.as_bytes()).await;
                     let _ = c.write_all(&body).await;
                 });
@@ -464,7 +646,10 @@ mod tests {
     }
 
     fn tarball(name: &str, body: &[u8]) -> Vec<u8> {
-        let mut b = tar::Builder::new(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast()));
+        let mut b = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::fast(),
+        ));
         let mut h = tar::Header::new_gnu();
         h.set_size(body.len() as u64);
         h.set_mode(0o755);
@@ -476,22 +661,46 @@ mod tests {
     #[tokio::test]
     async fn a_release_asset_is_checked_unpacked_and_swapped_in_beside_the_old_one() {
         use sha2::{Digest, Sha256};
-        let tool = Native { name: "dev".into(), repo: "hanzoai/dev-v1".into(), binary: "dev".into(), alias: String::new() };
+        let tool = Native {
+            name: "dev".into(),
+            repo: "hanzoai/dev-v1".into(),
+            binary: "dev".into(),
+            alias: String::new(),
+        };
         let tgz = tarball("dev.exe", b"new build");
-        let sum: String = Sha256::digest(&tgz).iter().map(|b| format!("{b:02x}")).collect();
+        let sum: String = Sha256::digest(&tgz)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         let path = "/hanzoai/dev-v1/releases/latest/download/dev-windows-amd64.tar.gz";
-        let base = serve(vec![(path.into(), tgz.clone()), (format!("{path}.sha256"), format!("{sum}  dev-windows-amd64.tar.gz\n").into_bytes())]).await;
+        let base = serve(vec![
+            (path.into(), tgz.clone()),
+            (
+                format!("{path}.sha256"),
+                format!("{sum}  dev-windows-amd64.tar.gz\n").into_bytes(),
+            ),
+        ])
+        .await;
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("dev.exe"), b"old build").unwrap();
         let client = reqwest::Client::new();
-        let bin = fetch(&client, &base, &tool, "windows-amd64", dir.path()).await.unwrap();
+        let bin = fetch(&client, &base, &tool, "windows-amd64", dir.path())
+            .await
+            .unwrap();
         assert_eq!(bin, dir.path().join("dev.exe"));
         assert_eq!(std::fs::read(&bin).unwrap(), b"new build");
         assert!(!dir.path().join(".dev.exe.new").exists());
 
         // An asset that does not match its checksum is refused, and nothing is replaced.
-        let bad = serve(vec![(path.into(), tarball("dev.exe", b"tampered")), (format!("{path}.sha256"), format!("{sum}  x\n").into_bytes())]).await;
-        let e = fetch(&client, &bad, &tool, "windows-amd64", dir.path()).await.unwrap_err().to_string();
+        let bad = serve(vec![
+            (path.into(), tarball("dev.exe", b"tampered")),
+            (format!("{path}.sha256"), format!("{sum}  x\n").into_bytes()),
+        ])
+        .await;
+        let e = fetch(&client, &bad, &tool, "windows-amd64", dir.path())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("does not match its checksum"), "{e}");
         assert_eq!(std::fs::read(&bin).unwrap(), b"new build");
     }

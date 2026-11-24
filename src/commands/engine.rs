@@ -83,7 +83,8 @@ async fn pull_native_hf(repo_id: &str, hub_dir: &Path) -> Result<PathBuf> {
             "model `{repo_id}` must be `<org>/<model>` (for example `zenlm/zen-nano-0.6b`) or a known alias (`zen-nano`)"
         );
     }
-    let api_base = std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
+    let api_base =
+        std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".to_string());
     let api_base = api_base.trim_end_matches('/');
     let token = std::env::var("HF_TOKEN")
         .ok()
@@ -108,7 +109,10 @@ async fn pull_native_hf(repo_id: &str, hub_dir: &Path) -> Result<PathBuf> {
         let body = resp.text().await.unwrap_or_default();
         bail!("model `{repo_id}` lookup failed ({status}): {body}");
     }
-    let meta: serde_json::Value = resp.json().await.context("parsing Hugging Face model metadata")?;
+    let meta: serde_json::Value = resp
+        .json()
+        .await
+        .context("parsing Hugging Face model metadata")?;
     let sha = meta["sha"]
         .as_str()
         .filter(|s| !s.is_empty())
@@ -136,15 +140,31 @@ async fn pull_native_hf(repo_id: &str, hub_dir: &Path) -> Result<PathBuf> {
 
     for (idx, rfile) in files.iter().enumerate() {
         let dest = snap_dir.join(rfile);
-        if dest.exists() && std::fs::metadata(&dest).map(|m| m.len() > 0).unwrap_or(false) {
-            println!("  {} [{}/{}] {} (cached)", "•".green(), idx + 1, files.len(), rfile);
+        if dest.exists()
+            && std::fs::metadata(&dest)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+        {
+            println!(
+                "  {} [{}/{}] {} (cached)",
+                "•".green(),
+                idx + 1,
+                files.len(),
+                rfile
+            );
             continue;
         }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let url = format!("{api_base}/{repo_id}/resolve/{sha}/{rfile}");
-        print!("  {} [{}/{}] {} ...", "↓".cyan(), idx + 1, files.len(), rfile);
+        print!(
+            "  {} [{}/{}] {} ...",
+            "↓".cyan(),
+            idx + 1,
+            files.len(),
+            rfile
+        );
         let _ = std::io::stdout().flush();
 
         let mut dl = client.get(&url);
@@ -157,14 +177,21 @@ async fn pull_native_hf(repo_id: &str, hub_dir: &Path) -> Result<PathBuf> {
             .with_context(|| format!("downloading {url}"))?;
         if !res.status().is_success() {
             println!();
-            bail!("failed to download `{rfile}` from {url}: HTTP {}", res.status());
+            bail!(
+                "failed to download `{rfile}` from {url}: HTTP {}",
+                res.status()
+            );
         }
 
         let part = dest.with_extension("part");
-        let mut out = std::fs::File::create(&part)
-            .with_context(|| format!("creating {}", part.display()))?;
+        let mut out =
+            std::fs::File::create(&part).with_context(|| format!("creating {}", part.display()))?;
         let mut total: u64 = 0;
-        while let Some(chunk) = res.chunk().await.with_context(|| format!("reading {rfile}"))? {
+        while let Some(chunk) = res
+            .chunk()
+            .await
+            .with_context(|| format!("reading {rfile}"))?
+        {
             out.write_all(&chunk)?;
             total += chunk.len() as u64;
         }
@@ -230,8 +257,7 @@ pub async fn pull(model: &str, node: &str) -> Result<()> {
     };
 
     let snap = if used_cli {
-        cached_snapshot(&hub_dir, resolved)
-            .unwrap_or_else(|| repo_cache_dir(&hub_dir, resolved))
+        cached_snapshot(&hub_dir, resolved).unwrap_or_else(|| repo_cache_dir(&hub_dir, resolved))
     } else {
         pull_native_hf(resolved, &hub_dir).await?
     };
@@ -307,7 +333,11 @@ pub fn list() -> Result<()> {
 }
 
 /// `hanzo engine serve MODEL [--overlay FILE] [-- engine args…]`
-pub async fn serve(model: String, overlay: Option<String>, mut passthrough: Vec<String>) -> Result<()> {
+pub async fn serve(
+    model: String,
+    overlay: Option<String>,
+    mut passthrough: Vec<String>,
+) -> Result<()> {
     let bin = engine_bin().ok_or_else(|| {
         anyhow!(
             "engine not found. Set HANZO_ENGINE_BIN=/path/to/hanzo-engine (from \
@@ -322,11 +352,7 @@ pub async fn serve(model: String, overlay: Option<String>, mut passthrough: Vec<
         resolved.cyan().bold()
     );
     if let Some(ref ov) = overlay {
-        println!(
-            "  {} applying .pleo overlay: {}",
-            "•".green(),
-            ov.bold()
-        );
+        println!("  {} applying .pleo overlay: {}", "•".green(), ov.bold());
         passthrough.push("--overlay".to_string());
         passthrough.push(ov.clone());
     }
@@ -337,7 +363,12 @@ pub async fn serve(model: String, overlay: Option<String>, mut passthrough: Vec<
 
 /// `hanzo engine up` — bring up the native bare-metal GPU engine & router
 pub async fn up() -> Result<()> {
-    println!("{}", "Bringing up native bare-metal GPU inference engine & router...".cyan().bold());
+    println!(
+        "{}",
+        "Bringing up native bare-metal GPU inference engine & router..."
+            .cyan()
+            .bold()
+    );
     let res = reqwest::get("http://127.0.0.1:1235/health").await;
     if res.is_err() {
         println!("  {} Starting hanzo-router (:1235)...", "→".cyan());
@@ -355,7 +386,12 @@ pub async fn up() -> Result<()> {
 
 /// `hanzo engine down` — stop the native bare-metal GPU engine & router
 pub async fn down() -> Result<()> {
-    println!("{}", "Stopping native bare-metal GPU inference engine & router...".cyan().bold());
+    println!(
+        "{}",
+        "Stopping native bare-metal GPU inference engine & router..."
+            .cyan()
+            .bold()
+    );
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "stop", "hanzo-router.service"])
         .status();

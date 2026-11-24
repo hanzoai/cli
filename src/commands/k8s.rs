@@ -238,7 +238,18 @@ fn expand_helm_args(rest: &[String]) -> Vec<String> {
     let sub = rest.first().map(String::as_str).unwrap_or_default();
     let ns_scoped = matches!(
         sub,
-        "list" | "ls" | "status" | "upgrade" | "install" | "uninstall" | "del" | "delete" | "history" | "rollback" | "get" | "test"
+        "list"
+            | "ls"
+            | "status"
+            | "upgrade"
+            | "install"
+            | "uninstall"
+            | "del"
+            | "delete"
+            | "history"
+            | "rollback"
+            | "get"
+            | "test"
     );
     if ns_scoped && !has_namespace_flag(rest) {
         out.push("-n".to_string());
@@ -326,7 +337,9 @@ pub async fn run(args: Vec<String>) -> Result<()> {
     }
 
     let kubeconfig = resolve_kubeconfig().ok_or_else(|| {
-        anyhow!("no kubeconfig found at ~/.kube/hanzo-aws.yaml, ~/.kube/hanzo.yaml, or ~/.kube/config")
+        anyhow!(
+            "no kubeconfig found at ~/.kube/hanzo-aws.yaml, ~/.kube/hanzo.yaml, or ~/.kube/config"
+        )
     })?;
 
     match args.first().map(String::as_str) {

@@ -142,7 +142,8 @@ impl Credential {
     /// Standard `base64(username:secret)` used in `Authorization: Basic …` and
     /// Kubernetes `.dockerconfigjson`.
     pub fn basic(&self) -> String {
-        base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", self.username, self.secret))
+        base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", self.username, self.secret))
     }
 }
 
@@ -227,11 +228,7 @@ pub async fn pin_with(
 /// `git.hanzo.ai`, `ghcr.io` or a custom registry, the credential verified
 /// against the manifest endpoint (or the first configured credential on a
 /// network hiccup) is returned.
-pub async fn pull_secret_for(
-    http: &Client,
-    reference: &str,
-    cfg: &mut Config,
-) -> Option<String> {
+pub async fn pull_secret_for(http: &Client, reference: &str, cfg: &mut Config) -> Option<String> {
     let it = parse(reference).ok()?;
     let creds = credentials_for(&it.registry, cfg).await;
     if creds.is_empty() {
@@ -244,7 +241,9 @@ pub async fn pull_secret_for(
         Ok((_, Some(cred))) => Some(dockerconfigjson(&it.registry, &cred)),
         // If probing failed transiently, still plant the best local credential
         // so kubelet's own retry loop has it.
-        Err(_) => creds.first().map(|cred| dockerconfigjson(&it.registry, cred)),
+        Err(_) => creds
+            .first()
+            .map(|cred| dockerconfigjson(&it.registry, cred)),
     }
 }
 
@@ -300,7 +299,10 @@ pub async fn credentials_for(registry: &str, cfg: &mut Config) -> Vec<Credential
             }
         }
         "forge.hanzo.ai" | "git.hanzo.ai" => {
-            let active = store::active_token(cfg, paths::DEFAULT_BRAND).await.ok().flatten();
+            let active = store::active_token(cfg, paths::DEFAULT_BRAND)
+                .await
+                .ok()
+                .flatten();
             let default_user = env_nonempty("FORGE_USER")
                 .or_else(|| env_nonempty("GIT_USER"))
                 .or_else(|| active.as_ref().map(|(id, _)| id.name.clone()))
@@ -336,7 +338,10 @@ pub async fn credentials_for(registry: &str, cfg: &mut Config) -> Vec<Credential
 }
 
 fn env_nonempty(name: &str) -> Option<String> {
-    std::env::var(name).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn registry_host(registry: &str) -> &str {
@@ -391,7 +396,11 @@ where
         }
     }
 
-    if let Some(store_name) = doc.get("credsStore").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(store_name) = doc
+        .get("credsStore")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         // Query under any matching `auths` key first (e.g. `https://index.docker.io/v1/`),
         // then the bare registry host.
         if let Some(auths) = doc.get("auths").and_then(Value::as_object) {
@@ -424,7 +433,11 @@ fn docker_server_matches(server: &str, registry: &str) -> bool {
 }
 
 fn parse_docker_auth_entry(entry: &Value) -> Option<Credential> {
-    if let Some(b64) = entry.get("auth").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(b64) = entry
+        .get("auth")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64.trim())
             .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(b64.trim()))
@@ -436,7 +449,10 @@ fn parse_docker_auth_entry(entry: &Value) -> Option<Credential> {
             }
         }
     }
-    let user = entry.get("username").and_then(Value::as_str).unwrap_or("token");
+    let user = entry
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or("token");
     let secret = entry
         .get("password")
         .and_then(Value::as_str)
@@ -544,7 +560,10 @@ fn config_digest(body: &Value) -> Result<String> {
 }
 
 fn text(v: &Value, key: &str) -> String {
-    v.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+    v.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// GET a manifest, with the digest the registry itself computed for it.
@@ -614,7 +633,11 @@ async fn get_with(
         .unwrap_or_default()
         .to_string();
 
-    if challenge.trim_start().to_ascii_lowercase().starts_with("basic") {
+    if challenge
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("basic")
+    {
         for cred in creds {
             let retry = http
                 .get(url)
@@ -702,7 +725,9 @@ async fn mint_token(
     scope: &str,
     cred: Option<&Credential>,
 ) -> Result<String> {
-    let mut req = http.get(realm).query(&[("service", service), ("scope", scope)]);
+    let mut req = http
+        .get(realm)
+        .query(&[("service", service), ("scope", scope)]);
     if let Some(c) = cred {
         req = req.header(AUTHORIZATION, format!("Basic {}", c.basic()));
     }
@@ -754,7 +779,10 @@ mod tests {
         assert_eq!(parse("ghcr.io/hanzoai/cloud").unwrap().version, "latest");
         // A port in the registry is not a tag.
         let local = parse("localhost:5000/cloud").unwrap();
-        assert_eq!((local.registry.as_str(), local.version.as_str()), ("localhost:5000", "latest"));
+        assert_eq!(
+            (local.registry.as_str(), local.version.as_str()),
+            ("localhost:5000", "latest")
+        );
     }
 
     #[test]
@@ -785,7 +813,10 @@ mod tests {
         assert_eq!(select(&index, "arm64").as_deref(), Some("sha256:arm"));
         assert_eq!(select(&index, "amd64").as_deref(), Some("sha256:amd"));
         assert_eq!(select(&index, "riscv64"), None);
-        assert_eq!(select(&json!({"config": {"digest": "sha256:c"}}), "amd64"), None);
+        assert_eq!(
+            select(&json!({"config": {"digest": "sha256:c"}}), "amd64"),
+            None
+        );
     }
 
     #[test]
@@ -794,7 +825,10 @@ mod tests {
             {"digest": "sha256:amd", "platform": {"os": "linux", "architecture": "amd64"}},
         ]});
         assert_eq!(platforms(&index), vec!["linux/amd64"]);
-        assert_eq!(config_digest(&json!({"config": {"digest": "sha256:c"}})).unwrap(), "sha256:c");
+        assert_eq!(
+            config_digest(&json!({"config": {"digest": "sha256:c"}})).unwrap(),
+            "sha256:c"
+        );
         assert!(config_digest(&json!({"manifests": []})).is_err());
     }
 
@@ -812,7 +846,10 @@ mod tests {
     #[test]
     fn a_challenge_names_its_realm_and_service() {
         let challenge = r#"Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="x""#;
-        assert_eq!(field(challenge, "realm").as_deref(), Some("https://ghcr.io/token"));
+        assert_eq!(
+            field(challenge, "realm").as_deref(),
+            Some("https://ghcr.io/token")
+        );
         assert_eq!(field(challenge, "service").as_deref(), Some("ghcr.io"));
         assert_eq!(field(challenge, "missing"), None);
     }
@@ -850,12 +887,16 @@ mod tests {
             let log = seen.clone();
             tokio::spawn(async move {
                 loop {
-                    let Ok((mut stream, _)) = listener.accept().await else { break };
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        break;
+                    };
                     let routes = routes.clone();
                     let log = log.clone();
                     tokio::spawn(async move {
                         let mut buf = [0u8; 4096];
-                        let Ok(n) = stream.read(&mut buf).await else { return };
+                        let Ok(n) = stream.read(&mut buf).await else {
+                            return;
+                        };
                         let head = String::from_utf8_lossy(&buf[..n]).to_string();
                         let mut lines = head.lines();
                         let path = lines
@@ -879,11 +920,9 @@ mod tests {
                             )
                         } else {
                             match routes.iter().find(|(p, _)| *p == path) {
-                                Some((_, b)) => body(
-                                    "200 OK",
-                                    b,
-                                    "Docker-Content-Digest: sha256:whatever\r\n",
-                                ),
+                                Some((_, b)) => {
+                                    body("200 OK", b, "Docker-Content-Digest: sha256:whatever\r\n")
+                                }
                                 None => body("404 Not Found", r#"{"errors":[]}"#, ""),
                             }
                         };
@@ -920,13 +959,26 @@ mod tests {
         let http = Client::new();
 
         let pinned = pin(&http, &r.reference("main"), "arm64").await.unwrap();
-        assert_eq!(pinned, format!("127.0.0.1:{}/hanzoai/cloud@sha256:arm", r.port));
+        assert_eq!(
+            pinned,
+            format!("127.0.0.1:{}/hanzoai/cloud@sha256:arm", r.port)
+        );
 
         let seen = r.seen.lock().unwrap().clone();
-        assert_eq!(seen[0], "/v2/hanzoai/cloud/manifests/main", "asked anonymously first");
+        assert_eq!(
+            seen[0], "/v2/hanzoai/cloud/manifests/main",
+            "asked anonymously first"
+        );
         assert!(seen[1].starts_with("/token?"), "then the realm: {:?}", seen);
-        assert!(seen[1].contains("scope=repository"), "scoped to the repository: {}", seen[1]);
-        assert_eq!(seen[2], "/v2/hanzoai/cloud/manifests/main", "then again, with it");
+        assert!(
+            seen[1].contains("scope=repository"),
+            "scoped to the repository: {}",
+            seen[1]
+        );
+        assert_eq!(
+            seen[2], "/v2/hanzoai/cloud/manifests/main",
+            "then again, with it"
+        );
     }
 
     /// An index without this architecture says what it does have, rather than
@@ -934,7 +986,9 @@ mod tests {
     #[tokio::test]
     async fn an_index_without_this_architecture_is_refused() {
         let r = Registry::start(vec![("/v2/hanzoai/cloud/manifests/main", INDEX)]).await;
-        let err = pin(&Client::new(), &r.reference("main"), "riscv64").await.unwrap_err();
+        let err = pin(&Client::new(), &r.reference("main"), "riscv64")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("no linux/riscv64"), "{err}");
         assert!(err.to_string().contains("linux/amd64"), "{err}");
     }
@@ -963,7 +1017,9 @@ mod tests {
             "pinned to the digest the registry computed for the manifest"
         );
 
-        let err = pin(&http, &r.reference("latest"), "arm64").await.unwrap_err();
+        let err = pin(&http, &r.reference("latest"), "arm64")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("is a linux/amd64 image"), "{err}");
     }
 
@@ -972,7 +1028,10 @@ mod tests {
     async fn a_pinned_reference_never_reaches_the_registry() {
         let r = Registry::start(vec![]).await;
         let reference = format!("127.0.0.1:{}/hanzoai/cloud@sha256:abc", r.port);
-        assert_eq!(pin(&Client::new(), &reference, "arm64").await.unwrap(), reference);
+        assert_eq!(
+            pin(&Client::new(), &reference, "arm64").await.unwrap(),
+            reference
+        );
         assert!(r.seen.lock().unwrap().is_empty(), "nothing was asked");
     }
 
@@ -992,17 +1051,32 @@ mod tests {
         .to_string();
 
         let oci = docker_credentials_from_str(&cfg, "oci.hanzo.ai", |_, _| None);
-        assert_eq!(oci, vec![Credential { username: "token".into(), secret: "secret-jwt".into() }]);
+        assert_eq!(
+            oci,
+            vec![Credential {
+                username: "token".into(),
+                secret: "secret-jwt".into()
+            }]
+        );
 
         let pkg = docker_credentials_from_str(&cfg, "pkg.hanzo.ai", |_, _| None);
-        assert_eq!(pkg, vec![Credential { username: "u".into(), secret: "p".into() }]);
+        assert_eq!(
+            pkg,
+            vec![Credential {
+                username: "u".into(),
+                secret: "p".into()
+            }]
+        );
 
         let forge = docker_credentials_from_str(&cfg, "forge.hanzo.ai", |h, s| {
             Credential::new(format!("{h}:{s}"), "forge-pat")
         });
         assert_eq!(
             forge[0],
-            Credential { username: "osxkeychain:forge.hanzo.ai".into(), secret: "forge-pat".into() }
+            Credential {
+                username: "osxkeychain:forge.hanzo.ai".into(),
+                secret: "forge-pat".into()
+            }
         );
     }
 
@@ -1015,15 +1089,22 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let expected = format!(
             "authorization: basic {}",
-            Credential::new("token", "oidc-jwt").unwrap().basic().to_ascii_lowercase()
+            Credential::new("token", "oidc-jwt")
+                .unwrap()
+                .basic()
+                .to_ascii_lowercase()
         );
         tokio::spawn(async move {
             loop {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let expected = expected.clone();
                 tokio::spawn(async move {
                     let mut buf = [0u8; 4096];
-                    let Ok(n) = stream.read(&mut buf).await else { return };
+                    let Ok(n) = stream.read(&mut buf).await else {
+                        return;
+                    };
                     let head = String::from_utf8_lossy(&buf[..n]).to_string();
                     let lower = head.to_ascii_lowercase();
                     let path = head
@@ -1074,10 +1155,14 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move {
             loop {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 tokio::spawn(async move {
                     let mut buf = [0u8; 4096];
-                    let Ok(n) = stream.read(&mut buf).await else { return };
+                    let Ok(n) = stream.read(&mut buf).await else {
+                        return;
+                    };
                     let head = String::from_utf8_lossy(&buf[..n]).to_string();
                     let lower = head.to_ascii_lowercase();
                     let path = head
@@ -1094,7 +1179,11 @@ mod tests {
                     } else if lower.contains("authorization: bearer user_jwt") {
                         body("200 OK", INDEX, "Docker-Content-Digest: sha256:idx\r\n")
                     } else if lower.contains("authorization: bearer anon_jwt") {
-                        body("404 Not Found", r#"{"errors":[{"code":"MANIFEST_UNKNOWN"}]}"#, "")
+                        body(
+                            "404 Not Found",
+                            r#"{"errors":[{"code":"MANIFEST_UNKNOWN"}]}"#,
+                            "",
+                        )
                     } else {
                         let realm = format!("http://127.0.0.1:{port}/v2/token");
                         body(
@@ -1111,7 +1200,9 @@ mod tests {
 
         let reference = format!("127.0.0.1:{port}/hanzoai/cloud:main");
         let creds = vec![Credential::new("a", "forge-pat").unwrap()];
-        let pinned = pin_with(&Client::new(), &reference, "arm64", &creds).await.unwrap();
+        let pinned = pin_with(&Client::new(), &reference, "arm64", &creds)
+            .await
+            .unwrap();
         assert_eq!(pinned, format!("127.0.0.1:{port}/hanzoai/cloud@sha256:arm"));
     }
 }

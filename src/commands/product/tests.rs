@@ -38,7 +38,14 @@ fn generated_data_carries_no_host_url_or_auth() {
         }
         scrubbed.push('\n');
     }
-    for banned in ["://", "Bearer", "Authorization", ".hanzo.", "hanzo.ai", "api.hanzo"] {
+    for banned in [
+        "://",
+        "Bearer",
+        "Authorization",
+        ".hanzo.",
+        "hanzo.ai",
+        "api.hanzo",
+    ] {
         assert!(
             !scrubbed.contains(banned),
             "generated call data must be host/url/auth-free; found {banned:?}"
@@ -52,18 +59,32 @@ fn generated_data_carries_no_host_url_or_auth() {
     // a client could dial instead of the configured origin.
     for op in OPS {
         let link = op.sum.match_indices("://").any(|(i, _)| {
-            op.sum[i + 3..].chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+            op.sum[i + 3..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric())
         });
-        assert!(!link, "prose may name a host or a scheme, never carry a link: {}", op.sum);
+        assert!(
+            !link,
+            "prose may name a host or a scheme, never carry a link: {}",
+            op.sum
+        );
     }
     // A product description is display-only prose, but it still must not carry
     // an auth token — and the tuple shape means it can never be dialed.
     for (name, d) in PRODUCTS {
-        assert!(!d.contains("Bearer") && !d.contains("Authorization"), "auth in {name} prose");
+        assert!(
+            !d.contains("Bearer") && !d.contains("Authorization"),
+            "auth in {name} prose"
+        );
     }
     // Every path template is a bare `/v1/…` — no scheme can ride a path.
     for op in OPS {
-        assert!(op.path.starts_with("/v1/") && !op.path.contains("://"), "bad path {}", op.path);
+        assert!(
+            op.path.starts_with("/v1/") && !op.path.contains("://"),
+            "bad path {}",
+            op.path
+        );
     }
 }
 
@@ -83,7 +104,12 @@ fn every_command_says_what_it_does() {
     let bare: Vec<String> = OPS
         .iter()
         .filter(|o| o.sum.trim().is_empty())
-        .map(|o| format!("  hanzo {} … {} <- {} {}", o.product, o.verb, o.method, o.path))
+        .map(|o| {
+            format!(
+                "  hanzo {} … {} <- {} {}",
+                o.product, o.verb, o.method, o.path
+            )
+        })
         .collect();
     assert!(
         bare.is_empty(),
@@ -115,8 +141,11 @@ fn every_command_says_what_it_does() {
 #[test]
 fn every_op_fills_to_a_path() {
     for op in OPS {
-        let templated =
-            op.path.split('/').filter(|s| s.starts_with('{') && s.ends_with('}')).count();
+        let templated = op
+            .path
+            .split('/')
+            .filter(|s| s.starts_with('{') && s.ends_with('}'))
+            .count();
         let scope = scope_count(op.path);
         assert_eq!(
             op.params.len(),
@@ -126,13 +155,23 @@ fn every_op_fills_to_a_path() {
         );
         let values: Vec<String> = op.params.iter().map(|p| format!("v-{p}")).collect();
         let filled = fill_path(op.path, op.rest, Some("acme"), &values).expect("fills");
-        assert!(!filled.contains('{') && !filled.contains('}'), "unfilled: {filled}");
+        assert!(
+            !filled.contains('{') && !filled.contains('}'),
+            "unfilled: {filled}"
+        );
         // `rest` is a subset of `params` (never names the tenant scope).
         for r in op.rest {
-            assert!(op.params.contains(r), "rest {r} must be a positional: {}", op.path);
+            assert!(
+                op.params.contains(r),
+                "rest {r} must be a positional: {}",
+                op.path
+            );
         }
         if scope > 0 {
-            assert!(filled.contains("/orgs/acme"), "scope must bind owner: {filled}");
+            assert!(
+                filled.contains("/orgs/acme"),
+                "scope must bind owner: {filled}"
+            );
             // ...and a signed-out caller is refused rather than sending a blank org.
             assert!(
                 fill_path(op.path, op.rest, None, &values).is_err(),
@@ -146,9 +185,7 @@ fn scope_count(path: &str) -> usize {
     let segs: Vec<&str> = path.split('/').collect();
     segs.iter()
         .enumerate()
-        .filter(|(i, s)| {
-            s.starts_with('{') && s.ends_with('}') && *i > 0 && segs[i - 1] == "orgs"
-        })
+        .filter(|(i, s)| s.starts_with('{') && s.ends_with('}') && *i > 0 && segs[i - 1] == "orgs")
         .count()
 }
 
@@ -227,7 +264,11 @@ fn the_org_scope_is_never_a_positional_or_flag() {
                 continue;
             }
             let name = s.trim_start_matches('{').trim_end_matches('}');
-            assert!(!op.params.contains(&name), "scope {name} leaked as a positional: {}", op.path);
+            assert!(
+                !op.params.contains(&name),
+                "scope {name} leaked as a positional: {}",
+                op.path
+            );
             assert!(
                 !op.fields.iter().any(|f| f.key == name),
                 "scope {name} leaked as a flag: {}",
@@ -303,9 +344,16 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
         panic!("expected a leaf for {argv:?}");
     };
     assert_eq!(got.path, op.path);
-    let LeafBody::Typed(v) = body else { panic!("typed leaf must build a JSON body") };
+    let LeafBody::Typed(v) = body else {
+        panic!("typed leaf must build a JSON body")
+    };
     for f in op.fields {
-        assert_eq!(v[f.key], format!("v-{}", f.key), "{} did not reach the body", f.key);
+        assert_eq!(
+            v[f.key],
+            format!("v-{}", f.key),
+            "{} did not reach the body",
+            f.key
+        );
     }
 
     // A typed leaf takes no `--data` — the flags ARE the body — and using it is refused by name.
@@ -313,13 +361,24 @@ fn a_typed_write_assembles_a_json_body_from_flags() {
     leaky.push("--data");
     leaky.push("{}");
     let m = matches_of(&leaky);
-    let Some(Resolved::Leaf { body: LeafBody::Misused, .. }) = resolve(&hand(), &m) else {
+    let Some(Resolved::Leaf {
+        body: LeafBody::Misused,
+        ..
+    }) = resolve(&hand(), &m)
+    else {
         panic!("a typed write must refuse --data: {leaky:?}");
     };
     let said = flags_not_data(op);
-    assert!(said.contains("takes its body as flags, not --data"), "{said}");
+    assert!(
+        said.contains("takes its body as flags, not --data"),
+        "{said}"
+    );
     for f in op.fields.iter().filter(|f| !f.query && !f.secret) {
-        assert!(said.contains(&format!("--{}", field_flag(f))), "{said} does not name --{}", field_flag(f));
+        assert!(
+            said.contains(&format!("--{}", field_flag(f))),
+            "{said} does not name --{}",
+            field_flag(f)
+        );
     }
 }
 
@@ -333,7 +392,11 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
     let top_int = |f: &&Field| matches!(f.ty, Ty::Int) && !f.query && !f.key.contains('.');
     let op = OPS
         .iter()
-        .find(|o| o.params.is_empty() && o.fields.iter().any(|f| top_int(&f)) && o.fields.iter().all(|f| !f.required))
+        .find(|o| {
+            o.params.is_empty()
+                && o.fields.iter().any(|f| top_int(&f))
+                && o.fields.iter().all(|f| !f.required)
+        })
         .expect("a typed op with a top-level body int field and no required fields exists");
     let int = op.fields.iter().find(top_int).unwrap();
 
@@ -344,12 +407,20 @@ fn a_typed_int_flag_is_a_json_number_and_optionals_are_omitted() {
     argv.push("42".into());
 
     let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
-    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
+    let Some(Resolved::Leaf {
+        body: LeafBody::Typed(v),
+        ..
+    }) = resolve(&hand(), &m)
+    else {
         panic!("typed leaf");
     };
     assert_eq!(v[int.key], 42, "int flag must serialize as a JSON number");
     // Only the int we set is present — every other optional BODY field is omitted.
-    assert_eq!(v.as_object().unwrap().len(), 1, "unset optionals must be omitted: {v}");
+    assert_eq!(
+        v.as_object().unwrap().len(),
+        1,
+        "unset optionals must be omitted: {v}"
+    );
 }
 
 /// An ARRAY property is a REPEATABLE flag, one element per occurrence, and the
@@ -366,9 +437,9 @@ fn an_array_property_is_a_repeatable_flag_and_lands_as_a_json_array() {
         .find(|o| {
             o.params.is_empty()
                 && o.fields.iter().all(|f| !f.required)
-                && o.fields
-                    .iter()
-                    .any(|f| f.repeat && !f.query && f.choices.is_empty() && matches!(f.ty, Ty::Str))
+                && o.fields.iter().any(|f| {
+                    f.repeat && !f.query && f.choices.is_empty() && matches!(f.ty, Ty::Str)
+                })
         })
         .expect("cloud declares at least one array-of-string body property");
     let arr = op
@@ -385,12 +456,20 @@ fn an_array_property_is_a_repeatable_flag_and_lands_as_a_json_array() {
         argv.push(v.into());
     }
     let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
-    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
+    let Some(Resolved::Leaf {
+        body: LeafBody::Typed(v),
+        ..
+    }) = resolve(&hand(), &m)
+    else {
         panic!("typed leaf");
     };
     assert_eq!(v[arr.key], serde_json::json!(["one", "two"]), "in {v}");
     // Order is the order they were typed — a list is not a set.
-    assert_eq!(v.as_object().unwrap().len(), 1, "unset optionals stay out: {v}");
+    assert_eq!(
+        v.as_object().unwrap().len(),
+        1,
+        "unset optionals stay out: {v}"
+    );
 }
 
 /// A NESTED object is DOTTED flags, and the body rebuilds the object the schema
@@ -404,9 +483,9 @@ fn a_nested_object_is_dotted_flags_that_rebuild_the_object() {
         .find(|o| {
             o.params.is_empty()
                 && o.fields.iter().all(|f| !f.required)
-                && o.fields
-                    .iter()
-                    .any(|f| !f.query && !f.repeat && f.key.contains('.') && matches!(f.ty, Ty::Str))
+                && o.fields.iter().any(|f| {
+                    !f.query && !f.repeat && f.key.contains('.') && matches!(f.ty, Ty::Str)
+                })
         })
         .expect("cloud declares at least one nested body object");
     let nested = op
@@ -421,17 +500,26 @@ fn a_nested_object_is_dotted_flags_that_rebuild_the_object() {
     argv.push(format!("--{}", nested.flag));
     argv.push("deep".into());
     let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
-    let Some(Resolved::Leaf { body: LeafBody::Typed(v), .. }) = resolve(&hand(), &m) else {
+    let Some(Resolved::Leaf {
+        body: LeafBody::Typed(v),
+        ..
+    }) = resolve(&hand(), &m)
+    else {
         panic!("typed leaf");
     };
     // Walk the dotted key: every step is a real JSON object, and the leaf holds
     // the value — the flag is FLAT and the body is NESTED.
     let mut node = &v;
     for step in nested.key.split('.') {
-        node = node.get(step).unwrap_or_else(|| panic!("{} missing in {v}", nested.key));
+        node = node
+            .get(step)
+            .unwrap_or_else(|| panic!("{} missing in {v}", nested.key));
     }
     assert_eq!(node, "deep");
-    assert!(v[nested.key.split('.').next().unwrap()].is_object(), "must nest, not flatten: {v}");
+    assert!(
+        v[nested.key.split('.').next().unwrap()].is_object(),
+        "must nest, not flatten: {v}"
+    );
 }
 
 /// The dotted-key law, held on the values rather than on a document: two flags
@@ -457,7 +545,10 @@ fn two_dotted_keys_under_one_parent_build_one_object() {
 /// `{id}` is the service account and its body `id` is the ROLE being assigned.
 #[test]
 fn a_lone_body_property_survives_a_path_parameter_of_the_same_name() {
-    for op in OPS.iter().filter(|o| matches!(o.method, "POST" | "PUT" | "PATCH")) {
+    for op in OPS
+        .iter()
+        .filter(|o| matches!(o.method, "POST" | "PUT" | "PATCH"))
+    {
         let body: Vec<&Field> = op.fields.iter().filter(|f| !f.query).collect();
         // Where a body key echoes a path param, it may only be because it was the
         // body's whole shape.
@@ -478,7 +569,11 @@ fn a_lone_body_property_survives_a_path_parameter_of_the_same_name() {
         // And the converse: a write with a declared body never falls back to
         // `--data` because the echo rule emptied it.
         assert!(
-            !(body.is_empty() && op.params.iter().any(|p| op.fields.iter().any(|f| f.key == *p))),
+            !(body.is_empty()
+                && op
+                    .params
+                    .iter()
+                    .any(|p| op.fields.iter().any(|f| f.key == *p))),
             "{} {} typed its whole body away",
             op.method,
             op.path
@@ -518,7 +613,10 @@ fn a_leaf_whose_name_also_heads_a_group_is_still_runnable() {
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let m = matches_of(&argv);
     let Some(Resolved::Leaf { op: got, .. }) = resolve(&hand(), &m) else {
-        panic!("`{}` must run its own operation, not demand a subcommand", argv.join(" "))
+        panic!(
+            "`{}` must run its own operation, not demand a subcommand",
+            argv.join(" ")
+        )
     };
     assert_eq!((got.method, got.path), (op.method, op.path));
 }
@@ -541,7 +639,11 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
                 && o.fields.iter().filter(|f| f.query && !f.required).count() >= 1
         })
         .expect("some GET takes an optional query parameter");
-    let flag = target.fields.iter().find(|f| f.query && !f.required).unwrap();
+    let flag = target
+        .fields
+        .iter()
+        .find(|f| f.query && !f.required)
+        .unwrap();
 
     let mut argv: Vec<String> = vec!["hanzo".into(), target.product.into()];
     argv.extend(target.nodes.iter().map(|n| n.to_string()));
@@ -550,7 +652,12 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
     argv.push("gateway".into());
 
     let m = augment(hand()).try_get_matches_from(&argv).expect("parses");
-    let Some(Resolved::Leaf { op, body, query, .. }) = resolve(&hand(), &m) else { panic!("leaf") };
+    let Some(Resolved::Leaf {
+        op, body, query, ..
+    }) = resolve(&hand(), &m)
+    else {
+        panic!("leaf")
+    };
     assert_eq!(op.path, target.path);
     assert!(matches!(body, LeafBody::None), "a GET carries no body");
     assert!(
@@ -581,27 +688,48 @@ fn a_query_param_becomes_a_typed_flag_in_the_url() {
 #[test]
 fn a_graph_question_carries_both_times_to_the_wire() {
     let (of, known) = ("2026-09-01T00:00:00Z", "2026-09-15T00:00:00Z");
-    let timed: Vec<&Op> =
-        OPS.iter().filter(|o| o.product == "graph" && o.fields.iter().any(|f| f.key == "as_known")).collect();
-    assert!(timed.len() >= 7, "the document carries {} graph ops with as_known", timed.len());
+    let timed: Vec<&Op> = OPS
+        .iter()
+        .filter(|o| o.product == "graph" && o.fields.iter().any(|f| f.key == "as_known"))
+        .collect();
+    assert!(
+        timed.len() >= 7,
+        "the document carries {} graph ops with as_known",
+        timed.len()
+    );
     for op in timed {
         let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
         argv.extend(op.nodes.iter().map(|n| n.to_string()));
         argv.push(op.verb.to_string());
         for f in op.fields.iter().filter(|f| f.required) {
             argv.push(format!("--{}", f.flag));
-            argv.push(if matches!(f.ty, Ty::Int) { "1".into() } else { format!("v-{}", f.key) });
+            argv.push(if matches!(f.ty, Ty::Int) {
+                "1".into()
+            } else {
+                format!("v-{}", f.key)
+            });
         }
         argv.extend(["--as-of", of, "--as-known", known].map(String::from));
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let Some(Resolved::Leaf { op: got, body, query, .. }) = resolve(&hand(), &matches_of(&argv)) else {
+        let Some(Resolved::Leaf {
+            op: got,
+            body,
+            query,
+            ..
+        }) = resolve(&hand(), &matches_of(&argv))
+        else {
             panic!("expected a leaf for {argv:?}");
         };
         assert_eq!(got.path, op.path);
         match body {
-            LeafBody::Typed(v) => assert_eq!((&v["as_of"], &v["as_known"]), (&Value::from(of), &Value::from(known)), "{argv:?}"),
+            LeafBody::Typed(v) => assert_eq!(
+                (&v["as_of"], &v["as_known"]),
+                (&Value::from(of), &Value::from(known)),
+                "{argv:?}"
+            ),
             _ => assert!(
-                query.contains(&format!("as_of={of}")) && query.contains(&format!("as_known={known}")),
+                query.contains(&format!("as_of={of}"))
+                    && query.contains(&format!("as_known={known}")),
                 "{argv:?} sent {query:?}"
             ),
         }
@@ -634,13 +762,23 @@ fn every_capability_the_document_carries_is_a_command() {
         .map(|rest| rest.split('/').next().unwrap_or(""))
         .filter(|c| !c.is_empty() && !c.starts_with('{'))
         .collect();
-    assert!(caps.len() > 100, "the document carries {} capabilities", caps.len());
+    assert!(
+        caps.len() > 100,
+        "the document carries {} capabilities",
+        caps.len()
+    );
 
     // A capability `src/curation.rs` places under another command keeps its
     // routes and moves coordinate, so what is asked is whether its routes reach a
     // command — at its own name, or under the one the arrangement names.
     let reached = |c: &str| {
-        is_product(c) || OPS.iter().any(|o| o.path.strip_prefix("/v1/").and_then(|r| r.split('/').next()) == Some(c))
+        is_product(c)
+            || OPS.iter().any(|o| {
+                o.path
+                    .strip_prefix("/v1/")
+                    .and_then(|r| r.split('/').next())
+                    == Some(c)
+            })
     };
     let missing: Vec<&str> = caps.iter().copied().filter(|c| !reached(c)).collect();
     assert!(
@@ -694,7 +832,9 @@ fn every_coordinate_parses_and_dispatches_to_its_own_route() {
 /// the literal `org`, not the `orgs/{org}` scope pair, so it stays a positional).
 #[test]
 fn a_deep_nested_leaf_resolves_and_fills_in_order() {
-    let m = matches_of(&["hanzo", "platform", "projects", "apps", "get", "site", "web"]);
+    let m = matches_of(&[
+        "hanzo", "platform", "projects", "apps", "get", "site", "web",
+    ]);
     let Some(Resolved::Leaf { op, values, .. }) = resolve(&hand(), &m) else {
         panic!("expected a leaf");
     };
@@ -714,10 +854,19 @@ fn a_deep_nested_leaf_resolves_and_fills_in_order() {
 #[test]
 fn there_is_no_passthrough_or_raw_path_escape() {
     let src = include_str!("mod.rs");
-    assert!(!src.contains("Resolved::Pass"), "no passthrough variant may remain");
-    assert!(!src.contains("fn passthrough"), "no passthrough builder may remain");
+    assert!(
+        !src.contains("Resolved::Pass"),
+        "no passthrough variant may remain"
+    );
+    assert!(
+        !src.contains("fn passthrough"),
+        "no passthrough builder may remain"
+    );
     // The dispatcher speaks the seam directly, in-module (no `api` command).
-    assert!(!src.contains("super::api"), "the seam moved in-module; no `api` command remains");
+    assert!(
+        !src.contains("super::api"),
+        "the seam moved in-module; no `api` command remains"
+    );
 }
 
 // ---- collisions: a local command always wins its bare name -------------------
@@ -772,10 +921,18 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
     let hand = crate::Cli::command();
     let merged = augment(crate::Cli::command());
     let mut absorbed = 0usize;
-    for p in OPS.iter().map(|o| o.product).collect::<std::collections::BTreeSet<_>>() {
-        let Some(local) = hand.find_subcommand(p) else { continue };
+    for p in OPS
+        .iter()
+        .map(|o| o.product)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let Some(local) = hand.find_subcommand(p) else {
+            continue;
+        };
         absorbed += 1;
-        let here = merged.find_subcommand(p).expect("a product mounts under some name");
+        let here = merged
+            .find_subcommand(p)
+            .expect("a product mounts under some name");
         // Every operation of the product is reachable AS ITSELF…
         for op in OPS.iter().filter(|o| o.product == p) {
             let argv = argv_for(op);
@@ -805,8 +962,7 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
                     shadowed,
                     "`{line}` reaches no operation — {} {} is served, described, and reachable by \
                      nobody, and no local command of that name terminates there to explain it",
-                    op.method,
-                    op.path
+                    op.method, op.path
                 );
                 continue;
             };
@@ -824,9 +980,12 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
         // …and every name the local command declared is still ITS OWN command,
         // not a generated node wearing the same name.
         for sub in local.get_subcommands() {
-            let mine = here
-                .find_subcommand(sub.get_name())
-                .unwrap_or_else(|| panic!("`hanzo {p} {}` is the local command's and was overwritten", sub.get_name()));
+            let mine = here.find_subcommand(sub.get_name()).unwrap_or_else(|| {
+                panic!(
+                    "`hanzo {p} {}` is the local command's and was overwritten",
+                    sub.get_name()
+                )
+            });
             assert_eq!(
                 mine.get_about().map(ToString::to_string),
                 sub.get_about().map(ToString::to_string),
@@ -835,7 +994,10 @@ fn every_operation_of_an_absorbed_product_resolves_to_its_own_route() {
             );
         }
     }
-    assert!(absorbed > 0, "no product shares a local name — the collision law is untested");
+    assert!(
+        absorbed > 0,
+        "no product shares a local name — the collision law is untested"
+    );
 }
 
 /// A local command owns EVERY spelling it answers to, its aliases included. The
@@ -852,7 +1014,11 @@ fn a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down() {
     let hand = crate::Cli::command();
     let merged = augment(crate::Cli::command());
     let mut asked = 0usize;
-    for p in OPS.iter().map(|o| o.product).collect::<std::collections::BTreeSet<_>>() {
+    for p in OPS
+        .iter()
+        .map(|o| o.product)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         let (Some(local), Some(here)) = (hand.find_subcommand(p), merged.find_subcommand(p)) else {
             continue;
         };
@@ -873,7 +1039,10 @@ fn a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down() {
             }
         }
     }
-    assert!(asked > 0, "no absorbed product's local command has an alias — this rule is untested");
+    assert!(
+        asked > 0,
+        "no absorbed product's local command has an alias — this rule is untested"
+    );
 }
 
 /// A NAME MAY ONLY BE RESERVED BY A COMMAND THAT EXISTS.
@@ -892,10 +1061,16 @@ fn a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down() {
 fn a_reservation_must_name_a_command_that_exists() {
     use clap::CommandFactory;
     let hand = crate::Cli::command();
-    let local: std::collections::HashSet<String> =
-        hand.get_subcommands().map(|s| s.get_name().to_string()).collect();
+    let local: std::collections::HashSet<String> = hand
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
     let merged = augment(crate::Cli::command());
-    for p in OPS.iter().map(|o| o.product).collect::<std::collections::BTreeSet<_>>() {
+    for p in OPS
+        .iter()
+        .map(|o| o.product)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         let mounted = merged.find_subcommand(p).is_some();
         assert!(
             mounted,
@@ -908,14 +1083,24 @@ fn a_reservation_must_name_a_command_that_exists() {
         // proved, and it is not advertised as a top-level product because it is
         // not one. Its operations are reachable inside it — see
         // [`a_local_name_absorbs_the_product_instead_of_dropping_it`].
-        assert!(super::mounted(&hand).iter().all(|m| *m != p), "{p} is absorbed, not mounted");
+        assert!(
+            super::mounted(&hand).iter().all(|m| *m != p),
+            "{p} is absorbed, not mounted"
+        );
     }
     // The reservation that had lost its owner: `deploy` is generated again, and it
     // is the CD control plane, not a wrapper.
-    assert!(is_product("deploy"), "cloud serves /v1/deploy/* — `deploy` is a product");
-    assert!(!local.contains("deploy"), "no local `deploy` command may reclaim the name silently");
     assert!(
-        OPS.iter().any(|o| o.product == "deploy" && o.path == "/v1/deploy/applications"),
+        is_product("deploy"),
+        "cloud serves /v1/deploy/* — `deploy` is a product"
+    );
+    assert!(
+        !local.contains("deploy"),
+        "no local `deploy` command may reclaim the name silently"
+    );
+    assert!(
+        OPS.iter()
+            .any(|o| o.product == "deploy" && o.path == "/v1/deploy/applications"),
         "`hanzo deploy applications` must reach GET /v1/deploy/applications"
     );
 }
@@ -931,8 +1116,13 @@ fn the_man_page_names_exactly_what_the_parser_mounts() {
     let advertised: Vec<&str> = super::catalog(&hand).into_iter().map(|(n, _)| n).collect();
     let merged = augment(crate::Cli::command());
     for n in &advertised {
-        let sub = merged.find_subcommand(*n).expect("advertised group must parse");
-        assert!(sub.has_subcommands(), "`{n}` is advertised as a GROUP; it must take subcommands");
+        let sub = merged
+            .find_subcommand(*n)
+            .expect("advertised group must parse");
+        assert!(
+            sub.has_subcommands(),
+            "`{n}` is advertised as a GROUP; it must take subcommands"
+        );
     }
     let page = crate::commands::man::page(&hand);
     for local in hand.get_subcommands().map(clap::Command::get_name) {
@@ -941,7 +1131,10 @@ fn the_man_page_names_exactly_what_the_parser_mounts() {
             "`{local}` is a local command; the generated tree must not also advertise it"
         );
     }
-    assert!(page.contains("deploy"), "the CD control plane must appear on the page");
+    assert!(
+        page.contains("deploy"),
+        "the CD control plane must appear on the page"
+    );
 }
 
 /// WHAT KILLED THE SECOND CONNECTOR COMMAND, pinned so it cannot come back
@@ -959,11 +1152,24 @@ fn the_credential_of_a_connect_has_no_flag_to_carry_it() {
         .iter()
         .find(|o| o.path == "/v1/provider/{provider}/connect" && o.method == "POST")
         .expect("cloud serves the connector plane");
-    let token = op.fields.iter().find(|f| f.key == "token").expect("the document types the body");
+    let token = op
+        .fields
+        .iter()
+        .find(|f| f.key == "token")
+        .expect("the document types the body");
     assert!(token.secret, "a provider credential must never be a flag");
-    let argv = ["hanzo", op.product, op.verb, "cloudflare", "--token", "cf-live-key"];
+    let argv = [
+        "hanzo",
+        op.product,
+        op.verb,
+        "cloudflare",
+        "--token",
+        "cf-live-key",
+    ];
     assert!(
-        augment(Command::new("hanzo")).try_get_matches_from(argv).is_err(),
+        augment(Command::new("hanzo"))
+            .try_get_matches_from(argv)
+            .is_err(),
         "`--token <literal>` must not parse"
     );
 }
@@ -979,9 +1185,18 @@ fn a_terminal_is_prompted_and_never_read_as_a_pipe() {
     let src = include_str!("mod.rs");
     let body = &src[src.find("fn inject_secret").expect("inject_secret exists")..];
     let body = &body[..body.find("\n}\n").expect("a function ends")];
-    assert!(body.contains("secret::secret_source("), "the source of a secret is the law's to decide");
-    assert!(body.contains("SecretSource::Prompt => {"), "a terminal must be prompted");
-    assert!(!body.contains("read_secret(std::io::stdin().lock())?;\n    let obj"), "unconditional pipe read");
+    assert!(
+        body.contains("secret::secret_source("),
+        "the source of a secret is the law's to decide"
+    );
+    assert!(
+        body.contains("SecretSource::Prompt =>"),
+        "a terminal must be prompted"
+    );
+    assert!(
+        !body.contains("read_secret(std::io::stdin().lock())?;\n    let obj"),
+        "unconditional pipe read"
+    );
 }
 
 /// THE invariant of a secrets CLI, on the GENERATED path: a `format: password`
@@ -994,8 +1209,10 @@ fn a_terminal_is_prompted_and_never_read_as_a_pipe() {
 /// vacuously forever.
 #[test]
 fn a_stdin_secret_can_never_reach_argv() {
-    let secrets: Vec<(&Op, &Field)> =
-        OPS.iter().flat_map(|o| o.fields.iter().filter(|f| f.secret).map(move |f| (o, f))).collect();
+    let secrets: Vec<(&Op, &Field)> = OPS
+        .iter()
+        .flat_map(|o| o.fields.iter().filter(|f| f.secret).map(move |f| (o, f)))
+        .collect();
     assert!(
         !secrets.is_empty(),
         "not one body property reads as a secret, so the law below is asserted over nothing. \
@@ -1005,7 +1222,11 @@ fn a_stdin_secret_can_never_reach_argv() {
 
     let base = || augment(Command::new("hanzo"));
     for (op, f) in &secrets {
-        assert!(!f.query, "{}: a secret is a body field, never a query param", op.path);
+        assert!(
+            !f.query,
+            "{}: a secret is a body field, never a query param",
+            op.path
+        );
         let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
         argv.extend(op.nodes.iter().map(|n| n.to_string()));
         argv.push(op.verb.to_string());
@@ -1016,7 +1237,10 @@ fn a_stdin_secret_can_never_reach_argv() {
             let mut a = argv.clone();
             a.push(format!("--{leak}"));
             a.push("hunter2".into());
-            assert!(base().try_get_matches_from(&a).is_err(), "value-bearing argv must not parse: {a:?}");
+            assert!(
+                base().try_get_matches_from(&a).is_err(),
+                "value-bearing argv must not parse: {a:?}"
+            );
         }
     }
 }
@@ -1032,7 +1256,10 @@ fn no_kms_verb_takes_an_org() {
         &["hanzo", "kms", "secrets", "rm", "DB", "--org", "other"],
     ];
     for argv in orged {
-        assert!(base().try_get_matches_from(*argv).is_err(), "no --org may exist: {argv:?}");
+        assert!(
+            base().try_get_matches_from(*argv).is_err(),
+            "no --org may exist: {argv:?}"
+        );
     }
 }
 
@@ -1042,13 +1269,21 @@ fn no_kms_verb_takes_an_org() {
 fn augment_never_clobbers_an_existing_command() {
     // `world` IS a generated product; pin that a same-named local wins.
     assert!(is_product("world"), "precondition: world is a product");
-    let base = Command::new("hanzo")
-        .subcommand(Command::new("world").about("LOCAL-MARKER"));
+    let base = Command::new("hanzo").subcommand(Command::new("world").about("LOCAL-MARKER"));
     let merged = augment(base);
     let world = merged.find_subcommand("world").expect("world present");
-    assert_eq!(world.get_about().map(|s| s.to_string()).as_deref(), Some("LOCAL-MARKER"));
+    assert_eq!(
+        world.get_about().map(|s| s.to_string()).as_deref(),
+        Some("LOCAL-MARKER")
+    );
     // exactly one `world`, and it is the local.
-    assert_eq!(merged.get_subcommands().filter(|s| s.get_name() == "world").count(), 1);
+    assert_eq!(
+        merged
+            .get_subcommands()
+            .filter(|s| s.get_name() == "world")
+            .count(),
+        1
+    );
 }
 
 // ---- the moved executor: method / body / url helpers -------------------------
@@ -1121,10 +1356,20 @@ fn a_marked_address_param_keeps_its_slashes_and_an_unmarked_one_escapes_them() {
     );
 
     // The active org is handed in and does NOT appear.
-    assert!(!filled.contains("acme"), "the org must not reach the URL: {filled}");
+    assert!(
+        !filled.contains("acme"),
+        "the org must not reach the URL: {filled}"
+    );
 
     // Traversal and empty segments are refused before a URL is built.
-    for evil in ["../../evil/k", "a/../b", "a//b", "/leading", "trailing/", "."] {
+    for evil in [
+        "../../evil/k",
+        "a/../b",
+        "a//b",
+        "/leading",
+        "trailing/",
+        ".",
+    ] {
         assert!(
             fill_path(path, multi, Some("acme"), &[evil.into()]).is_err(),
             "a multi-segment address must refuse {evil:?}"
@@ -1133,7 +1378,13 @@ fn a_marked_address_param_keeps_its_slashes_and_an_unmarked_one_escapes_them() {
 
     // UNMARKED is the default, and it escapes the slash.
     assert_eq!(
-        fill_path("/v1/agents/sessions/{id}", &[], Some("acme"), &["a/b".into()]).unwrap(),
+        fill_path(
+            "/v1/agents/sessions/{id}",
+            &[],
+            Some("acme"),
+            &["a/b".into()]
+        )
+        .unwrap(),
         "/v1/agents/sessions/a%2Fb"
     );
 }
@@ -1167,7 +1418,10 @@ fn a_2xx_error_envelope_is_surfaced_not_swallowed() {
     // An error status with no message still fails (generic) — never silent.
     assert!(envelope_error(&json!({"status": "error"})).is_some());
     // A bare `{"error":…}` with no data is an error.
-    assert_eq!(envelope_error(&json!({"error": "bad request"})).as_deref(), Some("bad request"));
+    assert_eq!(
+        envelope_error(&json!({"error": "bad request"})).as_deref(),
+        Some("bad request")
+    );
 
     // GENUINE SUCCESS is untouched (None → renders normally):
     assert!(envelope_error(&json!({"status": "ok", "data": {"id": 1}})).is_none());
@@ -1227,10 +1481,30 @@ fn a_failed_resource_is_rendered_not_refused() {
 /// (`--backend-mode caddy`; the customer is picking "serve a directory", and
 /// share.rs translates at the one place the value leaves for the helper).
 const FOREIGN: &[&str] = &[
-    "OpenAI-compatible", "Anthropic-compatible", "ChatGPT", "ngrok", "zrok",
-    "caddy", "Caddy", "nginx", "PostHog", "Stripe", "Casbin", "Casdoor",
-    "gh auth", "Prometheus", "Grafana", "Datadog", "Auth0", "Okta", "Vercel",
-    "Heroku", "Cloudflare Workers", "LangChain", "Ollama", "HuggingFace",
+    "OpenAI-compatible",
+    "Anthropic-compatible",
+    "ChatGPT",
+    "ngrok",
+    "zrok",
+    "caddy",
+    "Caddy",
+    "nginx",
+    "PostHog",
+    "Stripe",
+    "Casbin",
+    "Casdoor",
+    "gh auth",
+    "Prometheus",
+    "Grafana",
+    "Datadog",
+    "Auth0",
+    "Okta",
+    "Vercel",
+    "Heroku",
+    "Cloudflare Workers",
+    "LangChain",
+    "Ollama",
+    "HuggingFace",
 ];
 
 /// Walk every `about` and `long_about` in the HAND-WRITTEN tree and refuse a
@@ -1247,7 +1521,10 @@ const FOREIGN: &[&str] = &[
 fn hand_written_help_names_no_outside_vendor() {
     use clap::CommandFactory;
     fn walk(cmd: &Command, path: &str, out: &mut Vec<(String, String)>) {
-        for text in [cmd.get_about(), cmd.get_long_about()].into_iter().flatten() {
+        for text in [cmd.get_about(), cmd.get_long_about()]
+            .into_iter()
+            .flatten()
+        {
             out.push((path.to_string(), text.to_string()));
         }
         for arg in cmd.get_arguments() {
@@ -1261,7 +1538,11 @@ fn hand_written_help_names_no_outside_vendor() {
     }
     let mut copy = Vec::new();
     walk(&crate::Cli::command(), "hanzo", &mut copy);
-    assert!(copy.len() > 100, "walked {} strings — the walk is broken", copy.len());
+    assert!(
+        copy.len() > 100,
+        "walked {} strings — the walk is broken",
+        copy.len()
+    );
 
     let mut found = Vec::new();
     for (where_, text) in &copy {
@@ -1271,7 +1552,11 @@ fn hand_written_help_names_no_outside_vendor() {
             }
         }
     }
-    assert!(found.is_empty(), "outside vendor named in customer-facing help:\n  {}", found.join("\n  "));
+    assert!(
+        found.is_empty(),
+        "outside vendor named in customer-facing help:\n  {}",
+        found.join("\n  ")
+    );
 }
 
 /// A command name says the thing; the METHOD-shaped word is the command's own
@@ -1287,9 +1572,9 @@ fn hand_written_help_names_no_outside_vendor() {
 fn hand_written_command_names_are_not_verb_nouns() {
     use clap::CommandFactory;
     const VERBS: &[&str] = &[
-        "add", "get", "set", "put", "delete", "update", "create", "remove", "list",
-        "run", "check", "send", "mint", "issue", "revoke", "reset", "refresh",
-        "sync", "is", "place", "pay", "commit", "query", "upload", "resolve",
+        "add", "get", "set", "put", "delete", "update", "create", "remove", "list", "run", "check",
+        "send", "mint", "issue", "revoke", "reset", "refresh", "sync", "is", "place", "pay",
+        "commit", "query", "upload", "resolve",
     ];
     fn walk(cmd: &Command, path: &str, out: &mut Vec<String>) {
         for sub in cmd.get_subcommands() {
@@ -1304,7 +1589,11 @@ fn hand_written_command_names_are_not_verb_nouns() {
     }
     let mut bad = Vec::new();
     walk(&crate::Cli::command(), "hanzo", &mut bad);
-    assert!(bad.is_empty(), "verb-noun command names — name the thing, let the position say the verb:\n  {}", bad.join("\n  "));
+    assert!(
+        bad.is_empty(),
+        "verb-noun command names — name the thing, let the position say the verb:\n  {}",
+        bad.join("\n  ")
+    );
 }
 
 /// A UNION flag says what it looks like: a JSON object or array reaches the body
@@ -1326,10 +1615,16 @@ fn a_union_flag_sends_json_as_json_and_text_as_text() {
         repeat: false,
     };
     let send = |value: &str| {
-        let m = Command::new("t").arg(field_arg(&STATE)).try_get_matches_from(["t", "--state", value]).expect("parses");
+        let m = Command::new("t")
+            .arg(field_arg(&STATE))
+            .try_get_matches_from(["t", "--state", value])
+            .expect("parses");
         m.get_one::<Value>(STATE.id).cloned().expect("a value")
     };
-    assert_eq!(send(r#"{"message":"charged twice"}"#), serde_json::json!({"message": "charged twice"}));
+    assert_eq!(
+        send(r#"{"message":"charged twice"}"#),
+        serde_json::json!({"message": "charged twice"})
+    );
     assert_eq!(send(r#"["a","b"]"#), serde_json::json!(["a", "b"]));
     assert_eq!(send("charged twice"), serde_json::json!("charged twice"));
     // A scalar that happens to parse as JSON is still text: the union admits no number.
@@ -1347,12 +1642,22 @@ fn a_machine_key_is_the_variable_trimmed_and_nothing_when_blank() {
     assert_eq!(machine_key(None), None);
     assert_eq!(machine_key(Some(OsString::from(""))), None);
     assert_eq!(machine_key(Some(OsString::from("  \n"))), None);
-    assert_eq!(machine_key(Some(OsString::from("sk-live-x"))), Some("sk-live-x".into()));
-    assert_eq!(machine_key(Some(OsString::from(" sk-live-x\n"))), Some("sk-live-x".into()));
+    assert_eq!(
+        machine_key(Some(OsString::from("sk-live-x"))),
+        Some("sk-live-x".into())
+    );
+    assert_eq!(
+        machine_key(Some(OsString::from(" sk-live-x\n"))),
+        Some("sk-live-x".into())
+    );
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
-        assert_eq!(machine_key(Some(OsString::from_vec(vec![0xff, 0xfe]))), None, "not text is no key");
+        assert_eq!(
+            machine_key(Some(OsString::from_vec(vec![0xff, 0xfe]))),
+            None,
+            "not text is no key"
+        );
     }
 }
 
@@ -1396,7 +1701,10 @@ fn the_one_array_an_object_carries_is_its_list_and_an_object_is_field_rows() {
 #[test]
 fn json_and_yaml_render_the_same_value() {
     let v = json!({"id": "a", "n": [1, 2]});
-    assert_eq!(render(&v, Output::Json, 80).unwrap(), serde_json::to_string_pretty(&v).unwrap());
+    assert_eq!(
+        render(&v, Output::Json, 80).unwrap(),
+        serde_json::to_string_pretty(&v).unwrap()
+    );
     let yaml = render(&v, Output::Yaml, 80).unwrap();
     assert_eq!(serde_norway::from_str::<Value>(&yaml).unwrap(), v, "{yaml}");
     assert_eq!(render(&Value::Null, Output::Table, 80), None);
@@ -1406,22 +1714,36 @@ fn json_and_yaml_render_the_same_value() {
 /// `-o` is on every generated command and names the format; without it the command line gives none.
 #[test]
 fn the_output_flag_is_on_every_generated_command() {
-    let op = OPS.iter().find(|o| o.method == "GET" && o.params.is_empty() && o.fields.is_empty()).expect("a bare read");
+    let op = OPS
+        .iter()
+        .find(|o| o.method == "GET" && o.params.is_empty() && o.fields.is_empty())
+        .expect("a bare read");
     let mut argv = vec!["hanzo".to_string(), op.product.to_string()];
     argv.extend(op.nodes.iter().map(|n| n.to_string()));
     argv.push(op.verb.to_string());
     let bare: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let Some(Resolved::Leaf { output, .. }) = resolve(&hand(), &matches_of(&bare)) else { panic!("leaf") };
+    let Some(Resolved::Leaf { output, .. }) = resolve(&hand(), &matches_of(&bare)) else {
+        panic!("leaf")
+    };
     assert_eq!(output, None);
-    for (flag, want) in [("table", Output::Table), ("json", Output::Json), ("yaml", Output::Yaml)] {
+    for (flag, want) in [
+        ("table", Output::Table),
+        ("json", Output::Json),
+        ("yaml", Output::Yaml),
+    ] {
         let mut given = bare.clone();
         given.extend(["-o", flag]);
-        let Some(Resolved::Leaf { output, .. }) = resolve(&hand(), &matches_of(&given)) else { panic!("leaf") };
+        let Some(Resolved::Leaf { output, .. }) = resolve(&hand(), &matches_of(&given)) else {
+            panic!("leaf")
+        };
         assert_eq!(output, Some(want));
     }
     let mut wrong = bare.clone();
     wrong.extend(["--output", "xml"]);
-    assert!(augment(hand()).try_get_matches_from(&wrong).is_err(), "xml is not a format");
+    assert!(
+        augment(hand()).try_get_matches_from(&wrong).is_err(),
+        "xml is not a format"
+    );
 }
 
 /// An operation that declares a `requestId` is given one per invocation, and keeps the one a caller gave.
@@ -1434,7 +1756,11 @@ fn an_operation_that_declares_a_request_id_is_given_one() {
     let body = named(op, json!({}));
     let id = body["requestId"].as_str().unwrap().to_string();
     assert!(id.starts_with("cli-") && id.len() > 20, "{id}");
-    assert_ne!(named(op, json!({}))["requestId"], id, "one id per invocation");
+    assert_ne!(
+        named(op, json!({}))["requestId"],
+        id,
+        "one id per invocation"
+    );
     assert_eq!(named(op, json!({"requestId": "mine"}))["requestId"], "mine");
 }
 
@@ -1442,7 +1768,10 @@ fn an_operation_that_declares_a_request_id_is_given_one() {
 /// `/v1/chat/completions`, never to `/v1/completions`.
 #[test]
 fn completions_create_posts_to_chat_completions() {
-    let op = OPS.iter().find(|o| o.product == "completions" && o.verb == "create").expect("completions create");
+    let op = OPS
+        .iter()
+        .find(|o| o.product == "completions" && o.verb == "create")
+        .expect("completions create");
     assert_eq!((op.method, op.path), ("POST", "/v1/chat/completions"));
     assert!(OPS.iter().all(|o| o.path != "/v1/completions"));
 }

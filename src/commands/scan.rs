@@ -26,8 +26,17 @@ struct Finding {
 }
 
 /// Directories that never hold source-of-truth secrets and only add noise + time.
-const SKIP_DIRS: &[&str] =
-    &[".git", "node_modules", "target", "dist", "build", "vendor", ".venv", "__pycache__", ".next"];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "vendor",
+    ".venv",
+    "__pycache__",
+    ".next",
+];
 
 /// Files larger than this are treated as data, not code, and skipped.
 const MAX_FILE: u64 = 5 * 1024 * 1024;
@@ -52,13 +61,21 @@ pub async fn scan(path: PathBuf) -> Result<()> {
     }
 
     if findings.is_empty() {
-        println!("{} scanned {} file(s) — no exposed secrets", "✓".green(), files);
+        println!(
+            "{} scanned {} file(s) — no exposed secrets",
+            "✓".green(),
+            files
+        );
         return Ok(());
     }
     bail!(
         "{} potential secret(s) in {} file(s) — rotate anything real and remove it from the tree",
         findings.len(),
-        findings.iter().map(|f| &f.file).collect::<std::collections::BTreeSet<_>>().len()
+        findings
+            .iter()
+            .map(|f| &f.file)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
     )
 }
 
@@ -72,7 +89,12 @@ fn walk(path: &Path, files: &mut usize, out: &mut Vec<Finding>) {
         return; // never follow a symlink — no loops, no escaping the named tree
     }
     if meta.is_dir() {
-        if path.file_name().and_then(|n| n.to_str()).map(|n| SKIP_DIRS.contains(&n)).unwrap_or(false) {
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| SKIP_DIRS.contains(&n))
+            .unwrap_or(false)
+        {
             return;
         }
         if let Ok(entries) = std::fs::read_dir(path) {
@@ -99,7 +121,12 @@ fn walk(path: &Path, files: &mut usize, out: &mut Vec<Finding>) {
     *files += 1;
     for (i, line) in text.lines().enumerate() {
         for (rule, hit) in scan_line(line) {
-            out.push(Finding { file: path.to_path_buf(), line: i + 1, rule, redacted: redact(&hit) });
+            out.push(Finding {
+                file: path.to_path_buf(),
+                line: i + 1,
+                rule,
+                redacted: redact(&hit),
+            });
         }
     }
 }
@@ -176,14 +203,18 @@ fn prefixed(tok: &str) -> Option<&'static str> {
 fn is_aws_key(tok: &str) -> bool {
     tok.len() == 20
         && tok.starts_with("AKIA")
-        && tok[4..].bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        && tok[4..]
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
 }
 
 /// Google API key: `AIza` + 35 URL-safe chars.
 fn is_google_key(tok: &str) -> bool {
     tok.len() == 39
         && tok.starts_with("AIza")
-        && tok[4..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && tok[4..]
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// A JWT: three base64url segments, the first a `{"…` header (`eyJ`).
@@ -191,7 +222,9 @@ fn is_jwt(tok: &str) -> bool {
     let parts: Vec<&str> = tok.split('.').collect();
     parts.len() == 3
         && parts[0].starts_with("eyJ")
-        && parts.iter().all(|p| p.len() >= 8 && p.bytes().all(is_b64url))
+        && parts
+            .iter()
+            .all(|p| p.len() >= 8 && p.bytes().all(is_b64url))
 }
 
 fn is_b64url(b: u8) -> bool {
@@ -203,14 +236,28 @@ fn is_b64url(b: u8) -> bool {
 /// asset in ordinary code does not trip the scanner.
 fn entropy_assignment(line: &str) -> Option<String> {
     let lower = line.to_ascii_lowercase();
-    let named = ["secret", "token", "password", "passwd", "pwd", "apikey", "api_key", "api-key", "access_key"]
-        .iter()
-        .any(|k| lower.contains(k));
+    let named = [
+        "secret",
+        "token",
+        "password",
+        "passwd",
+        "pwd",
+        "apikey",
+        "api_key",
+        "api-key",
+        "access_key",
+    ]
+    .iter()
+    .any(|k| lower.contains(k));
     if !named {
         return None;
     }
     // The value after the last `=` or `:` on the line, unquoted.
-    let rhs = line.rsplit(['=', ':']).next()?.trim().trim_matches(['"', '\'', ',', ';'].as_ref());
+    let rhs = line
+        .rsplit(['=', ':'])
+        .next()?
+        .trim()
+        .trim_matches(['"', '\'', ',', ';'].as_ref());
     let val = rhs.trim();
     if val.len() >= 16 && val.len() <= 200 && looks_random(val) && entropy(val) >= 3.5 {
         Some(val.to_string())
@@ -221,7 +268,9 @@ fn entropy_assignment(line: &str) -> Option<String> {
 
 /// Drawn from a key alphabet (base64/hex-ish) — excludes sentences with spaces.
 fn looks_random(s: &str) -> bool {
-    !s.contains(' ') && s.bytes().all(|b| b.is_ascii_alphanumeric() || "-_./+=".contains(b as char))
+    !s.contains(' ')
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || "-_./+=".contains(b as char))
 }
 
 /// Shannon entropy (bits/char) — a proxy for randomness.
@@ -282,7 +331,8 @@ mod tests {
 
     #[test]
     fn high_entropy_only_when_named_a_secret() {
-        assert!(rules("api_secret = \"9f3ck2Lm8Qz1Yx7Rt4Wb0Nv6Hs5Pd\"").contains(&"high-entropy-secret"));
+        assert!(rules("api_secret = \"9f3ck2Lm8Qz1Yx7Rt4Wb0Nv6Hs5Pd\"")
+            .contains(&"high-entropy-secret"));
         // The same value under a non-secret name is NOT flagged.
         assert!(rules("commit = \"9f3ck2Lm8Qz1Yx7Rt4Wb0Nv6Hs5Pd\"").is_empty());
     }

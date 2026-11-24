@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 mod commands;
 mod config;
-mod image;
 mod iam;
+mod image;
 mod telemetry;
 // ZAP reaches the local host over a UNIX socket. Windows has none, so there the
 // local host is reached over the HTTP view it also serves (see commands::host).
@@ -336,12 +336,21 @@ enum Commands {
     /// applications and the machines on the fleet
     Status {
         /// Show the local GPU inference cluster instead of the cloud
-        #[arg(long, visible_alias = "nodes", visible_alias = "gpu", visible_alias = "telemetry")]
+        #[arg(
+            long,
+            visible_alias = "nodes",
+            visible_alias = "gpu",
+            visible_alias = "telemetry"
+        )]
         infer: bool,
     },
 
     /// Live telemetry inspector and cluster dashboard for GPU inference cluster & models
-    #[command(visible_alias = "top", visible_alias = "gpu", visible_alias = "telemetry")]
+    #[command(
+        visible_alias = "top",
+        visible_alias = "gpu",
+        visible_alias = "telemetry"
+    )]
     Monitor(commands::monitor::Args),
 
     /// Print the CLI version
@@ -378,7 +387,11 @@ enum Commands {
     },
 
     /// Open the interactive fleet operations console (sandboxes, compute nodes, GPU mesh)
-    #[command(visible_alias = "dashboard", visible_alias = "ui", visible_alias = "gui")]
+    #[command(
+        visible_alias = "dashboard",
+        visible_alias = "ui",
+        visible_alias = "gui"
+    )]
     Console,
 
     /// Agent sandboxes & isolated execution environments (Docker `sbx` compatibility: `sbx run`, `sbx ls`)
@@ -887,7 +900,10 @@ async fn run() -> Result<()> {
     // `resolve` must ask exactly what `augment` asked.
     let hand = Cli::command();
     let merged = commands::product::augment(hand.clone());
-    let argv = backend_flags(&merged, alias(&merged, hoist(&merged, std::env::args().collect())));
+    let argv = backend_flags(
+        &merged,
+        alias(&merged, hoist(&merged, std::env::args().collect())),
+    );
     if let Some(message) = retired(&merged, &argv).or_else(|| misspelled(&merged, &argv)) {
         clap::Error::raw(clap::error::ErrorKind::InvalidSubcommand, message).exit();
     }
@@ -928,7 +944,10 @@ async fn run() -> Result<()> {
     // so a network selected in another shell meanwhile never moves where this
     // invocation's credentials go.
     config.network.bound = Some(commands::network::active(&config).name);
-    let telemetry = if matches.subcommand_matches("doctor").is_some_and(|args| args.get_flag("offline")) {
+    let telemetry = if matches
+        .subcommand_matches("doctor")
+        .is_some_and(|args| args.get_flag("offline"))
+    {
         hanzo_event::Telemetry::disabled()
     } else {
         let t = telemetry::build(&config);
@@ -941,7 +960,13 @@ async fn run() -> Result<()> {
         let started = std::time::Instant::now();
         let outcome = commands::product::dispatch(&mut config, resolved).await;
         if let Err(ref err) = outcome {
-            telemetry.capture_error("CommandError", &err.to_string(), None, true, Some("product"));
+            telemetry.capture_error(
+                "CommandError",
+                &err.to_string(),
+                None,
+                true,
+                Some("product"),
+            );
         }
         telemetry.command("product", started.elapsed(), outcome.is_ok());
         telemetry.flush().await;
@@ -955,7 +980,13 @@ async fn run() -> Result<()> {
             let started = std::time::Instant::now();
             let outcome = dispatch(command, config).await;
             if let Err(ref err) = outcome {
-                telemetry.capture_error("CommandError", &err.to_string(), None, true, Some(command_label));
+                telemetry.capture_error(
+                    "CommandError",
+                    &err.to_string(),
+                    None,
+                    true,
+                    Some(command_label),
+                );
             }
             telemetry.command(command_label, started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
@@ -1029,8 +1060,10 @@ fn alias(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
     }
     let rest = &argv[at + 1..];
     let help = rest.iter().any(|a| a == "--help" || a == "-h");
-    let index = first_word(rest.iter().cloned())
-        .is_some_and(|w| cmd.find_subcommand("code").is_some_and(|c| c.find_subcommand(&w).is_some()));
+    let index = first_word(rest.iter().cloned()).is_some_and(|w| {
+        cmd.find_subcommand("code")
+            .is_some_and(|c| c.find_subcommand(&w).is_some())
+    });
     let cloud = rest.iter().any(|a| a == "--cloud" || a == "--teleport");
     if cloud || !(help || index) {
         argv[at] = "dev".into();
@@ -1046,7 +1079,9 @@ fn backend_flags(cmd: &clap::Command, argv: Vec<String>) -> Vec<String> {
     let at = leading_globals(&argv);
     let session = match argv.get(at).map(String::as_str) {
         None => true,
-        Some(w) if !w.starts_with('-') => matches!(w, "dev" | "desktop") || cmd.find_subcommand(w).is_none(),
+        Some(w) if !w.starts_with('-') => {
+            matches!(w, "dev" | "desktop") || cmd.find_subcommand(w).is_none()
+        }
         Some(_) => true,
     };
     if !session {
@@ -1061,8 +1096,10 @@ fn backend_flags(cmd: &clap::Command, argv: Vec<String>) -> Vec<String> {
 fn misspelled(cmd: &clap::Command, argv: &[String]) -> Option<String> {
     let at = leading_globals(argv);
     let word = argv.get(at)?;
-    let lone = argv.len() == at + 1 && !word.starts_with('-') && !word.contains(char::is_whitespace);
-    if !lone || cmd.find_subcommand(word).is_some() || hanzo_gen::backend::BackendKind::names(word) {
+    let lone =
+        argv.len() == at + 1 && !word.starts_with('-') && !word.contains(char::is_whitespace);
+    if !lone || cmd.find_subcommand(word).is_some() || hanzo_gen::backend::BackendKind::names(word)
+    {
         return None;
     }
     let near = cmd
@@ -1072,7 +1109,10 @@ fn misspelled(cmd: &clap::Command, argv: &[String]) -> Option<String> {
         .map(|name| (strsim::jaro_winkler(word, name), name))
         .filter(|(score, _)| *score >= 0.85)
         .max_by(|a, b| a.0.total_cmp(&b.0))?;
-    Some(format!("no command `{word}`: did you mean `hanzo {}`? As a coding task: `hanzo dev \"{word}\"`", near.1))
+    Some(format!(
+        "no command `{word}`: did you mean `hanzo {}`? As a coding task: `hanzo dev \"{word}\"`",
+        near.1
+    ))
 }
 
 /// `hanzo run …` started a session before `hanzo dev` was the one launcher. It is
@@ -1112,28 +1152,44 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
     match command {
         // `retired` refuses every argv that reaches a bare `code`, so only the
         // code-index operations (resolved before this match) run under that name.
-        Commands::Code => anyhow::bail!("`hanzo code` takes a code-index subcommand: `hanzo code --help`"),
+        Commands::Code => {
+            anyhow::bail!("`hanzo code` takes a code-index subcommand: `hanzo code --help`")
+        }
 
-        Commands::Desktop(args) => commands::dev::session(&mut config, args, Target::Desktop).await?,
+        Commands::Desktop(args) => {
+            commands::dev::session(&mut config, args, Target::Desktop).await?
+        }
         Commands::Daemon(args) => commands::daemon::run(&mut config, args).await?,
         Commands::Sources(args) => commands::sources::run(&mut config, args).await?,
         Commands::Prompt(args) => commands::prompt::run(args).await?,
 
         // `hanzo dev` IS the launcher.
-        Commands::Dev(args) => commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?,
-        Commands::Login { brand, provider, token, account } => {
-            commands::auth::login(&mut config, &brand, provider, token, account).await?
+        Commands::Dev(args) => {
+            commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?
         }
+        Commands::Login {
+            brand,
+            provider,
+            token,
+            account,
+        } => commands::auth::login(&mut config, &brand, provider, token, account).await?,
         Commands::Whoami { brand } => commands::auth::show(&mut config, &brand).await?,
         Commands::Auth { command } => match command {
-            AuthCommands::Login { brand, provider, token, account } => {
-                commands::auth::login(&mut config, &brand, provider, token, account).await?
-            }
-            AuthCommands::Logout { identity, brand, all } => {
-                commands::auth::logout(&mut config, &brand, identity, all).await?
-            }
+            AuthCommands::Login {
+                brand,
+                provider,
+                token,
+                account,
+            } => commands::auth::login(&mut config, &brand, provider, token, account).await?,
+            AuthCommands::Logout {
+                identity,
+                brand,
+                all,
+            } => commands::auth::logout(&mut config, &brand, identity, all).await?,
             AuthCommands::Show { brand } => commands::auth::show(&mut config, &brand).await?,
-            AuthCommands::List { brand, output } => commands::auth::list(&mut config, &brand, output).await?,
+            AuthCommands::List { brand, output } => {
+                commands::auth::list(&mut config, &brand, output).await?
+            }
             AuthCommands::Use { identity, brand } => {
                 commands::auth::use_identity(&mut config, &brand, identity)?
             }
@@ -1183,24 +1239,44 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
         Commands::Build(args) => commands::build::run(&mut config, args).await?,
         Commands::Vm { args } => commands::vm::run(args).await?,
         Commands::K8s { args } => commands::k8s::run(args).await?,
-        Commands::Link { command, shell, read_only, title } => match command {
+        Commands::Link {
+            command,
+            shell,
+            read_only,
+            title,
+        } => match command {
             None => commands::link::run(&mut config, shell, read_only, title).await?,
-            Some(LinkCommands::Host { name, target, signer, install }) => {
-                commands::link::host(&mut config, name.zip(target), signer, install).await?
+            Some(LinkCommands::Host {
+                name,
+                target,
+                signer,
+                install,
+            }) => commands::link::host(&mut config, name.zip(target), signer, install).await?,
+            Some(LinkCommands::Dial {
+                service,
+                port,
+                signer,
+                install,
+            }) => commands::link::dial(&mut config, service, port, signer, install).await?,
+            Some(LinkCommands::Status { signer }) => {
+                commands::link::status(&mut config, signer).await?
             }
-            Some(LinkCommands::Dial { service, port, signer, install }) => {
-                commands::link::dial(&mut config, service, port, signer, install).await?
+            Some(LinkCommands::Rm { name, signer }) => {
+                commands::link::rm(&mut config, name, signer).await?
             }
-            Some(LinkCommands::Status { signer }) => commands::link::status(&mut config, signer).await?,
-            Some(LinkCommands::Rm { name, signer }) => commands::link::rm(&mut config, name, signer).await?,
-            Some(LinkCommands::Grant { folder }) => commands::link::folders::grant(&mut config, folder).await?,
-            Some(LinkCommands::Revoke { folder }) => commands::link::folders::revoke(&mut config, folder).await?,
+            Some(LinkCommands::Grant { folder }) => {
+                commands::link::folders::grant(&mut config, folder).await?
+            }
+            Some(LinkCommands::Revoke { folder }) => {
+                commands::link::folders::revoke(&mut config, folder).await?
+            }
             Some(LinkCommands::Folders) => commands::link::folders::list(&mut config).await?,
         },
 
         Commands::Beat => {
             let host = commands::dev::Store::host(config.clone());
-            hanzo_gen::target::present(host, &hanzo_gen::Root::need()?, iam::paths::DEFAULT_BRAND).await?
+            hanzo_gen::target::present(host, &hanzo_gen::Root::need()?, iam::paths::DEFAULT_BRAND)
+                .await?
         }
 
         Commands::Shell { command } => commands::shell::run(&config, command).await?,
@@ -1225,8 +1301,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             ui,
             no_ui,
         } => {
-            let boot =
-                commands::up::Boot { cpus, memory_mb: memory, disk_mb: disk_size, cloud };
+            let boot = commands::up::Boot {
+                cpus,
+                memory_mb: memory,
+                disk_mb: disk_size,
+                cloud,
+            };
             match command {
                 // `--attest` reads the running cluster rather than booting a
                 // second one: what a machine IS is a question, not a boot.
@@ -1236,23 +1316,25 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 Some(UpCommands::Status) => commands::up::status().await?,
                 Some(UpCommands::Down) => commands::up::down()?,
                 Some(UpCommands::Supervise) => commands::up::supervise(&mut config, boot).await?,
-                Some(UpCommands::Service(argv)) => {
-                    commands::up::deprecated_service(argv).await?
-                }
+                Some(UpCommands::Service(argv)) => commands::up::deprecated_service(argv).await?,
             }
         }
         Commands::Down => commands::up::down()?,
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
-        Commands::Doctor { verify, offline, share } => {
-            commands::doctor::run(&mut config, verify, offline, share).await?
-        }
+        Commands::Doctor {
+            verify,
+            offline,
+            share,
+        } => commands::doctor::run(&mut config, verify, offline, share).await?,
         Commands::Report { args } => commands::doctor::share_report(&args).await?,
         Commands::Upgrade { tools } => commands::upgrade::run(tools).await?,
         Commands::Console => commands::up::dashboard()?,
         Commands::Sandbox { command } => match command {
-            Some(SandboxCommands::Run(args)) => commands::dev::session(&mut config, *args, Target::Repo).await?,
+            Some(SandboxCommands::Run(args)) => {
+                commands::dev::session(&mut config, *args, Target::Repo).await?
+            }
             Some(SandboxCommands::Exec { vm, cd, command }) => {
                 commands::bot::sandbox_exec(vm, cd, command).await?
             }
@@ -1268,8 +1350,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 println!("  Attach to shell: `hanzo link` or press Enter in `hanzo console`.");
             }
             Some(SandboxCommands::Models) => list_models(),
-            Some(SandboxCommands::Pull { model, node }) => commands::engine::pull(&model, &node).await?,
-            Some(SandboxCommands::Load { node, model }) => load_cluster_fleet(&node, model.as_deref()).await?,
+            Some(SandboxCommands::Pull { model, node }) => {
+                commands::engine::pull(&model, &node).await?
+            }
+            Some(SandboxCommands::Load { node, model }) => {
+                load_cluster_fleet(&node, model.as_deref()).await?
+            }
             Some(SandboxCommands::Ui) | None => commands::up::dashboard()?,
         },
         Commands::Load { node, model } => load_cluster_fleet(&node, model.as_deref()).await?,
@@ -1289,9 +1375,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             HostCommands::Start => commands::host::start(&config).await?,
             HostCommands::Status => commands::host::status(&config).await?,
             HostCommands::Stop => commands::host::stop(&config).await?,
-            HostCommands::Serve { service, passthrough } => {
-                commands::host::serve(service, passthrough).await?
-            }
+            HostCommands::Serve {
+                service,
+                passthrough,
+            } => commands::host::serve(service, passthrough).await?,
         },
 
         Commands::Network { command } => match command {
@@ -1309,27 +1396,38 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 label,
                 activate,
             } => commands::network::add(
-                &mut config, name, network_id, chain_id, rpc, api, iam, explorer, label, activate,
+                &mut config,
+                name,
+                network_id,
+                chain_id,
+                rpc,
+                api,
+                iam,
+                explorer,
+                label,
+                activate,
             )?,
         },
         Commands::Wallet { command } => match command {
             WalletCommands::Show => commands::wallet::show(&config)?,
             WalletCommands::Address => commands::wallet::address(&config)?,
-            WalletCommands::Create { name, local, custody } => {
-                commands::wallet::create(&mut config, name, local, custody).await?
-            }
+            WalletCommands::Create {
+                name,
+                local,
+                custody,
+            } => commands::wallet::create(&mut config, name, local, custody).await?,
             WalletCommands::Import { secret, name } => {
                 commands::wallet::import(&mut config, secret, name).await?
             }
             WalletCommands::Use { address } => commands::wallet::use_wallet(&mut config, address)?,
             WalletCommands::List => commands::wallet::list(&config)?,
         },
-        Commands::Share { target, backend_mode, name } => {
-            commands::share::run(&mut config, target, backend_mode, name).await?
-        }
-        Commands::Graph { command } => {
-            commands::graph::run(command, &mut config).await?
-        }
+        Commands::Share {
+            target,
+            backend_mode,
+            name,
+        } => commands::share::run(&mut config, target, backend_mode, name).await?,
+        Commands::Graph { command } => commands::graph::run(command, &mut config).await?,
         Commands::Init { template, name } => commands::init::run(template, name).await?,
     }
     Ok(())
@@ -1337,12 +1435,30 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
 
 fn explore_sandboxes() {
     println!("Available Hanzo Container & MicroVM Environments:\n");
-    println!("  {:<18} {:<18} {:<30} ISOLATION", "TEMPLATE", "BASE RUNTIME", "RECOMMENDED AGENT");
-    println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "hanzo", "alpine/rust/node", "Hanzo (Autonomous)");
-    println!("  {:<18} {:<18} {:<30} MicroVM / VirtioFS", "claude-env", "node-lts/git", "Claude Code (Anthropic)");
-    println!("  {:<18} {:<18} {:<30} MicroVM / Workspace", "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)");
-    println!("  {:<18} {:<18} {:<30} Metal GPU MicroVM", "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)");
-    println!("  {:<18} {:<18} {:<30} Bare-Metal / ROCm / CUDA", "runc-native", "bare-metal/gpu", "High-Perf Agentic LLMs");
+    println!(
+        "  {:<18} {:<18} {:<30} ISOLATION",
+        "TEMPLATE", "BASE RUNTIME", "RECOMMENDED AGENT"
+    );
+    println!(
+        "  {:<18} {:<18} {:<30} MicroVM / Workspace",
+        "hanzo", "alpine/rust/node", "Hanzo (Autonomous)"
+    );
+    println!(
+        "  {:<18} {:<18} {:<30} MicroVM / VirtioFS",
+        "claude-env", "node-lts/git", "Claude Code (Anthropic)"
+    );
+    println!(
+        "  {:<18} {:<18} {:<30} MicroVM / Workspace",
+        "codex-runner", "python/uv/bash", "Codex CLI (OpenAI)"
+    );
+    println!(
+        "  {:<18} {:<18} {:<30} Metal GPU MicroVM",
+        "zen-coder", "llama.cpp/metal", "Zen Coder (Qwen 3+ series)"
+    );
+    println!(
+        "  {:<18} {:<18} {:<30} Bare-Metal / ROCm / CUDA",
+        "runc-native", "bare-metal/gpu", "High-Perf Agentic LLMs"
+    );
     println!("\nLaunch with: `hanzo sandbox launch <TEMPLATE> [--node <NODE>]`");
     println!("Or run agent directly: `hanzo dev --claude` / `hanzo dev`");
     println!("High-perf bare-metal/runc: `hanzo dev --runc` (GPU pass-through)\n");
@@ -1351,28 +1467,44 @@ fn explore_sandboxes() {
 
 fn list_models() {
     let app = commands::up::tui::App::new(commands::up::tui::App::store());
-    println!("{:<36} {:<16} {:<24} {:<10} {:<18} ENDPOINT", "MODEL ID", "BACKEND", "TARGET NODE", "PARAMS", "STATUS");
+    println!(
+        "{:<36} {:<16} {:<24} {:<10} {:<18} ENDPOINT",
+        "MODEL ID", "BACKEND", "TARGET NODE", "PARAMS", "STATUS"
+    );
     for m in &app.local_models {
         println!(
             "{:<36} {:<16} {:<24} {:<10} {:<18} {}",
-            m.id,
-            m.backend,
-            m.target_node,
-            m.parameters,
-            m.status,
-            m.endpoint,
+            m.id, m.backend, m.target_node, m.parameters, m.status, m.endpoint,
         );
     }
 }
 
 fn explore_models() {
     println!("Hanzo Open AI Model Catalog (Qwen 3+ series & Zen Endpoints):\n");
-    println!("  {:<36} {:<10} {:<14} {:<12} HUGGING FACE REPO", "MODEL ID", "PARAMS", "CONTEXT", "VRAM REQ");
-    println!("  {:<36} {:<10} {:<14} {:<12} Qwen/Qwen3-27B-Instruct", "qwen/qwen3.8-27b", "27B", "262k RoPE", "17.8 GB");
-    println!("  {:<36} {:<10} {:<14} {:<12} Qwen/Qwen3-72B-Instruct", "qwen/qwen3.8-72b", "72B", "262k RoPE", "44.2 GB");
-    println!("  {:<36} {:<10} {:<14} {:<12} hanzoai/zen5-coder-32b", "zen5-coder-32b", "32B", "128k RoPE", "21.4 GB");
-    println!("  {:<36} {:<10} {:<14} {:<12} deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "DeepSeek-R1-Distill-Qwen-32B", "32B", "128k RoPE", "20.1 GB");
-    println!("  {:<36} {:<10} {:<14} {:<12} nomic-ai/nomic-embed-text-v1.5", "nomic-embed-text-v1.5", "137M", "8,192", "0.6 GB");
+    println!(
+        "  {:<36} {:<10} {:<14} {:<12} HUGGING FACE REPO",
+        "MODEL ID", "PARAMS", "CONTEXT", "VRAM REQ"
+    );
+    println!(
+        "  {:<36} {:<10} {:<14} {:<12} Qwen/Qwen3-27B-Instruct",
+        "qwen/qwen3.8-27b", "27B", "262k RoPE", "17.8 GB"
+    );
+    println!(
+        "  {:<36} {:<10} {:<14} {:<12} Qwen/Qwen3-72B-Instruct",
+        "qwen/qwen3.8-72b", "72B", "262k RoPE", "44.2 GB"
+    );
+    println!(
+        "  {:<36} {:<10} {:<14} {:<12} hanzoai/zen5-coder-32b",
+        "zen5-coder-32b", "32B", "128k RoPE", "21.4 GB"
+    );
+    println!(
+        "  {:<36} {:<10} {:<14} {:<12} deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+        "DeepSeek-R1-Distill-Qwen-32B", "32B", "128k RoPE", "20.1 GB"
+    );
+    println!(
+        "  {:<36} {:<10} {:<14} {:<12} nomic-ai/nomic-embed-text-v1.5",
+        "nomic-embed-text-v1.5", "137M", "8,192", "0.6 GB"
+    );
     println!("\nPull to this machine with: `hanzo pull <MODEL>` (or `hanzo sandbox pull <MODEL> --node <NODE>`)");
     println!("(Uses `hf` CLI when installed, or native Hugging Face Hub download)");
 }
@@ -1384,8 +1516,14 @@ async fn load_cluster_fleet(target_node: &str, model_override: Option<&str>) -> 
     println!("  • evo.local   (10.0.0.21): AMD Strix Halo · Halogen Flash Server (:8731)");
     println!("  • local-host  (127.0.0.1): Hanzo Router Mesh (:1235)\n");
 
-    let should_spark = target_node == "all" || target_node == "spark" || target_node == "spark.local" || target_node == "dgx";
-    let should_halo = target_node == "all" || target_node == "halo" || target_node == "evo" || target_node == "evo.local";
+    let should_spark = target_node == "all"
+        || target_node == "spark"
+        || target_node == "spark.local"
+        || target_node == "dgx";
+    let should_halo = target_node == "all"
+        || target_node == "halo"
+        || target_node == "evo"
+        || target_node == "evo.local";
 
     if should_spark {
         let model = model_override.unwrap_or("nvidia/Qwen3.8-Flash-Next-NVFP4");
@@ -1427,7 +1565,10 @@ mod tests {
     /// it is missing, so it must never be the developer's.
     fn root() -> hanzo_gen::Root {
         static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-        hanzo_gen::Root::at(DIR.get_or_init(|| tempfile::tempdir().expect("a temp dir")).path())
+        hanzo_gen::Root::at(
+            DIR.get_or_init(|| tempfile::tempdir().expect("a temp dir"))
+                .path(),
+        )
     }
 
     /// A truly-bare `hanzo` parses to no subcommand, so it falls through to the
@@ -1467,7 +1608,9 @@ mod tests {
         // session flags every other spelling does.
         let cli = Cli::try_parse_from(["hanzo", "desktop", "--model", "enso", "browse docs"])
             .expect("`hanzo desktop` parses");
-        let Some(Commands::Desktop(code)) = cli.command else { panic!("expected desktop") };
+        let Some(Commands::Desktop(code)) = cli.command else {
+            panic!("expected desktop")
+        };
         assert_eq!(code.model.as_deref(), Some("enso"));
         assert_eq!(code.positional.as_deref(), Some("browse docs"));
     }
@@ -1496,7 +1639,10 @@ mod tests {
         assert_eq!(resolved(&["hanzo", "dev", "fix the bug"]), BackendKind::Dev);
         assert_eq!(resolved(&["hanzo", "fix the bug"]), BackendKind::Dev);
         assert_eq!(resolved(&["hanzo", "dev", "--dev"]), BackendKind::Dev);
-        assert_eq!(resolved(&["hanzo", "dev", "--backend", "dev"]), BackendKind::Dev);
+        assert_eq!(
+            resolved(&["hanzo", "dev", "--backend", "dev"]),
+            BackendKind::Dev
+        );
 
         // The tool is a flag.
         for (flag, kind) in [
@@ -1507,58 +1653,123 @@ mod tests {
             ("--agent", BackendKind::parse("cursor").unwrap()),
         ] {
             assert_eq!(resolved(&["hanzo", "dev", flag]), kind, "{flag}");
-            assert_eq!(resolved(&["hanzo", "dev", flag, "fix it"]), kind, "{flag} + task");
-            assert_eq!(resolved(&["hanzo", "dev", flag, "--", "-c"]), kind, "{flag} + passthrough");
+            assert_eq!(
+                resolved(&["hanzo", "dev", flag, "fix it"]),
+                kind,
+                "{flag} + task"
+            );
+            assert_eq!(
+                resolved(&["hanzo", "dev", flag, "--", "-c"]),
+                kind,
+                "{flag} + passthrough"
+            );
         }
-        for argv in [["hanzo", "agy"].as_slice(), ["hanzo", "antigravity"].as_slice()] {
+        for argv in [
+            ["hanzo", "agy"].as_slice(),
+            ["hanzo", "antigravity"].as_slice(),
+        ] {
             assert_eq!(resolved(argv).as_str(), "agy", "{argv:?}");
         }
         assert_eq!(resolved(&["hanzo", "agent"]).as_str(), "cursor");
 
         // Every agent in the table is a flag too, through one rewrite.
         let merged = commands::product::augment(Cli::command());
-        for name in ["gemini", "qwen", "opencode", "kilo", "crush", "pi", "copilot", "amp", "grok", "kilocode"] {
-            let argv: Vec<String> = ["hanzo", "dev", &format!("--{name}"), "fix it"].iter().map(|s| s.to_string()).collect();
+        for name in [
+            "gemini", "qwen", "opencode", "kilo", "crush", "pi", "copilot", "amp", "grok",
+            "kilocode",
+        ] {
+            let argv: Vec<String> = ["hanzo", "dev", &format!("--{name}"), "fix it"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             let argv = backend_flags(&merged, argv);
             let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{name}: {e}"));
-            let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-            let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
+            let Some(Commands::Dev(args)) = cli.command else {
+                panic!("expected dev")
+            };
+            let opts = args
+                .dev("hanzo dev")
+                .unwrap()
+                .into_options(root())
+                .expect("resolves");
             assert_eq!(opts.backend, BackendKind::parse(name).unwrap(), "{name}");
             assert_eq!(opts.task.as_deref(), Some("fix it"));
             // A bare session takes it too.
-            let bare = backend_flags(&merged, ["hanzo", &format!("--{name}")].iter().map(|s| s.to_string()).collect());
+            let bare = backend_flags(
+                &merged,
+                ["hanzo", &format!("--{name}")]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            );
             assert_eq!(bare[1..], ["--backend".to_string(), name.to_string()]);
         }
         // A flag clap knows, and every other command's argv, are left alone.
         let keep = |line: &[&str]| -> Vec<String> { line.iter().map(|s| s.to_string()).collect() };
-        assert_eq!(backend_flags(&merged, keep(&["hanzo", "--claude"])), keep(&["hanzo", "--claude"]));
-        assert_eq!(backend_flags(&merged, keep(&["hanzo", "vm", "run", "--gemini"])), keep(&["hanzo", "vm", "run", "--gemini"]));
+        assert_eq!(
+            backend_flags(&merged, keep(&["hanzo", "--claude"])),
+            keep(&["hanzo", "--claude"])
+        );
+        assert_eq!(
+            backend_flags(&merged, keep(&["hanzo", "vm", "run", "--gemini"])),
+            keep(&["hanzo", "vm", "run", "--gemini"])
+        );
 
         // The task rides after the flag, the passthrough after `--`.
-        let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "fix it", "--", "-c"]).expect("parses");
-        let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
+        let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "fix it", "--", "-c"])
+            .expect("parses");
+        let Some(Commands::Dev(args)) = cli.command else {
+            panic!("expected dev")
+        };
+        let opts = args
+            .dev("hanzo dev")
+            .unwrap()
+            .into_options(root())
+            .expect("resolves");
         assert_eq!(opts.task.as_deref(), Some("fix it"));
         assert_eq!(opts.passthrough, ["-c"]);
 
         // Every existing session flag works the same under `dev`.
         let cli = Cli::try_parse_from([
-            "hanzo", "dev", "--claude", "--no-link", "--no-mcp", "--resume", "abc",
-            "--runtime", "runc",
+            "hanzo",
+            "dev",
+            "--claude",
+            "--no-link",
+            "--no-mcp",
+            "--resume",
+            "abc",
+            "--runtime",
+            "runc",
         ])
         .expect("parses");
-        let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let opts = args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves");
+        let Some(Commands::Dev(args)) = cli.command else {
+            panic!("expected dev")
+        };
+        let opts = args
+            .dev("hanzo dev")
+            .unwrap()
+            .into_options(root())
+            .expect("resolves");
         assert!(!opts.cloud && opts.no_link && !opts.mcp && opts.no_sandbox);
         assert_eq!(opts.resume.as_deref(), Some("abc"));
         // `--metered` selects cloud models for a local run; `--cloud` executes remotely.
         let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "--metered"]).expect("parses");
-        let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        assert!(args.dev("hanzo dev").unwrap().into_options(root()).expect("resolves").cloud);
+        let Some(Commands::Dev(args)) = cli.command else {
+            panic!("expected dev")
+        };
+        assert!(
+            args.dev("hanzo dev")
+                .unwrap()
+                .into_options(root())
+                .expect("resolves")
+                .cloud
+        );
         assert!(Cli::try_parse_from(["hanzo", "dev", "--claude", "--no-route"]).is_err());
         assert!(Cli::try_parse_from(["hanzo", "--no-route"]).is_err());
         let cli = Cli::try_parse_from(["hanzo", "dev", "--link"]).expect("parses");
-        let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
+        let Some(Commands::Dev(args)) = cli.command else {
+            panic!("expected dev")
+        };
         assert!(args.link);
     }
 
@@ -1585,13 +1796,30 @@ mod tests {
     #[test]
     fn a_lone_near_miss_names_the_command_and_a_task_still_runs() {
         let merged = commands::product::augment(Cli::command());
-        let line = |words: &[&str]| -> Vec<String> { std::iter::once("hanzo").chain(words.iter().copied()).map(String::from).collect() };
+        let line = |words: &[&str]| -> Vec<String> {
+            std::iter::once("hanzo")
+                .chain(words.iter().copied())
+                .map(String::from)
+                .collect()
+        };
         let e = misspelled(&merged, &line(&["stauts"])).expect("a near miss");
         assert!(e.contains("`hanzo status`"), "{e}");
-        assert!(misspelled(&merged, &line(&["whoami"])).is_none(), "whoami is a command");
-        assert!(misspelled(&merged, &line(&["claude"])).is_none(), "an agent's name");
-        assert!(misspelled(&merged, &line(&["fix the failing test"])).is_none(), "a quoted task");
-        assert!(misspelled(&merged, &line(&["stauts", "--cloud"])).is_none(), "not alone");
+        assert!(
+            misspelled(&merged, &line(&["whoami"])).is_none(),
+            "whoami is a command"
+        );
+        assert!(
+            misspelled(&merged, &line(&["claude"])).is_none(),
+            "an agent's name"
+        );
+        assert!(
+            misspelled(&merged, &line(&["fix the failing test"])).is_none(),
+            "a quoted task"
+        );
+        assert!(
+            misspelled(&merged, &line(&["stauts", "--cloud"])).is_none(),
+            "not alone"
+        );
     }
 
     /// `hanzo run` is a retired spelling of `hanzo dev`: refused, naming the command
@@ -1601,9 +1829,18 @@ mod tests {
     fn retired_launch_spellings_name_hanzo_dev() {
         let merged = commands::product::augment(Cli::command());
         let argv = |line: &str| -> Vec<String> {
-            std::iter::once("hanzo").chain(line.split_whitespace()).map(String::from).collect()
+            std::iter::once("hanzo")
+                .chain(line.split_whitespace())
+                .map(String::from)
+                .collect()
         };
-        for gone in ["run", "run claude", "run --runc dev", "run --runtime runc --gpus all dev", "--as admin run claude"] {
+        for gone in [
+            "run",
+            "run claude",
+            "run --runc dev",
+            "run --runtime runc --gpus all dev",
+            "--as admin run claude",
+        ] {
             let message = retired(&merged, &hoist(&merged, argv(gone)))
                 .unwrap_or_else(|| panic!("`hanzo {gone}` must be refused"));
             assert!(message.contains("`hanzo dev`"), "{gone}: {message}");
@@ -1617,7 +1854,11 @@ mod tests {
             ("--as admin code --codex", "--as admin dev --codex"),
             ("-v code", "-v dev"),
         ] {
-            assert_eq!(alias(&merged, hoist(&merged, argv(said))), hoist(&merged, argv(means)), "`hanzo {said}`");
+            assert_eq!(
+                alias(&merged, hoist(&merged, argv(said))),
+                hoist(&merged, argv(means)),
+                "`hanzo {said}`"
+            );
         }
         for kept in [
             "code search",
@@ -1645,22 +1886,37 @@ mod tests {
         // `run` is not a `Commands` variant, and `code`'s launching form is the
         // rewrite above: clap itself knows neither.
         assert!(Cli::try_parse_from(["hanzo", "code", "--claude"]).is_err());
-        assert!(!Cli::command().get_subcommands().any(|c| c.get_name() == "run"));
-        assert!(Cli::command().get_subcommands().all(|c| c.get_all_aliases().all(|a| a != "run")));
+        assert!(!Cli::command()
+            .get_subcommands()
+            .any(|c| c.get_name() == "run"));
+        assert!(Cli::command()
+            .get_subcommands()
+            .all(|c| c.get_all_aliases().all(|a| a != "run")));
     }
 
     /// `hanzo dev` takes the tool as a flag, never as a word.
     #[test]
     fn dev_takes_the_tool_as_a_flag() {
         let cli = Cli::try_parse_from(["hanzo", "dev", "claude"]).expect("parses");
-        let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        let err = args.dev("hanzo dev").err().expect("a tool named as a word is refused").to_string();
+        let Some(Commands::Dev(args)) = cli.command else {
+            panic!("expected dev")
+        };
+        let err = args
+            .dev("hanzo dev")
+            .err()
+            .expect("a tool named as a word is refused")
+            .to_string();
         assert!(err.contains("`hanzo dev --claude`"), "got: {err}");
 
         // A task that merely looks like prose is a task.
         let cli = Cli::try_parse_from(["hanzo", "dev", "fix the claude bug"]).expect("parses");
-        let Some(Commands::Dev(args)) = cli.command else { panic!("expected dev") };
-        assert_eq!(args.dev("hanzo dev").unwrap().positional.as_deref(), Some("fix the claude bug"));
+        let Some(Commands::Dev(args)) = cli.command else {
+            panic!("expected dev")
+        };
+        assert_eq!(
+            args.dev("hanzo dev").unwrap().positional.as_deref(),
+            Some("fix the claude bug")
+        );
     }
 
     /// The old top-level verbs are GONE from the derive tree — relocated under
@@ -1680,8 +1936,10 @@ mod tests {
     /// `hanzo desktop`.
     #[test]
     fn old_top_level_verbs_are_removed() {
-        let names: Vec<String> =
-            Cli::command().get_subcommands().map(|s| s.get_name().to_string()).collect();
+        let names: Vec<String> = Cli::command()
+            .get_subcommands()
+            .map(|s| s.get_name().to_string())
+            .collect();
         // `login` is the ONE exception, and deliberately so: it is the first thing
         // anyone types and the one command they have not read the help for yet, so
         // it answers where they will reach for it. It is an alias, not a second
@@ -1701,16 +1959,21 @@ mod tests {
         // DELETED hand commands: proxies, npx passthroughs, and shadows of
         // generated cloud products (the org-review verdicts). `engine` and
         // `scan` are their surviving local halves.
-        for gone in ["cluster", "model", "node", "secret", "usage", "docs", "mdx", "ui"] {
+        for gone in [
+            "cluster", "model", "node", "secret", "usage", "docs", "mdx", "ui",
+        ] {
             assert!(
                 !names.iter().any(|n| n == gone),
                 "`{gone}` is a deleted hand command and must not be a top-level"
             );
         }
-        for present in
-            ["auth", "build", "code", "config", "desktop", "dev", "engine", "runner", "scan", "up"]
-        {
-            assert!(names.iter().any(|n| n == present), "`{present}` must be a resource noun");
+        for present in [
+            "auth", "build", "code", "config", "desktop", "dev", "engine", "runner", "scan", "up",
+        ] {
+            assert!(
+                names.iter().any(|n| n == present),
+                "`{present}` must be a resource noun"
+            );
         }
     }
 
@@ -1720,9 +1983,19 @@ mod tests {
     fn build_is_a_command_not_a_task() {
         let hand = Cli::command();
         let m = commands::product::augment(hand.clone())
-            .try_get_matches_from(["hanzo", "build", "app", "-t", "ghcr.io/hanzoai/app:1.0.0", "--push"])
+            .try_get_matches_from([
+                "hanzo",
+                "build",
+                "app",
+                "-t",
+                "ghcr.io/hanzoai/app:1.0.0",
+                "--push",
+            ])
             .expect("build parses");
-        assert!(commands::product::resolve(&hand, &m).is_none(), "build is not a cloud operation");
+        assert!(
+            commands::product::resolve(&hand, &m).is_none(),
+            "build is not a cloud operation"
+        );
         let Some(Commands::Build(args)) = Cli::from_arg_matches(&m).unwrap().command else {
             panic!("expected build")
         };
@@ -1784,8 +2057,14 @@ mod tests {
     fn first_word_finds_the_subcommand_past_the_globals() {
         let w = |argv: &[&str]| first_word(argv.iter().map(|s| s.to_string()));
         assert_eq!(w(&["fabric", "up"]).as_deref(), Some("fabric"));
-        assert_eq!(w(&["--config", "/tmp/x", "-v", "chain", "up"]).as_deref(), Some("chain"));
-        assert_eq!(w(&["--as", "fabric", "chain", "up"]).as_deref(), Some("chain"));
+        assert_eq!(
+            w(&["--config", "/tmp/x", "-v", "chain", "up"]).as_deref(),
+            Some("chain")
+        );
+        assert_eq!(
+            w(&["--as", "fabric", "chain", "up"]).as_deref(),
+            Some("chain")
+        );
         assert_eq!(w(&["-v"]), None);
     }
 
@@ -1797,8 +2076,14 @@ mod tests {
     fn a_leading_global_leaves_the_command_a_command() {
         let merged = commands::product::augment(Cli::command());
         let parse = |line: &str| {
-            let argv = std::iter::once("hanzo").chain(line.split(' ')).map(String::from).collect();
-            merged.clone().try_get_matches_from(hoist(&merged, argv)).unwrap()
+            let argv = std::iter::once("hanzo")
+                .chain(line.split(' '))
+                .map(String::from)
+                .collect();
+            merged
+                .clone()
+                .try_get_matches_from(hoist(&merged, argv))
+                .unwrap()
         };
         let path = |m: &clap::ArgMatches| {
             let mut out = Vec::new();
@@ -1812,21 +2097,45 @@ mod tests {
 
         let m = parse("--as admin auth login");
         assert_eq!(path(&m), ["auth", "login"]);
-        assert_eq!(m.get_one::<String>("org").map(String::as_str), Some("admin"));
-        assert_eq!(path(&parse("--config /tmp/x -vv chain up mainnet")), ["chain", "up"]);
+        assert_eq!(
+            m.get_one::<String>("org").map(String::as_str),
+            Some("admin")
+        );
+        assert_eq!(
+            path(&parse("--config /tmp/x -vv chain up mainnet")),
+            ["chain", "up"]
+        );
         assert_eq!(path(&parse("--as=admin agent list")), ["agent", "list"]);
         // Behind the whole path, a global never meets a command's own arguments.
         assert_eq!(path(&parse("--as admin link status")), ["link", "status"]);
-        assert_eq!(path(&parse("--as hanzo network routers")), ["network", "routers"]);
-        assert_eq!(path(&parse("--as hanzo engine status")), ["engine", "status"]);
+        assert_eq!(
+            path(&parse("--as hanzo network routers")),
+            ["network", "routers"]
+        );
+        assert_eq!(
+            path(&parse("--as hanzo engine status")),
+            ["engine", "status"]
+        );
         assert_eq!(path(&parse("-v auth link list")), ["auth", "link", "list"]);
 
         let m = parse("--as admin claude status");
-        assert!(path(&m).is_empty(), "a backend and a task are a session, not `status`");
-        assert_eq!(m.get_one::<String>("positional").map(String::as_str), Some("claude"));
-        assert_eq!(m.get_one::<String>("tail").map(String::as_str), Some("status"));
+        assert!(
+            path(&m).is_empty(),
+            "a backend and a task are a session, not `status`"
+        );
+        assert_eq!(
+            m.get_one::<String>("positional").map(String::as_str),
+            Some("claude")
+        );
+        assert_eq!(
+            m.get_one::<String>("tail").map(String::as_str),
+            Some("status")
+        );
         let m = parse("--model enso auth list");
-        assert!(path(&m).is_empty(), "a session flag still makes the line a session");
+        assert!(
+            path(&m).is_empty(),
+            "a session flag still makes the line a session"
+        );
     }
 
     /// `hanzo vm …` passes argv through verbatim — flags included, because the
@@ -1836,11 +2145,15 @@ mod tests {
     fn vm_is_a_verbatim_passthrough() {
         let cli = Cli::try_parse_from(["hanzo", "vm", "run", "--cpus", "2", "echo", "hi"])
             .expect("vm parses");
-        let Some(Commands::Vm { args }) = cli.command else { panic!("expected vm") };
+        let Some(Commands::Vm { args }) = cli.command else {
+            panic!("expected vm")
+        };
         assert_eq!(args, ["run", "--cpus", "2", "echo", "hi"]);
 
         let cli = Cli::try_parse_from(["hanzo", "vm", "--help"]).expect("--help passes through");
-        let Some(Commands::Vm { args }) = cli.command else { panic!("expected vm") };
+        let Some(Commands::Vm { args }) = cli.command else {
+            panic!("expected vm")
+        };
         assert_eq!(args, ["--help"]);
     }
 
@@ -1848,14 +2161,40 @@ mod tests {
     fn auth_switch_list_json_and_token_as_parse() {
         // Other tools read the login through these: `switch` is `use`, the list is data,
         // and the token can be another identity's.
-        let cli = Cli::try_parse_from(["hanzo", "auth", "switch", "hanzo/z"]).expect("switch parses");
-        let Some(Commands::Auth { command: AuthCommands::Use { identity: Some(who), .. } }) = cli.command else { panic!("expected auth use") };
+        let cli =
+            Cli::try_parse_from(["hanzo", "auth", "switch", "hanzo/z"]).expect("switch parses");
+        let Some(Commands::Auth {
+            command:
+                AuthCommands::Use {
+                    identity: Some(who),
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected auth use")
+        };
         assert_eq!(who, "hanzo/z");
-        let cli = Cli::try_parse_from(["hanzo", "auth", "list", "-o", "json"]).expect("list -o json parses");
-        let Some(Commands::Auth { command: AuthCommands::List { output: Some(format), .. } }) = cli.command else { panic!("expected auth list") };
+        let cli = Cli::try_parse_from(["hanzo", "auth", "list", "-o", "json"])
+            .expect("list -o json parses");
+        let Some(Commands::Auth {
+            command:
+                AuthCommands::List {
+                    output: Some(format),
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected auth list")
+        };
         assert_eq!(format, "json");
-        let cli = Cli::try_parse_from(["hanzo", "auth", "token", "--as", "hanzo/z"]).expect("token --as parses");
-        assert!(matches!(cli.command, Some(Commands::Auth { command: AuthCommands::Token { .. } })));
+        let cli = Cli::try_parse_from(["hanzo", "auth", "token", "--as", "hanzo/z"])
+            .expect("token --as parses");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Auth {
+                command: AuthCommands::Token { .. }
+            })
+        ));
         assert_eq!(cli.org.as_deref(), Some("hanzo/z"));
     }
 
@@ -1866,8 +2205,17 @@ mod tests {
     #[test]
     fn up_boots_k3s_and_the_old_service_spelling_still_forwards() {
         let cli = Cli::try_parse_from(["hanzo", "up"]).expect("bare up parses");
-        let Some(Commands::Up { command: None, cpus, memory, disk_size, cloud, attest, link, ui, no_ui }) =
-            cli.command
+        let Some(Commands::Up {
+            command: None,
+            cpus,
+            memory,
+            disk_size,
+            cloud,
+            attest,
+            link,
+            ui,
+            no_ui,
+        }) = cli.command
         else {
             panic!("expected bare up")
         };
@@ -1879,9 +2227,23 @@ mod tests {
 
         // UI flags parse cleanly and conflict properly
         let cli = Cli::try_parse_from(["hanzo", "up", "--ui"]).expect("--ui parses");
-        let Some(Commands::Up { ui: true, no_ui: false, .. }) = cli.command else { panic!("expected --ui") };
+        let Some(Commands::Up {
+            ui: true,
+            no_ui: false,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected --ui")
+        };
         let cli = Cli::try_parse_from(["hanzo", "up", "--no-ui"]).expect("--no-ui parses");
-        let Some(Commands::Up { ui: false, no_ui: true, .. }) = cli.command else { panic!("expected --no-ui") };
+        let Some(Commands::Up {
+            ui: false,
+            no_ui: true,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected --no-ui")
+        };
         assert!(Cli::try_parse_from(["hanzo", "up", "--ui", "--no-ui"]).is_err());
 
         // `hanzo beat` is the standalone fleet presence, with no arguments
@@ -1890,39 +2252,120 @@ mod tests {
 
         // Console subcommand and alias parse
         let cli = Cli::try_parse_from(["hanzo", "up", "console"]).expect("console parses");
-        let Some(Commands::Up { command: Some(UpCommands::Console), .. }) = cli.command else { panic!("expected console") };
+        let Some(Commands::Up {
+            command: Some(UpCommands::Console),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected console")
+        };
         let cli = Cli::try_parse_from(["hanzo", "up", "dashboard"]).expect("dashboard parses");
-        let Some(Commands::Up { command: Some(UpCommands::Console), .. }) = cli.command else { panic!("expected dashboard alias") };
+        let Some(Commands::Up {
+            command: Some(UpCommands::Console),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected dashboard alias")
+        };
         let cli = Cli::try_parse_from(["hanzo", "up", "ui"]).expect("ui alias parses");
-        let Some(Commands::Up { command: Some(UpCommands::Console), .. }) = cli.command else { panic!("expected ui alias") };
+        let Some(Commands::Up {
+            command: Some(UpCommands::Console),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected ui alias")
+        };
 
         // Top-level console and sandbox commands and aliases parse
         let cli = Cli::try_parse_from(["hanzo", "console"]).expect("top-level console parses");
         assert!(matches!(cli.command, Some(Commands::Console)));
-        let cli = Cli::try_parse_from(["hanzo", "dashboard"]).expect("top-level dashboard alias parses");
+        let cli =
+            Cli::try_parse_from(["hanzo", "dashboard"]).expect("top-level dashboard alias parses");
         assert!(matches!(cli.command, Some(Commands::Console)));
         let cli = Cli::try_parse_from(["hanzo", "sandbox"]).expect("top-level sandbox parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: None })));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox { command: None })
+        ));
         let cli = Cli::try_parse_from(["hanzo", "sbx"]).expect("top-level sbx alias parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: None })));
-        let cli = Cli::try_parse_from(["hanzo", "sandboxes"]).expect("top-level sandboxes alias parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: None })));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox { command: None })
+        ));
+        let cli =
+            Cli::try_parse_from(["hanzo", "sandboxes"]).expect("top-level sandboxes alias parses");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox { command: None })
+        ));
         let cli = Cli::try_parse_from(["hanzo", "sandbox", "ui"]).expect("sandbox ui parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Ui) })));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox {
+                command: Some(SandboxCommands::Ui)
+            })
+        ));
         let cli = Cli::try_parse_from(["hanzo", "sandbox", "ls"]).expect("sandbox ls parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
-        let cli = Cli::try_parse_from(["hanzo", "sandbox", "explore"]).expect("sandbox explore parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Explore) })));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox {
+                command: Some(SandboxCommands::List)
+            })
+        ));
+        let cli =
+            Cli::try_parse_from(["hanzo", "sandbox", "explore"]).expect("sandbox explore parses");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox {
+                command: Some(SandboxCommands::Explore)
+            })
+        ));
         let cli = Cli::try_parse_from(["hanzo", "sandbox", "ps"]).expect("sandbox ps parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox {
+                command: Some(SandboxCommands::List)
+            })
+        ));
         let cli = Cli::try_parse_from(["hanzo", "sbx", "ps"]).expect("sbx ps parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::List) })));
-        let cli = Cli::try_parse_from(["hanzo", "sandbox", "launch", "claude-env", "--node", "spark.local"]).expect("sandbox launch parses");
-        let Some(Commands::Sandbox { command: Some(SandboxCommands::Launch { template, node }) }) = cli.command else { panic!("expected launch") };
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox {
+                command: Some(SandboxCommands::List)
+            })
+        ));
+        let cli = Cli::try_parse_from([
+            "hanzo",
+            "sandbox",
+            "launch",
+            "claude-env",
+            "--node",
+            "spark.local",
+        ])
+        .expect("sandbox launch parses");
+        let Some(Commands::Sandbox {
+            command: Some(SandboxCommands::Launch { template, node }),
+        }) = cli.command
+        else {
+            panic!("expected launch")
+        };
         assert_eq!(template, "claude-env");
         assert_eq!(node, "spark.local");
-        let cli = Cli::try_parse_from(["hanzo", "sandbox", "start", "claude-env", "--node", "spark.local"]).expect("sandbox start parses");
-        let Some(Commands::Sandbox { command: Some(SandboxCommands::Launch { template, node }) }) = cli.command else { panic!("expected start") };
+        let cli = Cli::try_parse_from([
+            "hanzo",
+            "sandbox",
+            "start",
+            "claude-env",
+            "--node",
+            "spark.local",
+        ])
+        .expect("sandbox start parses");
+        let Some(Commands::Sandbox {
+            command: Some(SandboxCommands::Launch { template, node }),
+        }) = cli.command
+        else {
+            panic!("expected start")
+        };
         assert_eq!(template, "claude-env");
         assert_eq!(node, "spark.local");
         let cli = Cli::try_parse_from(["hanzo", "ls"]).expect("top-level ls parses");
@@ -1933,42 +2376,89 @@ mod tests {
         assert!(matches!(cli.command, Some(Commands::Ls)));
 
         // Bare-metal runc & GPU pass-through options on the launcher
-        let cli = Cli::try_parse_from(["hanzo", "dev", "--claude", "--runc"]).expect("dev --runc parses");
-        let Some(Commands::Dev(code_args)) = cli.command else { panic!("expected dev") };
+        let cli =
+            Cli::try_parse_from(["hanzo", "dev", "--claude", "--runc"]).expect("dev --runc parses");
+        let Some(Commands::Dev(code_args)) = cli.command else {
+            panic!("expected dev")
+        };
         assert!(code_args.no_sandbox);
 
-        let cli = Cli::try_parse_from(["hanzo", "dev", "--runtime", "runc", "--gpus", "all"]).expect("dev --runtime runc --gpus all parses");
-        let Some(Commands::Dev(code_args)) = cli.command else { panic!("expected dev with runtime runc") };
+        let cli = Cli::try_parse_from(["hanzo", "dev", "--runtime", "runc", "--gpus", "all"])
+            .expect("dev --runtime runc --gpus all parses");
+        let Some(Commands::Dev(code_args)) = cli.command else {
+            panic!("expected dev with runtime runc")
+        };
         assert_eq!(code_args.runtime.as_deref(), Some("runc"));
         assert_eq!(code_args.gpus.as_deref(), Some("all"));
 
         // Sandbox models and pull commands parse
-        let cli = Cli::try_parse_from(["hanzo", "sandbox", "models"]).expect("sandbox models parses");
-        assert!(matches!(cli.command, Some(Commands::Sandbox { command: Some(SandboxCommands::Models) })));
-        let cli = Cli::try_parse_from(["hanzo", "sandbox", "pull", "qwen/qwen3.8-27b", "--node", "spark.local"]).expect("sandbox pull parses");
-        let Some(Commands::Sandbox { command: Some(SandboxCommands::Pull { model, node }) }) = cli.command else { panic!("expected pull") };
+        let cli =
+            Cli::try_parse_from(["hanzo", "sandbox", "models"]).expect("sandbox models parses");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Sandbox {
+                command: Some(SandboxCommands::Models)
+            })
+        ));
+        let cli = Cli::try_parse_from([
+            "hanzo",
+            "sandbox",
+            "pull",
+            "qwen/qwen3.8-27b",
+            "--node",
+            "spark.local",
+        ])
+        .expect("sandbox pull parses");
+        let Some(Commands::Sandbox {
+            command: Some(SandboxCommands::Pull { model, node }),
+        }) = cli.command
+        else {
+            panic!("expected pull")
+        };
         assert_eq!(model, "qwen/qwen3.8-27b");
         assert_eq!(node, "spark.local");
 
         // Load commands parse
-        let cli = Cli::try_parse_from(["hanzo", "load", "--node", "spark"]).expect("top-level load parses");
-        let Some(Commands::Load { node, model }) = cli.command else { panic!("expected load") };
+        let cli = Cli::try_parse_from(["hanzo", "load", "--node", "spark"])
+            .expect("top-level load parses");
+        let Some(Commands::Load { node, model }) = cli.command else {
+            panic!("expected load")
+        };
         assert_eq!(node, "spark");
         assert!(model.is_none());
 
-        let cli = Cli::try_parse_from(["hanzo", "sandbox", "load", "--node", "halo", "--model", "custom-model"]).expect("sandbox load parses");
-        let Some(Commands::Sandbox { command: Some(SandboxCommands::Load { node, model }) }) = cli.command else { panic!("expected sandbox load") };
+        let cli = Cli::try_parse_from([
+            "hanzo",
+            "sandbox",
+            "load",
+            "--node",
+            "halo",
+            "--model",
+            "custom-model",
+        ])
+        .expect("sandbox load parses");
+        let Some(Commands::Sandbox {
+            command: Some(SandboxCommands::Load { node, model }),
+        }) = cli.command
+        else {
+            panic!("expected sandbox load")
+        };
         assert_eq!(node, "halo");
         assert_eq!(model.as_deref(), Some("custom-model"));
 
         // The image is nameable, and asking what a cluster is takes no boot.
-        let cli = Cli::try_parse_from(["hanzo", "up", "--cloud", "ghcr.io/hanzoai/cloud@sha256:ab"])
-            .expect("--cloud parses");
-        let Some(Commands::Up { cloud, .. }) = cli.command else { panic!("expected up") };
+        let cli =
+            Cli::try_parse_from(["hanzo", "up", "--cloud", "ghcr.io/hanzoai/cloud@sha256:ab"])
+                .expect("--cloud parses");
+        let Some(Commands::Up { cloud, .. }) = cli.command else {
+            panic!("expected up")
+        };
         assert_eq!(cloud, "ghcr.io/hanzoai/cloud@sha256:ab");
 
         let cli = Cli::try_parse_from(["hanzo", "up", "--attest"]).expect("--attest parses");
-        let Some(Commands::Up { attest, .. }) = cli.command else { panic!("expected up") };
+        let Some(Commands::Up { attest, .. }) = cli.command else {
+            panic!("expected up")
+        };
         assert!(attest);
 
         assert!(Cli::try_parse_from(["hanzo", "up", "status"]).is_ok());
@@ -1976,12 +2466,17 @@ mod tests {
         assert!(Cli::try_parse_from(["hanzo", "down"]).is_ok());
 
         let cli = Cli::try_parse_from(["hanzo", "up", "--link", "dev"]).expect("--link parses");
-        let Some(Commands::Up { link, .. }) = cli.command else { panic!("expected up") };
+        let Some(Commands::Up { link, .. }) = cli.command else {
+            panic!("expected up")
+        };
         assert_eq!(link.as_deref(), Some("dev"));
 
         // The deprecated spelling lands on the forwarder, argv intact.
         let cli = Cli::try_parse_from(["hanzo", "up", "iam"]).expect("old spelling parses");
-        let Some(Commands::Up { command: Some(UpCommands::Service(argv)), .. }) = cli.command
+        let Some(Commands::Up {
+            command: Some(UpCommands::Service(argv)),
+            ..
+        }) = cli.command
         else {
             panic!("expected the forwarder")
         };
@@ -2000,58 +2495,117 @@ mod tests {
     fn link_speaks_the_network_from_this_machine() {
         let parse = |argv: &[&str]| Cli::try_parse_from(argv).map(|c| c.command);
 
-        let Ok(Some(Commands::Link { command: None, shell, read_only, .. })) =
-            parse(&["hanzo", "link", "--shell", "bash", "--read-only"])
+        let Ok(Some(Commands::Link {
+            command: None,
+            shell,
+            read_only,
+            ..
+        })) = parse(&["hanzo", "link", "--shell", "bash", "--read-only"])
         else {
             panic!("bare link")
         };
         assert_eq!((shell.as_deref(), read_only), (Some("bash"), true));
 
-        let Ok(Some(Commands::Link { command: Some(LinkCommands::Host { name, target, signer, install }), .. })) =
-            parse(&["hanzo", "link", "host", "engine", "127.0.0.1:1235", "--token-command", "/etc/hanzo/link/token"])
+        let Ok(Some(Commands::Link {
+            command:
+                Some(LinkCommands::Host {
+                    name,
+                    target,
+                    signer,
+                    install,
+                }),
+            ..
+        })) = parse(&[
+            "hanzo",
+            "link",
+            "host",
+            "engine",
+            "127.0.0.1:1235",
+            "--token-command",
+            "/etc/hanzo/link/token",
+        ])
         else {
             panic!("link host NAME TARGET")
         };
-        assert_eq!((name.as_deref(), target.as_deref()), (Some("engine"), Some("127.0.0.1:1235")));
-        assert_eq!(signer.token_command.as_deref(), Some("/etc/hanzo/link/token"));
+        assert_eq!(
+            (name.as_deref(), target.as_deref()),
+            (Some("engine"), Some("127.0.0.1:1235"))
+        );
+        assert_eq!(
+            signer.token_command.as_deref(),
+            Some("/etc/hanzo/link/token")
+        );
         assert!(!install.install);
 
         // Hosting what the identity is already bound to publishes nothing.
-        let Ok(Some(Commands::Link { command: Some(LinkCommands::Host { name: None, target: None, install, .. }), .. })) =
-            parse(&["hanzo", "link", "host", "--install", "--system"])
+        let Ok(Some(Commands::Link {
+            command:
+                Some(LinkCommands::Host {
+                    name: None,
+                    target: None,
+                    install,
+                    ..
+                }),
+            ..
+        })) = parse(&["hanzo", "link", "host", "--install", "--system"])
         else {
             panic!("link host --install --system")
         };
         assert!(install.install && install.system);
 
-        let Ok(Some(Commands::Link { command: Some(LinkCommands::Dial { service, port, install, .. }), .. })) =
-            parse(&["hanzo", "link", "dial", "k8s.hanzo", "26443", "--install"])
+        let Ok(Some(Commands::Link {
+            command:
+                Some(LinkCommands::Dial {
+                    service,
+                    port,
+                    install,
+                    ..
+                }),
+            ..
+        })) = parse(&["hanzo", "link", "dial", "k8s.hanzo", "26443", "--install"])
         else {
             panic!("link dial")
         };
-        assert_eq!((service.as_str(), port, install.install, install.system), ("k8s.hanzo", 26443, true, false));
+        assert_eq!(
+            (service.as_str(), port, install.install, install.system),
+            ("k8s.hanzo", 26443, true, false)
+        );
 
         assert!(matches!(
             parse(&["hanzo", "link", "status"]),
-            Ok(Some(Commands::Link { command: Some(LinkCommands::Status { .. }), .. }))
+            Ok(Some(Commands::Link {
+                command: Some(LinkCommands::Status { .. }),
+                ..
+            }))
         ));
         assert!(matches!(
             parse(&["hanzo", "link", "rm", "engine"]),
-            Ok(Some(Commands::Link { command: Some(LinkCommands::Rm { .. }), .. }))
+            Ok(Some(Commands::Link {
+                command: Some(LinkCommands::Rm { .. }),
+                ..
+            }))
         ));
-        let Ok(Some(Commands::Link { command: Some(LinkCommands::Grant { folder }), .. })) =
-            parse(&["hanzo", "link", "grant", "/home/me/site"])
+        let Ok(Some(Commands::Link {
+            command: Some(LinkCommands::Grant { folder }),
+            ..
+        })) = parse(&["hanzo", "link", "grant", "/home/me/site"])
         else {
             panic!("link grant")
         };
         assert_eq!(folder, PathBuf::from("/home/me/site"));
         assert!(matches!(
             parse(&["hanzo", "link", "revoke", "site"]),
-            Ok(Some(Commands::Link { command: Some(LinkCommands::Revoke { .. }), .. }))
+            Ok(Some(Commands::Link {
+                command: Some(LinkCommands::Revoke { .. }),
+                ..
+            }))
         ));
         assert!(matches!(
             parse(&["hanzo", "link", "folders"]),
-            Ok(Some(Commands::Link { command: Some(LinkCommands::Folders), .. }))
+            Ok(Some(Commands::Link {
+                command: Some(LinkCommands::Folders),
+                ..
+            }))
         ));
 
         // A name without a target, a system unit that is not installed, port 0,
@@ -2086,7 +2640,10 @@ mod tests {
             assert!(accounts.find_subcommand(verb).is_some(), "auth link {verb}");
         }
         let link = merged.find_subcommand("link").expect("link");
-        assert!(link.find_subcommand("list").is_none(), "`link list` is not the machine link");
+        assert!(
+            link.find_subcommand("list").is_none(),
+            "`link list` is not the machine link"
+        );
         assert!(link.find_subcommand("route").is_none());
     }
 
@@ -2111,11 +2668,20 @@ mod tests {
     fn a_generated_product_resolves_and_a_local_command_does_not() {
         let hand = Cli::command();
         let merged = commands::product::augment(hand.clone());
-        let m = merged.clone().try_get_matches_from(["hanzo", "agent", "list"]).unwrap();
-        assert!(commands::product::resolve(&hand, &m).is_some(), "a cloud product resolves");
+        let m = merged
+            .clone()
+            .try_get_matches_from(["hanzo", "agent", "list"])
+            .unwrap();
+        assert!(
+            commands::product::resolve(&hand, &m).is_some(),
+            "a cloud product resolves"
+        );
 
         let m = merged.try_get_matches_from(["hanzo", "version"]).unwrap();
-        assert!(commands::product::resolve(&hand, &m).is_none(), "a local command is not a product");
+        assert!(
+            commands::product::resolve(&hand, &m).is_none(),
+            "a local command is not a product"
+        );
     }
 
     /// `hanzo code` is the code index and nothing else: each of its operations
@@ -2146,9 +2712,16 @@ mod tests {
         let code = merged.find_subcommand("code").expect("code exists");
         let verbs: Vec<&str> = code.get_subcommands().map(|c| c.get_name()).collect();
         for verb in ["search", "index", "context", "file", "tree", "ask"] {
-            assert!(verbs.contains(&verb), "`hanzo code {verb}` is missing: {verbs:?}");
+            assert!(
+                verbs.contains(&verb),
+                "`hanzo code {verb}` is missing: {verbs:?}"
+            );
         }
-        assert_eq!(code.get_arguments().filter(|a| !a.is_global_set()).count(), 0, "code takes no session args");
+        assert_eq!(
+            code.get_arguments().filter(|a| !a.is_global_set()).count(),
+            0,
+            "code takes no session args"
+        );
 
         for argv in [
             ["hanzo", "dev"].as_slice(),
@@ -2165,40 +2738,74 @@ mod tests {
                 "{argv:?} is the coding session, not a cloud operation"
             );
             let cli = Cli::from_arg_matches(&m).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
-            assert!(matches!(cli.command, Some(Commands::Dev(_))), "{argv:?} must be `dev`");
+            assert!(
+                matches!(cli.command, Some(Commands::Dev(_))),
+                "{argv:?} must be `dev`"
+            );
         }
     }
 
     #[test]
     fn channels_and_connect_parse_cleanly() {
         let cli = Cli::try_parse_from(["hanzo", "channels"]).expect("bare channels parses");
-        let Some(Commands::Channels(args)) = cli.command else { panic!("expected channels") };
+        let Some(Commands::Channels(args)) = cli.command else {
+            panic!("expected channels")
+        };
         assert!(args.command.is_none());
 
         let cli = Cli::try_parse_from(["hanzo", "channels", "--group", "Antje Worring", "--json"])
             .expect("channels --group --json parses");
-        let Some(Commands::Channels(args)) = cli.command else { panic!("expected channels") };
+        let Some(Commands::Channels(args)) = cli.command else {
+            panic!("expected channels")
+        };
         assert_eq!(args.group.as_deref(), Some("Antje Worring"));
         assert!(args.json);
 
         assert!(Cli::try_parse_from(["hanzo", "channels", "groups"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "channels", "providers"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "channels", "group", "ch_1", "Hanzo AI"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "channels", "set-group", "ch_1", "Hanzo AI"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "channels", "analytics", "ch_1", "--days", "30"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["hanzo", "channels", "set-group", "ch_1", "Hanzo AI"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["hanzo", "channels", "analytics", "ch_1", "--days", "30"]).is_ok()
+        );
         assert!(Cli::try_parse_from(["hanzo", "channels", "disconnect", "ch_1"]).is_ok());
 
-        let cli = Cli::try_parse_from(["hanzo", "connect", "x", "--group", "Antje Worring", "--open"])
-            .expect("connect parses");
-        let Some(Commands::Connect(args)) = cli.command else { panic!("expected connect") };
+        let cli = Cli::try_parse_from([
+            "hanzo",
+            "connect",
+            "x",
+            "--group",
+            "Antje Worring",
+            "--open",
+        ])
+        .expect("connect parses");
+        let Some(Commands::Connect(args)) = cli.command else {
+            panic!("expected connect")
+        };
         assert_eq!(args.provider, "x");
         assert_eq!(args.group.as_deref(), Some("Antje Worring"));
         assert!(args.open);
 
         assert!(Cli::try_parse_from(["hanzo", "post"]).is_ok());
         assert!(Cli::try_parse_from(["hanzo", "post", "list", "--status", "scheduled"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "post", "create", "Hello Hanzo", "--channel", "x", "--channel", "bluesky", "--group", "Hanzo AI"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "post", "now", "Ship it", "--account", "ch_1"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "hanzo",
+            "post",
+            "create",
+            "Hello Hanzo",
+            "--channel",
+            "x",
+            "--channel",
+            "bluesky",
+            "--group",
+            "Hanzo AI"
+        ])
+        .is_ok());
+        assert!(
+            Cli::try_parse_from(["hanzo", "post", "now", "Ship it", "--account", "ch_1"]).is_ok()
+        );
         assert!(Cli::try_parse_from(["hanzo", "post", "autopost", "list"]).is_ok());
     }
 
@@ -2250,7 +2857,9 @@ mod tests {
         assert!(commands::product::resolve(&hand, &m).is_none());
         assert!(matches!(
             Cli::from_arg_matches(&m).unwrap().command,
-            Some(Commands::Bot { command: BotCommands::Ask { .. } })
+            Some(Commands::Bot {
+                command: BotCommands::Ask { .. }
+            })
         ));
         let bot_sub = merged.find_subcommand("bot").expect("bot exists");
         for cloud_sub in ["members", "runs"] {
@@ -2262,6 +2871,8 @@ mod tests {
 
         // `hanzo sandbox exec` & `hanzo sandbox computer` parse cleanly.
         assert!(Cli::try_parse_from(["hanzo", "sandbox", "exec", "--", "uname", "-a"]).is_ok());
-        assert!(Cli::try_parse_from(["hanzo", "sandbox", "computer", "http://127.0.0.1:5173"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["hanzo", "sandbox", "computer", "http://127.0.0.1:5173"]).is_ok()
+        );
     }
 }

@@ -43,7 +43,12 @@ impl Unit {
 
     /// The systemd unit file.
     pub fn systemd(&self, scope: Scope) -> String {
-        let exec = self.argv.iter().map(|a| systemd_arg(a)).collect::<Vec<_>>().join(" ");
+        let exec = self
+            .argv
+            .iter()
+            .map(|a| systemd_arg(a))
+            .collect::<Vec<_>>()
+            .join(" ");
         let wanted = match scope {
             Scope::User => "default.target",
             Scope::System => "multi-user.target",
@@ -70,7 +75,11 @@ impl Unit {
     /// The launchd job.
     pub fn launchd(&self) -> String {
         let label = self.launchd_label();
-        let args: String = self.argv.iter().map(|a| format!("<string>{}</string>", xml(a))).collect();
+        let args: String = self
+            .argv
+            .iter()
+            .map(|a| format!("<string>{}</string>", xml(a)))
+            .collect();
         let log = xml(&format!("/tmp/{label}.log"));
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -98,23 +107,34 @@ impl Unit {
 /// is double-quoted with those escaped.
 fn systemd_arg(a: &str) -> String {
     let a = a.replace('%', "%%").replace('$', "$$");
-    if !a.is_empty() && !a.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | ';')) {
+    if !a.is_empty()
+        && !a.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | ';'))
+    {
         return a;
     }
     format!("\"{}\"", a.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn xml(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Where this unit's file lives on this OS.
 pub fn path(unit: &Unit, scope: Scope) -> Result<PathBuf> {
     let home = || dirs::home_dir().context("no home directory");
     Ok(match (cfg!(target_os = "macos"), scope) {
-        (true, Scope::User) => home()?.join("Library/LaunchAgents").join(format!("{}.plist", unit.launchd_label())),
-        (true, Scope::System) => PathBuf::from("/Library/LaunchDaemons").join(format!("{}.plist", unit.launchd_label())),
-        (false, Scope::User) => home()?.join(".config/systemd/user").join(unit.systemd_name()),
+        (true, Scope::User) => home()?
+            .join("Library/LaunchAgents")
+            .join(format!("{}.plist", unit.launchd_label())),
+        (true, Scope::System) => {
+            PathBuf::from("/Library/LaunchDaemons").join(format!("{}.plist", unit.launchd_label()))
+        }
+        (false, Scope::User) => home()?
+            .join(".config/systemd/user")
+            .join(unit.systemd_name()),
         (false, Scope::System) => PathBuf::from("/etc/systemd/system").join(unit.systemd_name()),
     })
 }
@@ -122,11 +142,18 @@ pub fn path(unit: &Unit, scope: Scope) -> Result<PathBuf> {
 /// Write the unit, enable it, and (re)start it. Returns the file written.
 pub fn install(unit: &Unit, scope: Scope) -> Result<PathBuf> {
     let file = path(unit, scope)?;
-    let body = if cfg!(target_os = "macos") { unit.launchd() } else { unit.systemd(scope) };
+    let body = if cfg!(target_os = "macos") {
+        unit.launchd()
+    } else {
+        unit.systemd(scope)
+    };
     let dir = file.parent().context("a unit path has a parent")?;
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     std::fs::write(&file, body).with_context(|| match scope {
-        Scope::System => format!("writing {} (a system unit is root's: run it with sudo)", file.display()),
+        Scope::System => format!(
+            "writing {} (a system unit is root's: run it with sudo)",
+            file.display()
+        ),
         Scope::User => format!("writing {}", file.display()),
     })?;
     if cfg!(target_os = "macos") {
@@ -136,8 +163,13 @@ pub fn install(unit: &Unit, scope: Scope) -> Result<PathBuf> {
         };
         // A job already loaded must be booted out before a new plist loads; a job
         // that was never loaded refuses, which is the state wanted.
-        let _ = Command::new("launchctl").args(["bootout", &domain]).arg(&file).status();
-        run(Command::new("launchctl").args(["bootstrap", &domain]).arg(&file))?;
+        let _ = Command::new("launchctl")
+            .args(["bootout", &domain])
+            .arg(&file)
+            .status();
+        run(Command::new("launchctl")
+            .args(["bootstrap", &domain])
+            .arg(&file))?;
     } else {
         let ctl = |args: &[&str]| {
             let mut c = Command::new("systemctl");
@@ -181,17 +213,25 @@ pub fn installed() -> Vec<(String, Scope)> {
     let mut out = Vec::new();
     let dirs: [(Option<PathBuf>, Scope); 2] = if cfg!(target_os = "macos") {
         [
-            (dirs::home_dir().map(|h| h.join("Library/LaunchAgents")), Scope::User),
+            (
+                dirs::home_dir().map(|h| h.join("Library/LaunchAgents")),
+                Scope::User,
+            ),
             (Some(PathBuf::from("/Library/LaunchDaemons")), Scope::System),
         ]
     } else {
         [
-            (dirs::home_dir().map(|h| h.join(".config/systemd/user")), Scope::User),
+            (
+                dirs::home_dir().map(|h| h.join(".config/systemd/user")),
+                Scope::User,
+            ),
             (Some(PathBuf::from("/etc/systemd/system")), Scope::System),
         ]
     };
     for (dir, scope) in dirs {
-        let Some(Ok(entries)) = dir.map(std::fs::read_dir) else { continue };
+        let Some(Ok(entries)) = dir.map(std::fs::read_dir) else {
+            continue;
+        };
         let mut names: Vec<String> = entries
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -209,7 +249,10 @@ fn ours(file: &str) -> bool {
     let id = file
         .strip_prefix("hanzo-link-")
         .and_then(|r| r.strip_suffix(".service"))
-        .or_else(|| file.strip_prefix("com.ai.hanzo.link.").and_then(|r| r.strip_suffix(".plist")));
+        .or_else(|| {
+            file.strip_prefix("com.ai.hanzo.link.")
+                .and_then(|r| r.strip_suffix(".plist"))
+        });
     matches!(id, Some(id) if id == "host" || id.starts_with("dial-"))
 }
 
@@ -218,7 +261,10 @@ fn ours(file: &str) -> bool {
 pub fn state(name: &str, scope: Scope) -> String {
     if cfg!(target_os = "macos") {
         let label = name.trim_end_matches(".plist");
-        let loaded = Command::new("launchctl").args(["list", label]).output().map(|o| o.status.success());
+        let loaded = Command::new("launchctl")
+            .args(["list", label])
+            .output()
+            .map(|o| o.status.success());
         return match loaded {
             Ok(true) => "loaded".into(),
             _ => "not loaded".into(),
@@ -244,8 +290,14 @@ fn run(c: &mut Command) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn uid() -> Result<u32> {
-    let out = Command::new("id").arg("-u").output().context("running id -u")?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().context("parsing id -u")
+    let out = Command::new("id")
+        .arg("-u")
+        .output()
+        .context("running id -u")?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .context("parsing id -u")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -284,16 +336,24 @@ mod tests {
     #[test]
     fn a_user_unit_restarts_forever_and_starts_with_the_session() {
         let text = dial().systemd(Scope::User);
-        assert!(text.starts_with("# Written by `hanzo link dial k8s.hanzo 26443 --install`."), "{text}");
+        assert!(
+            text.starts_with("# Written by `hanzo link dial k8s.hanzo 26443 --install`."),
+            "{text}"
+        );
         assert!(text.contains("Description=Hanzo link: dial k8s.hanzo on :26443\n"));
         assert!(text.contains("After=network-online.target\nWants=network-online.target\n"));
         assert!(text.contains("Restart=always\nRestartSec=2\n"));
-        assert!(text.ends_with("[Install]\nWantedBy=default.target\n"), "{text}");
+        assert!(
+            text.ends_with("[Install]\nWantedBy=default.target\n"),
+            "{text}"
+        );
     }
 
     #[test]
     fn a_system_unit_starts_with_the_machine() {
-        assert!(dial().systemd(Scope::System).ends_with("WantedBy=multi-user.target\n"));
+        assert!(dial()
+            .systemd(Scope::System)
+            .ends_with("WantedBy=multi-user.target\n"));
     }
 
     /// A token command with spaces is ONE argument to zt, so it is quoted as one
@@ -332,10 +392,19 @@ mod tests {
 
     #[test]
     fn only_the_units_install_writes_are_listed_as_ours() {
-        for mine in ["hanzo-link-host.service", "hanzo-link-dial-k8s.hanzo.service", "com.ai.hanzo.link.host.plist"] {
+        for mine in [
+            "hanzo-link-host.service",
+            "hanzo-link-dial-k8s.hanzo.service",
+            "com.ai.hanzo.link.host.plist",
+        ] {
             assert!(ours(mine), "{mine}");
         }
-        for theirs in ["hanzo-link-guard.service", "link.service", "hanzo-beat.service", "hanzo-link-host.service.d"] {
+        for theirs in [
+            "hanzo-link-guard.service",
+            "link.service",
+            "hanzo-beat.service",
+            "hanzo-link-host.service.d",
+        ] {
             assert!(!ours(theirs), "{theirs}");
         }
     }

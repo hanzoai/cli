@@ -378,8 +378,14 @@ impl Says {
 
 impl Table {
     fn read(doc: &Value) -> Self {
-        let (mut routes, mut owned) = (BTreeMap::<String, Vec<Vec<String>>>::new(), BTreeSet::new());
-        for (path, item) in doc.get("paths").and_then(Value::as_object).into_iter().flatten() {
+        let (mut routes, mut owned) =
+            (BTreeMap::<String, Vec<Vec<String>>>::new(), BTreeSet::new());
+        for (path, item) in doc
+            .get("paths")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             let s = segs(path);
             // The bare `/v1/*` is the global fallthrough. Counting it as evidence
             // would make every conceivable path "served" and the gate a no-op.
@@ -392,7 +398,10 @@ impl Table {
             let pat: Vec<String> = s.iter().map(|x| (*x).to_string()).collect();
             for (m, _) in item.as_object().into_iter().flatten() {
                 if VERBS.contains(&m.to_ascii_lowercase().as_str()) {
-                    routes.entry(m.to_ascii_uppercase()).or_default().push(pat.clone());
+                    routes
+                        .entry(m.to_ascii_uppercase())
+                        .or_default()
+                        .push(pat.clone());
                 }
             }
         }
@@ -422,7 +431,11 @@ impl Table {
     }
 
     fn says(&self, method: &str, path: &[&str]) -> Says {
-        match self.routes.get(method).and_then(|r| r.iter().find(|p| Self::matches(p, path))) {
+        match self
+            .routes
+            .get(method)
+            .and_then(|r| r.iter().find(|p| Self::matches(p, path)))
+        {
             Some(p) if p.iter().any(|s| is_wild(s)) => Says::Door,
             Some(_) => Says::Serves,
             None if self.owned.contains(path[1]) => Says::Refutes,
@@ -437,7 +450,13 @@ impl Table {
 /// spec, and one retired since is in the spec and not the table.
 fn products(doc: &Value) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for path in doc.get("paths").and_then(Value::as_object).into_iter().flatten().map(|(p, _)| p) {
+    for path in doc
+        .get("paths")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(p, _)| p)
+    {
         let s = segs(path);
         if s.len() >= 2 && s[0] == "v1" && !is_param(s[1]) {
             out.insert(s[1].to_string());
@@ -451,9 +470,15 @@ fn products(doc: &Value) -> BTreeSet<String> {
 /// that is a measurement rather than a convention.
 fn coordinates(doc: &Value) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
-    for (path, item) in doc.get("paths").and_then(Value::as_object).into_iter().flatten() {
+    for (path, item) in doc
+        .get("paths")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
         let s = segs(path);
-        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) || path.contains('?') || path.contains('#') {
+        if s.len() < 2 || s[0] != "v1" || is_param(s[1]) || path.contains('?') || path.contains('#')
+        {
             continue;
         }
         let literal = !s.iter().any(|x| is_param(x));
@@ -477,7 +502,12 @@ fn declares(doc: &Value, path: &str) -> bool {
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .any(|(k, _)| Table::matches(&segs(k).iter().map(|s| (*s).to_string()).collect::<Vec<_>>(), &want))
+        .any(|(k, _)| {
+            Table::matches(
+                &segs(k).iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
+                &want,
+            )
+        })
 }
 
 /// Every `/v1` path the HAND-WRITTEN commands send, read out of the source that
@@ -503,13 +533,17 @@ fn declares(doc: &Value, path: &str) -> bool {
 /// and it is the granularity the defect lives at.
 fn sent(src: &Path) -> BTreeMap<String, String> {
     fn walk(dir: &Path, out: &mut BTreeMap<String, String>) {
-        let mut entries: Vec<PathBuf> =
-            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-                .map(|e| e.expect("dir entry").path())
-                .collect();
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+            .map(|e| e.expect("dir entry").path())
+            .collect();
         entries.sort();
         for p in entries {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             if p.is_dir() {
                 // `bin/` is the maintainer tools, not the shipped binary.
                 if name != "bin" {
@@ -523,7 +557,8 @@ fn sent(src: &Path) -> BTreeMap<String, String> {
             if !name.ends_with(".rs") || name == "generated.rs" || name.contains("test") {
                 continue;
             }
-            let text = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+            let text =
+                std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
             let text = &text[..text.find("cfg(test)").unwrap_or(text.len())];
             let file = p.display().to_string();
             let mut rest = text;
@@ -709,7 +744,10 @@ fn resolves(hanzo: &Path, spelling: &str) -> bool {
         .unwrap_or_else(|e| panic!("run {} {spelling} --help: {e}", hanzo.display()));
     let text = String::from_utf8_lossy(&out.stdout) + String::from_utf8_lossy(&out.stderr);
     let want = format!("Usage: hanzo {spelling}");
-    text.lines().any(|l| l.strip_prefix(&want).is_some_and(|r| r.is_empty() || r.starts_with(' ')))
+    text.lines().any(|l| {
+        l.strip_prefix(&want)
+            .is_some_and(|r| r.is_empty() || r.starts_with(' '))
+    })
 }
 
 /// The spelling a curated entry says reaches this surface instead — the claim the
@@ -749,7 +787,8 @@ fn named(method: &str, path: &str) -> String {
 
 // ---- arguments ---------------------------------------------------------------
 
-const USAGE: &str = "usage: driftgate [--refresh [--check]] [--registry <url|path>] [--host <url>] \
+const USAGE: &str =
+    "usage: driftgate [--refresh [--check]] [--registry <url|path>] [--host <url>] \
                      [--spec <path>] [--live <path>] [--hanzo <path>]";
 
 struct Args {
@@ -768,7 +807,10 @@ fn args() -> Args {
     // beside this gate is the `hanzo` this gate is about.
     let sibling = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join(if cfg!(windows) { "hanzo.exe" } else { "hanzo" })))
+        .and_then(|p| {
+            p.parent()
+                .map(|d| d.join(if cfg!(windows) { "hanzo.exe" } else { "hanzo" }))
+        })
         .unwrap_or_else(|| manifest.join("target/debug/hanzo"));
     let mut a = Args {
         refresh: false,
@@ -810,12 +852,20 @@ fn args() -> Args {
             "--hanzo" => |a, v| a.hanzo = PathBuf::from(v),
             other => panic!("{USAGE}\nunknown: {other}"),
         };
-        set(&mut a, argv.get(i + 1).cloned().unwrap_or_else(|| panic!("{flag} needs a value\n{USAGE}")));
+        set(
+            &mut a,
+            argv.get(i + 1)
+                .cloned()
+                .unwrap_or_else(|| panic!("{flag} needs a value\n{USAGE}")),
+        );
         i += 2;
     }
-    assert!(!(a.check && !a.refresh), "--check is a mode of --refresh: it re-asks the host and \
+    assert!(
+        !(a.check && !a.refresh),
+        "--check is a mode of --refresh: it re-asks the host and \
          refuses to write when a verdict moved. The default run is already a check, and it needs \
-         no network.\n{USAGE}");
+         no network.\n{USAGE}"
+    );
     a
 }
 
@@ -862,7 +912,12 @@ async fn read(src: &str) -> Value {
             if attempt > 0 {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
-            match tls_client().get(src).send().await.and_then(reqwest::Response::error_for_status) {
+            match tls_client()
+                .get(src)
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+            {
                 Ok(r) => match r.text().await {
                     Ok(t) => {
                         got = Some(t);
@@ -1011,7 +1066,14 @@ fn rule(spec: &Value, ev: &Evidence) -> (Vec<Row>, Vec<(String, String)>) {
             Some(Probe::Flapping(c)) => (Some(c), true),
             _ => (None, false),
         };
-        rows.push(Row { method, path, says, verdict: settle(says, probe), code, flapping });
+        rows.push(Row {
+            method,
+            path,
+            says,
+            verdict: settle(says, probe),
+            code,
+            flapping,
+        });
     }
     (rows, unproven)
 }
@@ -1037,7 +1099,8 @@ async fn main() {
 
     let a = args();
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let spec_bytes = std::fs::read(&a.spec).unwrap_or_else(|e| panic!("read {}: {e}", a.spec.display()));
+    let spec_bytes =
+        std::fs::read(&a.spec).unwrap_or_else(|e| panic!("read {}: {e}", a.spec.display()));
     let spec: Value = serde_json::from_slice(&spec_bytes)
         .unwrap_or_else(|e| panic!("{} is not a spec: {e}", a.spec.display()));
     let spec_sha = sha256(&spec_bytes);
@@ -1064,7 +1127,10 @@ async fn refresh(a: &Args, spec: &Value, spec_sha: String, spec_ref: String) {
         .map(|(p, _)| p)
         .collect();
     if !blind.is_empty() {
-        println!("driftgate --refresh: BLIND on {} target(s) — nothing written.", blind.len());
+        println!(
+            "driftgate --refresh: BLIND on {} target(s) — nothing written.",
+            blind.len()
+        );
         for p in blind.iter().take(20) {
             println!("   {p}");
         }
@@ -1100,10 +1166,21 @@ async fn refresh(a: &Args, spec: &Value, spec_sha: String, spec_ref: String) {
                 _ => {}
             }
         }
-        let gone: BTreeSet<&String> = have.evidence.products.difference(&fresh.evidence.products).collect();
-        let new: BTreeSet<&String> = fresh.evidence.products.difference(&have.evidence.products).collect();
+        let gone: BTreeSet<&String> = have
+            .evidence
+            .products
+            .difference(&fresh.evidence.products)
+            .collect();
+        let new: BTreeSet<&String> = fresh
+            .evidence
+            .products
+            .difference(&have.evidence.products)
+            .collect();
         if moved.is_empty() && gone.is_empty() && new.is_empty() {
-            println!("driftgate --refresh --check: the live server still says what {} records.", a.live.display());
+            println!(
+                "driftgate --refresh --check: the live server still says what {} records.",
+                a.live.display()
+            );
             return;
         }
         println!("!! THE LIVE SERVER MOVED under the committed evidence.");
@@ -1146,7 +1223,10 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
         a.hanzo.display()
     );
     let raw = std::fs::read(&a.live).unwrap_or_else(|e| {
-        panic!("read {}: {e}\nNo evidence, no verdict. Capture it with `make live`.", a.live.display())
+        panic!(
+            "read {}: {e}\nNo evidence, no verdict. Capture it with `make live`.",
+            a.live.display()
+        )
     });
     let cap: Capture = serde_json::from_slice(&raw)
         .unwrap_or_else(|e| panic!("{} is not a capture: {e}", a.live.display()));
@@ -1220,7 +1300,10 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
     };
     let ahead = by(Settled::Absent, false);
     let contradicted = by(Settled::Absent, true);
-    let blind: Vec<String> = by(Settled::Blind, true).into_iter().chain(by(Settled::Blind, false)).collect();
+    let blind: Vec<String> = by(Settled::Blind, true)
+        .into_iter()
+        .chain(by(Settled::Blind, false))
+        .collect();
     let flapping: Vec<&Row> = rows.iter().filter(|r| r.flapping).collect();
 
     // ---- the same direction, asked of the OTHER tree --------------------------
@@ -1283,15 +1366,25 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
     println!(
         "  the host answered    {:>5}   {}",
         codes.values().sum::<usize>(),
-        codes.iter().map(|(c, n)| format!("{c}×{n}")).collect::<Vec<_>>().join(" ")
+        codes
+            .iter()
+            .map(|(c, n)| format!("{c}×{n}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     println!(
         "  controls             {:>5}   prefixes asked with a route nobody wrote; {} of them \
          answered, so nothing under those prefixes can be decided",
         ev.controls.len(),
-        ev.controls.values().filter(|a| verdict(a) != Probe::Absent).count()
+        ev.controls
+            .values()
+            .filter(|a| verdict(a) != Probe::Absent)
+            .count()
     );
-    println!("  products reachable   {reachable:>5}   of {}", universe.len());
+    println!(
+        "  products reachable   {reachable:>5}   of {}",
+        universe.len()
+    );
     // Printed, because a sweep that quietly reads nothing is a gate that passes
     // for the wrong reason — the failure mode of every lexical read ever written.
     println!(
@@ -1306,7 +1399,10 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
         curation::CURATED.len()
     );
     if !flapping.is_empty() {
-        println!("\n   {} route(s) answered 404 and then answered — present, but not reliably:", flapping.len());
+        println!(
+            "\n   {} route(s) answered 404 and then answered — present, but not reliably:",
+            flapping.len()
+        );
         for r in &flapping {
             println!("   {:<7}{}", r.method, r.path);
         }
@@ -1343,7 +1439,10 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
 
     broke(
         "STALE EXCEPTION — the curation table sends people to a command that does not exist",
-        stale.iter().map(|(p, s)| format!("{p:<16}claims `hanzo {s}`")).collect(),
+        stale
+            .iter()
+            .map(|(p, s)| format!("{p:<16}claims `hanzo {s}`"))
+            .collect(),
     );
     fail |= !stale.is_empty();
 
@@ -1413,8 +1512,15 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
 
     if excused.len() != EXCUSED {
         fail = true;
-        let verb = if excused.len() > EXCUSED { "GREW" } else { "SHRANK" };
-        println!("\n!! DECLARED EXCEPTIONS {verb}: {} applied, EXCUSED says {EXCUSED}", excused.len());
+        let verb = if excused.len() > EXCUSED {
+            "GREW"
+        } else {
+            "SHRANK"
+        };
+        println!(
+            "\n!! DECLARED EXCEPTIONS {verb}: {} applied, EXCUSED says {EXCUSED}",
+            excused.len()
+        );
         for c in &excused {
             println!("   {:<16}{}", c.product, c.why);
         }
@@ -1425,7 +1531,10 @@ fn gate(a: &Args, spec: &Value, spec_sha: &str, spec_ref: &str) {
             excused.len()
         );
     } else if !excused.is_empty() {
-        println!("\n   {} declared exceptions, each with a written reason:", excused.len());
+        println!(
+            "\n   {} declared exceptions, each with a written reason:",
+            excused.len()
+        );
         for c in &excused {
             println!("   {:<16}{}", c.product, c.why);
         }
@@ -1455,7 +1564,9 @@ mod tests {
         // 303 is in this list because it was MEASURED: `GET /v1/o11y/complete/google`
         // answers it, and the transport used to follow the redirect and report the
         // 404 of wherever it landed — a present route recorded as absent.
-        for code in [200, 201, 204, 302, 303, 400, 401, 403, 405, 409, 429, 500, 502, 503] {
+        for code in [
+            200, 201, 204, 302, 303, 400, 401, 403, 405, 409, 429, 500, 502, 503,
+        ] {
             assert!(
                 matches!(verdict(&[Some(code)]), Probe::Answered(c) if c == code),
                 "{code} is an answer FROM a route — a router with nothing at that address cannot \
@@ -1471,8 +1582,15 @@ mod tests {
     #[test]
     fn a_404_that_does_not_hold_is_flapping_and_never_drift() {
         assert_eq!(verdict(&[Some(404), Some(200)]), Probe::Flapping(200));
-        assert_eq!(verdict(&[Some(404), Some(404), Some(403)]), Probe::Flapping(403));
-        assert_eq!(verdict(&[Some(404), Some(404)]), Probe::Blind, "two 404s are not the {CONFIRM} that confirm one");
+        assert_eq!(
+            verdict(&[Some(404), Some(404), Some(403)]),
+            Probe::Flapping(403)
+        );
+        assert_eq!(
+            verdict(&[Some(404), Some(404)]),
+            Probe::Blind,
+            "two 404s are not the {CONFIRM} that confirm one"
+        );
         assert_eq!(verdict(&[None]), Probe::Blind);
         assert_eq!(verdict(&[Some(404), None]), Probe::Blind);
         assert_eq!(verdict(&[]), Probe::Blind);
@@ -1486,15 +1604,33 @@ mod tests {
     fn a_prefix_that_answers_for_nonsense_has_testified_about_nothing() {
         let (real, absent) = (Probe::Answered(200), Probe::Absent);
         // The door: control 403, so a 403 on the real path proves nothing…
-        assert_eq!(settle(Says::Door, Some((Probe::Answered(403), Probe::Answered(403)))), Settled::Unfalsifiable);
+        assert_eq!(
+            settle(
+                Says::Door,
+                Some((Probe::Answered(403), Probe::Answered(403)))
+            ),
+            Settled::Unfalsifiable
+        );
         // …and neither does a 404 under a prefix that 200s for nonsense.
-        assert_eq!(settle(Says::Serves, Some((absent, Probe::Answered(200)))), Settled::Unfalsifiable);
+        assert_eq!(
+            settle(Says::Serves, Some((absent, Probe::Answered(200)))),
+            Settled::Unfalsifiable
+        );
         // A discriminating prefix is what makes both readings possible.
         assert_eq!(settle(Says::Silent, Some((real, absent))), Settled::Present);
-        assert_eq!(settle(Says::Serves, Some((absent, absent))), Settled::Absent);
+        assert_eq!(
+            settle(Says::Serves, Some((absent, absent))),
+            Settled::Absent
+        );
         // Silence is never an answer, from either side.
-        assert_eq!(settle(Says::Serves, Some((Probe::Blind, absent))), Settled::Blind);
-        assert_eq!(settle(Says::Serves, Some((real, Probe::Blind))), Settled::Blind);
+        assert_eq!(
+            settle(Says::Serves, Some((Probe::Blind, absent))),
+            Settled::Blind
+        );
+        assert_eq!(
+            settle(Says::Serves, Some((real, Probe::Blind))),
+            Settled::Blind
+        );
     }
 
     /// Where no host can be asked, the table's own word stands — and it may only
@@ -1507,11 +1643,21 @@ mod tests {
             "/v1/{wildcard1}": {"get": {}}
         }}));
         assert_eq!(t.says("GET", &segs("/v1/billing/usage")), Says::Serves);
-        assert_eq!(t.says("GET", &segs("/v1/billing/no-such-route")), Says::Refutes);
+        assert_eq!(
+            t.says("GET", &segs("/v1/billing/no-such-route")),
+            Says::Refutes
+        );
         assert_eq!(t.says("GET", &segs("/v1/iam/anything/at/all")), Says::Door);
         assert_eq!(t.says("GET", &segs("/v1/nosuchproduct/x")), Says::Silent);
-        assert_eq!(t.says("POST", &segs("/v1/billing/usage")), Says::Refutes, "a verb is part of the route");
-        assert_eq!(t.owned, ["billing", "iam"].iter().map(ToString::to_string).collect());
+        assert_eq!(
+            t.says("POST", &segs("/v1/billing/usage")),
+            Says::Refutes,
+            "a verb is part of the route"
+        );
+        assert_eq!(
+            t.owned,
+            ["billing", "iam"].iter().map(ToString::to_string).collect()
+        );
 
         assert_eq!(settle(Says::Serves, None), Settled::Present);
         assert_eq!(settle(Says::Refutes, None), Settled::Absent);
@@ -1534,7 +1680,10 @@ mod tests {
     /// fallthrough swallow everything?".
     #[test]
     fn a_control_is_a_nonsense_sibling_under_the_same_prefix() {
-        assert_eq!(control_of("/v1/o11y/services"), format!("/v1/o11y/{NONSENSE}"));
+        assert_eq!(
+            control_of("/v1/o11y/services"),
+            format!("/v1/o11y/{NONSENSE}")
+        );
         assert_eq!(control_of("/v1/models"), format!("/v1/{NONSENSE}"));
         assert_eq!(parent(&control_of("/v1/o11y/services")), "/v1/o11y");
     }
@@ -1543,7 +1692,10 @@ mod tests {
     /// a fix has to touch — and it says so plainly when a coordinate has none.
     #[test]
     fn a_failing_coordinate_is_named_as_the_command_it_is() {
-        let op = OPS.iter().find(|o| o.method == "GET").expect("the tree has a read");
+        let op = OPS
+            .iter()
+            .find(|o| o.method == "GET")
+            .expect("the tree has a read");
         let line = named(op.method, op.path);
         assert!(line.contains(&format!("hanzo {}", op.product)), "{line}");
         assert!(named("GET", "/v1/no-such-product/nothing").contains("no command"));
@@ -1556,13 +1708,22 @@ mod tests {
     #[test]
     fn the_sweep_reads_the_routes_the_local_commands_send() {
         let local = sent(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
-        for p in ["/v1/k8s/clusters", "/v1/deploy/applications", "/v1/fleet/workers"] {
-            let from = local.get(p).unwrap_or_else(|| panic!("the sweep missed {p}"));
+        for p in [
+            "/v1/k8s/clusters",
+            "/v1/deploy/applications",
+            "/v1/fleet/workers",
+        ] {
+            let from = local
+                .get(p)
+                .unwrap_or_else(|| panic!("the sweep missed {p}"));
             assert!(from.ends_with("status.rs"), "{p} is sent by {from}");
         }
         // Prose that quotes a route is not a route, and a query string is not
         // part of an address.
-        assert!(local.keys().all(|p| !p.contains(' ') && !p.contains('?')), "{local:?}");
+        assert!(
+            local.keys().all(|p| !p.contains(' ') && !p.contains('?')),
+            "{local:?}"
+        );
     }
 
     /// THE DOCUMENT DECIDES, and only for the products it owns. `hanzo chain`
@@ -1602,7 +1763,12 @@ mod tests {
         };
         let mut cap = Capture::seal(ev);
         assert!(cap.sealed());
-        cap.evidence.table.insert(coord("GET", "/v1/invented"), Says::Serves);
-        assert!(!cap.sealed(), "a row was added and the file still claimed its own digest");
+        cap.evidence
+            .table
+            .insert(coord("GET", "/v1/invented"), Says::Serves);
+        assert!(
+            !cap.sealed(),
+            "a row was added and the file still claimed its own digest"
+        );
     }
 }

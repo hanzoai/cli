@@ -46,15 +46,28 @@ struct Revoked {
 impl Caller {
     /// Grant `folder` on machine `target`.
     pub async fn grant(&self, target: &str, folder: &str) -> Result<Grant> {
-        let v = self.send(Method::POST, &folders_path(target)?, Some(json!({ "folder": folder }))).await?;
+        let v = self
+            .send(
+                Method::POST,
+                &folders_path(target)?,
+                Some(json!({ "folder": folder })),
+            )
+            .await?;
         serde_json::from_value(v).context("decode folder grant")
     }
 
     /// End the grant of `folder` on machine `target`; the folder cloud revoked.
     pub async fn revoke(&self, target: &str, folder: &str) -> Result<String> {
-        let url = reqwest::Url::parse_with_params(&format!("{}{}", self.api, folders_path(target)?), [("folder", folder)])
-            .context("building the revoke url")?;
-        let v = self.http.send(self.request(Method::DELETE, url.into())).await?.ok()?;
+        let url = reqwest::Url::parse_with_params(
+            &format!("{}{}", self.api, folders_path(target)?),
+            [("folder", folder)],
+        )
+        .context("building the revoke url")?;
+        let v = self
+            .http
+            .send(self.request(Method::DELETE, url.into()))
+            .await?
+            .ok()?;
         let r: Revoked = serde_json::from_value(v).context("decode folder revoke")?;
         Ok(r.folder)
     }
@@ -76,7 +89,8 @@ fn folders_path(target: &str) -> Result<String> {
 
 /// The absolute real path of a folder that exists: symlinks and `..` resolved.
 fn real(folder: &Path) -> Result<PathBuf> {
-    let real = std::fs::canonicalize(folder).with_context(|| format!("{} is not a folder here", folder.display()))?;
+    let real = std::fs::canonicalize(folder)
+        .with_context(|| format!("{} is not a folder here", folder.display()))?;
     if !real.is_dir() {
         bail!("{} is not a folder", real.display());
     }
@@ -89,9 +103,22 @@ async fn this_machine(caller: &Caller) -> Result<String> {
     let root = Root::need()?;
     let (machine, host) = (context::machine_id(&root), context::hostname(&root));
     let sample = Sampler::new().machine().await;
-    target::sync(&root, &caller.api, &caller.token, caller.selected(), &machine, &host, &sample)
-        .await
-        .ok_or_else(|| anyhow!("this machine ({host}) could not be registered with {}", caller.api))?;
+    target::sync(
+        &root,
+        &caller.api,
+        &caller.token,
+        caller.selected(),
+        &machine,
+        &host,
+        &sample,
+    )
+    .await
+    .ok_or_else(|| {
+        anyhow!(
+            "this machine ({host}) could not be registered with {}",
+            caller.api
+        )
+    })?;
     TargetRecord::load(&root, &machine)?
         .filter(|r| r.host == host && r.api == caller.api)
         .map(|r| r.id)
@@ -104,7 +131,11 @@ pub async fn grant(cfg: &mut Config, folder: PathBuf) -> Result<()> {
     let caller = Caller::sign_in(cfg, None).await?;
     let id = this_machine(&caller).await?;
     let g = caller.grant(&id, &folder.to_string_lossy()).await?;
-    println!("{} the web may start runs in {} on this machine ({id})", "✓".green(), g.folder.cyan());
+    println!(
+        "{} the web may start runs in {} on this machine ({id})",
+        "✓".green(),
+        g.folder.cyan()
+    );
     Ok(())
 }
 
@@ -118,7 +149,11 @@ pub async fn revoke(cfg: &mut Config, folder: PathBuf) -> Result<()> {
     let caller = Caller::sign_in(cfg, None).await?;
     let id = this_machine(&caller).await?;
     let gone = caller.revoke(&id, &folder.to_string_lossy()).await?;
-    println!("{} the web may no longer start runs in {} on this machine ({id})", "✓".green(), gone.cyan());
+    println!(
+        "{} the web may no longer start runs in {} on this machine ({id})",
+        "✓".green(),
+        gone.cyan()
+    );
     Ok(())
 }
 
@@ -131,7 +166,12 @@ pub async fn list(cfg: &mut Config) -> Result<()> {
         println!("no folder on this machine ({id}) is granted to the web: `hanzo link grant <folder>` grants one");
     }
     for g in &grants {
-        println!("{}  granted by {} at {}", g.folder.cyan(), g.granted_by, g.granted_at);
+        println!(
+            "{}  granted by {} at {}",
+            g.folder.cyan(),
+            g.granted_by,
+            g.granted_at
+        );
     }
     Ok(())
 }
@@ -144,40 +184,82 @@ mod tests {
 
     #[tokio::test]
     async fn grant_posts_the_folder_to_the_machine() {
-        let fake = Fake::serve(201, r#"{"folder":"/home/me/site","grantedBy":"me","grantedAt":"2026-11-21T00:00:00Z"}"#).await;
-        let g = caller(&fake.base, Some("acme")).grant("tgt_1", "/home/me/site").await.unwrap();
-        assert_eq!((g.folder.as_str(), g.granted_by.as_str()), ("/home/me/site", "me"));
+        let fake = Fake::serve(
+            201,
+            r#"{"folder":"/home/me/site","grantedBy":"me","grantedAt":"2026-11-21T00:00:00Z"}"#,
+        )
+        .await;
+        let g = caller(&fake.base, Some("acme"))
+            .grant("tgt_1", "/home/me/site")
+            .await
+            .unwrap();
+        assert_eq!(
+            (g.folder.as_str(), g.granted_by.as_str()),
+            ("/home/me/site", "me")
+        );
         let (method, path, auth, org, body) = fake.one();
-        assert_eq!((method.as_str(), path.as_str()), ("POST", "/v1/agent/targets/tgt_1/folders"));
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            ("POST", "/v1/agent/targets/tgt_1/folders")
+        );
         assert_eq!(auth, format!("Bearer {}", token()));
         assert_eq!(org, "acme");
-        assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), json!({"folder": "/home/me/site"}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap(),
+            json!({"folder": "/home/me/site"})
+        );
     }
 
     #[tokio::test]
     async fn revoke_names_the_folder_in_the_query() {
         let fake = Fake::serve(200, r#"{"revoked":true,"folder":"/home/me/my site"}"#).await;
-        let gone = caller(&fake.base, None).revoke("tgt_1", "/home/me/my site").await.unwrap();
+        let gone = caller(&fake.base, None)
+            .revoke("tgt_1", "/home/me/my site")
+            .await
+            .unwrap();
         assert_eq!(gone, "/home/me/my site");
         let (method, path, ..) = fake.one();
-        assert_eq!((method.as_str(), path.as_str()), ("DELETE", "/v1/agent/targets/tgt_1/folders?folder=%2Fhome%2Fme%2Fmy+site"));
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            (
+                "DELETE",
+                "/v1/agent/targets/tgt_1/folders?folder=%2Fhome%2Fme%2Fmy+site"
+            )
+        );
     }
 
     #[tokio::test]
     async fn folders_lists_the_active_grants() {
         let fake = Fake::serve(200, r#"{"folders":[{"folder":"/a","grantedBy":"me","grantedAt":"t"},{"folder":"/b","grantedBy":"me","grantedAt":"t"}]}"#).await;
         let list = caller(&fake.base, None).folders("tgt_1").await.unwrap();
-        assert_eq!(list.iter().map(|g| g.folder.as_str()).collect::<Vec<_>>(), ["/a", "/b"]);
+        assert_eq!(
+            list.iter().map(|g| g.folder.as_str()).collect::<Vec<_>>(),
+            ["/a", "/b"]
+        );
         let (method, path, ..) = fake.one();
-        assert_eq!((method.as_str(), path.as_str()), ("GET", "/v1/agent/targets/tgt_1/folders"));
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            ("GET", "/v1/agent/targets/tgt_1/folders")
+        );
     }
 
     /// A colleague's machine, or an admin who is not its owner: cloud's 403 is the answer.
     #[tokio::test]
     async fn a_grant_by_someone_not_the_owner_is_cloud_s_refusal() {
-        let fake = Fake::serve(403, r#"{"error":"only the machine's owner may grant or revoke its folders"}"#).await;
-        let err = caller(&fake.base, None).grant("tgt_1", "/x").await.unwrap_err().to_string();
-        assert!(err.contains("403") && err.contains("only the machine's owner"), "{err}");
+        let fake = Fake::serve(
+            403,
+            r#"{"error":"only the machine's owner may grant or revoke its folders"}"#,
+        )
+        .await;
+        let err = caller(&fake.base, None)
+            .grant("tgt_1", "/x")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("403") && err.contains("only the machine's owner"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -185,11 +267,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let site = tmp.path().join("site");
         std::fs::create_dir_all(site.join("src")).unwrap();
-        assert_eq!(real(&site.join("src").join("..")).unwrap(), std::fs::canonicalize(&site).unwrap());
+        assert_eq!(
+            real(&site.join("src").join("..")).unwrap(),
+            std::fs::canonicalize(&site).unwrap()
+        );
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&site, tmp.path().join("link")).unwrap();
-            assert_eq!(real(&tmp.path().join("link")).unwrap(), std::fs::canonicalize(&site).unwrap());
+            assert_eq!(
+                real(&tmp.path().join("link")).unwrap(),
+                std::fs::canonicalize(&site).unwrap()
+            );
         }
         assert!(real(&tmp.path().join("gone")).is_err());
         std::fs::write(site.join("f"), "").unwrap();

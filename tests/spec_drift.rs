@@ -51,13 +51,25 @@ fn maintainer(exe: &'static str) -> &'static str {
     static BUILT: OnceLock<Result<(), String>> = OnceLock::new();
     let built = BUILT.get_or_init(|| {
         // The profile cargo built this test with, read off where it put the tools.
-        let profile = match Path::new(exe).parent().and_then(Path::file_name).and_then(|p| p.to_str()) {
+        let profile = match Path::new(exe)
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|p| p.to_str())
+        {
             Some("debug") | None => "dev",
             Some(other) => other,
         };
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let out = Command::new(cargo)
-            .args(["build", "--quiet", "--locked", "--features", "maintainer", "--profile", profile])
+            .args([
+                "build",
+                "--quiet",
+                "--locked",
+                "--features",
+                "maintainer",
+                "--profile",
+                profile,
+            ])
             .args(["--bin", "driftgate", "--bin", "genproduct"])
             .current_dir(root())
             .output()
@@ -71,7 +83,10 @@ fn maintainer(exe: &'static str) -> &'static str {
     if let Err(e) = built {
         panic!("building the maintainer tools failed:\n{e}");
     }
-    assert!(Path::new(exe).exists(), "{exe} was not built where cargo said it would be; run `make test`");
+    assert!(
+        Path::new(exe).exists(),
+        "{exe} was not built where cargo said it would be; run `make test`"
+    );
     exe
 }
 
@@ -86,8 +101,15 @@ fn maintainer(exe: &'static str) -> &'static str {
 /// writes the file.
 #[test]
 fn generated_is_exactly_what_the_spec_derives() {
-    let out = Command::new(maintainer(env!("CARGO_BIN_EXE_genproduct"))).arg("--check").output().expect("run genproduct");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(maintainer(env!("CARGO_BIN_EXE_genproduct")))
+        .arg("--check")
+        .output()
+        .expect("run genproduct");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// …and the spec names a RELEASE, by ref and by digest, and `.spec-lock` agrees.
@@ -107,9 +129,13 @@ fn generated_is_exactly_what_the_spec_derives() {
 /// document a ref can NAME.
 #[test]
 fn the_committed_spec_names_the_release_it_was_generated_from() {
-    let spec = std::fs::read_to_string(format!("{}/spec/cloud.json", root())).expect("read spec/cloud.json");
+    let spec = std::fs::read_to_string(format!("{}/spec/cloud.json", root()))
+        .expect("read spec/cloud.json");
     let doc: serde_json::Value = serde_json::from_str(&spec).expect("spec/cloud.json is JSON");
-    let prov = doc.pointer("/info/description").and_then(serde_json::Value::as_str).unwrap_or("");
+    let prov = doc
+        .pointer("/info/description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
 
     let lock = std::fs::read_to_string(format!("{}/.spec-lock", root())).expect("read .spec-lock");
     let field = |k: &str| {

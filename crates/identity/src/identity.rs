@@ -212,7 +212,9 @@ pub mod testjwt {
     /// never verifies the signature (that is the server's job), so a fixed
     /// placeholder is faithful to what the decode path actually sees.
     pub fn jwt(owner: &str, name: &str) -> String {
-        claims_jwt(&format!(r#"{{"owner":"{owner}","name":"{name}","sub":"u-1"}}"#))
+        claims_jwt(&format!(
+            r#"{{"owner":"{owner}","name":"{name}","sub":"u-1"}}"#
+        ))
     }
 
     pub fn claims_jwt(claims_json: &str) -> String {
@@ -238,7 +240,10 @@ mod tests {
     #[test]
     fn an_address_is_read_off_the_token_or_reported_missing() {
         assert_eq!(
-            email(&claims_jwt(r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai"}"#)).as_deref(),
+            email(&claims_jwt(
+                r#"{"owner":"hanzo","name":"a","email":"a@hanzo.ai"}"#
+            ))
+            .as_deref(),
             Some("a@hanzo.ai")
         );
         assert_eq!(
@@ -268,8 +273,16 @@ mod tests {
         assert_eq!(party(azp).as_deref(), Some("admin-cli"));
         assert_eq!(party(r#"{"aud":["lux-cli"]}"#).as_deref(), Some("lux-cli"));
         assert_eq!(party(r#"{"aud":"lux-cli"}"#).as_deref(), Some("lux-cli"));
-        assert_eq!(party(r#"{"azp":"","aud":"lux-cli"}"#).as_deref(), Some("lux-cli"));
-        for none in [r#"{"aud":["a","b"]}"#, r#"{"aud":[]}"#, r#"{"azp":" "}"#, r#"{"owner":"hanzo"}"#] {
+        assert_eq!(
+            party(r#"{"azp":"","aud":"lux-cli"}"#).as_deref(),
+            Some("lux-cli")
+        );
+        for none in [
+            r#"{"aud":["a","b"]}"#,
+            r#"{"aud":[]}"#,
+            r#"{"azp":" "}"#,
+            r#"{"owner":"hanzo"}"#,
+        ] {
             assert_eq!(party(none), None, "{none}");
         }
         assert_eq!(super::party("hk-abc"), None);

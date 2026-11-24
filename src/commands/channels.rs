@@ -294,14 +294,14 @@ pub enum AutopostCommand {
 pub async fn run_channels(cfg: &mut Config, args: ChannelsArgs) -> Result<()> {
     match args.command {
         None => list_channels(cfg, args.group, args.provider, args.json).await,
-        Some(ChannelsCommand::List { group, provider, json }) => {
-            list_channels(cfg, group, provider, json).await
-        }
+        Some(ChannelsCommand::List {
+            group,
+            provider,
+            json,
+        }) => list_channels(cfg, group, provider, json).await,
         Some(ChannelsCommand::Groups { json }) => list_groups(cfg, json).await,
         Some(ChannelsCommand::Providers { json }) => list_providers(cfg, json).await,
-        Some(ChannelsCommand::Group { id, group, json }) => {
-            set_group(cfg, &id, &group, json).await
-        }
+        Some(ChannelsCommand::Group { id, group, json }) => set_group(cfg, &id, &group, json).await,
         Some(ChannelsCommand::Analytics { id, days, json }) => {
             channel_analytics(cfg, &id, days, json).await
         }
@@ -315,10 +315,20 @@ pub async fn run_connect(cfg: &mut Config, args: ConnectArgs) -> Result<()> {
         bail!("provider is required (e.g. `hanzo connect x --group \"Hanzo AI\" --open`)");
     }
     let mut body = json!({ "provider": provider });
-    if let Some(g) = args.group.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(g) = args
+        .group
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         body["groupName"] = Value::String(g.to_string());
     }
-    if let Some(r) = args.return_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(r) = args
+        .return_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         body["returnUrl"] = Value::String(r.to_string());
     }
 
@@ -339,7 +349,11 @@ pub async fn run_connect(cfg: &mut Config, args: ConnectArgs) -> Result<()> {
     }
 
     println!("{} Connect {} channel:", "→".cyan().bold(), provider.bold());
-    if let Some(g) = data.get("groupName").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(g) = data
+        .get("groupName")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         println!("  Group: {}", g.green());
     }
     println!("  Authorize URL: {}", url.underline());
@@ -358,9 +372,12 @@ pub async fn run_connect(cfg: &mut Config, args: ConnectArgs) -> Result<()> {
 pub async fn run_post(cfg: &mut Config, args: PostArgs) -> Result<()> {
     match args.command {
         None => list_posts(cfg, args.status, args.channel, args.group, args.json).await,
-        Some(PostCommand::List { status, channel, group, json }) => {
-            list_posts(cfg, status, channel, group, json).await
-        }
+        Some(PostCommand::List {
+            status,
+            channel,
+            group,
+            json,
+        }) => list_posts(cfg, status, channel, group, json).await,
         Some(PostCommand::Create {
             content,
             channels,
@@ -371,22 +388,62 @@ pub async fn run_post(cfg: &mut Config, args: PostArgs) -> Result<()> {
             media,
             json,
         }) => {
-            create_post(cfg, &content, &channels, &accounts, group.as_deref(), &status, schedule_at.as_deref(), &media, json).await
+            create_post(
+                cfg,
+                &content,
+                &channels,
+                &accounts,
+                group.as_deref(),
+                &status,
+                schedule_at.as_deref(),
+                &media,
+                json,
+            )
+            .await
         }
-        Some(PostCommand::Now { content, channels, accounts, group, media, json }) => {
-            create_post(cfg, &content, &channels, &accounts, group.as_deref(), "now", None, &media, json).await
+        Some(PostCommand::Now {
+            content,
+            channels,
+            accounts,
+            group,
+            media,
+            json,
+        }) => {
+            create_post(
+                cfg,
+                &content,
+                &channels,
+                &accounts,
+                group.as_deref(),
+                "now",
+                None,
+                &media,
+                json,
+            )
+            .await
         }
         Some(PostCommand::Get { id, json }) => get_post(cfg, &id, json).await,
         Some(PostCommand::Publish { id, json }) => publish_post(cfg, &id, json).await,
-        Some(PostCommand::Analytics { id, days, json }) => post_analytics(cfg, &id, days, json).await,
+        Some(PostCommand::Analytics { id, days, json }) => {
+            post_analytics(cfg, &id, days, json).await
+        }
         Some(PostCommand::Delete { id }) => delete_post(cfg, &id).await,
         Some(PostCommand::Autopost { command, json }) => match command {
             None => list_autoposts(cfg, json).await,
             Some(AutopostCommand::List { json }) => list_autoposts(cfg, json).await,
-            Some(AutopostCommand::Create { title, url, accounts, ai_summary, add_picture, json }) => {
+            Some(AutopostCommand::Create {
+                title,
+                url,
+                accounts,
+                ai_summary,
+                add_picture,
+                json,
+            }) => {
                 create_autopost(cfg, &title, &url, &accounts, ai_summary, add_picture, json).await
             }
-            Some(AutopostCommand::Active { id, active }) => set_autopost_active(cfg, &id, active).await,
+            Some(AutopostCommand::Active { id, active }) => {
+                set_autopost_active(cfg, &id, active).await
+            }
             Some(AutopostCommand::Delete { id }) => delete_autopost(cfg, &id).await,
         },
     }
@@ -450,8 +507,14 @@ async fn list_channels(
                     .filter(|s| !s.is_empty())
             })
             .unwrap_or("—");
-        let refresh_needed = row.get("refreshNeeded").and_then(Value::as_bool).unwrap_or(false);
-        let disabled = row.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+        let refresh_needed = row
+            .get("refreshNeeded")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let disabled = row
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let connected_flag = row.get("connected").and_then(Value::as_bool);
         let raw_status = str_field(row, &["status"]);
         let status_colored = if disabled {
@@ -489,7 +552,12 @@ async fn list_groups(cfg: &mut Config, as_json: bool) -> Result<()> {
         println!("No channel groups defined yet.");
         return Ok(());
     }
-    println!("{:<28} {:<10} {}", "GROUP".bold(), "CHANNELS".bold(), "ID / PROVIDERS".bold());
+    println!(
+        "{:<28} {:<10} {}",
+        "GROUP".bold(),
+        "CHANNELS".bold(),
+        "ID / PROVIDERS".bold()
+    );
     for row in &rows {
         let name = str_field(row, &["name"]);
         let count = row
@@ -500,7 +568,12 @@ async fn list_groups(cfg: &mut Config, as_json: bool) -> Result<()> {
         let providers = row
             .get("providers")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| str_field(row, &["id"]));
         println!("{:<28} {:<10} {}", trunc(&name, 27), count, providers);
@@ -519,7 +592,12 @@ async fn list_providers(cfg: &mut Config, as_json: bool) -> Result<()> {
         .or_else(|| data.get("providers").and_then(Value::as_array))
         .cloned()
         .unwrap_or_default();
-    println!("{:<20} {:<14} {}", "PROVIDER".bold(), "READY".bold(), "NOTES".bold());
+    println!(
+        "{:<20} {:<14} {}",
+        "PROVIDER".bold(),
+        "READY".bold(),
+        "NOTES".bold()
+    );
     for row in &rows {
         let prov = str_field(row, &["provider", "identifier"]);
         let ready = row
@@ -530,9 +608,18 @@ async fn list_providers(cfg: &mut Config, as_json: bool) -> Result<()> {
         let missing = row
             .get("missingCredentials")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .unwrap_or_default();
-        let status = if ready { "yes".green().to_string() } else { "missing env".yellow().to_string() };
+        let status = if ready {
+            "yes".green().to_string()
+        } else {
+            "missing env".yellow().to_string()
+        };
         println!("{:<20} {:<14} {}", prov, status, missing);
     }
     Ok(())
@@ -540,11 +627,23 @@ async fn list_providers(cfg: &mut Config, as_json: bool) -> Result<()> {
 
 async fn set_group(cfg: &mut Config, id: &str, group: &str, as_json: bool) -> Result<()> {
     let path = format!("/v1/channel/{}/group", id.trim());
-    let data = request(cfg, Method::PUT, &path, &[], Some(json!({ "name": group.trim() }))).await?;
+    let data = request(
+        cfg,
+        Method::PUT,
+        &path,
+        &[],
+        Some(json!({ "name": group.trim() })),
+    )
+    .await?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&data)?);
     } else {
-        println!("{} Updated channel `{}` group -> `{}`", "✓".green(), id.trim(), group.trim());
+        println!(
+            "{} Updated channel `{}` group -> `{}`",
+            "✓".green(),
+            id.trim(),
+            group.trim()
+        );
     }
     Ok(())
 }
@@ -694,15 +793,16 @@ async fn create_post(
     media: &[String],
     as_json: bool,
 ) -> Result<()> {
-    let (resolved_ts, resolved_date) = if let Some(raw_at) = schedule_at.map(str::trim).filter(|s| !s.is_empty()) {
-        let ts = parse_schedule(raw_at)?;
-        let iso = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
-            .unwrap_or_else(chrono::Utc::now)
-            .to_rfc3339();
-        (Some(ts), iso)
-    } else {
-        (None, chrono::Utc::now().to_rfc3339())
-    };
+    let (resolved_ts, resolved_date) =
+        if let Some(raw_at) = schedule_at.map(str::trim).filter(|s| !s.is_empty()) {
+            let ts = parse_schedule(raw_at)?;
+            let iso = chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339();
+            (Some(ts), iso)
+        } else {
+            (None, chrono::Utc::now().to_rfc3339())
+        };
     let post_type = match status.trim().to_lowercase().as_str() {
         "now" | "publish" | "published" => "now",
         "draft" => "draft",
@@ -751,8 +851,15 @@ async fn create_post(
                         .unwrap_or_default()
                         .to_lowercase();
                     let disabled = r.get("disabled").and_then(Value::as_bool).unwrap_or(false);
-                    let refresh = r.get("refreshNeeded").and_then(Value::as_bool).unwrap_or(false);
-                    if grp == want_g && !disabled && !refresh && !target_ids.iter().any(|x| x == &id) {
+                    let refresh = r
+                        .get("refreshNeeded")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if grp == want_g
+                        && !disabled
+                        && !refresh
+                        && !target_ids.iter().any(|x| x == &id)
+                    {
                         target_ids.push(id);
                     }
                 }
@@ -834,7 +941,12 @@ async fn create_post(
         str_field(&data, &["id", "postId"])
     };
     println!("{} Post submitted (`{id}`).", "✓".green());
-    if let Some(url) = data.get("releaseUrl").or_else(|| data.get("releaseURL")).and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(url) = data
+        .get("releaseUrl")
+        .or_else(|| data.get("releaseURL"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         println!("  URL: {}", url.underline());
     }
     Ok(())
@@ -893,14 +1005,30 @@ async fn list_autoposts(cfg: &mut Config, as_json: bool) -> Result<()> {
         println!("No RSS auto-publishing rules configured.");
         return Ok(());
     }
-    println!("{:<38} {:<10} {:<26} {}", "ID".bold(), "ACTIVE".bold(), "TITLE".bold(), "FEED URL".bold());
+    println!(
+        "{:<38} {:<10} {:<26} {}",
+        "ID".bold(),
+        "ACTIVE".bold(),
+        "TITLE".bold(),
+        "FEED URL".bold()
+    );
     for row in &rows {
         let id = str_field(row, &["id"]);
         let active = row.get("active").and_then(Value::as_bool).unwrap_or(false);
         let title = str_field(row, &["title"]);
         let url = str_field(row, &["url"]);
-        let active_str = if active { "active".green().to_string() } else { "paused".yellow().to_string() };
-        println!("{:<38} {:<10} {:<26} {}", id, active_str, trunc(&title, 25), url);
+        let active_str = if active {
+            "active".green().to_string()
+        } else {
+            "paused".yellow().to_string()
+        };
+        println!(
+            "{:<38} {:<10} {:<26} {}",
+            id,
+            active_str,
+            trunc(&title, 25),
+            url
+        );
     }
     Ok(())
 }
@@ -930,15 +1058,31 @@ async fn create_autopost(
     if as_json {
         println!("{}", serde_json::to_string_pretty(&data)?);
     } else {
-        println!("{} Created RSS autopost rule `{}` -> {}", "✓".green(), title.bold(), url);
+        println!(
+            "{} Created RSS autopost rule `{}` -> {}",
+            "✓".green(),
+            title.bold(),
+            url
+        );
     }
     Ok(())
 }
 
 async fn set_autopost_active(cfg: &mut Config, id: &str, active: bool) -> Result<()> {
     let path = format!("/v1/autopost/{}/active", id.trim());
-    let _ = request(cfg, Method::POST, &path, &[], Some(json!({ "active": active }))).await?;
-    println!("{} Updated autopost `{}` active={active}.", "✓".green(), id.trim());
+    let _ = request(
+        cfg,
+        Method::POST,
+        &path,
+        &[],
+        Some(json!({ "active": active })),
+    )
+    .await?;
+    println!(
+        "{} Updated autopost `{}` active={active}.",
+        "✓".green(),
+        id.trim()
+    );
     Ok(())
 }
 
@@ -953,8 +1097,9 @@ fn parse_schedule(raw: &str) -> Result<i64> {
     if let Ok(ts) = raw.parse::<i64>() {
         return Ok(ts);
     }
-    let dt = chrono::DateTime::parse_from_rfc3339(raw)
-        .map_err(|e| anyhow::anyhow!("invalid `--at` value {raw:?} (pass unix seconds or RFC3339): {e}"))?;
+    let dt = chrono::DateTime::parse_from_rfc3339(raw).map_err(|e| {
+        anyhow::anyhow!("invalid `--at` value {raw:?} (pass unix seconds or RFC3339): {e}")
+    })?;
     Ok(dt.timestamp())
 }
 
@@ -982,7 +1127,8 @@ async fn request(
     let mut reply = if let Ok(explicit) = std::env::var("HANZO_POST_URL") {
         let trimmed = explicit.trim();
         if !trimmed.is_empty() {
-            seam.send_at(trimmed, method.clone(), path, query, body.clone()).await?
+            seam.send_at(trimmed, method.clone(), path, query, body.clone())
+                .await?
         } else {
             seam.send(method.clone(), path, query, body.clone()).await?
         }
@@ -1035,7 +1181,11 @@ async fn request(
 }
 
 fn post_channel_str(row: &Value) -> String {
-    if let Some(c) = row.get("channel").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(c) = row
+        .get("channel")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         return c.to_string();
     }
     if let Some(intg) = row.get("integration") {
@@ -1063,15 +1213,27 @@ fn post_status_str(row: &Value) -> String {
 }
 
 fn post_when_str(row: &Value) -> String {
-    if let Some(s) = row.get("publishDate").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    if let Some(s) = row
+        .get("publishDate")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
         return s.chars().take(19).collect();
     }
-    if let Some(ts) = row.get("scheduleAt").and_then(Value::as_i64).filter(|&t| t > 0) {
+    if let Some(ts) = row
+        .get("scheduleAt")
+        .and_then(Value::as_i64)
+        .filter(|&t| t > 0)
+    {
         if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
             return dt.format("%Y-%m-%d %H:%M UTC").to_string();
         }
     }
-    if let Some(ts) = row.get("createdAt").and_then(Value::as_i64).filter(|&t| t > 0) {
+    if let Some(ts) = row
+        .get("createdAt")
+        .and_then(Value::as_i64)
+        .filter(|&t| t > 0)
+    {
         if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
             return dt.format("%Y-%m-%d %H:%M UTC").to_string();
         }
@@ -1081,7 +1243,12 @@ fn post_when_str(row: &Value) -> String {
 
 fn str_field(row: &Value, keys: &[&str]) -> String {
     for k in keys {
-        if let Some(s) = row.get(*k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(s) = row
+            .get(*k)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             return s.to_string();
         }
     }

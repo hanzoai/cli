@@ -205,7 +205,12 @@ async fn poll_device_token(origin: &str, client_id: &str, da: &DeviceAuthResp) -
 /// through `org`'s client (`--as`), and return the tokens. `want` is the account
 /// it is for, named on the screen: the approving page signs the device in as
 /// whoever that page is signed in as.
-pub async fn login(origin: &str, brand: &str, org: Option<&str>, want: Option<&str>) -> Result<TokenSet> {
+pub async fn login(
+    origin: &str,
+    brand: &str,
+    org: Option<&str>,
+    want: Option<&str>,
+) -> Result<TokenSet> {
     let client = oauth::client(org);
     let da = device_auth(origin, &client, SCOPE).await?;
 

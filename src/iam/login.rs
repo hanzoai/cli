@@ -56,10 +56,15 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Resu
     let origin = &oauth::server_url(brand)?; // reject unknown brands before opening a browser
     let browser = browser_here();
     let picked = match account {
-        None if !browser && cfg.org.is_none() => pick(&store::list(cfg, brand), store::active(cfg, brand).as_ref())?,
+        None if !browser && cfg.org.is_none() => {
+            pick(&store::list(cfg, brand), store::active(cfg, brand).as_ref())?
+        }
         _ => None,
     };
-    let want = account.or(picked.as_deref()).map(|a| wanted(cfg, brand, a)).transpose()?;
+    let want = account
+        .or(picked.as_deref())
+        .map(|a| wanted(cfg, brand, a))
+        .transpose()?;
     // `--as <org>` signs in to hold another identity — `admin/z` beside
     // `hanzo/z` — through that org's own client, so IAM signs the person in to
     // that org. An `--account` in another org names that org the same way. A
@@ -67,15 +72,35 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Resu
     let org = client_org(cfg.org.as_deref(), want.as_ref())?;
     let device = oauth::served(origin, org.as_deref()).await?;
     let before = store::active(cfg, brand);
-    let ask = oauth::Ask { hint: want.as_ref().map(|w| w.hint.clone()) };
+    let ask = oauth::Ask {
+        hint: want.as_ref().map(|w| w.hint.clone()),
+    };
     let filed = if by_device(browser, device) {
-        let tokens = device::login(origin, brand, org.as_deref(), want.as_ref().map(|w| w.raw.as_str())).await?;
-        file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())?
+        let tokens = device::login(
+            origin,
+            brand,
+            org.as_deref(),
+            want.as_ref().map(|w| w.raw.as_str()),
+        )
+        .await?;
+        file(
+            cfg,
+            brand,
+            &tokens,
+            org.as_deref(),
+            before.as_ref(),
+            want.as_ref(),
+        )?
     } else {
         match oauth::login(brand, org.as_deref(), browser, &ask).await? {
-            oauth::Done::Pasted(tokens) => {
-                file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())?
-            }
+            oauth::Done::Pasted(tokens) => file(
+                cfg,
+                brand,
+                &tokens,
+                org.as_deref(),
+                before.as_ref(),
+                want.as_ref(),
+            )?,
             oauth::Done::Browser(tokens, held) => {
                 // The page says who the terminal goes on as, so that is decided
                 // first; the tab is answered while the keychain write runs.
@@ -86,7 +111,14 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Resu
                     .filter(|prev| !activates(Some(prev), &id, chosen, cfg.org.is_some()));
                 let again = store::choose(brand, &id);
                 oauth::finish(held, &tokens, kept.as_ref(), &again, async {
-                    file(cfg, brand, &tokens, org.as_deref(), before.as_ref(), want.as_ref())
+                    file(
+                        cfg,
+                        brand,
+                        &tokens,
+                        org.as_deref(),
+                        before.as_ref(),
+                        want.as_ref(),
+                    )
                 })
                 .await?
             }
@@ -113,7 +145,8 @@ impl Wanted {
                 .is_some_and(|email| email.eq_ignore_ascii_case(&self.raw)),
             None => {
                 self.raw == id.name
-                    || super::identity::subject(&tokens.access_token).as_deref() == Some(self.raw.as_str())
+                    || super::identity::subject(&tokens.access_token).as_deref()
+                        == Some(self.raw.as_str())
             }
         }
     }
@@ -129,7 +162,11 @@ fn wanted(cfg: &Config, brand: &str, account: &str) -> Result<Wanted> {
         bail!("--account needs an `owner/name` or an email address");
     }
     if raw.contains('@') || !raw.contains('/') {
-        return Ok(Wanted { raw: raw.to_string(), hint: raw.to_string(), id: None });
+        return Ok(Wanted {
+            raw: raw.to_string(),
+            hint: raw.to_string(),
+            id: None,
+        });
     }
     let Selector::Exact(id) = raw.parse::<Selector>()? else {
         bail!("--account {raw} is not an `owner/name`");
@@ -161,7 +198,9 @@ fn client_org(as_org: Option<&str>, want: Option<&Wanted>) -> Result<Option<Stri
             bail!("`--as {org}` signs in to {org}, and --account names an identity in {owner}")
         }
         (Some(org), _) => Ok(Some(org.to_string())),
-        (None, Some(owner)) if oauth::client(Some(owner)) != oauth::client(None) => Ok(Some(owner.to_string())),
+        (None, Some(owner)) if oauth::client(Some(owner)) != oauth::client(None) => {
+            Ok(Some(owner.to_string()))
+        }
         (None, _) => Ok(None),
     }
 }
@@ -174,7 +213,9 @@ fn pick(held: &[Identity], active: Option<&Identity>) -> Result<Option<String>> 
         return Ok(None);
     }
     use dialoguer::{theme::SimpleTheme, Select};
-    let at = active.and_then(|a| held.iter().position(|id| id == a)).unwrap_or(0);
+    let at = active
+        .and_then(|a| held.iter().position(|id| id == a))
+        .unwrap_or(0);
     let Some(i) = Select::with_theme(&SimpleTheme)
         .with_prompt("Sign in as")
         .items(&accounts(held, active))
@@ -189,7 +230,13 @@ fn pick(held: &[Identity], active: Option<&Identity>) -> Result<Option<String>> 
 /// The picker's lines: every held identity, the active one marked, then another account.
 fn accounts(held: &[Identity], active: Option<&Identity>) -> Vec<String> {
     held.iter()
-        .map(|id| if Some(id) == active { format!("{id} (active)") } else { id.to_string() })
+        .map(|id| {
+            if Some(id) == active {
+                format!("{id} (active)")
+            } else {
+                id.to_string()
+            }
+        })
         .chain(std::iter::once("Another account".to_string()))
         .collect()
 }
@@ -231,7 +278,10 @@ fn file(
     let chosen = want.is_none_or(|w| w.names(&id, tokens));
     let activate = activates(before, &id, chosen, cfg.org.is_some());
     let id = store::file(cfg, brand, tokens, activate)?;
-    Ok(Filed { id, active: store::active(cfg, brand) })
+    Ok(Filed {
+        id,
+        active: store::active(cfg, brand),
+    })
 }
 
 /// The device grant only with no browser here and a client that permits it;
@@ -319,7 +369,9 @@ async fn report(cfg: &Config, brand: &str, filed: &Filed, want: Option<&Wanted>)
 /// identity just signed in is always the one `--as <its org>` speaks as.
 fn standing(id: &Identity, active: Option<&Identity>) -> String {
     match active {
-        Some(active) if active == id => format!("  {} {}", "active:".dimmed(), active.to_string().bold()),
+        Some(active) if active == id => {
+            format!("  {} {}", "active:".dimmed(), active.to_string().bold())
+        }
         Some(active) => format!(
             "  {} {} {}\n{}",
             "active:".dimmed(),
@@ -331,7 +383,9 @@ fn standing(id: &Identity, active: Option<&Identity>) -> String {
             )
             .dimmed()
         ),
-        None => format!("  no active identity — `hanzo auth use {id}`").dimmed().to_string(),
+        None => format!("  no active identity — `hanzo auth use {id}`")
+            .dimmed()
+            .to_string(),
     }
 }
 
@@ -345,7 +399,10 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
 
     if all {
         if store::list(cfg, brand).is_empty() {
-            bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
+            bail!(
+                "not signed in to {brand} — run `hanzo auth login{}`",
+                brand_flag(brand)
+            );
         }
         println!("{}", listing(cfg, brand));
         println!(
@@ -357,13 +414,20 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
 
     store::within(cfg, brand)?;
     let Some((id, tokens)) = store::active_token(cfg, brand).await? else {
-        bail!("not signed in to {brand} — run `hanzo auth login{}`", brand_flag(brand));
+        bail!(
+            "not signed in to {brand} — run `hanzo auth login{}`",
+            brand_flag(brand)
+        );
     };
 
     // `owner/name` first and bold: it is the billing org and the SuperAdmin
     // predicate, and it is exactly what a second identity makes ambiguous.
     println!("{} {}", "identity:".dimmed(), id.to_string().bold());
-    println!("{} {}", "org:".dimmed(), format!("{} (billed here)", id.owner).cyan());
+    println!(
+        "{} {}",
+        "org:".dimmed(),
+        format!("{} (billed here)", id.owner).cyan()
+    );
 
     let who = oauth::userinfo(brand, &tokens.access_token).await?;
     println!("{} {}", "sub:".dimmed(), who.sub);
@@ -433,7 +497,12 @@ pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result
 /// month of spendable access on a machine you had signed out of. Every credential
 /// dropped here is revoked at the server (RFC 7009), which kills its whole
 /// rotation family.
-pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all: bool) -> Result<()> {
+pub async fn logout(
+    cfg: &mut Config,
+    brand: &str,
+    identity: Option<String>,
+    all: bool,
+) -> Result<()> {
     let brand: &str = &store::realm(cfg, brand)?;
     if all {
         if identity.is_some() {
@@ -451,7 +520,11 @@ pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all
                 "{} Signed out of {} ({})",
                 "✓".green(),
                 brand.cyan(),
-                removed.iter().map(|r| r.id.to_string()).collect::<Vec<_>>().join(", ")
+                removed
+                    .iter()
+                    .map(|r| r.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
             end_browser(brand, &removed).await;
         }
@@ -473,7 +546,12 @@ pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all
     };
     let removed = store::remove(cfg, brand, sel)?;
     revoke_all(brand, std::slice::from_ref(&removed)).await;
-    println!("{} Signed out of {} as {}", "✓".green(), brand.cyan(), removed.id.to_string().bold());
+    println!(
+        "{} Signed out of {} as {}",
+        "✓".green(),
+        brand.cyan(),
+        removed.id.to_string().bold()
+    );
     end_browser(brand, std::slice::from_ref(&removed)).await;
 
     // Say what is left and how to select it — never select it for them.
@@ -482,7 +560,8 @@ pub async fn logout(cfg: &mut Config, brand: &str, identity: Option<String>, all
         None if !store::list(cfg, brand).is_empty() => {
             println!(
                 "{}",
-                format!("  no active identity on {brand} — `hanzo auth use <owner/name>`:").dimmed()
+                format!("  no active identity on {brand} — `hanzo auth use <owner/name>`:")
+                    .dimmed()
             );
             println!("{}", listing(cfg, brand));
         }
@@ -533,7 +612,11 @@ async fn end_browser(brand: &str, removed: &[store::Removed]) {
     let host = origin.split("://").nth(1).unwrap_or(&origin).to_string();
     let open = browser_here() && std::io::stdin().is_terminal();
     match oauth::end_session(&origin, &oauth::client(None), open).await {
-        Ok(true) => println!("{} Signed out of {} in this browser", "✓".green(), host.cyan()),
+        Ok(true) => println!(
+            "{} Signed out of {} in this browser",
+            "✓".green(),
+            host.cyan()
+        ),
         Ok(false) if open => crate::warn(&format!(
             "the browser did not come back from {host}, so it may still be signed in there; \
              `hanzo auth login` asks which account next time"
@@ -596,23 +679,50 @@ mod tests {
     #[test]
     fn only_a_chosen_account_replaces_the_active_identity() {
         let (z, grundy) = (id("hanzo/z"), id("hanzo/grundy"));
-        assert!(!activates(Some(&z), &grundy, false, false), "silent SSO replaced the active identity");
-        assert!(activates(Some(&z), &grundy, true, false), "the person chose it");
+        assert!(
+            !activates(Some(&z), &grundy, false, false),
+            "silent SSO replaced the active identity"
+        );
+        assert!(
+            activates(Some(&z), &grundy, true, false),
+            "the person chose it"
+        );
         assert!(activates(None, &grundy, false, false), "nothing was active");
-        assert!(activates(Some(&z), &z, false, false), "the same identity, renewed");
-        assert!(!activates(Some(&z), &id("admin/z"), true, true), "--as keeps the default");
+        assert!(
+            activates(Some(&z), &z, false, false),
+            "the same identity, renewed"
+        );
+        assert!(
+            !activates(Some(&z), &id("admin/z"), true, true),
+            "--as keeps the default"
+        );
     }
 
     /// `--account owner/name` signs in through that org's own client when it
     /// has one, and must agree with `--as`.
     #[test]
     fn an_account_in_another_org_names_that_orgs_client() {
-        let want = |raw: &str| Wanted { raw: raw.into(), hint: String::new(), id: Some(id(raw)) };
+        let want = |raw: &str| Wanted {
+            raw: raw.into(),
+            hint: String::new(),
+            id: Some(id(raw)),
+        };
         assert_eq!(client_org(None, Some(&want("hanzo/z"))).unwrap(), None);
-        assert_eq!(client_org(None, Some(&want("admin/z"))).unwrap().as_deref(), Some("admin"));
-        assert_eq!(client_org(Some("admin"), Some(&want("admin/z"))).unwrap().as_deref(), Some("admin"));
+        assert_eq!(
+            client_org(None, Some(&want("admin/z"))).unwrap().as_deref(),
+            Some("admin")
+        );
+        assert_eq!(
+            client_org(Some("admin"), Some(&want("admin/z")))
+                .unwrap()
+                .as_deref(),
+            Some("admin")
+        );
         assert!(client_org(Some("admin"), Some(&want("hanzo/z"))).is_err());
-        assert_eq!(client_org(Some("admin"), None).unwrap().as_deref(), Some("admin"));
+        assert_eq!(
+            client_org(Some("admin"), None).unwrap().as_deref(),
+            Some("admin")
+        );
         assert_eq!(client_org(None, None).unwrap(), None);
     }
 
@@ -622,7 +732,11 @@ mod tests {
     fn the_account_asked_for_is_recognised_in_the_token() {
         let t = tokens(r#"{"owner":"hanzo","name":"z","sub":"u-9","email":"z@hanzo.ai"}"#);
         let z = id("hanzo/z");
-        let ask = |raw: &str, id: Option<Identity>| Wanted { raw: raw.into(), hint: String::new(), id };
+        let ask = |raw: &str, id: Option<Identity>| Wanted {
+            raw: raw.into(),
+            hint: String::new(),
+            id,
+        };
         assert!(ask("hanzo/z", Some(id("hanzo/z"))).names(&z, &t));
         assert!(!ask("admin/z", Some(id("admin/z"))).names(&z, &t));
         assert!(ask("Z@Hanzo.ai", None).names(&z, &t));
@@ -636,8 +750,12 @@ mod tests {
     /// share; one not held, by its name.
     #[test]
     fn a_held_identity_is_hinted_by_its_subject() {
-        let t = tokens(r#"{"owner":"hanzo","name":"z","sub":"6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"}"#);
-        assert_eq!(subject_hint(Some(&t), &id("hanzo/z")), "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b");
+        let t =
+            tokens(r#"{"owner":"hanzo","name":"z","sub":"6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"}"#);
+        assert_eq!(
+            subject_hint(Some(&t), &id("hanzo/z")),
+            "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
+        );
         assert_eq!(subject_hint(None, &id("hanzo/z")), "z");
     }
 
@@ -666,8 +784,14 @@ mod tests {
         assert_eq!(plain(&standing(&z, Some(&z))), "  active: hanzo/z");
         let kept = plain(&standing(&grundy, Some(&z)));
         assert!(kept.contains("active: hanzo/z (unchanged)"), "{kept}");
-        assert!(kept.contains("`hanzo --as hanzo …` speaks as hanzo/grundy"), "{kept}");
-        assert!(kept.contains("`hanzo auth use hanzo/grundy` makes hanzo/grundy the default"), "{kept}");
+        assert!(
+            kept.contains("`hanzo --as hanzo …` speaks as hanzo/grundy"),
+            "{kept}"
+        );
+        assert!(
+            kept.contains("`hanzo auth use hanzo/grundy` makes hanzo/grundy the default"),
+            "{kept}"
+        );
         assert!(plain(&standing(&z, None)).contains("no active identity"));
     }
 
@@ -691,9 +815,16 @@ mod tests {
         let (z, a) = (id("hanzo/z"), id("hanzo/a"));
         assert_eq!(
             accounts(&[a.clone(), z.clone()], Some(&z)),
-            vec!["hanzo/a".to_string(), "hanzo/z (active)".to_string(), "Another account".to_string()]
+            vec![
+                "hanzo/a".to_string(),
+                "hanzo/z (active)".to_string(),
+                "Another account".to_string()
+            ]
         );
-        assert_eq!(accounts(&[a], None).last().map(String::as_str), Some("Another account"));
+        assert_eq!(
+            accounts(&[a], None).last().map(String::as_str),
+            Some("Another account")
+        );
     }
 
     #[test]

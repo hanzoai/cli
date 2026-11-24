@@ -23,7 +23,10 @@ pub(crate) fn wait_of(value: &str) -> Option<Duration> {
     let value = value.trim();
     let wait = match value.parse::<u64>() {
         Ok(seconds) => Duration::from_secs(seconds),
-        Err(_) => httpdate::parse_http_date(value).ok()?.duration_since(SystemTime::now()).unwrap_or_default(),
+        Err(_) => httpdate::parse_http_date(value)
+            .ok()?
+            .duration_since(SystemTime::now())
+            .unwrap_or_default(),
     };
     (!wait.is_zero()).then_some(wait)
 }
@@ -49,10 +52,17 @@ mod tests {
         assert_eq!(wait_of(" 10 "), Some(Duration::from_secs(10)));
         assert_eq!(wait_of("0"), None);
         assert_eq!(wait_of("soon"), None);
-        assert_eq!(wait_of("Sun, 06 Nov 1994 08:49:37 GMT"), None, "a date in the past names no wait");
+        assert_eq!(
+            wait_of("Sun, 06 Nov 1994 08:49:37 GMT"),
+            None,
+            "a date in the past names no wait"
+        );
         let soon = httpdate::fmt_http_date(SystemTime::now() + Duration::from_secs(30));
         let wait = wait_of(&soon).unwrap();
-        assert!(wait > Duration::from_secs(25) && wait <= Duration::from_secs(30), "{wait:?}");
+        assert!(
+            wait > Duration::from_secs(25) && wait <= Duration::from_secs(30),
+            "{wait:?}"
+        );
     }
 
     #[test]
@@ -61,7 +71,10 @@ mod tests {
             let ceiling = FIRST.saturating_mul(1 << (attempt - 1).min(8)).min(LONGEST);
             for _ in 0..50 {
                 let wait = backoff(attempt);
-                assert!(wait >= ceiling / 2 && wait <= ceiling, "try {attempt}: {wait:?} outside {ceiling:?}");
+                assert!(
+                    wait >= ceiling / 2 && wait <= ceiling,
+                    "try {attempt}: {wait:?} outside {ceiling:?}"
+                );
             }
         }
     }

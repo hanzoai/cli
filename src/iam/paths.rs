@@ -80,12 +80,16 @@ fn authority_origin(authority: &str) -> Option<String> {
             !l.is_empty()
                 && !l.starts_with('-')
                 && !l.ends_with('-')
-                && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         });
     if !dns {
         return None;
     }
-    let loopback = host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok_and(|a| a.is_loopback());
+    let loopback = host == "localhost"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|a| a.is_loopback());
     let scheme = if loopback { "http" } else { "https" };
     Some(match port {
         Some(p) => format!("{scheme}://{host}:{p}"),
@@ -121,7 +125,9 @@ pub fn brand_of(realm: &str) -> &str {
 /// hanzo.id.
 pub fn realm(brand: &str, issuer: &str) -> anyhow::Result<String> {
     let issuer = trim_server_url(issuer.trim());
-    if Some(issuer) == brand_origin(DEFAULT_BRAND) || former_origins(DEFAULT_BRAND).contains(&issuer) {
+    if Some(issuer) == brand_origin(DEFAULT_BRAND)
+        || former_origins(DEFAULT_BRAND).contains(&issuer)
+    {
         return Ok(brand.to_string());
     }
     if brand != DEFAULT_BRAND {
@@ -166,8 +172,14 @@ pub fn trim_server_url(server_url: &str) -> &str {
 /// Whether `iss` is the issuer of the IAM `realm` signs in at: what its
 /// discovery names, or an issuer its brand held before it moved.
 pub fn trusts(realm: &str, iss: &str) -> bool {
-    let Some(origin) = server_url_for_brand(realm) else { return false };
-    let former = if realm.contains('@') { &[][..] } else { former_origins(brand_of(realm)) };
+    let Some(origin) = server_url_for_brand(realm) else {
+        return false;
+    };
+    let former = if realm.contains('@') {
+        &[][..]
+    } else {
+        former_origins(brand_of(realm))
+    };
     hanzo_identity::discovery::accepts(&origin, former, iss)
 }
 
@@ -203,11 +215,26 @@ mod tests {
     #[test]
     fn brand_origins_are_canonical() {
         // The login host, not the API host — see server_url_for_brand.
-        assert_eq!(server_url_for_brand("hanzo").as_deref(), Some("https://hanzo.ai"));
-        assert_eq!(server_url_for_brand("lux").as_deref(), Some("https://lux.id"));
-        assert_eq!(server_url_for_brand("zoo").as_deref(), Some("https://zoo.id"));
-        assert_eq!(server_url_for_brand("bootnode").as_deref(), Some("https://id.bootno.de"));
-        assert_eq!(server_url_for_brand("pars").as_deref(), Some("https://pars.id"));
+        assert_eq!(
+            server_url_for_brand("hanzo").as_deref(),
+            Some("https://hanzo.ai")
+        );
+        assert_eq!(
+            server_url_for_brand("lux").as_deref(),
+            Some("https://lux.id")
+        );
+        assert_eq!(
+            server_url_for_brand("zoo").as_deref(),
+            Some("https://zoo.id")
+        );
+        assert_eq!(
+            server_url_for_brand("bootnode").as_deref(),
+            Some("https://id.bootno.de")
+        );
+        assert_eq!(
+            server_url_for_brand("pars").as_deref(),
+            Some("https://pars.id")
+        );
         assert_eq!(server_url_for_brand("nope"), None);
     }
 
@@ -218,11 +245,20 @@ mod tests {
         for iss in ["https://hanzo.ai", "https://hanzo.ai/", "https://hanzo.id"] {
             assert!(trusts("hanzo", iss), "{iss}");
         }
-        for iss in ["https://hanzo.evil.example", "https://id-dev.hanzo.ai", "https://api.hanzo.ai", "http://hanzo.ai", "https://lux.id"] {
+        for iss in [
+            "https://hanzo.evil.example",
+            "https://id-dev.hanzo.ai",
+            "https://api.hanzo.ai",
+            "http://hanzo.ai",
+            "https://lux.id",
+        ] {
             assert!(!trusts("hanzo", iss), "{iss}");
         }
         assert!(trusts("lux", "https://lux.id") && !trusts("lux", "https://hanzo.ai"));
-        assert!(trusts("hanzo@id-dev.hanzo.ai", "https://id-dev.hanzo.ai") && !trusts("hanzo@id-dev.hanzo.ai", "https://hanzo.ai"));
+        assert!(
+            trusts("hanzo@id-dev.hanzo.ai", "https://id-dev.hanzo.ai")
+                && !trusts("hanzo@id-dev.hanzo.ai", "https://hanzo.ai")
+        );
     }
 
     /// A network with its own issuer signs the default brand in there, under a
@@ -230,20 +266,34 @@ mod tests {
     /// keeps each brand's own realm, and so the credentials it already holds.
     #[test]
     fn a_network_with_its_own_issuer_is_a_realm_of_its_own() {
-        for own in ["https://hanzo.ai", "https://hanzo.ai/", "https://hanzo.id", "https://hanzo.id/"] {
+        for own in [
+            "https://hanzo.ai",
+            "https://hanzo.ai/",
+            "https://hanzo.id",
+            "https://hanzo.id/",
+        ] {
             assert_eq!(realm("hanzo", own).unwrap(), "hanzo", "{own}");
         }
         assert_eq!(realm("lux", "https://hanzo.ai").unwrap(), "lux");
         assert_eq!(realm("lux", "https://hanzo.id").unwrap(), "lux");
         let dev = realm("hanzo", "https://id-dev.hanzo.ai").unwrap();
         assert_eq!(dev, "hanzo@id-dev.hanzo.ai");
-        assert_eq!(server_url_for_brand(&dev).as_deref(), Some("https://id-dev.hanzo.ai"));
+        assert_eq!(
+            server_url_for_brand(&dev).as_deref(),
+            Some("https://id-dev.hanzo.ai")
+        );
         assert_eq!(brand_of(&dev), "hanzo");
         assert_eq!(brand_flag(&dev), "");
         let local = realm("hanzo", "http://localhost:8000").unwrap();
-        assert_eq!(server_url_for_brand(&local).as_deref(), Some("http://localhost:8000"));
+        assert_eq!(
+            server_url_for_brand(&local).as_deref(),
+            Some("http://localhost:8000")
+        );
         for brand in ["lux", "zoo", "pars", "bootnode"] {
-            assert!(realm(brand, "https://id-dev.hanzo.ai").is_err(), "{brand} signs in on devnet");
+            assert!(
+                realm(brand, "https://id-dev.hanzo.ai").is_err(),
+                "{brand} signs in on devnet"
+            );
         }
     }
 
@@ -262,7 +312,14 @@ mod tests {
         ] {
             assert!(realm("hanzo", bad).is_err(), "{bad} was accepted");
         }
-        for bad in ["hanzo@", "hanzo@ID.example", "hanzo@a/b", "hanzo@a:x", "nope@id.example", "hanzo@-a.example"] {
+        for bad in [
+            "hanzo@",
+            "hanzo@ID.example",
+            "hanzo@a/b",
+            "hanzo@a:x",
+            "nope@id.example",
+            "hanzo@-a.example",
+        ] {
             assert_eq!(server_url_for_brand(bad), None, "{bad} resolved");
         }
     }
@@ -271,10 +328,22 @@ mod tests {
     /// that merely starts like one.
     #[test]
     fn only_a_loopback_address_signs_in_over_http() {
-        assert_eq!(server_url_for_brand("hanzo@127.0.0.1:8000").as_deref(), Some("http://127.0.0.1:8000"));
-        assert_eq!(server_url_for_brand("hanzo@localhost").as_deref(), Some("http://localhost"));
-        assert_eq!(server_url_for_brand("hanzo@127.evil.example").as_deref(), Some("https://127.evil.example"));
-        assert_eq!(server_url_for_brand("hanzo@127.0.0.1.example").as_deref(), Some("https://127.0.0.1.example"));
+        assert_eq!(
+            server_url_for_brand("hanzo@127.0.0.1:8000").as_deref(),
+            Some("http://127.0.0.1:8000")
+        );
+        assert_eq!(
+            server_url_for_brand("hanzo@localhost").as_deref(),
+            Some("http://localhost")
+        );
+        assert_eq!(
+            server_url_for_brand("hanzo@127.evil.example").as_deref(),
+            Some("https://127.evil.example")
+        );
+        assert_eq!(
+            server_url_for_brand("hanzo@127.0.0.1.example").as_deref(),
+            Some("https://127.0.0.1.example")
+        );
     }
 
     /// No brand may point IAM at an `api.` host.
@@ -303,14 +372,29 @@ mod tests {
     #[test]
     fn endpoints_are_hip0111_exact() {
         // No /api/ prefix, no legacy /oauth/*. Exactly the HIP-0111 paths.
-        assert_eq!(iam_url("https://hanzo.id", AUTHORIZE), "https://hanzo.id/v1/iam/oauth/authorize");
-        assert_eq!(iam_url("https://hanzo.id", TOKEN), "https://hanzo.id/v1/iam/oauth/token");
-        assert_eq!(iam_url("https://hanzo.id", USERINFO), "https://hanzo.id/v1/iam/oauth/userinfo");
+        assert_eq!(
+            iam_url("https://hanzo.id", AUTHORIZE),
+            "https://hanzo.id/v1/iam/oauth/authorize"
+        );
+        assert_eq!(
+            iam_url("https://hanzo.id", TOKEN),
+            "https://hanzo.id/v1/iam/oauth/token"
+        );
+        assert_eq!(
+            iam_url("https://hanzo.id", USERINFO),
+            "https://hanzo.id/v1/iam/oauth/userinfo"
+        );
     }
 
     #[test]
     fn trailing_slashes_are_trimmed() {
-        assert_eq!(iam_url("https://lux.id/", TOKEN), "https://lux.id/v1/iam/oauth/token");
-        assert_eq!(iam_url("https://lux.id///", USERINFO), "https://lux.id/v1/iam/oauth/userinfo");
+        assert_eq!(
+            iam_url("https://lux.id/", TOKEN),
+            "https://lux.id/v1/iam/oauth/token"
+        );
+        assert_eq!(
+            iam_url("https://lux.id///", USERINFO),
+            "https://lux.id/v1/iam/oauth/userinfo"
+        );
     }
 }

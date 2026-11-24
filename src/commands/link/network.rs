@@ -65,7 +65,15 @@ impl Caller {
         let who = Identity::from_access_token(&token)?;
         let sub = identity::subject(&token).context("the access token names no subject")?;
         let org = selected.clone().unwrap_or_else(|| who.owner.clone());
-        Ok(Caller { api, token, org, selected, who, sub, http: Http::default() })
+        Ok(Caller {
+            api,
+            token,
+            org,
+            selected,
+            who,
+            sub,
+            http: Http::default(),
+        })
     }
 
     pub(super) fn request(&self, method: Method, url: String) -> Request {
@@ -77,7 +85,12 @@ impl Caller {
     }
 
     /// One call, and its 2xx body; a non-2xx is the server's own status and words.
-    pub(super) async fn send(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
+    pub(super) async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
         let mut request = self.request(method, format!("{}{path}", self.api));
         if let Some(body) = body {
             request = request.body(body);
@@ -95,7 +108,9 @@ impl Caller {
     /// The org's identities on the network: every one for a steward, the
     /// caller's own for a member.
     pub async fn identities(&self) -> Result<Vec<NetIdentity>> {
-        let v = self.send(Method::GET, "/v1/network/identities", None).await?;
+        let v = self
+            .send(Method::GET, "/v1/network/identities", None)
+            .await?;
         let list: IdentityList = serde_json::from_value(v).context("decode network identities")?;
         Ok(list.identities)
     }
@@ -103,7 +118,11 @@ impl Caller {
     /// Put the caller on the org's network as its IAM subject, with `roles` added
     /// (each scoped to the org by cloud). Idempotent.
     pub async fn ensure(&self, roles: &[String]) -> Result<NetIdentity> {
-        let body = if roles.is_empty() { json!({}) } else { json!({ "roles": roles }) };
+        let body = if roles.is_empty() {
+            json!({})
+        } else {
+            json!({ "roles": roles })
+        };
         let v = self
             .send(Method::POST, "/v1/network/identities", Some(body))
             .await
@@ -131,7 +150,10 @@ impl Caller {
         if !url_id(id) {
             bail!("{id:?} is not an id this command will put in a url");
         }
-        let request = self.request(Method::DELETE, format!("{}/v1/network/services/{id}", self.api));
+        let request = self.request(
+            Method::DELETE,
+            format!("{}/v1/network/services/{id}", self.api),
+        );
         self.http
             .send(request)
             .await?
@@ -163,7 +185,9 @@ fn steward(e: anyhow::Error, what: &str, org: &str) -> anyhow::Error {
 /// return what it printed. The token is never echoed.
 pub async fn run_token_command(cmd: &str) -> Result<String> {
     let argv: Vec<&str> = cmd.split_whitespace().collect();
-    let (bin, args) = argv.split_first().ok_or_else(|| anyhow!("the token command is empty"))?;
+    let (bin, args) = argv
+        .split_first()
+        .ok_or_else(|| anyhow!("the token command is empty"))?;
     let out = tokio::process::Command::new(bin)
         .args(args)
         .stdin(std::process::Stdio::null())
@@ -228,7 +252,10 @@ pub fn label(s: &str) -> Result<String> {
     let inner = |i: usize| i > 0 && i + 1 < l.len();
     if l.is_empty()
         || l.len() > 63
-        || !l.bytes().enumerate().all(|(i, b)| b.is_ascii_lowercase() || b.is_ascii_digit() || (b == b'-' && inner(i)))
+        || !l
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| b.is_ascii_lowercase() || b.is_ascii_digit() || (b == b'-' && inner(i)))
     {
         bail!("{s:?} is not a service name: 1-63 lowercase letters, digits and inner hyphens");
     }
@@ -247,7 +274,9 @@ pub fn scope(service: &str, org: &str) -> Result<String> {
 
 /// `host:port`, split at the LAST colon so a dotted host survives.
 pub fn host_port(s: &str) -> Result<(String, u16)> {
-    let (host, port) = s.rsplit_once(':').ok_or_else(|| anyhow!("want host:port, got {s:?}"))?;
+    let (host, port) = s
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow!("want host:port, got {s:?}"))?;
     if host.is_empty() {
         bail!("want host:port, got {s:?}");
     }
@@ -263,7 +292,9 @@ pub fn host_port(s: &str) -> Result<(String, u16)> {
 pub(super) fn url_id(id: &str) -> bool {
     !id.is_empty()
         && !id.bytes().all(|b| b == b'.')
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 #[cfg(test)]
@@ -292,19 +323,25 @@ pub(crate) mod tests {
             let record = seen.clone();
             tokio::spawn(async move {
                 loop {
-                    let Ok((mut sock, _)) = listener.accept().await else { return };
+                    let Ok((mut sock, _)) = listener.accept().await else {
+                        return;
+                    };
                     let record = record.clone();
                     tokio::spawn(async move {
                         let mut buf = vec![0u8; 65536];
                         let mut read = 0;
                         loop {
-                            let Ok(n) = sock.read(&mut buf[read..]).await else { return };
+                            let Ok(n) = sock.read(&mut buf[read..]).await else {
+                                return;
+                            };
                             if n == 0 {
                                 return;
                             }
                             read += n;
                             let text = String::from_utf8_lossy(&buf[..read]).into_owned();
-                            let Some(head_end) = text.find("\r\n\r\n") else { continue };
+                            let Some(head_end) = text.find("\r\n\r\n") else {
+                                continue;
+                            };
                             let head = &text[..head_end];
                             let header = |name: &str| {
                                 head.lines().find_map(|l| {
@@ -312,12 +349,14 @@ pub(crate) mod tests {
                                     k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
                                 })
                             };
-                            let len: usize =
-                                header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+                            let len: usize = header("content-length")
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0);
                             if text.len() < head_end + 4 + len {
                                 continue;
                             }
-                            let mut req = head.lines().next().unwrap_or_default().split_whitespace();
+                            let mut req =
+                                head.lines().next().unwrap_or_default().split_whitespace();
                             record.lock().unwrap().push((
                                 req.next().unwrap_or_default().to_string(),
                                 req.next().unwrap_or_default().to_string(),
@@ -358,7 +397,10 @@ pub(crate) mod tests {
     #[test]
     fn a_caller_acts_in_its_own_org_unless_it_selects_one() {
         let c = caller("http://x", None);
-        assert_eq!((c.org.as_str(), c.sub.as_str(), c.who.name.as_str()), ("acme", "sub_1", "box"));
+        assert_eq!(
+            (c.org.as_str(), c.sub.as_str(), c.who.name.as_str()),
+            ("acme", "sub_1", "box")
+        );
         assert_eq!(caller("http://x", Some("zoo")).org, "zoo");
     }
 
@@ -371,14 +413,26 @@ pub(crate) mod tests {
             r#"{"id":"idn_1","name":"box.acme","externalId":"sub_1","roles":["org-acme","web-host.acme"]}"#,
         )
         .await;
-        let id = caller(&fake.base, Some("acme")).ensure(&["web-host".into()]).await.unwrap();
-        assert_eq!((id.name.as_str(), id.external_id.as_str()), ("box.acme", "sub_1"));
+        let id = caller(&fake.base, Some("acme"))
+            .ensure(&["web-host".into()])
+            .await
+            .unwrap();
+        assert_eq!(
+            (id.name.as_str(), id.external_id.as_str()),
+            ("box.acme", "sub_1")
+        );
         assert_eq!(id.roles, ["org-acme", "web-host.acme"]);
         let (method, path, auth, org, body) = fake.one();
-        assert_eq!((method.as_str(), path.as_str()), ("POST", "/v1/network/identities"));
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            ("POST", "/v1/network/identities")
+        );
         assert_eq!(auth, format!("Bearer {}", token()));
         assert_eq!(org, "acme");
-        assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), json!({"roles": ["web-host"]}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap(),
+            json!({"roles": ["web-host"]})
+        );
     }
 
     #[tokio::test]
@@ -393,10 +447,16 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn publish_sends_the_service_and_returns_its_dns() {
         let fake = Fake::serve(201, r#"{"id":"svc_1","name":"web","dns":"web.acme.zt"}"#).await;
-        let p = caller(&fake.base, None).publish("web", "127.0.0.1", 8080).await.unwrap();
+        let p = caller(&fake.base, None)
+            .publish("web", "127.0.0.1", 8080)
+            .await
+            .unwrap();
         assert_eq!(p.dns, "web.acme.zt");
         let (method, path, _, _, body) = fake.one();
-        assert_eq!((method.as_str(), path.as_str()), ("POST", "/v1/network/services"));
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            ("POST", "/v1/network/services")
+        );
         assert_eq!(
             serde_json::from_str::<Value>(&body).unwrap(),
             json!({"name": "web", "host": "127.0.0.1", "port": 8080})
@@ -412,7 +472,10 @@ pub(crate) mod tests {
             r#"{"error":"publishing a service is for an admin of the org or its own machine client"}"#,
         )
         .await;
-        let err = caller(&fake.base, None).publish("web", "127.0.0.1", 8080).await.unwrap_err();
+        let err = caller(&fake.base, None)
+            .publish("web", "127.0.0.1", 8080)
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("403"), "{msg}");
         assert!(msg.contains("is for a steward: an admin of acme"), "{msg}");
@@ -423,23 +486,39 @@ pub(crate) mod tests {
     async fn services_and_identities_decode_the_org_lists() {
         let fake = Fake::serve(200, r#"{"services":[{"id":"s1","service":"web.acme","mtls":"required","status":"active"}]}"#).await;
         let s = caller(&fake.base, None).services().await.unwrap();
-        assert_eq!((s[0].id.as_str(), s[0].service.as_str()), ("s1", "web.acme"));
+        assert_eq!(
+            (s[0].id.as_str(), s[0].service.as_str()),
+            ("s1", "web.acme")
+        );
         assert_eq!(fake.one().1, "/v1/network/services");
 
         let fake = Fake::serve(200, r#"{"identities":[]}"#).await;
-        assert!(caller(&fake.base, None).identities().await.unwrap().is_empty());
+        assert!(caller(&fake.base, None)
+            .identities()
+            .await
+            .unwrap()
+            .is_empty());
         assert_eq!(fake.one().1, "/v1/network/identities");
     }
 
     #[tokio::test]
     async fn unpublish_deletes_by_id_and_a_refusal_is_an_error() {
         let fake = Fake::serve(200, "{}").await;
-        caller(&fake.base, None).unpublish("7OLM0dO4Y5VMsPoIuf2kST").await.unwrap();
+        caller(&fake.base, None)
+            .unpublish("7OLM0dO4Y5VMsPoIuf2kST")
+            .await
+            .unwrap();
         let (method, path, ..) = fake.one();
-        assert_eq!((method.as_str(), path.as_str()), ("DELETE", "/v1/network/services/7OLM0dO4Y5VMsPoIuf2kST"));
+        assert_eq!(
+            (method.as_str(), path.as_str()),
+            ("DELETE", "/v1/network/services/7OLM0dO4Y5VMsPoIuf2kST")
+        );
 
         let fake = Fake::serve(403, r#"{"error":"not yours"}"#).await;
-        let err = caller(&fake.base, None).unpublish("svc_1").await.unwrap_err();
+        let err = caller(&fake.base, None)
+            .unpublish("svc_1")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("is for a steward"), "{err}");
 
         assert!(caller("http://x", None).unpublish("..").await.is_err());
@@ -450,8 +529,16 @@ pub(crate) mod tests {
         assert_eq!(run_token_command("echo  tok").await.unwrap(), "tok");
         // No shell: `$HOME` is an argument, not an expansion.
         assert_eq!(run_token_command("echo $HOME").await.unwrap(), "$HOME");
-        assert!(run_token_command("false").await.unwrap_err().to_string().contains("exited"));
-        assert!(run_token_command("true").await.unwrap_err().to_string().contains("printed no token"));
+        assert!(run_token_command("false")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("exited"));
+        assert!(run_token_command("true")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("printed no token"));
         assert!(run_token_command("   ").await.is_err());
     }
 
@@ -473,8 +560,14 @@ pub(crate) mod tests {
 
     #[test]
     fn targets_parse_as_host_port() {
-        assert_eq!(host_port("127.0.0.1:6443").unwrap(), ("127.0.0.1".into(), 6443));
-        assert_eq!(host_port("db.local:5432").unwrap(), ("db.local".into(), 5432));
+        assert_eq!(
+            host_port("127.0.0.1:6443").unwrap(),
+            ("127.0.0.1".into(), 6443)
+        );
+        assert_eq!(
+            host_port("db.local:5432").unwrap(),
+            ("db.local".into(), 5432)
+        );
         for bad in ["6443", ":6443", "x:0", "x:notaport"] {
             assert!(host_port(bad).is_err(), "{bad}");
         }

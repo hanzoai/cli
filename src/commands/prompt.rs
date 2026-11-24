@@ -83,8 +83,16 @@ pub fn ensure_installed_prompt() -> Option<PathBuf> {
     let path = installed_prompt_path().ok()?;
     sync_prompt_file(&path, HANZO_PROMPT, true);
     if let Some(hanzo_dir) = path.parent() {
-        sync_prompt_file(&hanzo_dir.join("claude").join("CLAUDE.md"), HANZO_PROMPT, false);
-        sync_prompt_file(&hanzo_dir.join("dev").join("AGENTS.md"), HANZO_PROMPT, false);
+        sync_prompt_file(
+            &hanzo_dir.join("claude").join("CLAUDE.md"),
+            HANZO_PROMPT,
+            false,
+        );
+        sync_prompt_file(
+            &hanzo_dir.join("dev").join("AGENTS.md"),
+            HANZO_PROMPT,
+            false,
+        );
     }
     Some(path)
 }
@@ -115,11 +123,7 @@ pub fn parse_skills_index(markdown: &str) -> Vec<SkillEntry> {
         if slug.is_empty() || !url.starts_with("http") || !seen.insert(slug.clone()) {
             continue;
         }
-        let description = after_url
-            .trim()
-            .trim_start_matches(':')
-            .trim()
-            .to_string();
+        let description = after_url.trim().trim_start_matches(':').trim().to_string();
         out.push(SkillEntry {
             slug,
             url,
@@ -157,11 +161,18 @@ pub fn match_skills(entries: &[SkillEntry], query: &str, limit: usize) -> Vec<Sk
         })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.slug.cmp(&b.1.slug)));
-    scored.into_iter().take(limit).map(|(_, e)| e.clone()).collect()
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, e)| e.clone())
+        .collect()
 }
 
 pub async fn run(args: PromptArgs) -> Result<()> {
-    match args.command.unwrap_or(PromptCommand::Show { json: args.json }) {
+    match args
+        .command
+        .unwrap_or(PromptCommand::Show { json: args.json })
+    {
         PromptCommand::Show { json: as_json } => {
             let path = ensure_installed_prompt();
             if as_json || args.json {
@@ -224,7 +235,11 @@ pub async fn run(args: PromptArgs) -> Result<()> {
             println!("{}", path.display());
             Ok(())
         }
-        PromptCommand::Skills { query, limit, json: as_json } => {
+        PromptCommand::Skills {
+            query,
+            limit,
+            json: as_json,
+        } => {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()?;
@@ -255,7 +270,12 @@ pub async fn run(args: PromptArgs) -> Result<()> {
                 );
             } else {
                 for s in &matched {
-                    println!("  ${:<24} {}  {}", s.slug.cyan(), s.url.dimmed(), s.description);
+                    println!(
+                        "  ${:<24} {}  {}",
+                        s.slug.cyan(),
+                        s.url.dimmed(),
+                        s.description
+                    );
                 }
             }
             Ok(())
@@ -293,16 +313,34 @@ mod tests {
             assert!(HANZO_PROMPT.contains(heading), "missing {heading}");
         }
         for tool in [
-            "`fs`", "`exec`", "`code`", "`git`", "`fetch`", "`workspace`",
-            "`browser`", "`computer`", "`ui`", "`kai`", "`think`", "`plan`",
-            "`memory`", "`tasks`", "`tracker`", "`coding`", "`research`",
-            "`skills`", "`hanzo`",
+            "`fs`",
+            "`exec`",
+            "`code`",
+            "`git`",
+            "`fetch`",
+            "`workspace`",
+            "`browser`",
+            "`computer`",
+            "`ui`",
+            "`kai`",
+            "`think`",
+            "`plan`",
+            "`memory`",
+            "`tasks`",
+            "`tracker`",
+            "`coding`",
+            "`research`",
+            "`skills`",
+            "`hanzo`",
         ] {
             assert!(HANZO_PROMPT.contains(tool), "missing MCP tool {tool}");
         }
         assert!(HANZO_PROMPT.contains("https://hanzoskills.com"));
         assert!(HANZO_PROMPT.contains("npx -y hanzo mcp"));
-        assert!(!HANZO_PROMPT.contains("Ilove"), "must not contain bootstrap credentials");
+        assert!(
+            !HANZO_PROMPT.contains("Ilove"),
+            "must not contain bootstrap credentials"
+        );
     }
 
     #[test]
