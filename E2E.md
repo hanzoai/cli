@@ -10,6 +10,12 @@ HANZO_E2E_TOKEN="$(hanzo auth token)" make e2e
 
 This exercises token login through stdin, identity, authenticated usage JSON, a local `dev` task that writes and verifies a file in a temporary Git repository, and a read-only cloud task that clones a real repository and completes inference. It requires `dev` on PATH. The local and cloud tasks consume normal usage; the cloud test leases a sandbox. It does not log out your existing account or modify the source repository.
 
+The steering check also starts a bounded read-only task, sends an instruction
+while it runs, follows the replacement session, and verifies its repository
+answer. It requires an API release serving `/v1/agent/coding/{session}/steer`.
+Both sessions have a 120-second execution budget. The test fails if the
+instruction is refused or the handoff never completes.
+
 Test the public installer and its actual downloaded binaries:
 
 ```sh
