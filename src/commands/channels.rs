@@ -1172,11 +1172,6 @@ async fn request(
         Value::String(s) => s.trim().to_string(),
         v => v.to_string(),
     };
-    if reply.status == 403 {
-        if let Some(hint) = seam.hint {
-            bail!("{path} -> {}: {shown}{hint}", reply.status);
-        }
-    }
     bail!("{path} -> {}: {shown}", reply.status)
 }
 

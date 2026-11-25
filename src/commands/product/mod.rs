@@ -880,20 +880,13 @@ pub(crate) async fn call(
         return Ok(());
     }
 
-    // Non-2xx: surface the SERVER's own body, and — only on a 403 the server
-    // itself returned — the identity-switch hint. The refusal is always the
-    // server's, never a client-side guess; we read our identity only to explain
-    // it, after the fact.
+    // Non-2xx: surface the SERVER's own body. The refusal is the server's,
+    // never a client-side guess; a 403 already names who was refused and why.
     let shown = match &resp {
         Value::Null => String::new(),
         Value::String(s) => s.trim().to_string(),
         v => v.to_string(),
     };
-    if status == 403 {
-        if let Some(hint) = seam.hint {
-            anyhow::bail!("{path} -> {status}: {shown}{hint}");
-        }
-    }
     if status == 401 && seam.token.is_empty() {
         anyhow::bail!("{path} -> {status}: {shown} — not signed in; run `hanzo auth login`");
     }
@@ -918,10 +911,6 @@ pub(crate) struct Seam {
     /// no-op rather than an escalation. Without it an operator who belongs to
     /// several orgs could only ever see one of them.
     pub(crate) org: Option<String>,
-    /// The identity-switch hint to offer if — and only if — the SERVER returns a
-    /// 403. Resolved from the very identity we authenticate as, so it can never
-    /// name someone else.
-    pub(crate) hint: Option<String>,
     wire: Http,
 }
 
@@ -947,7 +936,6 @@ impl Seam {
             return Ok(Self {
                 origin,
                 token,
-                hint: None,
                 org: cfg.org.clone(),
                 wire: Http::default(),
             });
@@ -961,15 +949,10 @@ impl Seam {
         // Public routes (`models list`, health) answer without a credential, so a
         // signed-out call goes out anonymously; a protected route answers 401 and
         // the error says how to sign in.
-        let held = store::list(cfg, brand);
-        let hint = identity
-            .as_ref()
-            .and_then(|(id, _)| store::refusal_hint(id, &held));
         let token = identity.map(|(_, t)| t.access_token).unwrap_or_default();
         Ok(Self {
             origin,
             token,
-            hint,
             org: cfg.org.clone(),
             wire: Http::default(),
         })
