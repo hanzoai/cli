@@ -194,6 +194,74 @@ async fn a_401_remints_and_retries_once() {
     );
 }
 
+/// An unnamed write cannot be retried just because its scoped token got 401:
+/// a server may have performed the mutation before rejecting the response.
+/// The stale grant is still invalidated so the caller's next request mints fresh.
+#[tokio::test]
+async fn non_idempotent_scoped_writes_stop_after_first_401() {
+    for (method, body) in [
+        (Method::POST, json!({"limit": 500})),
+        (Method::PATCH, json!({"limit": 500})),
+        (Method::POST, json!({"limit": 500, "requestId": ""})),
+    ] {
+        let stub = Stub::new(vec![
+            minted("act_1", 3600),
+            reply(401, json!({"msg": "expired"})),
+            minted("act_2", 3600),
+            reply(200, json!({"ok": true})),
+        ]);
+        let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
+        let err = user
+            .call::<Value>(method.clone(), "/v1/card", Some(body))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Api { status: 401, .. }));
+        let seen = stub.seen();
+        assert_eq!(
+            seen.len(),
+            2,
+            "mint plus one write — no repeat for {method}"
+        );
+        assert_eq!(seen[1].method, method);
+
+        // Stale grant was invalidated: a subsequent GET mints a fresh token.
+        let ok = user
+            .call::<Value>(Method::GET, "/v1/card", None)
+            .await
+            .unwrap();
+        assert_eq!(ok.done().unwrap(), json!({"ok": true}));
+        assert_eq!(stub.seen()[3].token.as_deref(), Some("act_2"));
+    }
+}
+
+/// A non-empty requestId makes POST/PATCH safe to retry as the transport contract states.
+#[tokio::test]
+async fn named_scoped_writes_can_remint_and_retry_once() {
+    for method in [Method::POST, Method::PATCH] {
+        let stub = Stub::new(vec![
+            minted("act_1", 3600),
+            reply(401, json!({"msg": "expired"})),
+            minted("act_2", 3600),
+            reply(200, json!({"ok": true})),
+        ]);
+        let user = Client::over(stub.clone(), "hk-operator").r#as("usr_42");
+        let out = user
+            .call::<Value>(
+                method.clone(),
+                "/v1/card",
+                Some(json!({"limit": 500, "requestId": "req_1"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.done().unwrap(), json!({"ok": true}));
+        assert_eq!(
+            stub.seen().len(),
+            4,
+            "mint, first call, remint and safe retry for {method}"
+        );
+    }
+}
+
 /// The retry is once, not a loop: a credential that is genuinely rejected
 /// surfaces as the server's own 401.
 #[tokio::test]
