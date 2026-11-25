@@ -1783,3 +1783,61 @@ fn completions_create_posts_to_chat_completions() {
     assert_eq!((op.method, op.path), ("POST", "/v1/chat/completions"));
     assert!(OPS.iter().all(|o| o.path != "/v1/completions"));
 }
+
+/// A generated boolean body field must distinguish omission from explicit
+/// false, while keeping the original bare-flag spelling for true.
+#[test]
+fn scalar_boolean_field_preserves_explicit_false_and_optional_omission() {
+    static ENABLED: Field = Field {
+        key: "enabled",
+        id: "field.enabled",
+        flag: "enabled",
+        ty: Ty::Bool,
+        required: false,
+        choices: &[],
+        query: false,
+        secret: false,
+        repeat: false,
+    };
+    static NAME: Field = Field {
+        key: "name",
+        id: "field.name",
+        flag: "name",
+        ty: Ty::Str,
+        required: false,
+        choices: &[],
+        query: false,
+        secret: false,
+        repeat: false,
+    };
+    let value = |args: Vec<&str>| {
+        let matches = Command::new("test")
+            .arg(field_arg(&ENABLED))
+            .arg(field_arg(&NAME))
+            .try_get_matches_from(args)
+            .expect("parses");
+        field_value(&ENABLED, &matches)
+    };
+    assert_eq!(value(vec!["test"]), None);
+    assert_eq!(value(vec!["test", "--enabled"]), Some(Value::Bool(true)));
+    assert_eq!(
+        value(vec!["test", "--enabled", "--name", "auto"]),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        value(vec!["test", "--enabled", "true"]),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        value(vec!["test", "--enabled=true"]),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        value(vec!["test", "--enabled", "false"]),
+        Some(Value::Bool(false))
+    );
+    assert_eq!(
+        value(vec!["test", "--enabled=false"]),
+        Some(Value::Bool(false))
+    );
+}
