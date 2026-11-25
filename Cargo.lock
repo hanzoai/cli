@@ -351,7 +351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "hanzo-cli"
-version = "8.5.1420"
+version = "8.5.1421"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -968,8 +968,8 @@ dependencies = [
 
 [[package]]
 name = "hanzo-gen"
-version = "0.2.0"
-source = "git+https://github.com/hanzoai/gen?rev=be1946c17b05d7beb97e9768345b5969455d67dc#be1946c17b05d7beb97e9768345b5969455d67dc"
+version = "0.2.1"
+source = "git+https://github.com/hanzoai/gen?rev=f2fdf31fa529b409c8a435169d531c1587f1d2d6#f2fdf31fa529b409c8a435169d531c1587f1d2d6"
 dependencies = [
  "anyhow",
  "base64",
@@ -3224,7 +3224,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
