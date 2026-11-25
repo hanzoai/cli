@@ -37,6 +37,9 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 /// "is someone already listening", and the answer is local either way.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// Number of trailing non-empty lines from `hanzod.log` included in startup errors.
+const LOG_TAIL_LINES: usize = 8;
+
 /// Where a cloud call goes, and over which wire.
 pub enum Origin {
     /// THE LOCAL HOST — which is the fact every rule below actually asks about,
@@ -146,23 +149,178 @@ pub(crate) async fn ensure(addr: &str) -> Result<()> {
         return Ok(()); // already serving — never double-start
     }
     let bin = binary()?;
+    if let Some(detail) = is_legacy_chain_binary(&bin) {
+        return Err(legacy_chain_error(&bin, &detail));
+    }
     let mut child = spawn(&bin)?;
+    let log = log_path()?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         if healthy(addr).await {
             return Ok(());
         }
         if let Some(status) = child.try_wait().context("waiting on hanzod")? {
-            bail!("hanzod exited ({status}) — see {}", log_path()?.display());
+            return Err(format_start_failure(
+                &bin,
+                &log,
+                &format!("hanzod exited ({status})"),
+            ));
         }
         if Instant::now() >= deadline {
-            bail!(
-                "hanzod did not answer within {}s — see {}",
-                READY_TIMEOUT.as_secs(),
-                log_path()?.display()
-            );
+            return Err(format_start_failure(
+                &bin,
+                &log,
+                &format!("hanzod did not answer within {}s", READY_TIMEOUT.as_secs()),
+            ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Read the last `max_lines` non-empty lines of `path`, or `None` if absent/empty.
+fn log_tail(path: &Path, max_lines: usize) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut lines: Vec<&str> = raw
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    if lines.len() > max_lines {
+        lines.drain(..lines.len() - max_lines);
+    }
+    Some(lines.join("\n"))
+}
+
+/// Detect output from the legacy L1 chain validator binary (split into
+/// `hanzo-chain` in `hanzoai/node` v0.2.6+, previously published as `hanzod` v0.2.5).
+fn looks_like_legacy_chain_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("no validators")
+        || lower.contains("--committee")
+        || lower.contains("hanzo-chain")
+}
+
+/// Parse `<major>.<minor>.<patch>` from the second whitespace token of a
+/// `hanzod <ver>` version line.
+fn parse_hanzod_semver(line: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = line.split_whitespace();
+    let name = parts.next()?.to_ascii_lowercase();
+    if name != "hanzod" {
+        return None;
+    }
+    let ver = parts.next()?.trim_start_matches('v');
+    let mut nums = ver.splitn(3, '.');
+    let major = nums.next()?.parse().ok()?;
+    let minor = nums.next()?.parse().ok()?;
+    let patch = nums
+        .next()?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+    Some((major, minor, patch))
+}
+
+/// Classify `hanzod --version` output. Returns `Some(reason)` when the binary is
+/// the old L1 chain validator (or otherwise not the unified `hanzod` daemon).
+fn classify_version_output(stdout: &str, stderr: &str, success: bool) -> Option<String> {
+    let combined = format!("{stdout}\n{stderr}");
+    let first_line = combined
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if looks_like_legacy_chain_text(&combined) {
+        return Some(format!("reported legacy validator output: `{first_line}`"));
+    }
+    let lower = combined.to_ascii_lowercase();
+    let mentions_daemon = lower.contains("hanzod") || lower.contains("daemon");
+    if !success {
+        if !mentions_daemon {
+            return Some(if first_line.is_empty() {
+                "`--version` exited non-zero without identifying `hanzod`".into()
+            } else {
+                format!("`--version` failed: `{first_line}`")
+            });
+        }
+        return None;
+    }
+    if !mentions_daemon {
+        return Some(if first_line.is_empty() {
+            "`--version` produced no output identifying `hanzod`".into()
+        } else {
+            format!("`--version` printed `{first_line}`, not the unified `hanzod` daemon")
+        });
+    }
+    // `hanzod` releases <= 0.2.5 (e.g. Nov-11 GitHub Release v0.2.5) were the
+    // standalone L1 validator binary before `hanzoai/node` split `chain/` and `daemon/`.
+    if !lower.contains("dev=") && !lower.contains("daemon") {
+        if let Some(ver) = parse_hanzod_semver(first_line) {
+            if ver < (0, 2, 6) {
+                return Some(format!(
+                    "`--version` reported `{first_line}` (pre-0.2.6 L1 validator release)"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Probe `bin --version` before spawning so a stale chain-validator binary is
+/// caught with an actionable diagnostic rather than failing after spawn.
+fn is_legacy_chain_binary(bin: &Path) -> Option<String> {
+    let out = Command::new(bin)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    classify_version_output(&stdout, &stderr, out.status.success())
+}
+
+fn legacy_chain_error(bin: &Path, detail: &str) -> anyhow::Error {
+    anyhow!(
+        "installed binary at {} is the legacy L1 chain validator (now `hanzo-chain`), \
+         not the unified `hanzod` daemon ({detail}).\n\
+         Install the unified `hanzod` daemon with:\n  \
+           hanzo upgrade hanzod\n\
+         Or build and install it from source (hanzoai/node `daemon/`):\n  \
+           cargo install --git https://github.com/hanzoai/node --locked hanzod --root ~/.hanzo",
+        bin.display()
+    )
+}
+
+fn format_start_failure(bin: &Path, log: &Path, headline: &str) -> anyhow::Error {
+    match log_tail(log, LOG_TAIL_LINES) {
+        Some(tail) if looks_like_legacy_chain_text(&tail) => {
+            let indented = tail
+                .lines()
+                .map(|l| format!("  {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow!(
+                "{}\n\nlast lines of {}:\n{indented}",
+                legacy_chain_error(bin, &format!("{headline}; log mentions validator flags")),
+                log.display()
+            )
+        }
+        Some(tail) => {
+            let indented = tail
+                .lines()
+                .map(|l| format!("  {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow!(
+                "{headline} — see {}\nlast lines of {}:\n{indented}",
+                log.display(),
+                log.display()
+            )
+        }
+        None => anyhow!("{headline} — see {}", log.display()),
     }
 }
 
@@ -612,5 +770,102 @@ mod tests {
         assert_eq!(loopback_addr("https://api.hanzo.ai"), None);
         assert_eq!(loopback_addr("https://localhost.attacker.example"), None);
         assert_eq!(loopback_addr("not a url"), None);
+    }
+
+    #[test]
+    fn classifies_unified_vs_legacy_chain_version_output() {
+        // Unified daemon builds (0.2.6+ and 0.5.0+) are accepted.
+        assert_eq!(
+            classify_version_output(
+                "hanzod 0.5.0 (dev=hanzo-gen harness=hanzo-gen/0.2.1 chain=steward engine=managed)\n",
+                "",
+                true,
+            ),
+            None
+        );
+        assert_eq!(classify_version_output("hanzod 0.2.7\n", "", true), None);
+        assert_eq!(
+            classify_version_output("hanzod daemon 0.3.0\n", "", true),
+            None
+        );
+
+        // Stale v0.2.5 release (the old L1 validator) is flagged.
+        let v025 = classify_version_output("hanzod 0.2.5\n", "", true)
+            .expect("v0.2.5 must be detected as legacy validator");
+        assert!(v025.contains("0.2.5"), "{v025}");
+
+        // Explicit hanzo-chain or --committee errors are flagged.
+        let chain = classify_version_output("hanzo-chain 0.2.6\n", "", true)
+            .expect("hanzo-chain must be detected");
+        assert!(chain.contains("hanzo-chain"), "{chain}");
+
+        let committee = classify_version_output("", "no validators: --committee <file>\n", false)
+            .expect("--committee error must be detected");
+        assert!(committee.contains("--committee"), "{committee}");
+
+        // Unrelated binary that mentions neither hanzod nor daemon is flagged.
+        let other = classify_version_output("some-other-bin 1.0.0\n", "", true)
+            .expect("unrelated binary must be flagged");
+        assert!(other.contains("some-other-bin"), "{other}");
+    }
+
+    #[test]
+    fn start_failure_surfaces_legacy_chain_fix_and_log_tail() {
+        let dir = scratch("start-fail");
+        let bin = dir.join("hanzod");
+        let log = dir.join("hanzod.log");
+
+        // Legacy chain validator signature produces actionable upgrade/build fix.
+        std::fs::write(&log, "hanzod: no validators: --committee <file>\n").unwrap();
+        let err = format_start_failure(&bin, &log, "hanzod exited (exit status: 1)").to_string();
+        assert!(err.contains("legacy L1 chain validator"), "{err}");
+        assert!(err.contains("hanzo-chain"), "{err}");
+        assert!(err.contains("hanzo upgrade hanzod"), "{err}");
+        assert!(err.contains("hanzoai/node"), "{err}");
+        assert!(err.contains("--committee"), "{err}");
+
+        // Non-validator error includes only the last 8 non-empty log lines.
+        let lines = (1..=12)
+            .map(|i| format!("line-{i}\n\n"))
+            .collect::<String>();
+        std::fs::write(&log, lines).unwrap();
+        let err = format_start_failure(&bin, &log, "hanzod exited (exit status: 2)").to_string();
+        assert!(!err.contains("legacy L1 chain validator"), "{err}");
+        assert!(!err.contains("line-4"), "{err}");
+        assert!(err.contains("line-5"), "{err}");
+        assert!(err.contains("line-12"), "{err}");
+
+        // Missing log falls back cleanly without panicking.
+        std::fs::remove_file(&log).unwrap();
+        let err = format_start_failure(&bin, &log, "hanzod did not answer within 10s").to_string();
+        assert!(err.contains("hanzod did not answer within 10s"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_chain_binary_probe_rejects_fake_validator_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("probe");
+        let fake_validator = dir.join("hanzod-old");
+        std::fs::write(
+            &fake_validator,
+            "#!/bin/sh\necho 'no validators: --committee <file>' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_validator, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let reason = is_legacy_chain_binary(&fake_validator)
+            .expect("validator script must be flagged before spawn");
+        assert!(reason.contains("--committee"), "{reason}");
+
+        let fake_daemon = dir.join("hanzod-new");
+        std::fs::write(
+            &fake_daemon,
+            "#!/bin/sh\necho 'hanzod 0.5.0 (dev=hanzo-gen harness=hanzo-gen/0.2.1 chain=steward engine=managed)'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(is_legacy_chain_binary(&fake_daemon), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
