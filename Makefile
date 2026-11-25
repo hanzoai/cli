@@ -97,10 +97,14 @@ build: ## The shipped binary.
 lint:
 	@cargo clippy --locked --all-targets -- -D warnings
 
-.PHONY: e2e e2e-installed
+.PHONY: e2e e2e-installed e2e-container
 e2e: ## Real login, usage, local dev and cloud sessions (requires HANZO_E2E_TOKEN).
 	@test -n "$${HANZO_E2E_TOKEN:-}" || { echo 'Set HANZO_E2E_TOKEN using hanzo auth token'; exit 1; }
 	@cargo test --locked --test production -- --ignored --nocapture --test-threads=1
 
 e2e-installed: ## Install published tools in isolation and test production end to end.
 	@sh scripts/e2e-installed.sh
+
+e2e-container: ## Clean-container integration test for models list, chat flags, MCP cold-cache, and auth.
+	@docker build -f Dockerfile.e2e -t hanzo-cli-e2e .
+	@docker run --rm -e HANZO_E2E_TOKEN="$${HANZO_E2E_TOKEN:-}" hanzo-cli-e2e

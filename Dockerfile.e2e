@@ -1,0 +1,25 @@
+# Clean container image for hanzoai/cli#65 integration tests:
+# verifies `hanzo models list`, `hanzo chat completions` flags & `--data` error,
+# `hanzo-mcp` cold-cache JSON-RPC `initialize`, and auth flow from an empty cache.
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV HOME=/tmp/e2e-home \
+    XDG_CACHE_HOME=/tmp/e2e-cache \
+    XDG_CONFIG_HOME=/tmp/e2e-config \
+    XDG_DATA_HOME=/tmp/e2e-data \
+    NPM_CONFIG_CACHE=/tmp/e2e-npm-cache \
+    UV_CACHE_DIR=/tmp/e2e-uv-cache \
+    NO_COLOR=1 \
+    HANZO_NO_ANIMATION=1
+
+WORKDIR /work
+COPY scripts/e2e-container.sh /usr/local/bin/e2e-container.sh
+RUN chmod +x /usr/local/bin/e2e-container.sh
+
+ENTRYPOINT ["/usr/local/bin/e2e-container.sh"]

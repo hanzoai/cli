@@ -753,13 +753,47 @@ fn k3s_asset() -> &'static str {
     }
 }
 
-fn install_cmd() -> String {
-    format!(
-        "curl -Lo /usr/local/bin/k3s \
-         https://github.com/k3s-io/k3s/releases/latest/download/{} \
-         && chmod +x /usr/local/bin/k3s",
-        k3s_asset()
-    )
+fn is_hanzo_artifact_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    [
+        "https://oci.hanzo.ai/",
+        "https://pkg.hanzo.ai/",
+        "https://hanzo.sh/",
+        "https://get.hanzo.ai/",
+        "https://releases.hanzo.ai/",
+    ]
+    .iter()
+    .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn install_cmd_for(strict_registry: bool, k3s_url_override: Option<&str>) -> Result<String> {
+    let url = if let Some(u) = k3s_url_override.map(str::trim).filter(|s| !s.is_empty()) {
+        if strict_registry && !is_hanzo_artifact_url(u) {
+            bail!(
+                "refusing non-Hanzo k3s artifact URL '{u}' under --strict-registry; \
+                 set HANZO_K3S_URL to a verified Hanzo-owned endpoint (pkg.hanzo.ai / oci.hanzo.ai)"
+            );
+        }
+        u.to_string()
+    } else if strict_registry {
+        bail!(
+            "refusing GitHub k3s download under --strict-registry; \
+             set HANZO_K3S_URL to a verified Hanzo-owned k3s mirror (pkg.hanzo.ai / oci.hanzo.ai)"
+        );
+    } else {
+        format!(
+            "https://github.com/k3s-io/k3s/releases/latest/download/{}",
+            k3s_asset()
+        )
+    };
+    Ok(format!(
+        "curl -fsSLo /usr/local/bin/k3s '{url}' && chmod +x /usr/local/bin/k3s"
+    ))
+}
+
+fn install_cmd(strict_registry: bool) -> Result<String> {
+    let env_url = std::env::var("HANZO_K3S_URL").ok();
+    install_cmd_for(strict_registry, env_url.as_deref())
 }
 
 /// How the cluster is started. Both paths are passed rather than defaulted:
@@ -1025,7 +1059,8 @@ pub async fn up(
         ..boot
     };
     let bin = vm::resolve_or_install().await?;
-    vm::ensure_checkpoint(&bin, &checkpoint(), &install_cmd())?;
+    let k3s_install = install_cmd(boot.strict_registry)?;
+    vm::ensure_checkpoint(&bin, &checkpoint(), &k3s_install)?;
 
     write_state(&dir, "starting");
     spawn_supervisor(&dir, &boot, cfg.org.as_deref())?;
@@ -1582,7 +1617,7 @@ mod tests {
     #[test]
     fn the_checkpoint_installs_k3s_for_this_architecture() {
         let cp = checkpoint();
-        let args = vm::checkpoint_args(&cp, &install_cmd());
+        let args = vm::checkpoint_args(&cp, &install_cmd_for(false, None).unwrap());
         assert_eq!(
             &args[..5],
             ["checkpoint", "create", cp.as_str(), "--allow-net", "--"]
@@ -1596,6 +1631,29 @@ mod tests {
         } else {
             assert_eq!(k3s_asset(), "k3s");
         }
+    }
+
+    /// `--strict-registry` refuses GitHub/non-Hanzo k3s downloads and only
+    /// accepts a Hanzo-owned artifact endpoint via `HANZO_K3S_URL`.
+    #[test]
+    fn install_cmd_for_enforces_strict_registry() {
+        let err = install_cmd_for(true, None).unwrap_err().to_string();
+        assert!(err.contains("refusing GitHub k3s download"), "{err}");
+
+        let err = install_cmd_for(
+            true,
+            Some("https://github.com/k3s-io/k3s/releases/download/v1/k3s"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("refusing non-Hanzo k3s artifact URL"), "{err}");
+
+        let ok = install_cmd_for(true, Some("https://pkg.hanzo.ai/k3s/v1.31/k3s-arm64")).unwrap();
+        assert!(
+            ok.contains("https://pkg.hanzo.ai/k3s/v1.31/k3s-arm64"),
+            "{ok}"
+        );
+        assert!(ok.contains("chmod +x /usr/local/bin/k3s"), "{ok}");
     }
 
     /// Ready is a MEMBER of the status column, never a substring: `NotReady`
