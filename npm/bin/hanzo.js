@@ -6,7 +6,7 @@
 // `hanzo-vm`, `zt`, `hanzod`) are always discoverable, and lazily fetches any
 // missing companion binary on first invocation via `../install.js`.
 const { spawnSync } = require("node:child_process");
-const { existsSync, realpathSync } = require("node:fs");
+const { accessSync, constants, existsSync, realpathSync, statSync } = require("node:fs");
 const { basename, delimiter, join } = require("node:path");
 
 const ext = process.platform === "win32" ? ".exe" : "";
@@ -35,14 +35,16 @@ const TOOL_BINS = {
 // count: treating one as the tool skips the download and then execs nothing.
 function realBinary(p) {
   try {
-    return !realpathSync(p).endsWith(".js");
+    if (!statSync(p).isFile()) return false;
+    if (process.platform !== "win32") accessSync(p, constants.X_OK);
+    return !realpathSync(p).toLowerCase().endsWith(".js");
   } catch {
     return false;
   }
 }
 
 function hasLocal(tool) {
-  return existsSync(join(__dirname, (TOOL_BINS[tool] || tool) + ext));
+  return realBinary(join(__dirname, (TOOL_BINS[tool] || tool) + ext));
 }
 
 function hasTool(tool) {
@@ -135,4 +137,14 @@ const r = spawnSync(bin, argv, {
   env,
 });
 if (r.error) { console.error("hanzo:", r.error.message); process.exit(1); }
-process.exit(r.status ?? 0);
+if (r.signal) {
+  // Node reserves SIGUSR1 for the debugger and ignores SIGPIPE. Sending
+  // these to ourselves would start an inspector (or silently do nothing)
+  // rather than preserving the native program's termination semantics.
+  if (process.platform !== "win32" && r.signal !== "SIGUSR1" && r.signal !== "SIGPIPE") {
+    try { process.kill(process.pid, r.signal); } catch { /* use shell exit status below */ }
+  }
+  const number = require("node:os").constants.signals[r.signal];
+  process.exit(typeof number === "number" ? 128 + number : 1);
+}
+process.exit(r.status ?? 1);
