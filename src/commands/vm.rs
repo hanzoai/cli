@@ -79,7 +79,107 @@ pub(crate) async fn resolve_or_install() -> Result<PathBuf> {
 /// the [`launch`] contract.
 pub async fn run(args: Vec<String>) -> Result<()> {
     let bin = resolve_or_install().await?;
+    if args_need_virtualization(&args) {
+        preflight_host()?;
+    }
     launch::exec(&bin, &args)
+}
+
+/// Whether a `hanzo vm <args…>` invocation will boot a VM and therefore needs
+/// host virtualization prerequisites checked before exec.
+fn args_need_virtualization(args: &[String]) -> bool {
+    match args.first().map(String::as_str) {
+        None | Some("-h" | "--help" | "help" | "-V" | "--version" | "version") => false,
+        Some("checkpoint") => matches!(args.get(1).map(String::as_str), Some("create")),
+        Some(_) => true,
+    }
+}
+
+/// State of `/dev/kvm` on a Linux virtualization host.
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    allow(dead_code)
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KvmState {
+    Available,
+    Missing,
+    Unreadable,
+}
+
+/// Validate Linux x86-64 virtualization prerequisites, separating `/dev/kvm`
+/// issues from a missing `cloud-hypervisor` binary so users never see the
+/// misleading `"Virtualization is not enabled on this machine"` error.
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    allow(dead_code)
+)]
+fn check_linux_x86_64_host(kvm: KvmState, cloud_hypervisor: Option<&Path>) -> Result<()> {
+    match kvm {
+        KvmState::Missing => bail!(
+            "/dev/kvm does not exist — KVM is required to run hanzo-vm on Linux x86-64.\n\
+             Enable Intel VT-x / AMD-V in firmware and load the KVM module:\n  \
+               sudo modprobe kvm_intel   # or: sudo modprobe kvm_amd"
+        ),
+        KvmState::Unreadable => bail!(
+            "/dev/kvm is not readable/writable by the current user.\n\
+             Add your user to the `kvm` group and start a new login session:\n  \
+               sudo usermod -aG kvm $USER"
+        ),
+        KvmState::Available => {}
+    }
+    if cloud_hypervisor.is_none() {
+        bail!(
+            "cloud-hypervisor is required on Linux x86-64 (not found in PATH or ~/.local/bin).\n\
+             Install the pinned release into ~/.local/bin:\n  \
+               mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/cloud-hypervisor \\\n    \
+                 https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v53.0/cloud-hypervisor-static && \\\n    \
+                 chmod +x ~/.local/bin/cloud-hypervisor"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn probe_kvm(path: &Path) -> KvmState {
+    if !path.exists() {
+        return KvmState::Missing;
+    }
+    match std::fs::OpenOptions::new().read(true).write(true).open(path) {
+        Ok(_) => KvmState::Available,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => KvmState::Missing,
+        Err(_) => KvmState::Unreadable,
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn find_cloud_hypervisor() -> Option<PathBuf> {
+    if let Ok(found) = which::which("cloud-hypervisor") {
+        return Some(found);
+    }
+    let fallback = dirs::home_dir()?.join(".local/bin/cloud-hypervisor");
+    is_executable_file(&fallback).then_some(fallback)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
+        .unwrap_or(false)
+}
+
+/// Preflight check before spawning `hanzo-vm` on Linux x86-64.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub(crate) fn preflight_host() -> Result<()> {
+    let kvm = probe_kvm(Path::new("/dev/kvm"));
+    let ch = find_cloud_hypervisor();
+    check_linux_x86_64_host(kvm, ch.as_deref())
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub(crate) fn preflight_host() -> Result<()> {
+    Ok(())
 }
 
 // ---- the bootstrap ------------------------------------------------------------
@@ -210,6 +310,7 @@ pub(crate) fn run_args(
 /// inherited stdio, so its one-time download is visible rather than a silent
 /// minute.
 pub(crate) fn ensure_checkpoint(bin: &Path, name: &str, install: &str) -> Result<()> {
+    preflight_host()?;
     let out = Command::new(bin)
         .args(["checkpoint", "list"])
         .output()
@@ -307,6 +408,9 @@ pub(crate) struct Rpc {
 impl Rpc {
     /// Spawn the vm with its stderr appended to `log`; stdout is the protocol.
     pub(crate) fn start(bin: &Path, args: &[String], log: &Path) -> Result<Rpc> {
+        if bin.file_name().and_then(|n| n.to_str()) == Some("hanzo-vm") {
+            preflight_host()?;
+        }
         let stderr = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -816,5 +920,51 @@ mod tests {
             "{e}"
         );
         let _ = rpc.child.wait();
+    }
+
+    #[test]
+    fn linux_x86_64_preflight_distinguishes_kvm_and_cloud_hypervisor() {
+        // Missing /dev/kvm reports KVM module / firmware guidance.
+        let err = check_linux_x86_64_host(KvmState::Missing, Some(Path::new("/usr/bin/ch")))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("/dev/kvm does not exist"), "{err}");
+        assert!(err.contains("modprobe"), "{err}");
+
+        // Unreadable /dev/kvm reports kvm group guidance.
+        let err = check_linux_x86_64_host(KvmState::Unreadable, Some(Path::new("/usr/bin/ch")))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("usermod -aG kvm $USER"), "{err}");
+
+        // Available /dev/kvm + missing cloud-hypervisor reports exact install guidance,
+        // never "Virtualization is not enabled".
+        let err = check_linux_x86_64_host(KvmState::Available, None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("cloud-hypervisor is required on Linux x86-64 (not found in PATH or ~/.local/bin)"),
+            "{err}"
+        );
+        assert!(err.contains("cloud-hypervisor-static"), "{err}");
+        assert!(!err.contains("Virtualization is not enabled"), "{err}");
+
+        // Both present passes cleanly.
+        check_linux_x86_64_host(
+            KvmState::Available,
+            Some(Path::new("/home/u/.local/bin/cloud-hypervisor")),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn vm_virtualization_preflight_gating_skips_info_subcommands() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(!args_need_virtualization(&s(&[])));
+        assert!(!args_need_virtualization(&s(&["--version"])));
+        assert!(!args_need_virtualization(&s(&["--help"])));
+        assert!(!args_need_virtualization(&s(&["checkpoint", "list"])));
+        assert!(args_need_virtualization(&s(&["checkpoint", "create", "k3s"])));
+        assert!(args_need_virtualization(&s(&["run", "--stdio"])));
     }
 }

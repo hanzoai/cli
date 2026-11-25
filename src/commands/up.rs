@@ -828,8 +828,20 @@ pub async fn up(
         "{} k3s is up — API at https://127.0.0.1:{K3S_PORT}",
         "✓".green()
     );
-    host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await?;
-    endpoints()?;
+    let hanzod_ready = match host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await
+    {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "{} k3s is up, but registering local cloud with hanzod failed:\n  {e:#}\n  \
+                 Install/upgrade the unified daemon with `hanzo upgrade hanzod` (then `hanzo host start`) \
+                 to expose http://127.0.0.1:3690; the local cloud is already reachable directly at http://127.0.0.1:{LOCAL_PORT}.",
+                "warning:".yellow().bold()
+            );
+            false
+        }
+    };
+    endpoints_with_hanzod(hanzod_ready)?;
     let res = finish_link(cfg, link).await;
     if ui || (!no_ui && std::io::stdout().is_terminal()) {
         return tui::run_dashboard();
@@ -849,10 +861,28 @@ pub fn console() -> Result<()> {
 }
 
 fn endpoints() -> Result<()> {
-    println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
-    println!("  the cloud             http://127.0.0.1:3690  via hanzod → 127.0.0.1:{LOCAL_PORT}  (hanzo network use local)");
-    println!("  what this cluster is  hanzo up --attest");
+    endpoints_with_hanzod(true)
+}
+
+fn endpoints_with_hanzod(hanzod_ready: bool) -> Result<()> {
+    print!("{}", format_endpoints(&kubeconfig_path()?, hanzod_ready));
     Ok(())
+}
+
+fn format_endpoints(kubeconfig: &Path, hanzod_ready: bool) -> String {
+    let cloud_line = if hanzod_ready {
+        format!(
+            "  the cloud             http://127.0.0.1:3690  via hanzod → 127.0.0.1:{LOCAL_PORT}  (hanzo network use local)\n"
+        )
+    } else {
+        format!(
+            "  the cloud (direct)    http://127.0.0.1:{LOCAL_PORT}  (http://127.0.0.1:3690 requires hanzod: `hanzo upgrade hanzod`)\n"
+        )
+    };
+    format!(
+        "  export KUBECONFIG={}\n{cloud_line}  what this cluster is  hanzo up --attest\n",
+        kubeconfig.display()
+    )
 }
 
 /// Leave the supervisor behind: our own binary, re-run as the hidden
@@ -1508,5 +1538,19 @@ mod tests {
             ("cloud".into(), v(&["--port", "1"]))
         );
         assert_eq!(service_argv(vec![]), ("cloud".into(), vec![]));
+    }
+
+    #[test]
+    fn endpoints_surface_direct_cloud_url_when_hanzod_is_unavailable() {
+        let kc = Path::new("/home/dev/.kube/hanzo.yaml");
+        let with_hanzod = format_endpoints(kc, true);
+        assert!(with_hanzod.contains("export KUBECONFIG=/home/dev/.kube/hanzo.yaml"));
+        assert!(with_hanzod.contains("http://127.0.0.1:3690  via hanzod → 127.0.0.1:36930"));
+
+        let without_hanzod = format_endpoints(kc, false);
+        assert!(without_hanzod.contains("export KUBECONFIG=/home/dev/.kube/hanzo.yaml"));
+        assert!(without_hanzod.contains("http://127.0.0.1:36930"));
+        assert!(without_hanzod.contains("http://127.0.0.1:3690 requires hanzod"));
+        assert!(without_hanzod.contains("hanzo upgrade hanzod"));
     }
 }
