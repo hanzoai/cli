@@ -313,6 +313,18 @@ enum Commands {
         /// reaches the cluster; name a digest to skip the registry entirely
         #[arg(long, value_name = "IMAGE", default_value = commands::up::CLOUD)]
         cloud: String,
+        /// Opt-in staged Cloud subsystems (`CLOUD_ENABLE_STAGED`, e.g. `fanclub`)
+        #[arg(long, value_name = "SUBSYSTEMS", env = "CLOUD_ENABLE_STAGED")]
+        staged: Option<String>,
+        /// Hanzo IAM OIDC issuer URL (`CLOUD_IAM_ISSUER`, e.g. `https://hanzo.ai`)
+        #[arg(long, value_name = "URL", env = "CLOUD_IAM_ISSUER")]
+        iam_issuer: Option<String>,
+        /// Hanzo AI / Engine HTTP base URL (`CLOUD_AI_BASE_URL`, e.g. `https://api.hanzo.ai`)
+        #[arg(long, value_name = "URL", env = "CLOUD_AI_BASE_URL")]
+        ai_base_url: Option<String>,
+        /// Refuse non-Hanzo container registries (`ghcr.io`, Docker Hub) and require `oci.hanzo.ai`
+        #[arg(long, env = "HANZO_STRICT_REGISTRY")]
+        strict_registry: bool,
         /// Print the running cluster's measurement — what booted, what it
         /// runs, and what its platform will sign for the pair
         #[arg(long)]
@@ -1296,6 +1308,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             memory,
             disk_size,
             cloud,
+            staged,
+            iam_issuer,
+            ai_base_url,
+            strict_registry,
             attest,
             link,
             ui,
@@ -1306,6 +1322,10 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 memory_mb: memory,
                 disk_mb: disk_size,
                 cloud,
+                staged,
+                iam_issuer,
+                ai_base_url,
+                strict_registry,
             };
             match command {
                 // `--attest` reads the running cluster rather than booting a
@@ -2221,6 +2241,10 @@ mod tests {
             memory,
             disk_size,
             cloud,
+            staged,
+            iam_issuer,
+            ai_base_url,
+            strict_registry,
             attest,
             link,
             ui,
@@ -2231,6 +2255,10 @@ mod tests {
         };
         assert_eq!((cpus, memory, disk_size, link), (4, 4096, 16384, None));
         assert_eq!(cloud, commands::up::CLOUD);
+        assert!(staged.is_none());
+        assert!(iam_issuer.is_none());
+        assert!(ai_base_url.is_none());
+        assert!(!strict_registry);
         assert!(!attest);
         assert!(!ui);
         assert!(!no_ui);
@@ -2464,6 +2492,33 @@ mod tests {
             panic!("expected up")
         };
         assert_eq!(cloud, "ghcr.io/hanzoai/cloud@sha256:ab");
+
+        let cli = Cli::try_parse_from([
+            "hanzo",
+            "up",
+            "--staged",
+            "fanclub",
+            "--iam-issuer",
+            "https://hanzo.ai",
+            "--ai-base-url",
+            "https://api.hanzo.ai",
+            "--strict-registry",
+        ])
+        .expect("up staged + strict-registry flags parse");
+        let Some(Commands::Up {
+            staged,
+            iam_issuer,
+            ai_base_url,
+            strict_registry,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected up")
+        };
+        assert_eq!(staged.as_deref(), Some("fanclub"));
+        assert_eq!(iam_issuer.as_deref(), Some("https://hanzo.ai"));
+        assert_eq!(ai_base_url.as_deref(), Some("https://api.hanzo.ai"));
+        assert!(strict_registry);
 
         let cli = Cli::try_parse_from(["hanzo", "up", "--attest"]).expect("--attest parses");
         let Some(Commands::Up { attest, .. }) = cli.command else {
