@@ -5,10 +5,9 @@
 //! hanzo.sh is the one implementation of fetching one: platform, asset name,
 //! checksum, second name. Upgrading is running it again, into the directory this
 //! `hanzo` lives in, so the build that answers `hanzo` is the build that was
-//! upgraded. Windows has no `sh`, so there `hanzo` reads the same tool table out
-//! of hanzo.sh and does what it does for each: the release asset
-//! `<binary>-windows-amd64.tar.gz`, checked against its `.sha256`, unpacked,
-//! and swapped in beside the running binary.
+//! upgraded. `hanzo` reads the same tool table out of hanzo.sh and does what it
+//! does for each: the release asset `<binary>-<os>-<arch>.tar.gz`, checked
+//! against its `.sha256`, unpacked, and swapped in beside the running binary.
 //!
 //! An agent upgrades the way its own file says ([`Upgrade`]): one that ships on
 //! npm (`gemini`, `qwen`, `opencode`, …) is installed under `~/.hanzo`, its
@@ -191,6 +190,40 @@ fn here() -> Result<PathBuf> {
 /// Where the releases are.
 const RELEASES: &str = "https://github.com";
 
+/// This machine's `<os>-<arch>` release target, as install.sh names it.
+fn target_platform() -> &'static str {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "linux-amd64"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        "linux-arm64"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        "darwin-amd64"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "darwin-arm64"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "windows-amd64"
+    }
+    #[cfg(not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+    )))]
+    {
+        "unknown"
+    }
+}
+
 /// One of Hanzo's native tools, as hanzo.sh's table names it.
 #[derive(Debug, PartialEq)]
 struct Native {
@@ -352,7 +385,18 @@ async fn fetch(
         if alias_path.exists() {
             let _ = std::fs::rename(&alias_path, &alias_aside);
         }
-        let _ = std::fs::copy(&target, &alias_path);
+        // A symlink makes the two names one build, as install.sh does; a copy is
+        // the fallback where links are unavailable (Windows).
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(&exe, &alias_path).is_err() {
+                let _ = std::fs::copy(&target, &alias_path);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = std::fs::copy(&target, &alias_path);
+        }
         let _ = std::fs::remove_file(&alias_aside);
     }
     Ok(target)
@@ -381,32 +425,20 @@ pub async fn run(names: Vec<String>) -> Result<()> {
         if !script.starts_with("#!") {
             bail!("hanzo.sh did not answer with an installer");
         }
-        if cfg!(windows) {
-            let tools = table(&script);
-            let client = reqwest::Client::new();
-            for name in &plan.native {
-                let Some(tool) = tools.iter().find(|t| &t.name == name) else {
-                    failed.push(format!("{name} (not in hanzo.sh's table)"));
-                    continue;
-                };
-                match fetch(&client, RELEASES, tool, "windows-amd64", &dir).await {
-                    Ok(bin) => println!("  {} {} → {}", "✓".green(), name, bin.display()),
-                    Err(e) => failed.push(format!("{name} ({e:#})")),
-                }
-            }
-        } else {
-            let status = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(&script)
-                .arg("hanzo.sh")
-                .arg("--dir")
-                .arg(&dir)
-                .args(&plan.native)
-                .status()
-                .await
-                .context("running the installer with sh")?;
-            if !status.success() {
-                failed.push(format!("{} ({status})", plan.native.join(", ")));
+        let tools = table(&script);
+        let client = reqwest::Client::new();
+        let platform = target_platform();
+        if platform == "unknown" {
+            bail!("unsupported platform for native upgrades");
+        }
+        for name in &plan.native {
+            let Some(tool) = tools.iter().find(|t| &t.name == name) else {
+                failed.push(format!("{name} (not in hanzo.sh's table)"));
+                continue;
+            };
+            match fetch(&client, RELEASES, tool, platform, &dir).await {
+                Ok(bin) => println!("  {} {} → {}", "✓".green(), name, bin.display()),
+                Err(e) => failed.push(format!("{name} ({e:#})")),
             }
         }
     }
@@ -677,42 +709,60 @@ mod tests {
             binary: "dev".into(),
             alias: String::new(),
         };
-        let tgz = tarball("dev.exe", b"new build");
+        let platform = "windows-amd64";
+        let exe = "dev.exe";
+        let tgz = tarball(exe, b"new build");
         let sum: String = Sha256::digest(&tgz)
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        let path = "/hanzoai/dev/releases/latest/download/dev-windows-amd64.tar.gz";
+        let path = format!("/hanzoai/dev/releases/latest/download/dev-{platform}.tar.gz");
         let base = serve(vec![
-            (path.into(), tgz.clone()),
+            (path.clone(), tgz.clone()),
             (
                 format!("{path}.sha256"),
-                format!("{sum}  dev-windows-amd64.tar.gz\n").into_bytes(),
+                format!("{sum}  dev-{platform}.tar.gz\n").into_bytes(),
             ),
         ])
         .await;
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("dev.exe"), b"old build").unwrap();
+        std::fs::write(dir.path().join(exe), b"old build").unwrap();
         let client = reqwest::Client::new();
-        let bin = fetch(&client, &base, &tool, "windows-amd64", dir.path())
+        let bin = fetch(&client, &base, &tool, platform, dir.path())
             .await
             .unwrap();
-        assert_eq!(bin, dir.path().join("dev.exe"));
+        assert_eq!(bin, dir.path().join(exe));
         assert_eq!(std::fs::read(&bin).unwrap(), b"new build");
-        assert!(!dir.path().join(".dev.exe.new").exists());
+        assert!(!dir.path().join(format!(".{exe}.new")).exists());
 
         // An asset that does not match its checksum is refused, and nothing is replaced.
         let bad = serve(vec![
-            (path.into(), tarball("dev.exe", b"tampered")),
+            (path.clone(), tarball(exe, b"tampered")),
             (format!("{path}.sha256"), format!("{sum}  x\n").into_bytes()),
         ])
         .await;
-        let e = fetch(&client, &bad, &tool, "windows-amd64", dir.path())
+        let e = fetch(&client, &bad, &tool, platform, dir.path())
             .await
             .unwrap_err()
             .to_string();
         assert!(e.contains("does not match its checksum"), "{e}");
         assert_eq!(std::fs::read(&bin).unwrap(), b"new build");
+    }
+
+    #[test]
+    fn the_target_platform_names_one_of_the_published_assets() {
+        let p = target_platform();
+        assert!(
+            matches!(
+                p,
+                "linux-amd64"
+                    | "linux-arm64"
+                    | "darwin-amd64"
+                    | "darwin-arm64"
+                    | "windows-amd64"
+            ) || p == "unknown",
+            "{p}"
+        );
     }
 
     #[test]
