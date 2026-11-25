@@ -11,7 +11,10 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } = require("node:fs");
 const { tmpdir } = require("node:os");
@@ -34,7 +37,7 @@ function setEnvironmentKey(env, name, value) {
   env[name] = value;
 }
 
-function createCase(t, { validArchive = true } = {}) {
+function createCase(t, { validArchive = true, archiveMember, archiveKind = "file", archiveExtras = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "hanzo issue 41 café "));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -51,9 +54,13 @@ function createCase(t, { validArchive = true } = {}) {
   const archive = join(root, assetName);
 
   if (validArchive) {
-    writeFileSync(join(sourceDir, binary), "local fixture only\n");
+    const member = archiveMember || binary;
+    if (archiveKind === "directory") mkdirSync(join(sourceDir, member));
+    else if (archiveKind === "symlink") symlinkSync("target-outside", join(sourceDir, member));
+    else writeFileSync(join(sourceDir, member), archiveKind === "empty" ? "" : "local fixture only\n");
+    for (const extra of archiveExtras) writeFileSync(join(sourceDir, extra), "sidecar fixture only\n");
     const archiveTar = process.platform === "win32" ? WINDOWS_SYSTEM_TAR : "tar";
-    execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, binary]);
+    execFileSync(archiveTar, ["-czf", archive, "-C", sourceDir, member, ...archiveExtras]);
   } else {
     writeFileSync(archive, "not a tar archive\n");
   }
@@ -68,6 +75,7 @@ function createCase(t, { validArchive = true } = {}) {
       'const { Readable } = require("node:stream");',
       "global.fetch = async (url) => {",
       "  if (String(url).endsWith(\".sha256\")) {",
+      '    if (process.env.HANZO_TEST_RAW_SHA !== undefined) return { ok: true, text: async () => process.env.HANZO_TEST_RAW_SHA };',
       "    return {",
       "      ok: true,",
       "      text: async () => `${process.env.HANZO_TEST_SHA}  ${process.env.HANZO_TEST_ASSET}\\n`,",
@@ -91,11 +99,13 @@ function createCase(t, { validArchive = true } = {}) {
   };
 }
 
-function runInstaller(context, { expectedSha = context.sha256, pathPrefix, systemRoot } = {}) {
+function runInstaller(context, { expectedSha = context.sha256, rawSha, pathPrefix, systemRoot, args = [] } = {}) {
   const env = { ...process.env };
   setEnvironmentKey(env, "HANZO_TEST_ARCHIVE", context.archive);
   setEnvironmentKey(env, "HANZO_TEST_ASSET", context.assetName);
   setEnvironmentKey(env, "HANZO_TEST_SHA", expectedSha);
+  if (rawSha !== undefined) setEnvironmentKey(env, "HANZO_TEST_RAW_SHA", rawSha);
+  else delete env.HANZO_TEST_RAW_SHA;
 
   if (pathPrefix) {
     const currentPath = Object.entries(process.env).find(
@@ -105,7 +115,7 @@ function runInstaller(context, { expectedSha = context.sha256, pathPrefix, syste
   }
   if (systemRoot !== undefined) setEnvironmentKey(env, "SystemRoot", systemRoot);
 
-  return spawnSync(process.execPath, ["--require", context.preload, join(context.packageDir, "install.js")], {
+  return spawnSync(process.execPath, ["--require", context.preload, join(context.packageDir, "install.js"), ...args], {
     cwd: context.root,
     env,
     encoding: "utf8",
@@ -176,11 +186,96 @@ test("Windows propagates an invalid system tar failure", (t) => {
   }));
 });
 
-test("an extraction failure is propagated", (t) => {
+test("replaces dangling native aliases and binary symlinks instead of writing through them", { skip: process.platform === "win32" }, (t) => {
+  const context = createCase(t);
+  const bin = join(context.packageDir, "bin");
+  mkdirSync(bin);
+  const alias = join(bin, "hanzo-cli");
+  const staleAliasTarget = join(bin, "previous-hanzo");
+  const staleBinaryTarget = join(bin, "previous-binary-target");
+  symlinkSync("previous-hanzo", alias);
+  symlinkSync("previous-binary-target", context.installedBinary);
+
+  const result = runInstaller(context);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readlinkSync(alias), "hanzo", "alias should point at the currently installed binary");
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "local fixture only\n");
+  assert.equal(existsSync(staleAliasTarget), false, "installer must not follow a dangling alias to create a stale file");
+  assert.equal(existsSync(staleBinaryTarget), false, "installer must not follow a dangling binary symlink");
+});
+
+test("rejects an archive that extracts successfully but lacks the expected native binary", (t) => {
+  const context = createCase(t, { archiveMember: "README.txt" });
+  const result = runInstaller(context);
+  assert.notEqual(result.status, 0, "an archive missing the binary must not be considered installed");
+  assert.match(result.stderr, /expected binary|missing native binary/i);
+  assert.equal(existsSync(context.installedBinary), false);
+});
+
+test("rejects directory, empty-file, and symlink placeholders instead of claiming a native binary was installed", (t) => {
+  const kinds = process.platform === "win32" ? ["directory", "empty"] : ["directory", "empty", "symlink"];
+  for (const archiveKind of kinds) {
+    const context = createCase(t, { archiveKind });
+    const result = runInstaller(context);
+    assert.notEqual(result.status, 0, `${archiveKind} must not install successfully`);
+    assert.match(result.stderr, /missing native binary/i);
+  }
+});
+
+test("a valid replacement keeps additional archive files and clears staging", (t) => {
+  const context = createCase(t, { archiveExtras: ["README.txt"] });
+  mkdirSync(join(context.packageDir, "bin"));
+  writeFileSync(context.installedBinary, "previous working binary\n");
+  const result = runInstaller(context);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "local fixture only\n");
+  assert.equal(readFileSync(join(context.packageDir, "bin", "README.txt"), "utf8"), "sidecar fixture only\n");
+  assert.equal(readdirSync(join(context.packageDir, "bin")).some((name) => name.startsWith(".hanzo-staging-")), false);
+});
+
+test("a stale installed binary cannot mask a missing binary in a new release", (t) => {
+  const context = createCase(t, { archiveMember: "README.txt" });
+  mkdirSync(join(context.packageDir, "bin"));
+  writeFileSync(context.installedBinary, "previous working binary\n");
+  const result = runInstaller(context);
+  assert.notEqual(result.status, 0, "missing release binary must fail despite an old installation");
+  assert.match(result.stderr, /missing native binary/i);
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "previous working binary\n", "failed updates preserve working installed binaries");
+});
+
+test("a failed extraction removes the downloaded archive", (t) => {
   const context = createCase(t, { validArchive: false });
   const result = runInstaller(context);
   assert.notEqual(result.status, 0);
   assert.equal(existsSync(context.installedBinary), false);
+  const leftovers = readdirSync(context.packageDir).filter(
+    (name) => name.startsWith(`${result.pid}-`) && name.endsWith(".tar.gz")
+  );
+  assert.deepEqual(leftovers, [], "failed extraction must not leave the downloaded archive behind");
+});
+
+test("an empty or malformed checksum file refuses installation rather than skipping verification", (t) => {
+  for (const rawSha of ["", "   \n", "not-a-sha256\n", "deadbeef  hanzo.tar.gz\n"]) {
+    const context = createCase(t);
+    const result = runInstaller(context, { rawSha });
+    assert.notEqual(result.status, 0, `raw checksum ${JSON.stringify(rawSha)} must fail`);
+    assert.match(result.stderr, /invalid checksum/i);
+    assert.equal(existsSync(context.installedBinary), false);
+  }
+});
+
+test("an optional companion fails closed on an empty checksum response", (t) => {
+  const context = createCase(t);
+  const result = runInstaller(context, { rawSha: "", args: ["gen"] });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /invalid checksum/i);
+});
+
+test("uppercase SHA-256 checksum digests verify successfully", (t) => {
+  const context = createCase(t);
+  const result = runInstaller(context, { expectedSha: context.sha256.toUpperCase() });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(context.installedBinary, "utf8"), "local fixture only\n");
 });
 
 test("a checksum mismatch stops before extraction", (t) => {

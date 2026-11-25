@@ -15,8 +15,23 @@
 // binaries (`dev`, `mcp`, `engine`, `node`, `zt`, `vm`, `gen`) are fetched
 // lazily on first use by `bin/hanzo.js` (or eagerly with `HANZO_NPM_EAGER=1` /
 // `node install.js --all`).
-const { createWriteStream, mkdirSync, chmodSync, copyFileSync, existsSync, symlinkSync, unlinkSync, writeFileSync } = require("node:fs");
+const {
+  createWriteStream,
+  mkdirSync,
+  mkdtempSync,
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} = require("node:fs");
 const { createHash } = require("node:crypto");
+const { tmpdir } = require("node:os");
 const { rm } = require("node:fs/promises");
 const { join } = require("node:path");
 const { execFileSync } = require("node:child_process");
@@ -87,8 +102,10 @@ function linkAlias(dest, binName, aliasName, ext) {
   const src = join(dest, `${binName}${ext}`);
   const dst = join(dest, `${aliasName}${ext}`);
   if (!existsSync(src)) return;
+  // existsSync misses dangling aliases; unlink before try so fallback copyFileSync
+  // can never write through a stale symlink.
+  if (lstatSync(dst, { throwIfNoEntry: false })) unlinkSync(dst);
   try {
-    if (existsSync(dst)) unlinkSync(dst);
     symlinkSync(`${binName}${ext}`, dst);
   } catch {
     copyFileSync(src, dst);
@@ -101,36 +118,67 @@ async function downloadAndExtract({ assetUrl, sha256Url, assetName, dest }) {
   let want = null;
   if (sha256Url) {
     want = (await (await get(sha256Url)).text()).trim().split(/\s+/)[0];
+    if (!/^[0-9a-f]{64}$/i.test(want)) {
+      throw new Error(`invalid checksum for ${assetName}: expected a 64-character SHA-256 digest`);
+    }
+    want = want.toLowerCase();
   }
 
   const res = await get(assetUrl);
   const hash = createHash("sha256");
-  const file = createWriteStream(tmp);
-  await pipeline(res.body, async function* (src) {
-    for await (const chunk of src) { hash.update(chunk); yield chunk; }
-  }, file);
+  try {
+    const file = createWriteStream(tmp);
+    await pipeline(res.body, async function* (src) {
+      for await (const chunk of src) { hash.update(chunk); yield chunk; }
+    }, file);
 
-  const got = hash.digest("hex");
-  if (want && got !== want) {
+    const got = hash.digest("hex");
+    if (want && got !== want) {
+      throw new Error(`checksum mismatch for ${assetName}\n  expected ${want}\n  got      ${got}`);
+    }
+
+    extractArchive(tmp, dest);
+  } finally {
     await rm(tmp, { force: true });
-    throw new Error(`checksum mismatch for ${assetName}\n  expected ${want}\n  got      ${got}`);
   }
-
-  extractArchive(tmp, dest);
-  await rm(tmp, { force: true });
 }
 
 async function fetchStandardTool({ base, bin, alias, target, dest, ext }) {
   const asset = `${bin}-${target}.tar.gz`;
-  await downloadAndExtract({
-    assetUrl: `${base}/${asset}`,
-    sha256Url: `${base}/${asset}.sha256`,
-    assetName: asset,
-    dest,
-  });
-  const out = join(dest, `${bin}${ext}`);
-  if (existsSync(out) && process.platform !== "win32") chmodSync(out, 0o755);
-  linkAlias(dest, bin, alias, ext);
+  // Validate the new release away from the live installation. An old binary
+  // must not make a malformed archive look correct, and a failed download
+  // must not remove or rewrite the previously working installation.
+  const staging = mkdtempSync(join(tmpdir(), "hanzo-npm-staging-"));
+  try {
+    await downloadAndExtract({
+      assetUrl: `${base}/${asset}`,
+      sha256Url: `${base}/${asset}.sha256`,
+      assetName: asset,
+      dest: staging,
+    });
+    const out = join(staging, `${bin}${ext}`);
+    // Directories, zero-byte placeholders and symlinks are not native binaries.
+    const extracted = lstatSync(out, { throwIfNoEntry: false });
+    if (!extracted?.isFile() || extracted.size === 0) {
+      throw new Error(`release ${asset} is missing native binary ${bin}${ext} (expected a non-empty regular file)`);
+    }
+    if (process.platform !== "win32") chmodSync(out, 0o755);
+    // Preserve any sidecar files shipped with a release, not only the
+    // executable, while retaining the previous contents until validation.
+    mkdirSync(dest, { recursive: true });
+    for (const name of readdirSync(staging)) {
+      const dst = join(dest, name);
+      // Unlink existing entries (including dangling symlinks) before copying:
+      // avoids macOS cpSync aborting on dangling symlinks and Linux ETXTBSY.
+      if (lstatSync(dst, { throwIfNoEntry: false })) rmSync(dst, { recursive: true, force: true });
+      cpSync(join(staging, name), dst, { recursive: true, force: true });
+    }
+    const installed = join(dest, `${bin}${ext}`);
+    if (process.platform !== "win32") chmodSync(installed, 0o755);
+    linkAlias(dest, bin, alias, ext);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 async function fetchEngine({ key, dest, ext }) {
@@ -187,9 +235,15 @@ shift
 model=""; port=""; set -- "$@" --hanzo-end
 while [ "$1" != --hanzo-end ]; do
   case "$1" in
-    -m|--model) model="$2"; shift 2 ;;
-    -p|--port) port="$2"; shift 2 ;;
-    --overlay) shift 2 ;;
+    -m|--model|-p|--port|--overlay)
+      case "\${2:-}" in
+        ""|--hanzo-end|-*) echo "hanzo-engine: $1 requires a value" >&2; exit 2 ;;
+      esac
+      case "$1" in
+        -m|--model) model="$2" ;;
+        -p|--port) port="$2" ;;
+      esac
+      shift 2 ;;
     *) set -- "$@" "$1"; shift ;;
   esac
 done
@@ -278,7 +332,8 @@ async function installOne(name, { key, target, dest, ext, optional }) {
     const label = tool.versioned && !fellBack ? `${tool.bin} ${VERSION}` : `${tool.bin} (latest release)`;
     console.error(`@hanzo/cli: installed ${label} (${target})`);
   } catch (err) {
-    if (!optional || String(err.message || err).includes("checksum mismatch")) throw err;
+    const msg = String(err.message || err);
+    if (!optional || msg.includes("checksum mismatch") || msg.includes("invalid checksum")) throw err;
     console.warn(`@hanzo/cli: optional companion ${tool.bin} skipped (${err.message})`);
   }
 }
@@ -325,4 +380,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { extractArchive, resolveTarExecutable };
+module.exports = { extractArchive, resolveTarExecutable, ENGINE_ADAPTER };

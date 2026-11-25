@@ -79,7 +79,7 @@ verify: ## Refuse a tree the committed evidence contradicts. Hermetic. The drift
 test: ## Everything, including the derivation gates in tests/ — `verify` among them.
 	@sh scripts/test-installer-strict.sh
 	@sh scripts/test-generate-check.sh
-	@node --test npm/install.test.js
+	@node --test npm/*.test.js
 	@python3 -m unittest discover -s tests -p test_installer.py
 	@cargo build --quiet --features maintainer --bin driftgate --bin genproduct --locked
 	# The cache has a home of its own, named before HOME moves — the same move
