@@ -383,6 +383,10 @@ pub(crate) mod tests {
             assert_eq!(seen.len(), 1, "one call, one request: {seen:?}");
             seen[0].clone()
         }
+
+        pub(crate) fn all(&self) -> Vec<Seen> {
+            self.seen.lock().unwrap().clone()
+        }
     }
 
     /// A token whose claims name owner `acme`, user `box` and subject `sub_1`.

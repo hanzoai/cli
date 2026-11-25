@@ -670,7 +670,10 @@ async fn finish(
     out: Result<()>,
 ) -> Result<()> {
     if let Some(id) = id {
-        let _ = client.set_status(id, Status::of(out.is_ok())).await;
+        let _ = match &out {
+            Ok(()) => client.set_status(id, Status::Done).await,
+            Err(e) => client.fail(id, &format!("{e:#}")).await,
+        };
     }
     // The tmux session outlives the link. Leaving the URL up would advertise a
     // tunnel that stopped answering the moment this returned.
@@ -1332,9 +1335,25 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("share ended"), "got: {err}");
-        let body: serde_json::Value = serde_json::from_str(&fake.one().4).unwrap();
+        let reqs = fake.all();
+        assert_eq!(
+            reqs.len(),
+            2,
+            "failed link emits closing status event then terminal PATCH: {reqs:?}"
+        );
+        let ev: serde_json::Value = serde_json::from_str(&reqs[0].4).unwrap();
+        assert_eq!(reqs[0].0, "POST");
+        assert_eq!(reqs[0].1, "/v1/agents/sessions/sess_1/events");
+        assert_eq!(ev["kind"], "status");
+        assert_eq!(ev["payload"]["status"], "error");
+        assert_eq!(ev["payload"]["error"], "share ended: exit 1");
+
+        let body: serde_json::Value = serde_json::from_str(&reqs[1].4).unwrap();
+        assert_eq!(reqs[1].0, "PATCH");
+        assert_eq!(reqs[1].1, "/v1/agents/sessions/sess_1");
         assert_eq!(body["status"], "error");
         assert_eq!(body["terminal"], "");
+        assert_eq!(body["error"], "share ended: exit 1");
     }
 
     /// Cloud being unreachable costs a stale row, never a failed command: the
