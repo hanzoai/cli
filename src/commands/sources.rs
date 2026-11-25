@@ -567,6 +567,9 @@ fn source_key_path() -> Result<PathBuf> {
 }
 
 pub fn load_or_create_keypair(path: &Path) -> Result<Ed25519KeyPair> {
+    // Two first-time `hanzo sources link` processes must share one device key.
+    // The lock lives beside the key, so it also guards a not-yet-created file.
+    let _guard = crate::config::Lock::acquire(path)?;
     if path.is_file() {
         let pkcs8 = std::fs::read(path)
             .with_context(|| format!("reading source device key {}", path.display()))?;
@@ -733,6 +736,41 @@ mod tests {
                 "openai,codex-cli,login,ready,,false\n",
             )
         );
+    }
+
+    #[test]
+    fn concurrent_first_source_links_share_one_persisted_keypair() {
+        use std::sync::{Arc, Barrier};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("source-key.ed25519");
+        const WORKERS: usize = 12;
+        let barrier = Arc::new(Barrier::new(WORKERS));
+        let keys = std::thread::scope(|scope| {
+            let tasks: Vec<_> = (0..WORKERS)
+                .map(|_| {
+                    let path = path.clone();
+                    let start = barrier.clone();
+                    scope.spawn(move || {
+                        start.wait();
+                        load_or_create_keypair(&path)
+                            .unwrap()
+                            .public_key()
+                            .as_ref()
+                            .to_vec()
+                    })
+                })
+                .collect();
+            tasks
+                .into_iter()
+                .map(|task| task.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let persisted = load_or_create_keypair(&path).unwrap();
+        assert!(keys
+            .iter()
+            .all(|key| key.as_slice() == persisted.public_key().as_ref()));
+        assert_eq!(keys.len(), WORKERS);
     }
 
     #[test]
