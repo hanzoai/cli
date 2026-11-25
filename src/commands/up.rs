@@ -53,6 +53,15 @@ pub struct Boot {
     /// the manifest names, the bytes containerd verifies and the register the
     /// measurement extends are one thing decided once.
     pub cloud: String,
+    /// Optional opt-in staged subsystems (`CLOUD_ENABLE_STAGED`, e.g. `fanclub`).
+    pub staged: Option<String>,
+    /// Optional IAM OIDC issuer (`CLOUD_IAM_ISSUER`, e.g. `https://hanzo.ai`).
+    pub iam_issuer: Option<String>,
+    /// Optional Hanzo AI / Engine HTTP base URL (`CLOUD_AI_BASE_URL`).
+    pub ai_base_url: Option<String>,
+    /// Refuse non-Hanzo container registries (`ghcr.io`, Docker Hub) rather than
+    /// falling back from `oci.hanzo.ai`.
+    pub strict_registry: bool,
 }
 
 /// The k3s API port, forwarded host→guest one-to-one.
@@ -76,6 +85,136 @@ const LOCAL_PORT: u16 = 36930;
 /// tag is resolved to a digest before it reaches the cluster, so what floats
 /// here is only which bytes a fresh `up` picks.
 pub const CLOUD: &str = "ghcr.io/hanzoai/cloud-oss:main";
+/// Canonical Hanzo-owned OCI registry image for `hanzoai/cloud` (`cli#57`).
+/// Preferred automatically whenever Hanzo OCI credentials are present, and
+/// required under `--strict-registry` / `HANZO_STRICT_REGISTRY=1`.
+pub const CLOUD_OCI: &str = "oci.hanzo.ai/hanzoai/cloud-oss:main";
+
+/// Declarative subset of `hanzo.config.json` / `hanzo.config.ts` read
+/// statically without ever executing TypeScript.
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppManifest {
+    pub cloud: Option<String>,
+    pub staged: Option<String>,
+    pub iam_issuer: Option<String>,
+    pub ai_base_url: Option<String>,
+    #[serde(default)]
+    pub strict_registry: bool,
+}
+
+/// Returns true when `reference` targets a Hanzo-owned OCI registry.
+pub fn is_hanzo_registry(reference: &str) -> bool {
+    let Ok(parsed) = image::parse(reference) else {
+        return false;
+    };
+    matches!(
+        parsed.registry.to_ascii_lowercase().as_str(),
+        "oci.hanzo.ai" | "pkg.hanzo.ai" | "forge.hanzo.ai" | "git.hanzo.ai"
+    )
+}
+
+/// Choose the Cloud OCI image reference under Hanzo registry policy:
+/// - In strict mode (`--strict-registry`), defaults to `CLOUD_OCI` and refuses
+///   any non-Hanzo registry reference with zero silent GHCR fallback.
+/// - Otherwise, when the caller left the default `CLOUD` and Hanzo OCI
+///   credentials are available, upgrades to `CLOUD_OCI`.
+pub fn select_cloud_image(
+    requested: &str,
+    strict_registry: bool,
+    has_hanzo_oci_creds: bool,
+) -> Result<String> {
+    let chosen = if requested == CLOUD && (strict_registry || has_hanzo_oci_creds) {
+        CLOUD_OCI.to_string()
+    } else {
+        requested.to_string()
+    };
+    if strict_registry && !is_hanzo_registry(&chosen) {
+        bail!(
+            "strict Hanzo registry mode refuses non-Hanzo image `{chosen}`; \
+             use a digest or tag on `oci.hanzo.ai` (e.g. `{CLOUD_OCI}`)"
+        );
+    }
+    Ok(chosen)
+}
+
+/// Statically discover an optional `hanzo.config.json` or `hanzo.config.ts`
+/// in `dir`. Never executes JavaScript or TypeScript.
+pub fn discover_app_manifest(dir: &Path) -> Result<Option<AppManifest>> {
+    let json_path = dir.join("hanzo.config.json");
+    if json_path.is_file() {
+        let raw = std::fs::read_to_string(&json_path)
+            .with_context(|| format!("reading {}", json_path.display()))?;
+        let parsed: AppManifest = serde_json::from_str(&raw)
+            .with_context(|| format!("parsing {}", json_path.display()))?;
+        return Ok(Some(parsed));
+    }
+    let ts_path = dir.join("hanzo.config.ts");
+    if ts_path.is_file() {
+        let raw = std::fs::read_to_string(&ts_path)
+            .with_context(|| format!("reading {}", ts_path.display()))?;
+        return Ok(Some(parse_static_ts_manifest(&raw)));
+    }
+    Ok(None)
+}
+
+/// Extract simple declarative string/bool fields from `hanzo.config.ts`
+/// without executing arbitrary code.
+fn parse_static_ts_manifest(src: &str) -> AppManifest {
+    let extract_str = |key: &str| -> Option<String> {
+        for line in src.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with('*') {
+                continue;
+            }
+            let Some(rest) = trimmed
+                .strip_prefix(key)
+                .or_else(|| trimmed.strip_prefix(&format!("\"{key}\"")))
+                .or_else(|| trimmed.strip_prefix(&format!("'{key}'")))
+            else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            let Some(rest) = rest.strip_prefix(':') else {
+                continue;
+            };
+            let val = rest.trim().trim_end_matches(',').trim();
+            if let Some(inner) = val
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .or_else(|| val.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            {
+                if !inner.is_empty() {
+                    return Some(inner.to_string());
+                }
+            }
+        }
+        None
+    };
+    let strict_registry = src.lines().any(|line| {
+        let t = line.trim();
+        !t.starts_with("//")
+            && (t.starts_with("strictRegistry:") || t.starts_with("\"strictRegistry\":"))
+            && t.contains("true")
+    });
+    AppManifest {
+        cloud: extract_str("cloud"),
+        staged: extract_str("staged"),
+        iam_issuer: extract_str("iamIssuer"),
+        ai_base_url: extract_str("aiBaseUrl"),
+        strict_registry,
+    }
+}
+
+fn yaml_env_block(name: &str, value: &str) -> Result<String> {
+    if value.chars().any(|c| c.is_control()) {
+        bail!("{name} must not contain control characters");
+    }
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    Ok(format!(
+        "            - name: {name}\n              value: \"{escaped}\"\n"
+    ))
+}
 /// Where the cluster keeps everything it owns, and where it writes the
 /// credential for reaching it. k3s defaults both to paths named after the
 /// company that wrote it; we run our own machine, so ours are named for it.
@@ -416,8 +555,49 @@ fn plant_pull_secret(rpc: &mut Rpc, dockerconfigjson: &str) -> Result<()> {
 /// cannot write, and sits there — no port, no second log line, 18 microcores.
 /// `readOnlyRootFilesystem` then costs a `/tmp` volume, which is why one is
 /// mounted.
+#[cfg(test)]
 fn workload(image: &str) -> String {
-    format!(
+    workload_for(&Boot {
+        cpus: 4,
+        memory_mb: 4096,
+        disk_mb: 16384,
+        cloud: image.to_string(),
+        staged: None,
+        iam_issuer: None,
+        ai_base_url: None,
+        strict_registry: false,
+    })
+    .expect("default workload renders")
+}
+
+fn workload_for(boot: &Boot) -> Result<String> {
+    let image = &boot.cloud;
+    let mut extra_env = String::new();
+    if let Some(v) = boot
+        .staged
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        extra_env.push_str(&yaml_env_block("CLOUD_ENABLE_STAGED", v)?);
+    }
+    if let Some(v) = boot
+        .iam_issuer
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        extra_env.push_str(&yaml_env_block("CLOUD_IAM_ISSUER", v)?);
+    }
+    if let Some(v) = boot
+        .ai_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        extra_env.push_str(&yaml_env_block("CLOUD_AI_BASE_URL", v)?);
+    }
+    Ok(format!(
         "apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -468,7 +648,7 @@ spec:
                   containerName: cloud
                   resource: requests.memory
                   divisor: 1Mi
-          resources:
+{extra_env}          resources:
             requests:
               memory: 1Gi
           readinessProbe:
@@ -509,7 +689,7 @@ spec:
       targetPort: {CLOUD_PORT}
       nodePort: {CLOUD_NODE_PORT}
 "
-    )
+    ))
 }
 
 // ---- the measurement ----------------------------------------------------------
@@ -686,7 +866,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Resu
     // apply it — no second tool, no window in which the cluster is up and
     // running nothing. It is written and MEASURED in the same breath: what the
     // register covers is the file the cluster will read.
-    let manifest = workload(&boot.cloud);
+    let manifest = workload_for(boot)?;
     rpc.write_file(GROUND, &ground())?;
     rpc.write_file(WORKLOAD, &manifest)?;
     record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
@@ -805,13 +985,39 @@ pub async fn up(
         clear_pid(&dir, VM);
     }
 
+    // Merge optional static `hanzo.config.json` / `hanzo.config.ts` from cwd
+    // without ever executing TypeScript. Explicit CLI flags take precedence.
+    let mut boot = boot;
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(m) = discover_app_manifest(&cwd)? {
+            if boot.cloud == CLOUD {
+                if let Some(img) = m.cloud {
+                    boot.cloud = img;
+                }
+            }
+            if boot.staged.is_none() {
+                boot.staged = m.staged;
+            }
+            if boot.iam_issuer.is_none() {
+                boot.iam_issuer = m.iam_issuer;
+            }
+            if boot.ai_base_url.is_none() {
+                boot.ai_base_url = m.ai_base_url;
+            }
+            boot.strict_registry = boot.strict_registry || m.strict_registry;
+        }
+    }
+
+    let has_hanzo_oci = !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
+    let selected_image = select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
+
     // Pinned HERE, once, in the foreground: the digest reaches the supervisor
     // as an argument, so the cluster and the measurement cannot end up naming
     // different bytes, and a tag that moves mid-boot cannot change what runs.
     let boot = Boot {
         cloud: image::pin_with_config(
             &reqwest::Client::new(),
-            &boot.cloud,
+            &selected_image,
             image::architecture(),
             cfg,
         )
@@ -917,13 +1123,25 @@ fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>) -> Result<u32> {
         &boot.disk_mb.to_string(),
         "--cloud",
         &boot.cloud,
-        "supervise",
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::from(
-        log.try_clone().context("duplicating the log handle")?,
-    ))
-    .stderr(Stdio::from(log));
+    ]);
+    if let Some(staged) = boot.staged.as_deref() {
+        cmd.args(["--staged", staged]);
+    }
+    if let Some(issuer) = boot.iam_issuer.as_deref() {
+        cmd.args(["--iam-issuer", issuer]);
+    }
+    if let Some(ai_url) = boot.ai_base_url.as_deref() {
+        cmd.args(["--ai-base-url", ai_url]);
+    }
+    if boot.strict_registry {
+        cmd.arg("--strict-registry");
+    }
+    cmd.arg("supervise")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(
+            log.try_clone().context("duplicating the log handle")?,
+        ))
+        .stderr(Stdio::from(log));
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -1124,7 +1342,69 @@ mod tests {
             memory_mb: 4096,
             disk_mb: 16384,
             cloud: "ghcr.io/hanzoai/cloud@sha256:c10d".into(),
+            staged: None,
+            iam_issuer: None,
+            ai_base_url: None,
+            strict_registry: false,
         }
+    }
+
+    #[test]
+    fn select_cloud_image_prefers_hanzo_oci_and_enforces_strict_registry() {
+        assert_eq!(select_cloud_image(CLOUD, false, true).unwrap(), CLOUD_OCI);
+        assert_eq!(select_cloud_image(CLOUD, false, false).unwrap(), CLOUD);
+        assert_eq!(select_cloud_image(CLOUD, true, false).unwrap(), CLOUD_OCI);
+        assert!(select_cloud_image("ghcr.io/hanzoai/cloud-oss@sha256:aa", true, true).is_err());
+        assert_eq!(
+            select_cloud_image("oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa", true, true).unwrap(),
+            "oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa"
+        );
+    }
+
+    #[test]
+    fn workload_for_injects_staged_iam_and_ai_env_and_changes_measurement() {
+        let plain = workload("oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa");
+        let fc = workload_for(&Boot {
+            cpus: 4,
+            memory_mb: 4096,
+            disk_mb: 16384,
+            cloud: "oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa".into(),
+            staged: Some("fanclub".into()),
+            iam_issuer: Some("https://hanzo.ai".into()),
+            ai_base_url: Some("https://api.hanzo.ai".into()),
+            strict_registry: true,
+        })
+        .unwrap();
+        assert!(fc.contains("name: CLOUD_ENABLE_STAGED"), "{fc}");
+        assert!(fc.contains("value: \"fanclub\""), "{fc}");
+        assert!(fc.contains("name: CLOUD_IAM_ISSUER"), "{fc}");
+        assert!(fc.contains("value: \"https://hanzo.ai\""), "{fc}");
+        assert!(fc.contains("name: CLOUD_AI_BASE_URL"), "{fc}");
+        assert!(fc.contains("value: \"https://api.hanzo.ai\""), "{fc}");
+        assert_ne!(
+            deployed("oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa", &plain).register(),
+            deployed("oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa", &fc).register()
+        );
+    }
+
+    #[test]
+    fn static_ts_and_json_app_manifest_parse_without_executing_ts() {
+        let parsed = parse_static_ts_manifest(
+            r#"
+            export default {
+              cloud: "oci.hanzo.ai/hanzoai/cloud-oss:main",
+              staged: "fanclub",
+              iamIssuer: "https://hanzo.ai",
+              aiBaseUrl: "https://api.hanzo.ai",
+              strictRegistry: true,
+            };
+            "#,
+        );
+        assert_eq!(parsed.cloud.as_deref(), Some(CLOUD_OCI));
+        assert_eq!(parsed.staged.as_deref(), Some("fanclub"));
+        assert_eq!(parsed.iam_issuer.as_deref(), Some("https://hanzo.ai"));
+        assert_eq!(parsed.ai_base_url.as_deref(), Some("https://api.hanzo.ai"));
+        assert!(parsed.strict_registry);
     }
 
     /// The exact argv the k3s VM boots with — the stdio wire, both forwards,
