@@ -867,12 +867,36 @@ enum WalletCommands {
     List,
 }
 
+/// A closed stdout or stderr is not a command failure: `hanzo … | head` ends the
+/// pipe on purpose. Rust's print macros panic on that write error, which turned a
+/// normal truncation into a Sentry panic storm. Quiet only that one panic; every
+/// other panic keeps the default hook and its report.
+fn is_broken_pipe(payload: &(dyn std::any::Any + Send)) -> bool {
+    let text = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    text.contains("Broken pipe") || text.contains("failed printing to")
+}
+
+fn install_broken_pipe_quiet() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if is_broken_pipe(info.payload()) {
+            std::process::exit(0);
+        }
+        default(info);
+    }));
+}
+
 /// A failed command says what failed and exits 1. Returning the error from
 /// `main` printed it with `{:?}`, which carries a stack backtrace whenever
 /// `RUST_BACKTRACE` is set — a person asked to sign in got thirty lines of
 /// frames under one sentence.
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    install_broken_pipe_quiet();
     match run().await {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
@@ -2939,5 +2963,21 @@ mod tests {
         assert!(
             Cli::try_parse_from(["hanzo", "sandbox", "computer", "http://127.0.0.1:5173"]).is_ok()
         );
+    }
+}
+
+#[cfg(test)]
+mod broken_pipe_tests {
+    use super::is_broken_pipe;
+
+    #[test]
+    fn a_closed_pipe_is_not_a_failure() {
+        assert!(is_broken_pipe(&"failed printing to stdout: Broken pipe (os error 32)".to_string()));
+        assert!(is_broken_pipe(&"failed printing to stderr: Broken pipe (os error 32)".to_string()));
+    }
+
+    #[test]
+    fn other_panics_stay_panics() {
+        assert!(!is_broken_pipe(&"index out of bounds".to_string()));
     }
 }
