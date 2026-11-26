@@ -8,9 +8,26 @@
 //! `fabric` (hanzod) has always used. This is a transparent launcher: it invents
 //! no behavior, it only finds and runs.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus};
+
+/// A transparently launched child binary exited non-zero (`kubectl`, `helm`,
+/// `hanzo-vm`, `buildctl`, …). The non-zero exit belongs to the child tool, not
+/// a `hanzo` CLI crash, so error telemetry skips filing it as `CommandError`.
+#[derive(Debug)]
+pub struct ChildExited {
+    pub bin: PathBuf,
+    pub status: ExitStatus,
+}
+
+impl std::fmt::Display for ChildExited {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} exited with {}", self.bin.display(), self.status)
+    }
+}
+
+impl std::error::Error for ChildExited {}
 
 /// Resolve a binary: `$env` (when it points at a real file), then each PATH
 /// candidate in order. `None` when nothing resolves — the caller crafts the
@@ -34,7 +51,11 @@ pub fn exec(bin: &Path, args: &[String]) -> Result<()> {
         .status()
         .with_context(|| format!("running {}", bin.display()))?;
     if !status.success() {
-        bail!("{} exited with {status}", bin.display());
+        return Err(ChildExited {
+            bin: bin.to_path_buf(),
+            status,
+        }
+        .into());
     }
     Ok(())
 }

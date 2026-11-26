@@ -305,7 +305,11 @@ fn cmd_restart(kubeconfig: &Path, rest: &[String]) -> Result<()> {
             .status()
             .context("running kubectl rollout restart")?;
         if !status.success() {
-            bail!("kubectl rollout restart {target} failed with {status}");
+            return Err(anyhow::Error::new(launch::ChildExited {
+                bin: kubectl.clone(),
+                status,
+            })
+            .context(format!("kubectl rollout restart {target} failed")));
         }
     }
     for target in &targets {
@@ -316,7 +320,11 @@ fn cmd_restart(kubeconfig: &Path, rest: &[String]) -> Result<()> {
             .status()
             .context("running kubectl rollout status")?;
         if !status.success() {
-            bail!("kubectl rollout status {target} failed with {status}");
+            return Err(anyhow::Error::new(launch::ChildExited {
+                bin: kubectl.clone(),
+                status,
+            })
+            .context(format!("kubectl rollout status {target} failed")));
         }
     }
     Ok(())

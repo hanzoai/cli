@@ -58,6 +58,29 @@ pub(crate) use generated::{OPS, PRODUCTS};
 mod op;
 pub use op::{Field, Op, Ty};
 
+/// A non-2xx HTTP status returned by the cloud API. 4xx responses are normal
+/// user, auth, or validation refusals; 5xx responses are upstream server/gateway
+/// faults already tracked server-side. Neither is a CLI client crash.
+#[derive(Debug)]
+pub struct HttpStatusError {
+    pub path: String,
+    pub status: u16,
+    pub detail: String,
+    pub hint: Option<&'static str>,
+}
+
+impl std::fmt::Display for HttpStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} -> {}: {}", self.path, self.status, self.detail)?;
+        if let Some(hint) = self.hint {
+            write!(f, " — {hint}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for HttpStatusError {}
+
 // ---- build the clap tree (BUILDER api — 130 products can't be a derive enum) --
 
 /// The generated products this parser mounts AT THEIR OWN NAME: every product no
@@ -668,7 +691,18 @@ fn field_value(f: &Field, m: &ArgMatches) -> Option<Value> {
             Ty::Int => m.get_many::<i64>(f.id)?.map(|v| json!(v)).collect(),
             Ty::Num => m.get_many::<f64>(f.id)?.map(|v| json!(v)).collect(),
             Ty::Bool => m.get_many::<bool>(f.id)?.map(|v| json!(v)).collect(),
-            Ty::Json | Ty::Union => m.get_many::<Value>(f.id)?.cloned().collect(),
+            // A repeatable JSON/Union flag represents a flat 1D schema array
+            // (genproduct classifies nested arrays with repeat=false). Callers
+            // naturally pass either repeated item objects (`--files '{…}' --files '{…}'`)
+            // or a JSON array (`--files '[{…},{…}]'`); flatten top-level JSON arrays
+            // so the latter is not double-wrapped into `[[{…}]]`.
+            Ty::Json | Ty::Union => m
+                .get_many::<Value>(f.id)?
+                .flat_map(|v| match v {
+                    Value::Array(items) => items.clone(),
+                    other => vec![other.clone()],
+                })
+                .collect(),
         };
         return Some(Value::Array(vs));
     }
@@ -836,7 +870,13 @@ fn accepted_session(Reply { status, body }: Reply) -> Result<String> {
             Value::String(s) => s.trim().to_string(),
             v => v.to_string(),
         };
-        bail!("/v1/agent/coding -> {status}: {shown}");
+        return Err(HttpStatusError {
+            path: "/v1/agent/coding".to_string(),
+            status,
+            detail: shown,
+            hint: None,
+        }
+        .into());
     }
     if let Some(msg) = envelope_error(&body) {
         bail!("/v1/agent/coding: {msg}");
@@ -864,7 +904,13 @@ async fn follow_session(seam: &Seam, id: &str, seconds: u64) -> Result<()> {
             .send(Method::GET, &format!("/v1/agent/sessions/{id}"), &[], None)
             .await?;
         if !(200..300).contains(&code) {
-            bail!("polling session {id} -> {code}: {body}");
+            return Err(HttpStatusError {
+                path: format!("polling session {id}"),
+                status: code,
+                detail: body.to_string(),
+                hint: None,
+            }
+            .into());
         }
         let value = body.get("data").cloned().unwrap_or(body);
         let current = value.get("status").and_then(Value::as_str).unwrap_or("");
@@ -1059,10 +1105,15 @@ pub(crate) async fn call(
         Value::String(s) => s.trim().to_string(),
         v => v.to_string(),
     };
-    if status == 401 && seam.token.is_empty() {
-        anyhow::bail!("{path} -> {status}: {shown} — not signed in; run `hanzo auth login`");
+    let hint =
+        (status == 401 && seam.token.is_empty()).then_some("not signed in; run `hanzo auth login`");
+    Err(HttpStatusError {
+        path,
+        status,
+        detail: shown,
+        hint,
     }
-    anyhow::bail!("{path} -> {status}: {shown}");
+    .into())
 }
 
 /// WHERE and WHO, resolved ONCE — the one authenticated route into cloud, held

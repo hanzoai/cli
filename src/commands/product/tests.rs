@@ -1999,3 +1999,51 @@ fn the_async_handle_is_unwrapped_and_validated_before_it_is_followed() {
     assert!(finished("done") && finished("error") && finished("stopped"));
     assert!(!finished("running") && !finished("paused"));
 }
+
+#[test]
+fn repeatable_json_flag_accepts_both_array_and_repeated_objects() {
+    let body_of = |argv: &[&str]| -> Value {
+        let m = matches_of(argv);
+        let Some(Resolved::Leaf {
+            body: LeafBody::Typed(v),
+            ..
+        }) = resolve(&hand(), &m)
+        else {
+            panic!("expected typed leaf body: {argv:?}");
+        };
+        v
+    };
+
+    // Single JSON array passed to a repeatable JSON flag (e.g. `git repos push --files '[…]'`)
+    // must NOT double-wrap into `[[{"path":…}]]`, which fails server json.Unmarshal.
+    let from_array = body_of(&[
+        "hanzo",
+        "git",
+        "repos",
+        "push",
+        "cd-clock-test",
+        "--files",
+        r#"[{"path":"index.html","content":"<h1>hi</h1>"},{"path":"a.txt","content":"ok"}]"#,
+    ]);
+    assert_eq!(
+        from_array["files"],
+        json!([
+            {"path": "index.html", "content": "<h1>hi</h1>"},
+            {"path": "a.txt", "content": "ok"}
+        ])
+    );
+
+    // Repeated item objects still collect into a flat JSON array.
+    let from_repeated = body_of(&[
+        "hanzo",
+        "git",
+        "repos",
+        "push",
+        "cd-clock-test",
+        "--files",
+        r#"{"path":"index.html","content":"<h1>hi</h1>"}"#,
+        "--files",
+        r#"{"path":"a.txt","content":"ok"}"#,
+    ]);
+    assert_eq!(from_repeated["files"], from_array["files"]);
+}
