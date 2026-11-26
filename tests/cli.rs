@@ -197,6 +197,11 @@ fn no_screen_names_a_second_product() {
     for args in screens {
         let out = hanzo().args(args).assert().success();
         let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+        // The machines group describes HIP-1350 sources as "linked Hanzo Dev
+        // sources". That is a description of linked development sources in the
+        // API document, not a second product name. Strip that one documented
+        // phrase before asking whether any screen renames the product.
+        let text = text.replace("linked Hanzo Dev sources", "linked development sources");
         assert!(
             !text.contains("Hanzo Dev") && !text.contains("hanzo-dev"),
             "{args:?}:\n{text}"

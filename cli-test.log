@@ -1,0 +1,1692 @@
+sh: strict verification and preservation of existing installs passed
+bash: strict verification and preservation of existing installs passed
+generate --check: current, moved and stale all ruled
+✔ adapter rejects missing model/port/overlay values without looping (349.608917ms)
+✔ adapter rejects an option in place of a required value (159.826125ms)
+✔ adapter preserves a valid model and explicit port (70.586083ms)
+﹣ Windows uses the system tar with a drive-letter, spaces, Unicode, and a hostile PATH tar (0.510333ms) # SKIP
+﹣ Windows succeeds with Git GNU tar first on PATH (0.058416ms) # SKIP
+✔ Windows rejects an absent SystemRoot (0.211875ms)
+✔ Windows rejects a missing system tar (11.164833ms)
+✔ Windows propagates an invalid system tar failure (10.929583ms)
+✔ replaces dangling native aliases and binary symlinks instead of writing through them (138.632917ms)
+✔ rejects an archive that extracts successfully but lacks the expected native binary (134.335458ms)
+✔ rejects directory, empty-file, and symlink placeholders instead of claiming a native binary was installed (413.016125ms)
+✔ a valid replacement keeps additional archive files and clears staging (140.345125ms)
+✔ a stale installed binary cannot mask a missing binary in a new release (137.908791ms)
+✔ a failed extraction removes the downloaded archive (127.252417ms)
+✔ an empty or malformed checksum file refuses installation rather than skipping verification (500.848ms)
+✔ an optional companion fails closed on an empty checksum response (123.467ms)
+✔ uppercase SHA-256 checksum digests verify successfully (134.421583ms)
+✔ a checksum mismatch stops before extraction (127.996791ms)
+﹣ Linux keeps using tar from PATH (0.032584ms) # SKIP
+✔ a non-executable PATH file does not satisfy a native companion (340.494ms)
+✔ a PATH directory does not satisfy a native companion (264.048792ms)
+✔ an executable regular file on PATH satisfies a native companion (230.897333ms)
+✔ launcher preserves native exit codes (156.199375ms)
+✔ launcher propagates native termination signals (176.971542ms)
+✔ launcher never starts the Node inspector for a native SIGUSR1 (221.365625ms)
+✔ launcher maps native SIGPIPE to standard 128+SIGPIPE exit status (279.374ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 3
+ℹ todo 0
+ℹ duration_ms 2140.546667
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 6.544s
+
+OK
+# The cache has a home of its own, named before HOME moves — the same move
+# the gate in hanzo.yml makes for CARGO_HOME and RUSTUP_HOME. The issuer
+# tests (`trusts`, the credential store) fetch the live discovery documents
+# and cache them through dirs::cache_dir; with XDG_CACHE_HOME unset that is
+# OME/.cache, so a test run wrote the runner's HOME and the gate refused
+# it (forge run #85 on the PR #72 merge: hanzo.ai, hanzo.id, lux.id). The
+# cache belongs in the build tree, never in a person's HOME.
+   Compiling hanzo-identity v0.1.0 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/identity)
+   Compiling hanzo-client v0.1.1 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/client)
+   Compiling hanzo-event v0.1.0 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/event)
+   Compiling hanzo-cli v8.5.1422 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.40s
+     Running unittests src/main.rs (target/debug/deps/hanzo-ee510827a25f997d)
+
+running 461 tests
+test broken_pipe_tests::a_closed_pipe_is_not_a_failure ... ok
+test commands::build::tests::the_checkpoint_installs_this_architecture_and_checks_its_digest ... ok
+test broken_pipe_tests::other_panics_stay_panics ... ok
+test commands::bot::tests::extracts_json_payload_past_banner_lines ... ok
+test commands::config::tests::scalar_types_are_natural ... ok
+test commands::config::tests::walk_reads_a_dotted_key ... ok
+test commands::daemon::tests::create_session_body_omits_blank_fields ... ok
+test commands::bot::tests::extracts_title_and_h1_from_rendered_dom ... ok
+test commands::build::tests::every_pin_is_a_sha256 ... ok
+test commands::dev::network_tests::the_hanzo_key_stays_with_the_issuer_that_minted_it ... ok
+test commands::config::tests::place_sets_and_creates_intermediate_tables ... ok
+test commands::daemon::tests::expect_ok_accepts_201_created_and_surfaces_error_body ... ok
+test commands::dev_server::tests::rewrites_non_upgrade_connection_to_close_and_identifies_api_paths ... ok
+test commands::dev::network_tests::the_token_helper_is_bound_to_the_sessions_network ... ok
+test commands::build::tests::a_bare_build_reads_the_dockerfile_in_its_context_and_exports_nothing ... ok
+test commands::build::tests::every_flag_reaches_buildctl ... ok
+test commands::build::tests::a_push_with_no_name_is_refused_before_anything_boots ... ok
+test commands::engine::tests::resolves_friendly_aliases_and_preserves_explicit_repos ... ok
+test commands::cloud_sessions::tests::handoffs_follow_the_new_session_and_surface_failures ... ok
+test commands::cloud_sessions::tests::errors_and_approvals_are_not_success ... ok
+test commands::host::tests::a_default_port_is_filled_in ... ok
+test commands::host::tests::loopback_is_recognised_by_every_spelling ... ok
+test commands::host::tests::classifies_unified_vs_legacy_chain_version_output ... ok
+test commands::host::tests::remote_origins_start_nothing ... ok
+test commands::k8s::tests::helm_defaults_to_hanzo_namespace_when_omitted ... ok
+test commands::cloud_sessions::tests::origins_are_normalized_without_credentials ... ok
+test commands::k8s::tests::logs_preserves_explicit_namespace_and_pod_or_resource_kind ... ok
+test commands::k8s::tests::logs_shorthand_expands_bare_service_into_hanzo_deployment ... ok
+test commands::link::dependencies::tests::install_advice_matches_platform_and_distribution ... ok
+test commands::link::dependencies::tests::minimal_linux_reports_missing_terminal_tools ... ok
+test commands::link::dependencies::tests::named_shell_does_not_require_multiplexer_tools ... ok
+test commands::doctor::tests::integrity_comparison_reads_bytes_not_filenames ... ok
+test commands::dev_server::tests::parses_hanzo_yml_build_section_and_hashes_output_deterministically ... ok
+test commands::engine::tests::finds_cached_snapshot_from_refs_main ... ok
+test commands::host::tests::start_failure_surfaces_legacy_chain_fix_and_log_tail ... ok
+test commands::link::network::tests::a_bare_service_is_the_orgs_and_a_dotted_one_is_the_fabrics ... ok
+test commands::host::tests::only_a_shared_install_is_retired ... ok
+test commands::link::network::tests::a_service_name_is_a_dns_label ... ok
+test commands::link::folders::tests::a_folder_is_sent_as_its_real_path ... ok
+test commands::link::network::tests::a_token_command_runs_without_a_shell_and_is_trimmed ... ok
+test commands::graph::tests::reads_synthetic_apple_pkg_sqlite_store ... ok
+test commands::link::folders::tests::a_grant_by_someone_not_the_owner_is_cloud_s_refusal ... ok
+test commands::host::tests::legacy_chain_binary_probe_rejects_fake_validator_script ... ok
+test commands::link::network::tests::targets_parse_as_host_port ... ok
+test commands::link::folders::tests::grant_posts_the_folder_to_the_machine ... ok
+test commands::link::folders::tests::revoke_names_the_folder_in_the_query ... ok
+test commands::link::tests::a_clean_exit_closes_the_session_and_withdraws_the_terminal ... ok
+test commands::link::tests::a_control_plane_that_refuses_the_close_does_not_fail_the_link ... ok
+test commands::link::tests::a_listener_is_read_off_the_kernels_socket_table ... ok
+test commands::link::tests::a_named_shell_is_never_given_the_url ... ok
+test commands::link::tests::asking_for_tmux_asks_for_the_default ... ok
+test commands::link::tests::named_shell_skips_tmux_check_and_falls_back_cleanly_without_ttyd ... ok
+test commands::link::tests::the_default_serves_a_shell_the_url_can_name ... ok
+test commands::link::tests::the_tunnel_carries_as_only_for_a_held_identity ... ok
+test commands::link::tests::the_wrapper_strips_a_name_down_to_something_safe ... ok
+test commands::link::tests::tunnels_are_read_off_the_process_table ... ok
+test commands::link::unit::tests::a_launchd_job_keeps_every_argument_whole_and_escaped ... ok
+test commands::link::unit::tests::a_system_unit_starts_with_the_machine ... ok
+test commands::link::unit::tests::a_user_unit_restarts_forever_and_starts_with_the_session ... ok
+test commands::link::unit::tests::exec_start_escapes_what_systemd_would_expand ... ok
+test commands::link::unit::tests::exec_start_keeps_the_token_command_one_argument ... ok
+test commands::link::unit::tests::one_id_names_the_unit_on_both_service_managers ... ok
+test commands::link::unit::tests::only_the_units_install_writes_are_listed_as_ours ... ok
+test commands::link::zt::tests::a_host_tunnel_signs_in_to_the_controller_by_token_command ... ok
+test commands::link::zt::tests::a_proxy_names_the_service_and_its_local_port ... ok
+test commands::link::zt::tests::a_service_is_hostable_only_where_the_page_grants_bind ... ok
+test commands::link::zt::tests::a_tarball_that_is_not_the_pinned_one_is_refused ... ok
+test commands::link::zt::tests::every_platform_zt_ships_has_a_pinned_digest ... ok
+test commands::link::zt::tests::the_platform_role_marks_an_identity_a_link_leaves_alone ... ok
+test commands::link::tests::a_failed_link_ends_as_an_error_and_still_reports_it ... ok
+test commands::man::tests::the_page_names_every_global_flag ... ok
+test commands::network::tests::an_override_never_moves_a_builtins_api_or_issuer ... ok
+test commands::network::tests::each_network_signs_in_at_the_issuer_its_api_trusts ... ok
+test commands::network::tests::the_bound_network_is_the_active_one ... ok
+test commands::product::membership_query_tests::exactly_one_question_is_asked ... ok
+test commands::product::tests::a_2xx_error_envelope_is_surfaced_not_swallowed ... ok
+test commands::product::tests::a_column_too_wide_is_left_out_and_the_narrow_ones_after_it_are_kept ... ok
+test commands::product::tests::a_data_body_on_a_read_is_a_named_error ... ok
+test commands::link::folders::tests::folders_lists_the_active_grants ... ok
+test commands::product::tests::a_failed_resource_is_rendered_not_refused ... ok
+test commands::product::tests::a_deep_nested_leaf_resolves_and_fills_in_order ... ok
+test commands::man::tests::the_page_names_every_command_and_only_real_ones ... ok
+test commands::product::tests::a_list_is_a_table_with_the_scalar_keys_as_columns ... ok
+test commands::product::tests::a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down ... ok
+test commands::product::tests::a_lone_body_property_survives_a_path_parameter_of_the_same_name ... ok
+test commands::product::tests::a_machine_key_is_the_variable_trimmed_and_nothing_when_blank ... ok
+test commands::product::tests::a_marked_address_param_keeps_its_slashes_and_an_unmarked_one_escapes_them ... ok
+test commands::product::tests::a_leaf_whose_name_also_heads_a_group_is_still_runnable ... ok
+test commands::product::tests::a_nested_object_is_dotted_flags_that_rebuild_the_object ... ok
+test commands::product::tests::a_query_param_becomes_a_typed_flag_in_the_url ... ok
+test commands::product::tests::a_reservation_must_name_a_command_that_exists ... ok
+test commands::link::network::tests::a_refused_publish_names_the_steward_rule ... ok
+test commands::product::tests::a_terminal_is_prompted_and_never_read_as_a_pipe ... ok
+test commands::product::tests::a_simple_leaf_resolves_and_fills ... ok
+test commands::product::tests::a_typed_int_flag_is_a_json_number_and_optionals_are_omitted ... ok
+test commands::product::tests::a_union_flag_sends_json_as_json_and_text_as_text ... ok
+test commands::product::tests::a_typed_write_assembles_a_json_body_from_flags ... ok
+test commands::link::network::tests::ensure_sends_the_roles_and_decodes_the_identity ... ok
+test commands::product::tests::an_operation_that_declares_a_request_id_is_given_one ... ok
+test commands::product::tests::an_array_property_is_a_repeatable_flag_and_lands_as_a_json_array ... ok
+test commands::product::tests::completions_create_posts_to_chat_completions ... ok
+test commands::product::tests::augment_never_clobbers_an_existing_command ... ok
+test commands::product::tests::every_command_says_what_it_does ... ok
+test commands::product::tests::a_graph_question_carries_both_times_to_the_wire ... ok
+test commands::product::tests::every_op_fills_to_a_path ... ok
+test commands::link::network::tests::joining_without_roles_sends_an_empty_body_and_no_org ... ok
+test commands::product::tests::every_capability_the_document_carries_is_a_command ... ok
+test commands::product::tests::generated_data_carries_no_host_url_or_auth ... ok
+test commands::product::tests::hand_written_command_names_are_not_verb_nouns ... ok
+test commands::product::tests::hand_written_help_names_no_outside_vendor ... ok
+test commands::product::tests::json_and_yaml_render_the_same_value ... ok
+test commands::product::tests::method_maps_from_the_op_string ... ok
+test commands::product::tests::exactly_one_agent_run_has_the_async_controls ... ok
+test commands::product::tests::agent_run_stays_sync_unless_asked_and_parses_the_wait_deadline ... ok
+test commands::product::tests::op_params_are_unique_and_not_reserved ... ok
+test commands::product::tests::query_pairs_are_appended_and_encoded ... ok
+test commands::product::tests::scalar_boolean_field_preserves_explicit_false_and_optional_omission ... ok
+test commands::product::tests::the_async_body_targets_the_same_agent_without_inventing_fields ... ok
+test commands::product::tests::no_two_ops_share_a_coordinate ... ok
+test commands::product::tests::the_async_handle_is_unwrapped_and_validated_before_it_is_followed ... ok
+test commands::product::tests::the_columns_that_fit_are_shown_and_the_first_always ... ok
+test commands::link::network::tests::publish_sends_the_service_and_returns_its_dns ... ok
+test commands::product::tests::the_one_array_an_object_carries_is_its_list_and_an_object_is_field_rows ... ok
+test commands::product::tests::the_org_scope_is_bound_from_owner_never_asked ... ok
+test commands::product::tests::the_org_scope_is_never_a_positional_or_flag ... ok
+test commands::product::tests::the_credential_of_a_connect_has_no_flag_to_carry_it ... ok
+test commands::product::tests::there_is_no_passthrough_or_raw_path_escape ... ok
+test commands::product::tests::two_dotted_keys_under_one_parent_build_one_object ... ok
+test commands::prompt::tests::embedded_prompt_matches_canonical_hanzo_rules ... ok
+test commands::prompt::tests::progressive_skill_discovery_parses_and_ranks_matches ... ok
+test commands::scan::tests::detects_provider_keys ... ok
+test commands::scan::tests::detects_structural_shapes ... ok
+test commands::scan::tests::high_entropy_only_when_named_a_secret ... ok
+test commands::scan::tests::ignores_ordinary_prose_and_short_tokens ... ok
+test commands::scan::tests::redaction_never_prints_the_whole_secret ... ok
+test commands::product::tests::the_man_page_names_exactly_what_the_parser_mounts ... ok
+test commands::product::tests::no_kms_verb_takes_an_org ... ok
+test commands::serve::tests::detects_web_spa_go_zip_and_static_projects ... ok
+test commands::serve::tests::rewrites_index_html_with_assets_and_hmr ... ok
+test commands::serve::tests::routes_proxy_paths_without_matching_spa_routes ... ok
+test commands::serve::tests::serves_spa_fallback_and_proxies_v1_to_upstream ... ok
+test commands::share::tests::a_failed_enable_says_why ... ok
+test commands::share::tests::a_published_share_names_the_person_it_is_for ... ok
+test commands::share::tests::a_refused_provision_says_cloud_s_reason ... ok
+test commands::share::tests::a_refused_sign_in_is_for_a_new_environment ... ok
+test commands::serve::tests::builds_spa_project_hermetically_with_zero_vite ... ok
+test commands::share::tests::extracts_share_token ... ok
+test commands::share::tests::forgetting_an_environment_clears_its_two_files_and_nothing_else ... ok
+test commands::share::tests::only_an_environment_on_our_controller_is_ours_to_make_again ... ok
+test commands::share::tests::resolves_targets ... ok
+test commands::shell::tests::profile_updates_preserve_user_content_and_are_idempotent ... ok
+test commands::product::tests::the_output_flag_is_on_every_generated_command ... ok
+test commands::shell::tests::supported_hooks_parse_and_do_nothing_in_noninteractive_shells ... ok
+test commands::sources::tests::detects_401_auth_failure_for_heartbeat_refresh ... ok
+test commands::sources::tests::heartbeat_signing_message_matches_cloud_wire_format ... ok
+test commands::sources::tests::keypair_persists_and_verifies_signed_heartbeat ... ok
+test commands::status::tests::a_cluster_reports_its_own_node_total ... ok
+test commands::status::tests::a_node_renders_only_what_the_host_reported ... ok
+test commands::status::tests::a_refusal_carries_the_status_and_the_servers_own_reason ... ok
+test commands::status::tests::an_empty_200_is_rows_and_a_missing_list_is_not ... ok
+test commands::sources::tests::concurrent_first_source_links_share_one_persisted_keypair ... ok
+test commands::status::tests::an_enveloped_payload_is_read_through_data ... ok
+test commands::status::tests::an_unavailable_surface_is_not_a_problem_and_not_a_zero ... ok
+test commands::status::tests::an_html_error_page_is_clipped_to_one_marked_line ... ok
+test commands::status::tests::an_unstated_verdict_is_unknown_and_never_healthy ... ok
+test commands::status::tests::attached_byo_cluster_is_healthy_and_partial_degraded_leads_attention ... ok
+test commands::status::tests::canonical_status_and_sandbox_list_routes_and_org_table ... ok
+test commands::status::tests::degraded_empty_clusters_is_unavailable_not_none_reported ... ok
+test commands::status::tests::drift_counts_only_the_healthy_but_stale ... ok
+test commands::status::tests::only_the_broken_lead_the_page_and_drift_is_not_broken ... ok
+test commands::term::tests::a_touch_device_gets_the_keys_it_has_no_hardware_for ... ok
+test commands::term::tests::only_the_workspace_chord_is_intercepted ... ok
+test commands::term::tests::the_face_travels_inside_the_page ... ok
+test commands::term::tests::nothing_is_fetched_from_anywhere ... ok
+test commands::term::tests::the_terminal_tells_its_parent_it_is_really_there ... ok
+test commands::up::compute::tests::history_takes_a_sibling_reading_once ... ok
+test commands::up::compute::tests::memory_mode_follows_dedicated_vram ... ok
+test commands::term::tests::the_page_has_no_holes_left_in_it ... ok
+test commands::up::compute::tests::this_machine_leads_and_replaces_its_own_target ... ok
+test commands::up::compute::tests::values_read_like_sparkdash ... ok
+test commands::up::savings::tests::a_gateways_answer_reads_into_the_page ... ok
+test commands::up::savings::tests::a_listening_gateway_is_found_and_a_silent_port_is_not ... ok
+test commands::up::savings::tests::a_range_is_counted_back_from_now ... ok
+test commands::up::compute::tests::renders_the_home_page ... ok
+test commands::serve::tests::cli_grammar_parses_serve_dev_build_and_preview ... ok
+test commands::up::savings::tests::the_cloud_fields_show_once_it_sends_them ... ok
+test commands::up::tests::a_node_is_ready_when_its_status_says_so ... ok
+test commands::up::tests::endpoints_surface_direct_cloud_url_when_hanzod_is_unavailable ... ok
+test commands::up::tests::install_cmd_for_enforces_strict_registry ... ok
+test commands::up::tests::no_manifest_ever_contains_the_key ... ok
+test commands::up::tests::select_cloud_image_prefers_hanzo_oci_and_enforces_strict_registry ... ok
+test commands::up::tests::static_ts_and_json_app_manifest_parse_without_executing_ts ... ok
+test commands::up::savings::tests::measured_and_estimated_are_shown_apart ... ok
+test commands::up::tests::stopping_what_is_already_gone_succeeds ... ok
+test commands::up::tests::the_at_rest_key_is_outside_the_measurement ... ok
+test commands::up::tests::the_checkpoint_installs_k3s_for_this_architecture ... ok
+test commands::up::tests::the_cluster_keeps_its_state_under_our_own_name ... ok
+test commands::up::tests::the_ground_carries_no_secret ... ok
+test commands::up::tests::the_key_is_fresh_every_time ... ok
+test commands::up::tests::the_kubeconfig_is_filed_owner_only ... ok
+test commands::up::tests::the_kubeconfig_is_pointed_at_the_forwarded_port ... ok
+test commands::up::savings::tests::what_did_not_answer_is_unavailable_never_zero ... ok
+test commands::up::tests::the_old_up_spelling_splits_into_service_and_tail ... ok
+test commands::up::tests::the_measurement_is_filed_and_reads_back ... ok
+test commands::up::tests::the_state_file_carries_the_phase ... ok
+test commands::up::tests::the_vm_is_booted_with_the_stdio_wire_and_the_forwards ... ok
+test commands::up::tests::the_workload_deploys_the_pinned_image_on_the_forwarded_port ... ok
+test commands::up::tests::the_workload_register_covers_the_image_and_the_manifest ... ok
+test commands::up::tests::workload_for_injects_staged_iam_and_ai_env_and_changes_measurement ... ok
+test commands::link::network::tests::a_caller_acts_in_its_own_org_unless_it_selects_one ... ok
+test commands::link::network::tests::services_and_identities_decode_the_org_lists ... ok
+test commands::up::tests::stopping_a_group_leader_takes_its_children ... ok
+test commands::up::tests::the_pidfile_follows_a_real_process ... ok
+test commands::share::tests::a_reset_disables_through_the_helper_and_falls_back_to_the_files ... ok
+test commands::link::network::tests::unpublish_deletes_by_id_and_a_refusal_is_an_error ... ok
+test commands::product::tests::every_operation_of_an_absorbed_product_resolves_to_its_own_route ... ok
+test commands::product::tests::a_stdin_secret_can_never_reach_argv ... ok
+test commands::up::tui::tests::test_all_agents_running ... ok
+test commands::up::tui::tests::test_app_initialization ... ok
+test commands::up::tui::tests::test_create_and_remove_sandbox ... ok
+test commands::up::tui::tests::test_dashboard_view_switching ... ok
+test commands::up::tui::tests::test_model_and_container_actions ... ok
+test commands::up::tui::tests::test_dump_tui_for_screenshot ... ok
+test commands::up::tui::tests::test_navigation_across_views ... ok
+test commands::upgrade::tests::a_binary_uv_placed_is_a_link_into_its_tool_directory ... ok
+test commands::upgrade::tests::a_named_tool_is_sorted_to_the_way_it_upgrades ... ok
+test commands::upgrade::tests::a_release_asset_is_checked_unpacked_and_swapped_in_beside_the_old_one ... ok
+test commands::upgrade::tests::an_unknown_name_is_refused_with_the_list ... ok
+test commands::upgrade::tests::every_agent_can_be_named ... ok
+test commands::upgrade::tests::nothing_named_is_everything_hanzo_ships_and_the_agents_installed ... ok
+test commands::upgrade::tests::prefixed_product_names_upgrade_their_native_binaries ... ok
+test commands::upgrade::tests::the_engine_is_upgraded_with_hanzo_and_is_not_a_name ... ok
+test commands::upgrade::tests::the_tool_table_is_read_out_of_hanzo_sh ... ok
+test commands::version::tests::a_different_file_holding_our_name_is_reported_and_our_own_is_not ... ok
+test commands::version::tests::a_non_version_is_not_mistaken_for_one ... ok
+test commands::version::tests::a_v_prefix_is_tolerated ... ok
+test commands::version::tests::a_version_is_read_from_the_binary ... ok
+test commands::version::tests::which_finds_the_first_on_path ... ok
+test commands::vm::tests::a_vm_that_reports_no_measurement_is_refused ... ok
+test commands::up::tui::tests::test_network_metrics_calculation ... ok
+test commands::vm::tests::extract_installs_the_hanzo_vm_entry ... ok
+test commands::vm::tests::extract_refuses_a_tarball_without_the_binary ... ok
+test commands::vm::tests::linux_x86_64_preflight_distinguishes_kvm_and_cloud_hypervisor ... ok
+test commands::vm::tests::platform_strings_match_the_release_assets ... ok
+test commands::vm::tests::sha256_sidecar_accepts_the_true_digest ... ok
+test commands::vm::tests::sha256_sidecar_refuses_a_tampered_download ... ok
+test commands::vm::tests::the_checkpoint_listing_is_read_by_name ... ok
+test commands::vm::tests::the_rpc_client_speaks_the_stdio_protocol ... ok
+test commands::vm::tests::version_ordering_drives_the_update ... ok
+test commands::vm::tests::vm_virtualization_preflight_gating_skips_info_subcommands ... ok
+test commands::wallet::tests::mnemonic_derives_known_evm_address ... ok
+test commands::wallet::tests::privkey_derives_known_evm_address ... ok
+test config::tests::a_config_with_no_auth_table_loads_signed_out ... ok
+test config::tests::a_failed_update_leaves_the_config_untouched ... ok
+test config::tests::a_network_without_an_issuer_still_parses ... ok
+test config::tests::a_sparse_auth_table_loads ... ok
+test config::tests::a_write_is_atomic_and_never_leaves_a_torn_config ... ok
+test config::tests::absent_code_table_links_by_default ... ok
+test config::tests::an_update_keeps_the_invocations_org_and_never_writes_it ... ok
+test config::tests::auth_index_roundtrips ... ok
+test config::tests::code_link_defaults_on ... ok
+test config::tests::concurrent_writers_do_not_lose_each_others_updates ... ok
+test config::tests::config_with_only_code_section_loads ... ok
+test config::tests::empty_code_table_links_by_default ... ok
+test config::tests::explicit_link_false_persists_the_opt_out ... ok
+test config::tests::the_bound_network_survives_a_write_and_is_never_written ... ok
+test config::tests::update_applies_to_current_disk_state_not_a_stale_snapshot ... ok
+test iam::device::tests::classify_covers_every_branch ... ok
+test iam::device::tests::device_auth_parses_response ... ok
+test iam::device::tests::device_auth_surfaces_error ... ok
+test iam::device::tests::done_maps_into_token_set_with_default_type ... ok
+test iam::device::tests::poll_deadline_expires ... ok
+test iam::device::tests::poll_denied_terminates ... ok
+test commands::vm::tests::dropping_the_conversation_stops_the_vm ... ok
+test iam::login::tests::a_held_identity_is_hinted_by_its_subject ... ok
+test iam::login::tests::an_account_in_another_org_names_that_orgs_client ... ok
+test iam::login::tests::nothing_held_asks_nothing ... ok
+test iam::login::tests::only_a_chosen_account_replaces_the_active_identity ... ok
+test iam::login::tests::the_account_asked_for_is_recognised_in_the_token ... ok
+test iam::login::tests::the_device_grant_runs_only_headless_and_only_where_the_client_permits_it ... ok
+test iam::login::tests::the_picker_lists_held_identities_then_another_account ... ok
+test iam::login::tests::the_report_says_which_identity_is_active ... ok
+test iam::oauth::tests::a_failure_page_shows_the_reason_as_text ... ok
+test iam::oauth::tests::a_paste_decodes_and_survives_copy_noise ... ok
+test iam::oauth::tests::a_paste_is_read_from_every_shape_a_person_can_copy ... ok
+test iam::oauth::tests::a_paste_leg_with_no_terminal_refuses_at_once ... ok
+test iam::oauth::tests::a_pasted_command_or_address_is_not_a_code ... ok
+test iam::oauth::tests::a_refusal_says_the_issuers_reason ... ok
+test iam::oauth::tests::a_token_outside_the_named_org_is_refused ... ok
+test iam::device::tests::poll_pending_then_issued ... ok
+test iam::oauth::tests::finish_answers_the_tab_and_its_retry_then_closes_the_port ... ok
+test iam::oauth::tests::loopback_captures_code_then_shows_the_signed_in_page ... ok
+test iam::oauth::tests::loopback_refuses_a_state_that_is_not_ours ... ok
+test iam::oauth::tests::parse_callback_decodes_code_and_state ... ok
+test iam::oauth::tests::parse_callback_surfaces_provider_error ... ok
+test iam::oauth::tests::server_url_known_and_unknown ... ok
+test iam::oauth::tests::signed_in_page_names_the_account_and_the_one_the_terminal_uses ... ok
+test iam::oauth::tests::the_client_is_the_orgs_own_cli ... ok
+test iam::oauth::tests::authorize_url_is_hip0111_pkce_s256 ... ok
+test iam::oauth::tests::the_sign_out_loopback_waits_for_its_own_state ... ok
+test iam::oauth::tests::the_end_session_url_names_the_client_and_its_loopback ... ok
+test iam::oauth::tests::wire_a_closed_token_endpoint_is_a_failure ... ok
+test iam::oauth::tests::wire_a_paste_does_not_hold_the_runtime_when_nothing_is_typed ... ok
+test commands::up::tui::tests::test_pane_and_tab_switching ... ok
+test iam::oauth::tests::wire_a_refused_paste_leaves_the_sign_in_waiting ... ok
+test iam::oauth::tests::wire_after_a_refused_paste_the_browser_still_lands ... ok
+test iam::oauth::tests::wire_a_client_granted_the_device_code_signs_in_by_it_as_itself ... ok
+test iam::oauth::tests::wire_a_refused_refresh_is_spent_and_an_unanswered_one_is_not ... ok
+test iam::oauth::tests::wire_an_org_without_its_own_cli_is_refused_before_sign_in ... ok
+test iam::oauth::tests::wire_as_admin_signs_in_by_paste_and_renews_through_admin_cli ... ok
+test commands::up::tui::tests::test_sandbox_navigation ... ok
+test commands::up::tui::tests::test_sandboxes_arrows_switch_views_and_tui_uses_play_triangle ... ok
+test iam::onboarding::tests::a_mismatched_provider_key_is_refused_and_nothing_is_filed ... ok
+test iam::onboarding::tests::a_native_agent_login_is_not_fresh ... ok
+test iam::onboarding::tests::a_pristine_config_is_fresh ... ok
+test iam::onboarding::tests::a_signed_in_identity_is_not_fresh ... ok
+test iam::onboarding::tests::a_stored_provider_is_not_fresh ... ok
+test iam::onboarding::tests::read_identity_token_refuses_an_argv_literal ... ok
+test iam::onboarding::tests::refuse_provider_mismatch_blocks_only_a_known_cross_vendor_key ... ok
+test iam::paths::tests::a_network_with_its_own_issuer_is_a_realm_of_its_own ... ok
+test iam::paths::tests::an_issuer_the_realm_cannot_name_is_refused ... ok
+test iam::paths::tests::brand_origins_are_canonical ... ok
+test iam::paths::tests::endpoints_are_hip0111_exact ... ok
+test commands::up::tui::tests::test_savings_page_is_view_six_and_t_steps_its_range ... ok
+test iam::paths::tests::no_brand_signs_in_against_an_api_host ... ok
+test iam::paths::tests::only_a_loopback_address_signs_in_over_http ... ok
+test iam::paths::tests::trailing_slashes_are_trimmed ... ok
+test iam::pkce::tests::challenge_matches_verifier ... ok
+test iam::pkce::tests::rfc7636_appendix_b_known_answer ... ok
+test iam::pkce::tests::state_is_high_entropy_and_unique ... ok
+test iam::pkce::tests::verifier_is_43_chars_url_safe ... ok
+test iam::provider::tests::a_provider_key_never_collides_with_an_identity_or_wallet_slot ... ok
+test iam::provider::tests::check_key_rejects_unclean_secrets ... ok
+test iam::provider::tests::detect_maps_prefixes_to_providers ... ok
+test iam::provider::tests::key_roundtrips_through_the_vault_seam ... ok
+test iam::provider::tests::parse_accepts_names_and_aliases ... ok
+test iam::provider::tests::slug_and_slot_are_stable_and_disjoint ... ok
+test iam::secret::tests::read_secret_refuses_empty ... ok
+test iam::secret::tests::read_secret_strips_exactly_one_trailing_newline ... ok
+test iam::secret::tests::read_trimmed_trims_and_rejects_empty ... ok
+test iam::secret::tests::secret_source_never_takes_a_secret_from_argv ... ok
+test iam::store::tests::a_bare_owner_that_is_ambiguous_is_refused_and_lists ... ok
+test iam::store::tests::a_founder_moved_into_their_org_is_followed ... ok
+test commands::up::tui::tests::test_toggle_network_block ... ok
+test commands::up::tui::tests::test_toggle_start_stop ... ok
+test iam::store::tests::a_migration_in_flight_cannot_revert_a_concurrent_explicit_login ... ok
+test iam::store::tests::a_realm_is_only_the_active_networks ... ok
+test iam::store::tests::a_refresh_that_comes_back_as_someone_else_is_refused_not_filed ... ok
+test iam::store::tests::a_refreshed_credential_replaces_the_one_it_was_read_from ... ok
+test iam::store::tests::a_missing_credential_never_falls_back_to_another_identity ... ok
+test iam::oauth::tests::wire_refresh_and_revoke_present_the_credentials_own_client ... ok
+test iam::store::tests::a_token_cannot_be_filed_under_another_principals_slot ... ok
+test iam::store::tests::a_token_with_no_readable_expiry_is_treated_as_live ... ok
+test iam::store::tests::a_token_without_claims_is_refused ... ok
+test iam::store::tests::a_tampered_index_row_cannot_relabel_a_credential ... ok
+test iam::oauth::tests::wire_exchange_refresh_and_revoke_use_the_token_endpoint ... ok
+test iam::store::tests::a_moved_identity_keeps_its_orgs_choice ... ok
+test iam::store::tests::an_unidentifiable_legacy_entry_fails_closed_and_login_clears_it ... ok
+test iam::store::tests::as_an_org_speaks_as_its_identity_without_switching ... ok
+test iam::oauth::tests::wire_the_exchange_runs_as_the_orgs_client_and_checks_the_owner ... ok
+test iam::store::tests::as_an_org_with_no_active_identity_sends_no_token ... ok
+test iam::store::tests::as_owner_slash_name_speaks_as_that_identity_exactly ... ok
+test iam::store::tests::as_an_org_you_hold_no_identity_in_is_refused_not_substituted ... ok
+test iam::store::tests::commands_refuse_an_unknown_brand_before_touching_the_keychain ... ok
+test iam::store::tests::expiry_comes_from_the_token_itself_and_is_acted_on_early ... ok
+test iam::store::tests::a_sign_in_is_its_orgs_active_identity ... ok
+test iam::store::tests::bare_switch_with_more_than_two_lists_and_refuses ... ok
+test iam::store::tests::bare_switch_toggles_between_exactly_two ... ok
+test iam::store::tests::legacy_entry_migrates_once_and_the_old_key_is_gone ... ok
+test iam::store::tests::filing_unasked_keeps_the_active_identity ... ok
+test iam::store::tests::hanzo_files_what_either_of_its_issuers_signed ... ok
+test iam::store::tests::every_consumer_follows_the_active_identity ... ok
+test iam::store::tests::logout_all_is_scoped_to_one_brand ... ok
+test iam::store::tests::logout_all_removes_every_identity_and_the_pointer ... ok
+test iam::store::tests::migration_does_not_touch_the_keychain_under_the_lock ... ok
+test iam::store::tests::logout_one_identity_leaves_the_other_intact_and_active ... ok
+test iam::store::tests::logout_of_the_active_identity_does_not_slide_onto_the_survivor ... ok
+test iam::store::tests::no_consumer_bypasses_the_active_identity_seam ... ok
+test iam::store::tests::migration_never_steals_an_active_pointer ... ok
+test iam::store::tests::logout_clears_only_its_orgs_choice ... ok
+test iam::store::tests::nothing_is_signed_in_by_default ... ok
+test iam::store::tests::only_the_same_person_outside_superadmin_is_followed ... ok
+test iam::store::tests::devnet_refuses_a_credential_its_issuer_did_not_sign ... ok
+test iam::store::tests::moving_an_inactive_identity_leaves_the_active_one_alone ... ok
+test iam::store::tests::signing_in_again_names_the_identitys_own_org ... ok
+test iam::store::tests::no_issuer_no_credential_and_no_other_brand_on_devnet ... ok
+test iam::paths::tests::hanzo_trusts_its_two_issuers_and_nobody_else ... ok
+test iam::store::tests::resolving_a_credential_never_moves_the_active_pointer ... ok
+test iam::store::tests::switch_flips_the_active_identity_and_therefore_the_billing_org ... ok
+test iam::store::tests::switch_resolves_a_bare_owner_when_unambiguous ... ok
+test iam::store::tests::the_credential_from_an_hour_old_login_is_already_spent ... ok
+test iam::store::tests::relogin_as_the_same_identity_updates_in_place ... ok
+test iam::store::tests::there_is_one_accessor_for_the_active_credential_and_it_is_async ... ok
+test iam::store::tests::switching_onto_an_indexed_but_unheld_identity_fails_closed ... ok
+test iam::store::tests::no_keychain_access_happens_while_the_config_lock_is_held ... ok
+test iam::store::tests::the_config_index_never_holds_token_material ... ok
+test iam::store::tests::the_list_as_json_names_every_identity_and_marks_the_default ... ok
+test iam::store::tests::switching_to_an_unknown_identity_is_refused_and_changes_nothing ... ok
+test iam::store::tests::token_for_a_mismatched_slot_fails_closed ... ok
+test iam::store::tests::token_for_an_unindexed_identity_is_none ... ok
+test iam::oauth::tests::wire_only_a_refresh_that_never_arrived_is_sent_again ... ok
+test image::tests::a_challenge_names_its_realm_and_service ... ok
+test image::tests::a_digest_reference_is_already_pinned ... ok
+test image::tests::a_loopback_registry_is_plain_http ... ok
+test image::tests::a_pinned_reference_never_reaches_the_registry ... ok
+test image::tests::a_reference_splits_into_registry_repository_and_version ... ok
+test image::tests::an_index_is_selected_by_platform ... ok
+test image::tests::a_lone_manifest_is_checked_against_its_config ... ok
+test image::tests::an_index_reports_what_it_does_have ... ok
+test image::tests::an_index_without_this_architecture_is_refused ... ok
+test image::tests::an_index_pins_to_this_architecture_through_the_token_dance ... ok
+test iam::store::tests::token_for_a_missing_credential_is_none_never_a_fallback ... ok
+test image::tests::an_unnamed_registry_is_refused ... ok
+test image::tests::docker_config_parses_auths_helpers_and_normalized_hosts ... ok
+test image::tests::the_architecture_is_the_one_a_registry_names ... ok
+test image::tests::forgejo_anonymous_token_404_retries_with_authenticated_token ... ok
+test image::tests::private_realm_refusing_anonymous_token_retries_with_basic_credential ... ok
+test iam::store::tests::token_for_refuses_an_unknown_brand ... ok
+test iam::store::tests::two_identities_coexist_and_the_second_login_does_not_clobber_the_first ... ok
+test tests::a_global_flag_still_reaches_an_absorbed_subcommand ... ok
+test tests::auth_switch_list_json_and_token_as_parse ... ok
+test tests::a_lone_near_miss_names_the_command_and_a_task_still_runs ... ok
+test tests::auth_owns_the_identity_verbs ... ok
+test tests::a_generated_product_resolves_and_a_local_command_does_not ... ok
+test tests::bare_hanzo_has_no_subcommand ... ok
+test tests::bare_hanzo_carries_top_level_code_flags ... ok
+test tests::chain_runs_the_hanzod_node ... ok
+test iam::store::tests::token_for_resolves_each_held_identitys_own_token ... ok
+test tests::channels_and_connect_parse_cleanly ... ok
+test tests::build_is_a_command_not_a_task ... ok
+test tests::contradictory_backend_spellings_are_refused ... ok
+test tests::first_word_finds_the_subcommand_past_the_globals ... ok
+test tests::help_flag_is_preserved ... ok
+test tests::dev_takes_the_tool_as_a_flag ... ok
+test tests::link_speaks_the_network_from_this_machine ... ok
+test tests::net_is_gone ... ok
+test tests::old_top_level_verbs_are_removed ... ok
+test tests::linked_ai_accounts_live_under_auth ... ok
+test tests::resource_nouns_parse ... ok
+test tests::the_duplicate_agent_spelling_is_gone_and_desktop_survives ... ok
+test tests::dev_serve_local_bot_and_sandbox_computer_parse_while_bot_absorbs_cloud_ops ... ok
+test tests::retired_launch_spellings_name_hanzo_dev ... ok
+test tests::vm_is_a_verbatim_passthrough ... ok
+test zap::tests::a_truncated_frame_is_an_error_not_a_panic ... ok
+test zap::tests::a_wrong_magic_is_refused ... ok
+test zap::tests::request_get_bare_is_byte_identical_to_go ... ok
+test zap::tests::request_get_one_header_is_byte_identical_to_go ... ok
+test zap::tests::request_get_two_headers_is_byte_identical_to_go ... ok
+test zap::tests::request_post_body_is_byte_identical_to_go ... ok
+test zap::tests::response_resp_200_json_decodes_from_go ... ok
+test zap::tests::response_resp_204_empty_decodes_from_go ... ok
+test zap::tests::response_resp_403_json_decodes_from_go ... ok
+test tests::every_entry_spelling_resolves_to_one_session ... ok
+test iam::store::tests::use_moves_one_orgs_choice_and_no_other ... ok
+test tests::a_leading_global_leaves_the_command_a_command ... ok
+test tests::up_boots_k3s_and_the_old_service_spelling_still_forwards ... ok
+test iam::store::tests::identities_never_cross_networks ... ok
+test tests::code_is_the_index_and_dev_is_the_session ... ok
+test tests::the_merged_command_tree_is_valid ... ok
+test commands::up::tui::tests::test_refresh_all ... ok
+test commands::product::tests::every_coordinate_parses_and_dispatches_to_its_own_route ... ok
+
+test result: ok. 461 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.92s
+
+     Running tests/auth.rs (target/debug/deps/auth-854f05f67966790e)
+
+running 6 tests
+test an_account_never_rides_a_handed_token ... ok
+test logout_without_a_browser_prints_the_end_session_link ... ok
+test the_listing_names_each_identity_by_owner_name_and_address ... ok
+test as_an_org_signs_out_and_hands_out_only_its_own_identity ... ok
+test as_an_org_files_its_identity_beside_the_default_and_speaks_as_it ... ok
+test each_org_keeps_its_own_active_identity ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.23s
+
+     Running tests/build.rs (target/debug/deps/build-041e69b8e891aea3)
+
+running 1 test
+test a_dockerfile_builds_in_the_vm_and_comes_back_as_an_oci_archive ... ignored, boots a hanzo-vm microVM: cargo test --test build -- --ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-539a174089607e2a)
+
+running 26 tests
+test live_login_whoami_usage_with_env_token ... ok
+test help_lists_the_resource_nouns ... ok
+test agent_run_offers_an_async_path_without_changing_the_default ... ok
+test login_refuses_a_literal_token_on_argv ... ok
+test every_version_spelling_prints_the_one_line ... ok
+test login_rejects_a_garbage_token_from_stdin ... ok
+test graph_asks_at_both_times ... ok
+test network_add_sovereign_roundtrip ... ok
+test no_screen_names_a_second_product ... FAILED
+test one_command_ships_under_one_name ... ok
+test auth_show_signed_out_refuses_with_login_hint ... ok
+test status_is_a_command_not_a_coding_session ... ok
+test network_list_shows_builtins_with_mainnet_active ... ok
+test pull_is_a_command_and_engine_lists_cached_models ... ok
+test version_is_the_cargo_version ... ok
+test network_use_unknown_fails_with_hint ... ok
+test status_signed_out_refuses_and_never_shows_an_empty_fleet ... ok
+test network_use_persists_across_invocations ... ok
+test wallet_list_empty_state ... ok
+test config_profile_is_what_gen_reads ... ok
+test vm_passes_through_to_a_resolved_binary ... ok
+test the_retired_launchers_name_hanzo_dev ... ok
+test hanzo_files_a_credential_from_hanzo_ai_and_hanzo_id_and_refuses_a_foreign_issuer ... ok
+test network_sandboxes_name_their_own_api ... ok
+test a_bare_hanzo_starts_the_coding_agent ... ok
+test identities_never_cross_networks ... ok
+
+failures:
+
+---- no_screen_names_a_second_product stdout ----
+
+thread 'no_screen_names_a_second_product' (15614898) panicked at tests/cli.rs:200:9:
+["--help"]:
+NAME
+    hanzo - manage Hanzo AI cloud resources and developer workflow
+
+SYNOPSIS
+    hanzo GROUP | COMMAND [FLAGS] [--config=FILE] [--verbose] [--help]
+    hanzo [FLAGS] [TASK] [-- PASSTHROUGH...]
+
+DESCRIPTION
+    The hanzo CLI manages authentication, billing, and every product of the
+    Hanzo AI cloud. Each GROUP below is one product; its subcommands are the
+    product's operations, generated from the same contract the API, SDKs and
+    MCP tools serve.
+
+    `hanzo` on its own starts an AI coding session, and `hanzo "fix the
+    failing test"` starts one on that task (`hanzo dev` is the same). Sign
+    in with `hanzo auth login`; see your money with `hanzo billing balance`
+    and `hanzo usage`.
+
+    `hanzo console` (or `hanzo dashboard`) launches the interactive fleet
+    operations console over agent sandboxes, compute nodes, and local model mesh.
+    `hanzo sandbox` (or `sbx`) manages isolated agent workspaces and environments.
+    `hanzo monitor` (or `hanzo top`) inspects real-time cluster GPU inference
+    telemetry, token throughput, KV cache usage, and speculative MTP heads.
+    `hanzo status` shows cloud health and local inference cluster status.
+
+    `hanzo --cloud "task"` runs in a cloud sandbox; `--watch` follows it.
+    `hanzo --cloud` lists runs; `--cloud --resume ID --watch` follows one.
+    `hanzo --teleport ID` fetches its branch into a clean checkout.
+    `--metered` selects Hanzo models for a local session.
+
+GLOBAL FLAGS
+     --config=FILE
+        Use a custom CLI config file for this invocation.
+
+     --as=ORG
+        Act as this org, as your identity in it when you hold one.
+
+     --verbose, -v
+        Increase logging verbosity (repeat for more).
+
+     --help
+        Display this page, or a subcommand's detailed help.
+
+GROUPS
+    GROUP is one of the following:
+
+     3d
+       `3d` cloud operations.
+
+     account
+       Your own account: API keys you mint and revoke, and org onboarding.
+
+     ad
+       Your paid ad campaigns, launched and paused from one place.
+
+     affiliate
+       A partner program that pays commission on what your referrals spend.
+
+     agent
+       Autonomous agents for your org: define them, run them, keep every run.
+
+     ai
+       Hanzo AI — the model API on /v1 (/v1/chat/completions, /v1/messages,
+       /v1/models and the rest of…
+
+     allowance
+       How much a plan lets you do without paying, and how much of it you
+       have left in the window that…
+
+     analytics
+       Implements the canonical /v1/analytics/* API, metric catalog,
+       automatic query planner, IAM tenant…
+
+     ask
+       A plain-language question about your business, answered with real
+       numbers.
+
+     audio
+       `audio` cloud operations.
+
+     audit
+       Your org's tamper-evident audit trail: every security-relevant event,
+       hash-chained and readable.
+
+     auth
+       Manage identities and credentials.
+
+     author
+       A royalty for open-source work: your repo runs, you get paid.
+
+     authz
+       The access decision behind an org-scoped call: who may do what, where,
+       answered allow or deny.
+
+     auto
+       Workflows that run themselves, on a schedule or a webhook.
+
+     base
+       Managed Hanzo Base: a hosted backend for your app — collections,
+       records, access rules and sign-in.
+
+     benchmark
+       One honest score for any model, on the tests everyone quotes.
+
+     billing
+       Your org's balance, what it has spent, and the cards it pays with.
+
+     blueprint
+       What a template costs to run, worked out before you deploy.
+
+     bot
+       Run a local Hanzo Bot gateway or embedded agent wired to local LLMs,
+       or manage cloud `/v1/bot`.
+
+     campaign
+       One go-to-market push across paid, organic and email at once.
+
+     capabilities
+       `capabilities` cloud operations.
+
+     captable
+       Your cap table: stakeholders, share classes, grants, SAFEs, rounds,
+       and who owns what.
+
+     catalog
+       One place to browse every project, app and site built here.
+
+     chain
+       Opt in to the chain (`hanzo-chain`, a child of hanzod), or out of it.
+
+     channel
+       `channel` cloud operations.
+
+     channels
+       List and manage connected social & messaging channels (`/v1/channel`).
+
+     chat
+       `chat` cloud operations.
+
+     ci
+       Mounts the CI dashboard as a capability of this binary.
+
+     cloudflare
+       Your Cloudflare account, managed from Hanzo: zones, Pages, Workers,
+       Workers AI, R2, KV, D1 and AI…
+
+     commerce
+       Selling: checkout, subscriptions, invoices, spend alerts, payment
+       webhooks and the storefront…
+
+     company
+       Incorporation end to end: pick a structure, add founders, pay, file,
+       and e-sign.
+
+     completions
+       `completions` cloud operations.
+
+     compliance
+       Your KYC/KYB onboarding, accreditation records, and the evidence trail
+       behind them.
+
+     compute
+       The compute you rent from Hanzo: machines, GPUs and clusters —
+       launch one, resize it, tear it down.
+
+     config
+       Manage local CLI settings.
+
+     connection
+       `connection` cloud operations.
+
+     content
+       Marketing content from draft to published, on every channel.
+
+     crawl
+       Any web page turned into clean markdown a model can read.
+
+     cyber
+       Mounts Hanzo Cyber's native cloud control plane at /v1/cyber/*.
+
+     daemon
+       Talk directly to the local Rust `hanzod` daemon (same backend Hanzo
+       Desktop uses for Dev).
+
+     dataroom
+       A secure document room you share by link and watch page by page.
+
+     dataset
+       The per-org dataset plane of /v1/risk: a dataset is a VERSIONED,
+       IMMUTABLE snapshot of one tenant's…
+
+     decisions
+       `decisions` cloud operations.
+
+     deploy
+       Hanzo CD: see what each app is running, sync it, and roll back a bad
+       release.
+
+     destination
+       Your events forwarded to the ad and analytics tools you use.
+
+     dns
+       Your DNS records: the zones and records behind every name you point at
+       Hanzo.
+
+     domain
+       Hanzo Domains: search a name, see the price, buy it from your prepaid
+       wallet.
+
+     email
+       The org's commercial mail: one message sent through the org's own SES
+       or SendGrid account (POST…
+
+     embeddings
+       `embeddings` cloud operations.
+
+     engine
+       Run AI engines on this machine (`engine serve <model>`).
+
+     entitlement
+       What your org may run: what the plan grants, and which of those
+       products are switched on.
+
+     environment
+       What a codebase is before its agent starts: the commands that install
+       it, the command that starts…
+
+     esign
+       A document out for signature, signed and filed with an audit trail.
+
+     eval
+       Scoring a model on your own data, with a judge you choose.
+
+     event
+       Product analytics: send an event, read back who did what.
+
+     exec
+       The code interpreter: run a snippet in a sandbox, and move files in
+       and out of the session that…
+
+     experiment
+       A/B testing anything: a flag, an ad, a subject line, a model.
+
+     explorer
+       Chain data: your block indexers and how far each has caught up, plus
+       the on-chain price feeds.
+
+     finance
+       Double-entry finance and accounting: chart of accounts, ledger, bank
+       reconciliation, and the…
+
+     flag
+       Feature flags: ship it dark, then turn it on for who you pick.
+
+     flow
+       Hanzo Flow: build an agent workflow on a visual canvas, run it, and
+       read every run.
+
+     foley
+       `foley` cloud operations.
+
+     form
+       Mounts forms (github.com/hanzoai/form) at /v1/form, the way apps/iam
+       mounts hanzoai/iam: the module…
+
+     frame
+       `frame` cloud operations.
+
+     framework
+       Document types you define: describe a record once, then create, list,
+       submit and cancel documents…
+
+     function
+       Your serverless code: publish it, call it over HTTP, watch every run
+       and what it cost.
+
+     gateway
+       Live control of the policy your API applies to every incoming request:
+       CORS, rate limits, cache TTL…
+
+     git
+       Git hosting for your org: create repos, clone, push, and see what they
+       cost.
+
+     graph
+       Personal & organization knowledge graph — local Apple PKG (`local`,
+       `sync`) and cloud `/v1/graph`.
+
+     guide
+       The AI that builds an agentic company with you, one measured step at a
+       time.
+
+     host
+       The local cloud host — every cloud command, served from a checkout.
+
+     iam
+       Hanzo's identity provider: users, organizations, applications, and the
+       OIDC/OAuth2 endpoints every…
+
+     images
+       `images` cloud operations.
+
+     index
+       Fast full-text search over your own data, typos forgiven.
+
+     ingress
+       Your edge: automatic TLS certificates and hostname routing to any
+       backend, changed live.
+
+     kms
+       Secret custody: your org's secrets sealed at rest, plus threshold
+       signing.
+
+     knowledge
+       Your team's wiki and your agents' memory, searchable by meaning.
+
+     kv
+       Your key-value store: buckets of versioned values your apps read and
+       write by key.
+
+     label
+       The ground-truth plane: what actually turned out to be fraud, who said
+       so, and when they could…
+
+     leaderboard
+       The ranking of who uses AI most, in your org and globally.
+
+     legal
+       The paperwork your company needs, drafted, signed and filed.
+
+     library
+       The Library: everything a person made, in one place.
+
+     licensing
+       What an org has bought and may run: signed licenses to issue, verify
+       and revoke, and the releases…
+
+     link
+       Link this machine to Hanzo cloud: on the org's network over Hanzo ZT,
+       on the fleet, and with a shell the console can drive.
+
+     lsp
+       Live semantic code intelligence — definitions, references, types,
+       hover, outline and diagnostics —…
+
+     machines
+       The registry of a person's linked Hanzo Dev sources (HIP-1350, slice
+       1): link, list, read, revoke…
+
+     market
+       What trades on each chain, and how far the read of it got.
+
+     marketing
+       Lifecycle email: drip sequences that reach the right people.
+
+     marketplace
+       The one market between orgs: agents and personas to hire, apps,
+       skills, MCP servers and tools to…
+
+     mcp
+       `mcp` cloud operations.
+
+     meet
+       The virtual office: it decides who may join a room and mints the
+       short-lived token that lets them…
+
+     messages
+       `messages` cloud operations.
+
+     metrics
+       `metrics` cloud operations.
+
+     ml
+       Model serving: deploy a model behind an endpoint and call it.
+
+     models
+       `models` cloud operations.
+
+     mq
+       Queue and stream admin for your org: create them, watch them drain,
+       ack what you pulled.
+
+     music
+       `music` cloud operations.
+
+     network
+       Network selection + custom/sovereign networks (mirrors the console).
+
+     node
+       Your machines: the ones you own, connected and ready to take a command.
+
+     notify
+       Transactional email and SMS, sent through your org's own provider
+       credential.
+
+     o11y
+       Your logs, metrics and traces: ship them in, query them, chart them.
+
+     openapi
+       The served contract: the OpenAPI document every client, tool list and
+       command group is generated…
+
+     openapi.json
+       `openapi.json` cloud operations.
+
+     patent
+       The record of who thought of what, and when the machine was asked to
+       write it.
+
+     patrol
+       Stands watch over an estate: sites, units, tours, keys, cameras, and
+       the incidents that interrupt…
+
+     plan
+       The plan catalog: every tier you can buy, what it costs, and what it
+       grants.
+
+     platform
+       Hanzo PaaS: deploy containers to your own tenant namespace — builds,
+       releases, environments, logs…
+
+     post
+       Create, schedule, publish, and inspect social posts & RSS autoposts
+       (`/v1/post`).
+
+     pref
+       Your own settings — theme, density, pinned nav — following you
+       across every Hanzo app.
+
+     pricing
+       The price list: what every model, provider, GPU tier, tool and hosting
+       plan costs.
+
+     principal
+       Serves an org as an economic principal: who it is, what it may pay,
+       and which agents answer to it.
+
+     project
+       Where your sites live: create one, deploy a build, roll back to any
+       release.
+
+     prompt
+       Canonical unified Hanzo system prompt (`# Hanzo Rules`,
+       `hanzoai/prompt`) & progressive `hanzoskills.com` discovery.
+
+     provider
+       How your org connects third-party accounts like Slack, and revokes
+       them.
+
+     provisioning
+       One-click data add-ons: a SQL, key-value, document, vector, search or
+       object store, wired straight…
+
+     pubsub
+       Your message bus: publish, subscribe, and durable streams your apps
+       read at their own pace.
+
+     reference
+       The lookup data a risk decision needs but cannot derive: which email
+       domains hand out throwaway…
+
+     referral
+       Referral ATTRIBUTION: who referred whom, and whether that referee ever
+       became a real customer.
+
+     registry
+       Your container and package registry: push images, pull them back, see
+       what you store.
+
+     rerank
+       `rerank` cloud operations.
+
+     research
+       Every experiment you have ever run, kept and comparable.
+
+     responses
+       `responses` cloud operations.
+
+     reward
+       Mounts the rewards rules engine (github.com/hanzoai/reward) at
+       /v1/reward, with the admin queue at…
+
+     risk
+       HANZO RISK's model plane: the per-organisation feature surface and the
+       per-organisation models…
+
+     runner
+       Provide this machine as a CI runner.
+
+     s3
+       Object storage: your buckets and the files in them, with signed URLs
+       for upload and download.
+
+     sandbox
+       Agent sandboxes & isolated execution environments (Docker `sbx`
+       compatibility: `sbx run`, `sbx ls`).
+
+     sbom
+       What is inside a container image: every component, resolvable by
+       digest or image ref.
+
+     search
+       One ranked result set over everything your org has stored.
+
+     security
+       Secret scanning for your code: submit sources, get findings, masked
+       never raw.
+
+     seo
+       Search visibility as data: what a phrase is worth, what a site already
+       places for, who places…
+
+     serve
+       Serve, bundle, and preview local web SPAs, Go hanzo.ai/zip services,
+       and static sites.
+
+     settings
+       How an org configures each product it uses, secret fields included.
+
+     shell
+       Opt-in shell startup hook and quiet background fleet presence + runner.
+
+     social
+       Posting to every social account you own, now or on a schedule.
+
+     sources
+       Unified linked machines, provider accounts, and cross-source usage
+       (HIP-1350).
+
+     space
+       Where work lives: drives, folders and the files in them.
+
+     standing
+       Prices and tracks what it costs to KEEP a company, as distinct from
+       what it cost to form one.
+
+     studio
+       Hanzo Studio's workflow backend: every creation — an image, a
+       poster, a document, a deck, a type…
+
+     sync
+       Data sync: link two endpoints and keep them in step, on a webhook, on
+       a schedule, or on demand.
+
+     task
+       Hanzo Task: boards, the work items on them, and the filters that make
+       a board.
+
+     tax
+       How companies formed on Hanzo exchange W-9s, W-8s and 1099s with each
+       other, from the payments that…
+
+     taxonomy
+       The product catalogue's shape: which categories exist, what each
+       product is called, which category…
+
+     team
+       Your org's shared space: documents edited together, files, seats, and
+       agents as teammates.
+
+     tel
+       The telecommunications surface: phone numbers, calls and messages, on
+       whatever carrier the…
+
+     template
+       A gallery of starter kits you can deploy as they come.
+
+     threads
+       `threads` cloud operations.
+
+     tool
+       Everything your org can call, in one list: connector actions,
+       functions, agents, skills and your…
+
+     train
+       The cloud's one training endpoint, /v1/train (HIP-1333): clients the
+       caller drives on the engine…
+
+     translate
+       Text in, the same text out in the language you asked for.
+
+     transport
+       One inbox for the chat apps you connect — Discord, Slack, Teams,
+       Telegram.
+
+     treasury
+       The reserve fund behind every payout: real capital, held and accounted
+       for.
+
+     trust
+       Your trust centre: the controls you publish, the coverage they compute
+       to, the documents a reviewer…
+
+     up
+       A local Kubernetes running the cloud — k3s in a Hanzo microVM.
+
+     usage
+       What your org ran and what it cost, broken down per account.
+
+     validator
+       One-click validator onboarding: prove your Genesis NFT, get a node
+       provisioned, queue its…
+
+     videos
+       `videos` cloud operations.
+
+     wallet
+       Wallet identity — PQ cloud custody (KMS/MPC) or local keychain.
+
+     web3
+       The chain-access surface: which chains this deployment can reach, a
+       JSON-RPC endpoint onto each…
+
+     webhook
+       How your app hears about events: register an endpoint, pick the
+       events, get each one delivered and…
+
+     websearch
+       A web search and a page fetch your agents can call.
+
+     workflow
+       Hanzo Workflow: durable workflows that survive a crash, with every run
+       visible and replayable.
+
+     world
+       A live news feed filtered to what your project cares about.
+
+     x402
+       Pay-per-request over HTTP 402: quote a price, take the payment, serve
+       the resource.
+
+COMMANDS
+    COMMAND is one of the following:
+
+     beat
+       Keep this machine present in the fleet: one beat every 30s, no shell,
+       no session. Run it under a service manager so the console and the
+       scheduler see the box between sessions instead of an hour after the
+       last one.
+
+     build
+       Build a container image with BuildKit, inside a hanzo-vm microVM.
+
+     code
+       Search, index and read code through the cloud's code index.
+
+     connect
+       Connect a social or messaging channel via OAuth
+       (`/v1/channel/connect`).
+
+     console
+       Open the interactive fleet operations console (sandboxes, compute
+       nodes, GPU mesh).
+
+     desktop
+       Point an agent at the desktop and browser instead of the repo.
+
+     dev
+       Start a coding session: a coding agent with the Hanzo MCP toolset
+       attached, on the account its tool is signed in to (`--metered` for
+       Hanzo's metered models), and the session streamed live to mission
+       control. Use `--cloud` to execute the task remotely in a Hanzo
+       sandbox.
+
+     doctor
+       Check installed tools, paths, authentication, GPU runtime and release
+       integrity.
+
+     down
+       Stop the local k3s microVM started by `hanzo up`.
+
+     help
+       Print this message or the help of the given subcommand(s).
+
+     init
+       Initialize a new Hanzo project.
+
+     k8s
+       Manage the Hanzo Kubernetes cluster over Zero-Trust (`k8s.hanzo` on
+       :26443) or pass kubectl args through.
+
+     load
+       Pull and load models across the distributed cluster fleet (DGX Spark &
+       Strix Halo).
+
+     login
+       Sign in through Hanzo IAM (OIDC) — `hanzo auth login` at the top
+       level.
+
+     ls
+       List active sandboxes, runc containers, & agent workspaces.
+
+     monitor
+       Live telemetry inspector and cluster dashboard for GPU inference
+       cluster & models.
+
+     pull
+       Pull local AI model weights into the shared Hugging Face cache (`hanzo
+       engine pull <model>`).
+
+     report
+       Collect and share a redacted coding session & diagnostic report with
+       Hanzo.
+
+     scan
+       Scan local files for exposed secrets (exits non-zero on a find).
+
+     share
+       Publish a local service to a public https://<token>.share.hanzo.ai URL.
+
+     status
+       Show the whole cloud: what is unhealthy first, then clusters,
+       applications and the machines on the fleet.
+
+     upgrade
+       Upgrade every Hanzo tool (hanzo, mcp, gen, zt) to its current release,
+       and every coding agent installed: npm agents under ~/.hanzo, the rest
+       by their own updater (`claude update`, `goose update`, …) or uv.
+       Name a tool to upgrade only it; naming an npm agent (gemini, qwen,
+       opencode, …) installs it.
+
+     version
+       Print the CLI version.
+
+     vm
+       Run the hanzo-vm microVM CLI, args passed through verbatim.
+
+     whoami
+       Show who you are signed in as and in which org — `hanzo auth show`
+       at the top level.
+
+
+stack backtrace:
+   0:        0x104384d00 - std[9bc579fd67db55b0]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:        0x104384d00 - std[9bc579fd67db55b0]::backtrace_rs::backtrace::trace_unsynchronized::<std[9bc579fd67db55b0]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:        0x104384d00 - std[9bc579fd67db55b0]::sys::backtrace::_print_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:74:9
+   3:        0x104384d00 - <<std[9bc579fd67db55b0]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[2525d0a98ae2f2bb]::fmt::Display>::fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:44:26
+   4:        0x104399dc8 - <core[2525d0a98ae2f2bb]::fmt::rt::Argument>::fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/fmt/rt.rs:152:76
+   5:        0x104399dc8 - core[2525d0a98ae2f2bb]::fmt::write
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/fmt/mod.rs:1687:22
+   6:        0x104389d20 - core[2525d0a98ae2f2bb]::io::write::default_write_fmt::<alloc[654f9ea51da0cd84]::vec::Vec<u8>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/io/write.rs:402:11
+   7:        0x104389d20 - <alloc[654f9ea51da0cd84]::vec::Vec<u8> as core[2525d0a98ae2f2bb]::io::write::Write>::write_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/io/write.rs:335:13
+   8:        0x104367600 - <std[9bc579fd67db55b0]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:47:25
+   9:        0x104367600 - std[9bc579fd67db55b0]::panicking::default_hook::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:292:27
+  10:        0x10437db1c - std[9bc579fd67db55b0]::panicking::default_hook
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:316:9
+  11:        0x1042d70e8 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn for<'a, 'b> core[2525d0a98ae2f2bb]::ops::function::Fn<(&'a std[9bc579fd67db55b0]::panic::PanicHookInfo<'b>,), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send + core[2525d0a98ae2f2bb]::marker::Sync> as core[2525d0a98ae2f2bb]::ops::function::Fn<(&std[9bc579fd67db55b0]::panic::PanicHookInfo,)>>::call
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2334:9
+  12:        0x1042d70e8 - test[f1218eb88dc64a32]::test_main_inner::<test[f1218eb88dc64a32]::test_main_static::{closure#0}>::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:155:21
+  13:        0x10437dee4 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn for<'a, 'b> core[2525d0a98ae2f2bb]::ops::function::Fn<(&'a std[9bc579fd67db55b0]::panic::PanicHookInfo<'b>,), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send + core[2525d0a98ae2f2bb]::marker::Sync> as core[2525d0a98ae2f2bb]::ops::function::Fn<(&std[9bc579fd67db55b0]::panic::PanicHookInfo,)>>::call
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2334:9
+  14:        0x10437dee4 - std[9bc579fd67db55b0]::panicking::panic_with_hook
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:823:13
+  15:        0x104367684 - std[9bc579fd67db55b0]::panicking::panic_handler::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:688:13
+  16:        0x10435fac8 - std[9bc579fd67db55b0]::sys::backtrace::__rust_end_short_backtrace::<std[9bc579fd67db55b0]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:182:18
+  17:        0x104367e10 - __rustc[3d2f79520d6fa809]::rust_begin_unwind
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:679:5
+  18:        0x1043ae378 - core[2525d0a98ae2f2bb]::panicking::panic_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panicking.rs:80:14
+  19:        0x1041c28f8 - cli[9e2092e0479f430b]::no_screen_names_a_second_product
+                               at /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/tests/cli.rs:200:9
+  20:        0x1041d2064 - cli[9e2092e0479f430b]::no_screen_names_a_second_product::{closure#0}
+                               at /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/tests/cli.rs:195:38
+  21:        0x1041b6e1c - <cli[9e2092e0479f430b]::no_screen_names_a_second_product::{closure#0} as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  22:        0x1042cc1d8 - <fn() -> core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  23:        0x1042cc1d8 - test[f1218eb88dc64a32]::__rust_begin_short_backtrace::<core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>, fn() -> core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:733:18
+  24:        0x1042d770c - test[f1218eb88dc64a32]::run_test_in_process::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:756:74
+  25:        0x1042d770c - <core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panic/unwind_safe.rs:275:9
+  26:        0x1042d770c - std[9bc579fd67db55b0]::panicking::catch_unwind::do_call::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>, core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576:43
+  27:        0x1042d770c - std[9bc579fd67db55b0]::panicking::catch_unwind::<core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>, core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544:19
+  28:        0x1042d770c - std[9bc579fd67db55b0]::panic::catch_unwind::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>, core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359:14
+  29:        0x1042d770c - test[f1218eb88dc64a32]::run_test_in_process
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:756:27
+  30:        0x1042d770c - test[f1218eb88dc64a32]::run_test::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:677:43
+  31:        0x1042d3280 - test[f1218eb88dc64a32]::run_test::{closure#1}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:707:41
+  32:        0x1042d3280 - std[9bc579fd67db55b0]::sys::backtrace::__rust_begin_short_backtrace::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166:18
+  33:        0x1042d9bd0 - std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/lifecycle.rs:70:13
+  34:        0x1042d9bd0 - <core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panic/unwind_safe.rs:275:9
+  35:        0x1042d9bd0 - std[9bc579fd67db55b0]::panicking::catch_unwind::do_call::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576:43
+  36:        0x1042d9bd0 - std[9bc579fd67db55b0]::panicking::catch_unwind::<(), core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544:19
+  37:        0x1042d9bd0 - std[9bc579fd67db55b0]::panic::catch_unwind::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359:14
+  38:        0x1042d9bd0 - std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/lifecycle.rs:68:26
+  39:        0x1042d9bd0 - <std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1} as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  40:        0x104383fc8 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn core[2525d0a98ae2f2bb]::ops::function::FnOnce<(), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2320:9
+  41:        0x104383fc8 - <std[9bc579fd67db55b0]::sys::thread::unix::Thread>::new::thread_start
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/thread/unix.rs:123:17
+  42:        0x19ed18ce4 - __pthread_exit
+
+
+failures:
+    no_screen_names_a_second_product
+
+test result: FAILED. 25 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.25s
+
+error: test failed, to rerun pass `-p hanzo-cli --test cli`
+     Running tests/cloud_sessions.rs (target/debug/deps/cloud_sessions-bfc19a8500feb7cc)
+
+running 3 tests
+test cloud_entry_points_are_exposed ... ok
+test cloud_does_not_silently_ignore_local_execution_options ... ok
+test cloud_controls_require_a_cloud_session_and_valid_bounds ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/feedback_flows.rs (target/debug/deps/feedback_flows-2c57968d131bd43c)
+
+running 4 tests
+test mcp_cold_cache_initialize_within_timeout ... ok
+test chat_completions_typed_flags_and_data_refusal ... ok
+test auth_flow_stdin_login_show_token_and_logout_isolated ... ok
+test models_list_formats_table_json_and_yaml_anonymously ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/production.rs (target/debug/deps/production-8587b2fd3e49ec18)
+
+running 6 tests
+test production_cloud_instruction_follows_the_new_session ... ignored, leases production sandboxes to verify an in-flight instruction and handoff
+test production_cloud_session_completes ... ignored, leases a production sandbox and runs a metered read-only task
+test production_local_dev_writes_a_file ... ignored, runs a metered coding task in a temporary directory
+test production_login_and_usage ... ignored, uses a real production identity and network
+test production_mcp_cold_cache_initialize ... ignored, runs installed hanzo-mcp on a cold package cache
+test production_models_list_and_chat_completions_flags ... ignored, exercises production models list and chat completions typed flags
+
+test result: ok. 0 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/refresh.rs (target/debug/deps/refresh-e56b33151f4062c7)
+
+running 1 test
+test processes_that_need_a_refresh_at_once_spend_the_refresh_token_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s
+
+     Running tests/shell.rs (target/debug/deps/shell-0b457795377e936d)
+
+running 3 tests
+test malformed_profile_is_not_overwritten ... ok
+test installer_path_setup_does_not_enable_presence ... ok
+test startup_is_idempotent_singleton_and_uninstall_stops_it ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.80s
+
+     Running tests/spec_drift.rs (target/debug/deps/spec_drift-72839b902759c28d)
+
+running 3 tests
+test the_committed_spec_names_the_release_it_was_generated_from ... ok
+test generated_is_exactly_what_the_spec_derives ... ok
+test the_live_server_contradicts_this_command_tree_in_neither_direction ... FAILED
+
+failures:
+
+---- the_live_server_contradicts_this_command_tree_in_neither_direction stdout ----
+
+thread 'the_live_server_contradicts_this_command_tree_in_neither_direction' (15616639) panicked at tests/spec_drift.rs:205:5:
+driftgate — /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/spec/cloud.json against hanzoai/cloud@8ad1bcbfdc0735237e0d0ebce771b32c978eed42, on evidence in /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/spec/live.json
+  coordinates           2885   2813 present, 0 absent, 72 unfalsifiable
+  the host answered      903   200×140 302×7 307×2 400×41 401×495 403×136 426×1 429×68 503×13
+  controls               257   prefixes asked with a route nobody wrote; 36 of them answered, so nothing under those prefixes can be decided
+  products reachable     161   of 161
+  hand-written routes     47   /v1 paths the local commands send, read from src/; 42 under a product cloud owns
+  declared exceptions      0   applied of 1 in src/curation.rs
+
+!! THE BLIND SPOT GREW: 72 coordinates sit behind a prefix that answers the same for a route nobody wrote, and UNFALSIFIABLE says 70.
+   This is the exact surface on which a second authority could once assert anything and call it verified —
+   66 of the 71 operations the deleted master contributed were 'confirmed' by a relay door. It falls on its own
+   as hanzoai/cloud types those relays into real operations; it may not rise without somebody saying why.
+
+driftgate: the CLI surface and the live server disagree.
+
+stack backtrace:
+   0:        0x102631a00 - std[9bc579fd67db55b0]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:        0x102631a00 - std[9bc579fd67db55b0]::backtrace_rs::backtrace::trace_unsynchronized::<std[9bc579fd67db55b0]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:        0x102631a00 - std[9bc579fd67db55b0]::sys::backtrace::_print_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:74:9
+   3:        0x102631a00 - <<std[9bc579fd67db55b0]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[2525d0a98ae2f2bb]::fmt::Display>::fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:44:26
+   4:        0x1026441c8 - <core[2525d0a98ae2f2bb]::fmt::rt::Argument>::fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/fmt/rt.rs:152:76
+   5:        0x1026441c8 - core[2525d0a98ae2f2bb]::fmt::write
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/fmt/mod.rs:1687:22
+   6:        0x102635960 - core[2525d0a98ae2f2bb]::io::write::default_write_fmt::<alloc[654f9ea51da0cd84]::vec::Vec<u8>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/io/write.rs:402:11
+   7:        0x102635960 - <alloc[654f9ea51da0cd84]::vec::Vec<u8> as core[2525d0a98ae2f2bb]::io::write::Write>::write_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/io/write.rs:335:13
+   8:        0x102615380 - <std[9bc579fd67db55b0]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:47:25
+   9:        0x102615380 - std[9bc579fd67db55b0]::panicking::default_hook::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:292:27
+  10:        0x10262ac9c - std[9bc579fd67db55b0]::panicking::default_hook
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:316:9
+  11:        0x1025de8a8 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn for<'a, 'b> core[2525d0a98ae2f2bb]::ops::function::Fn<(&'a std[9bc579fd67db55b0]::panic::PanicHookInfo<'b>,), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send + core[2525d0a98ae2f2bb]::marker::Sync> as core[2525d0a98ae2f2bb]::ops::function::Fn<(&std[9bc579fd67db55b0]::panic::PanicHookInfo,)>>::call
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2334:9
+  12:        0x1025de8a8 - test[f1218eb88dc64a32]::test_main_inner::<test[f1218eb88dc64a32]::test_main_static::{closure#0}>::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:155:21
+  13:        0x10262b064 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn for<'a, 'b> core[2525d0a98ae2f2bb]::ops::function::Fn<(&'a std[9bc579fd67db55b0]::panic::PanicHookInfo<'b>,), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send + core[2525d0a98ae2f2bb]::marker::Sync> as core[2525d0a98ae2f2bb]::ops::function::Fn<(&std[9bc579fd67db55b0]::panic::PanicHookInfo,)>>::call
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2334:9
+  14:        0x10262b064 - std[9bc579fd67db55b0]::panicking::panic_with_hook
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:823:13
+  15:        0x102615404 - std[9bc579fd67db55b0]::panicking::panic_handler::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:688:13
+  16:        0x10260d848 - std[9bc579fd67db55b0]::sys::backtrace::__rust_end_short_backtrace::<std[9bc579fd67db55b0]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:182:18
+  17:        0x102615ad0 - __rustc[3d2f79520d6fa809]::rust_begin_unwind
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:679:5
+  18:        0x1026526f8 - core[2525d0a98ae2f2bb]::panicking::panic_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panicking.rs:80:14
+  19:        0x1025ac6d4 - spec_drift[457fae423829727f]::the_live_server_contradicts_this_command_tree_in_neither_direction
+                               at /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/tests/spec_drift.rs:205:5
+  20:        0x1025acde8 - spec_drift[457fae423829727f]::the_live_server_contradicts_this_command_tree_in_neither_direction::{closure#0}
+                               at /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/tests/spec_drift.rs:197:72
+  21:        0x1025afb84 - <spec_drift[457fae423829727f]::the_live_server_contradicts_this_command_tree_in_neither_direction::{closure#0} as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  22:        0x1025d3998 - <fn() -> core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  23:        0x1025d3998 - test[f1218eb88dc64a32]::__rust_begin_short_backtrace::<core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>, fn() -> core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:733:18
+  24:        0x1025deecc - test[f1218eb88dc64a32]::run_test_in_process::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:756:74
+  25:        0x1025deecc - <core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panic/unwind_safe.rs:275:9
+  26:        0x1025deecc - std[9bc579fd67db55b0]::panicking::catch_unwind::do_call::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>, core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576:43
+  27:        0x1025deecc - std[9bc579fd67db55b0]::panicking::catch_unwind::<core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>, core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544:19
+  28:        0x1025deecc - std[9bc579fd67db55b0]::panic::catch_unwind::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>, core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359:14
+  29:        0x1025deecc - test[f1218eb88dc64a32]::run_test_in_process
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:756:27
+  30:        0x1025deecc - test[f1218eb88dc64a32]::run_test::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:677:43
+  31:        0x1025daa40 - test[f1218eb88dc64a32]::run_test::{closure#1}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:707:41
+  32:        0x1025daa40 - std[9bc579fd67db55b0]::sys::backtrace::__rust_begin_short_backtrace::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166:18
+  33:        0x1025e1390 - std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/lifecycle.rs:70:13
+  34:        0x1025e1390 - <core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panic/unwind_safe.rs:275:9
+  35:        0x1025e1390 - std[9bc579fd67db55b0]::panicking::catch_unwind::do_call::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576:43
+  36:        0x1025e1390 - std[9bc579fd67db55b0]::panicking::catch_unwind::<(), core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544:19
+  37:        0x1025e1390 - std[9bc579fd67db55b0]::panic::catch_unwind::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359:14
+  38:        0x1025e1390 - std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/lifecycle.rs:68:26
+  39:        0x1025e1390 - <std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1} as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  40:        0x102630f88 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn core[2525d0a98ae2f2bb]::ops::function::FnOnce<(), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2320:9
+  41:        0x102630f88 - <std[9bc579fd67db55b0]::sys::thread::unix::Thread>::new::thread_start
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/thread/unix.rs:123:17
+  42:        0x19ed18ce4 - __pthread_exit
+
+
+failures:
+    the_live_server_contradicts_this_command_tree_in_neither_direction
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.66s
+
+error: test failed, to rerun pass `-p hanzo-cli --test spec_drift`
+     Running unittests src/lib.rs (target/debug/deps/hanzo_client-31fa0c2191922e43)
+
+running 3 tests
+test retry::tests::only_a_429_is_made_again_for_a_request_that_may_have_been_processed ... ok
+test retry::tests::a_retry_after_is_seconds_or_an_http_date ... ok
+test retry::tests::the_backoff_doubles_to_its_ceiling_with_the_lower_half_fixed ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract.rs (target/debug/deps/contract-8f0b31cd602d8a7a)
+
+running 23 tests
+test a_refusal_carries_the_status_and_the_body ... ok
+test a_private_estate_moves_both_addresses ... ok
+test a_lifetime_iam_omitted_is_assumed_not_ignored ... ok
+test a_clone_shares_the_held_token ... ok
+test a_body_that_does_not_fit_is_a_decode_error ... ok
+test a_tokenless_mint_is_an_auth_error ... ok
+test a_401_remints_and_retries_once ... ok
+test a_202_is_held_and_carries_the_approval ... ok
+test a_second_401_surfaces_rather_than_looping ... ok
+test a_refused_mint_is_an_api_error ... ok
+test an_accepted_answer_is_not_a_hold ... ok
+test an_omitted_approval_field_reads_empty ... ok
+test an_unscoped_client_never_mints ... ok
+test done_on_a_held_call_is_an_error_naming_the_approval ... ok
+test each_subject_holds_its_own_token ... ok
+test mint_addresses_iam_and_names_the_subject_in_the_query ... ok
+test named_scoped_writes_can_remint_and_retry_once ... ok
+test the_body_rides_and_the_address_stays_v1 ... ok
+test non_idempotent_scoped_writes_stop_after_first_401 ... ok
+test the_call_rides_the_minted_token_not_the_operator_key ... ok
+test the_polled_approval_reads_with_the_same_shape ... ok
+test the_subject_is_encoded_not_interpolated ... ok
+test the_token_is_held_until_it_nears_expiry ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/retry.rs (target/debug/deps/retry-c1c4bf0a2f1bdc2f)
+
+running 8 tests
+test a_wait_past_the_hold_is_answered_at_once ... ok
+test a_dropped_connection_is_made_again ... ok
+test a_refusal_is_never_made_again ... ok
+test a_429_waits_the_retry_after_then_succeeds ... ok
+test a_post_is_made_again_after_a_failure_only_with_a_request_id ... ok
+test a_post_is_made_again_after_a_429 ... ok
+test a_5xx_that_later_succeeds_is_made_again ... ok
+test a_request_that_keeps_failing_is_made_four_times_and_its_last_answer_returned ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.67s
+
+     Running unittests src/lib.rs (target/debug/deps/hanzo_event-e0dafc88bebd2344)
+
+running 8 tests
+test tests::disabled_handle_records_nothing ... ok
+test tests::opt_out_reads_both_variables ... ok
+test tests::opted_out_new_is_a_noop ... ok
+test tests::device_id_is_stable_across_calls ... ok
+test tests::capture_error_builds_scrubbed_canonical_error_event ... ok
+test tests::command_builds_the_canonical_wire ... ok
+test tests::flush_without_credential_sends_nothing ... ok
+test tests::flush_posts_the_batch_to_the_endpoint ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/hanzo_identity-ea47cd859a5affe5)
+
+running 27 tests
+test identity::tests::identity_is_derived_from_the_tokens_own_claims ... ok
+test discovery::tests::the_discovered_issuer_is_the_one_accepted ... ok
+test identity::tests::an_address_is_read_off_the_token_or_reported_missing ... ok
+test identity::tests::a_non_jwt_token_has_no_derivable_identity ... ok
+test identity::tests::human_usernames_are_legal_claims ... ok
+test identity::tests::claims_without_owner_or_name_are_rejected ... ok
+test discovery::tests::an_address_a_credential_cannot_go_to_is_refused ... ok
+test identity::tests::claims_cannot_inject_the_key_separator_or_traverse ... ok
+test identity::tests::owner_is_the_billing_org ... ok
+test identity::tests::the_issuing_client_is_azp_else_the_one_aud ... ok
+test identity::tests::selector_parses_exact_and_bare_owner ... ok
+test token::tests::debug_never_prints_a_token ... ok
+test token::tests::deleting_one_identity_leaves_the_other_intact ... ok
+test token::tests::file_vault_default_location_is_the_data_dir ... ok
+test index::tests::reads_the_active_identity_of_a_brand ... ok
+test discovery::tests::the_issuer_may_be_another_host_than_the_origin ... ok
+test token::tests::the_key_is_brand_scoped_per_identity ... ok
+test token::tests::file_vault_set_creates_a_missing_parent_dir ... ok
+test token::tests::token_set_roundtrips_and_defaults_token_type ... ok
+test token::tests::two_identities_coexist_and_neither_clobbers_the_other ... ok
+test token::tests::refresh_lock_nests_with_a_vault_write ... ok
+test discovery::tests::cached_for_the_ttl_and_kept_when_a_refresh_fails ... ok
+test token::tests::file_vault_is_owner_only ... ok
+test token::tests::file_vault_roundtrips_get_set_remove ... ok
+test token::tests::file_vault_backs_the_full_identity_flow ... ok
+test token::tests::file_vault_two_keys_coexist ... ok
+test token::tests::file_vault_concurrent_writers_keep_each_others_keys ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+   Doc-tests hanzo_client
+
+running 1 test
+test crates/client/src/lib.rs - (line 19) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+   Doc-tests hanzo_event
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests hanzo_identity
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 2 targets failed:
+    `-p hanzo-cli --test cli`
+    `-p hanzo-cli --test spec_drift`
+make: *** [test] Error 101

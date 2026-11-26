@@ -1,0 +1,849 @@
+sh: strict verification and preservation of existing installs passed
+bash: strict verification and preservation of existing installs passed
+generate --check: current, moved and stale all ruled
+✔ adapter rejects missing model/port/overlay values without looping (244.803375ms)
+✔ adapter rejects an option in place of a required value (164.192625ms)
+✔ adapter preserves a valid model and explicit port (81.458583ms)
+﹣ Windows uses the system tar with a drive-letter, spaces, Unicode, and a hostile PATH tar (0.488666ms) # SKIP
+﹣ Windows succeeds with Git GNU tar first on PATH (0.054791ms) # SKIP
+✔ Windows rejects an absent SystemRoot (0.206958ms)
+✔ Windows rejects a missing system tar (11.876917ms)
+✔ Windows propagates an invalid system tar failure (9.413708ms)
+✔ replaces dangling native aliases and binary symlinks instead of writing through them (140.160708ms)
+✔ rejects an archive that extracts successfully but lacks the expected native binary (138.513958ms)
+✔ rejects directory, empty-file, and symlink placeholders instead of claiming a native binary was installed (409.973583ms)
+✔ a valid replacement keeps additional archive files and clears staging (141.890333ms)
+✔ a stale installed binary cannot mask a missing binary in a new release (133.319542ms)
+✔ a failed extraction removes the downloaded archive (125.614833ms)
+✔ an empty or malformed checksum file refuses installation rather than skipping verification (501.793125ms)
+✔ an optional companion fails closed on an empty checksum response (127.45125ms)
+✔ uppercase SHA-256 checksum digests verify successfully (139.500791ms)
+✔ a checksum mismatch stops before extraction (137.332542ms)
+﹣ Linux keeps using tar from PATH (0.033791ms) # SKIP
+✔ a non-executable PATH file does not satisfy a native companion (264.255833ms)
+✔ a PATH directory does not satisfy a native companion (262.360917ms)
+✔ an executable regular file on PATH satisfies a native companion (200.592541ms)
+✔ launcher preserves native exit codes (284.70325ms)
+✔ launcher propagates native termination signals (153.416041ms)
+✔ launcher never starts the Node inspector for a native SIGUSR1 (161.015167ms)
+✔ launcher maps native SIGPIPE to standard 128+SIGPIPE exit status (152.783958ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 3
+ℹ todo 0
+ℹ duration_ms 2155.003125
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 6.018s
+
+OK
+# The cache has a home of its own, named before HOME moves — the same move
+# the gate in hanzo.yml makes for CARGO_HOME and RUSTUP_HOME. The issuer
+# tests (`trusts`, the credential store) fetch the live discovery documents
+# and cache them through dirs::cache_dir; with XDG_CACHE_HOME unset that is
+# OME/.cache, so a test run wrote the runner's HOME and the gate refused
+# it (forge run #85 on the PR #72 merge: hanzo.ai, hanzo.id, lux.id). The
+# cache belongs in the build tree, never in a person's HOME.
+   Compiling hanzo-identity v0.1.0 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/identity)
+   Compiling hanzo-event v0.1.0 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/event)
+   Compiling hanzo-client v0.1.1 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/client)
+   Compiling hanzo-cli v8.5.1422 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.09s
+     Running unittests src/main.rs (target/debug/deps/hanzo-ee510827a25f997d)
+
+running 461 tests
+test broken_pipe_tests::other_panics_stay_panics ... ok
+test broken_pipe_tests::a_closed_pipe_is_not_a_failure ... ok
+test commands::build::tests::the_checkpoint_installs_this_architecture_and_checks_its_digest ... ok
+test commands::bot::tests::extracts_json_payload_past_banner_lines ... ok
+test commands::config::tests::scalar_types_are_natural ... ok
+test commands::config::tests::walk_reads_a_dotted_key ... ok
+test commands::build::tests::every_pin_is_a_sha256 ... ok
+test commands::config::tests::place_sets_and_creates_intermediate_tables ... ok
+test commands::bot::tests::extracts_title_and_h1_from_rendered_dom ... ok
+test commands::cloud_sessions::tests::errors_and_approvals_are_not_success ... ok
+test commands::daemon::tests::create_session_body_omits_blank_fields ... ok
+test commands::cloud_sessions::tests::handoffs_follow_the_new_session_and_surface_failures ... ok
+test commands::daemon::tests::expect_ok_accepts_201_created_and_surfaces_error_body ... ok
+test commands::dev_server::tests::rewrites_non_upgrade_connection_to_close_and_identifies_api_paths ... ok
+test commands::engine::tests::resolves_friendly_aliases_and_preserves_explicit_repos ... ok
+test commands::dev::network_tests::the_hanzo_key_stays_with_the_issuer_that_minted_it ... ok
+test commands::cloud_sessions::tests::origins_are_normalized_without_credentials ... ok
+test commands::host::tests::classifies_unified_vs_legacy_chain_version_output ... ok
+test commands::host::tests::a_default_port_is_filled_in ... ok
+test commands::dev::network_tests::the_token_helper_is_bound_to_the_sessions_network ... ok
+test commands::build::tests::every_flag_reaches_buildctl ... ok
+test commands::build::tests::a_bare_build_reads_the_dockerfile_in_its_context_and_exports_nothing ... ok
+test commands::build::tests::a_push_with_no_name_is_refused_before_anything_boots ... ok
+test commands::host::tests::loopback_is_recognised_by_every_spelling ... ok
+test commands::host::tests::remote_origins_start_nothing ... ok
+test commands::k8s::tests::helm_defaults_to_hanzo_namespace_when_omitted ... ok
+test commands::k8s::tests::logs_preserves_explicit_namespace_and_pod_or_resource_kind ... ok
+test commands::k8s::tests::logs_shorthand_expands_bare_service_into_hanzo_deployment ... ok
+test commands::link::dependencies::tests::named_shell_does_not_require_multiplexer_tools ... ok
+test commands::link::dependencies::tests::install_advice_matches_platform_and_distribution ... ok
+test commands::link::dependencies::tests::minimal_linux_reports_missing_terminal_tools ... ok
+test commands::doctor::tests::integrity_comparison_reads_bytes_not_filenames ... ok
+test commands::engine::tests::finds_cached_snapshot_from_refs_main ... ok
+test commands::dev_server::tests::parses_hanzo_yml_build_section_and_hashes_output_deterministically ... ok
+test commands::link::network::tests::a_bare_service_is_the_orgs_and_a_dotted_one_is_the_fabrics ... ok
+test commands::host::tests::start_failure_surfaces_legacy_chain_fix_and_log_tail ... ok
+test commands::host::tests::only_a_shared_install_is_retired ... ok
+test commands::link::network::tests::a_service_name_is_a_dns_label ... ok
+test commands::link::folders::tests::a_folder_is_sent_as_its_real_path ... ok
+test commands::link::network::tests::a_token_command_runs_without_a_shell_and_is_trimmed ... ok
+test commands::graph::tests::reads_synthetic_apple_pkg_sqlite_store ... ok
+test commands::host::tests::legacy_chain_binary_probe_rejects_fake_validator_script ... ok
+test commands::link::folders::tests::folders_lists_the_active_grants ... ok
+test commands::link::network::tests::targets_parse_as_host_port ... ok
+test commands::link::folders::tests::revoke_names_the_folder_in_the_query ... ok
+test commands::link::tests::a_clean_exit_closes_the_session_and_withdraws_the_terminal ... ok
+test commands::link::folders::tests::grant_posts_the_folder_to_the_machine ... ok
+test commands::link::tests::a_control_plane_that_refuses_the_close_does_not_fail_the_link ... ok
+test commands::link::tests::a_listener_is_read_off_the_kernels_socket_table ... ok
+test commands::link::tests::a_named_shell_is_never_given_the_url ... ok
+test commands::link::tests::asking_for_tmux_asks_for_the_default ... ok
+test commands::link::tests::named_shell_skips_tmux_check_and_falls_back_cleanly_without_ttyd ... ok
+test commands::link::tests::the_default_serves_a_shell_the_url_can_name ... ok
+test commands::link::tests::the_tunnel_carries_as_only_for_a_held_identity ... ok
+test commands::link::tests::the_wrapper_strips_a_name_down_to_something_safe ... ok
+test commands::link::tests::tunnels_are_read_off_the_process_table ... ok
+test commands::link::unit::tests::a_launchd_job_keeps_every_argument_whole_and_escaped ... ok
+test commands::link::unit::tests::a_system_unit_starts_with_the_machine ... ok
+test commands::link::unit::tests::a_user_unit_restarts_forever_and_starts_with_the_session ... ok
+test commands::link::unit::tests::exec_start_escapes_what_systemd_would_expand ... ok
+test commands::link::unit::tests::exec_start_keeps_the_token_command_one_argument ... ok
+test commands::link::unit::tests::one_id_names_the_unit_on_both_service_managers ... ok
+test commands::link::unit::tests::only_the_units_install_writes_are_listed_as_ours ... ok
+test commands::link::zt::tests::a_host_tunnel_signs_in_to_the_controller_by_token_command ... ok
+test commands::link::zt::tests::a_proxy_names_the_service_and_its_local_port ... ok
+test commands::link::zt::tests::a_service_is_hostable_only_where_the_page_grants_bind ... ok
+test commands::link::zt::tests::a_tarball_that_is_not_the_pinned_one_is_refused ... ok
+test commands::link::zt::tests::every_platform_zt_ships_has_a_pinned_digest ... ok
+test commands::link::zt::tests::the_platform_role_marks_an_identity_a_link_leaves_alone ... ok
+test commands::link::tests::a_failed_link_ends_as_an_error_and_still_reports_it ... ok
+test commands::man::tests::the_page_names_every_global_flag ... ok
+test commands::network::tests::an_override_never_moves_a_builtins_api_or_issuer ... ok
+test commands::network::tests::each_network_signs_in_at_the_issuer_its_api_trusts ... ok
+test commands::network::tests::the_bound_network_is_the_active_one ... ok
+test commands::product::membership_query_tests::exactly_one_question_is_asked ... ok
+test commands::product::tests::a_2xx_error_envelope_is_surfaced_not_swallowed ... ok
+test commands::product::tests::a_column_too_wide_is_left_out_and_the_narrow_ones_after_it_are_kept ... ok
+test commands::product::tests::a_data_body_on_a_read_is_a_named_error ... ok
+test commands::man::tests::the_page_names_every_command_and_only_real_ones ... ok
+test commands::product::tests::a_failed_resource_is_rendered_not_refused ... ok
+test commands::link::folders::tests::a_grant_by_someone_not_the_owner_is_cloud_s_refusal ... ok
+test commands::product::tests::a_deep_nested_leaf_resolves_and_fills_in_order ... ok
+test commands::product::tests::a_list_is_a_table_with_the_scalar_keys_as_columns ... ok
+test commands::product::tests::a_leaf_whose_name_also_heads_a_group_is_still_runnable ... ok
+test commands::product::tests::a_lone_body_property_survives_a_path_parameter_of_the_same_name ... ok
+test commands::product::tests::a_machine_key_is_the_variable_trimmed_and_nothing_when_blank ... ok
+test commands::product::tests::a_marked_address_param_keeps_its_slashes_and_an_unmarked_one_escapes_them ... ok
+test commands::product::tests::a_local_alias_owns_its_spelling_and_the_generated_verb_stands_down ... ok
+test commands::product::tests::a_nested_object_is_dotted_flags_that_rebuild_the_object ... ok
+test commands::product::tests::a_query_param_becomes_a_typed_flag_in_the_url ... ok
+test commands::product::tests::a_reservation_must_name_a_command_that_exists ... ok
+test commands::product::tests::a_simple_leaf_resolves_and_fills ... ok
+test commands::product::tests::a_terminal_is_prompted_and_never_read_as_a_pipe ... ok
+test commands::link::network::tests::a_refused_publish_names_the_steward_rule ... ok
+test commands::product::tests::a_typed_int_flag_is_a_json_number_and_optionals_are_omitted ... ok
+test commands::product::tests::a_union_flag_sends_json_as_json_and_text_as_text ... ok
+test commands::product::tests::a_typed_write_assembles_a_json_body_from_flags ... ok
+test commands::link::network::tests::ensure_sends_the_roles_and_decodes_the_identity ... ok
+test commands::product::tests::an_operation_that_declares_a_request_id_is_given_one ... ok
+test commands::product::tests::an_array_property_is_a_repeatable_flag_and_lands_as_a_json_array ... ok
+test commands::product::tests::completions_create_posts_to_chat_completions ... ok
+test commands::product::tests::augment_never_clobbers_an_existing_command ... ok
+test commands::product::tests::every_command_says_what_it_does ... ok
+test commands::product::tests::a_graph_question_carries_both_times_to_the_wire ... ok
+test commands::product::tests::every_op_fills_to_a_path ... ok
+test commands::link::network::tests::joining_without_roles_sends_an_empty_body_and_no_org ... ok
+test commands::product::tests::every_capability_the_document_carries_is_a_command ... ok
+test commands::product::tests::generated_data_carries_no_host_url_or_auth ... ok
+test commands::product::tests::hand_written_command_names_are_not_verb_nouns ... ok
+test commands::product::tests::exactly_one_agent_run_has_the_async_controls ... ok
+test commands::product::tests::json_and_yaml_render_the_same_value ... ok
+test commands::product::tests::method_maps_from_the_op_string ... ok
+test commands::product::tests::hand_written_help_names_no_outside_vendor ... ok
+test commands::product::tests::agent_run_stays_sync_unless_asked_and_parses_the_wait_deadline ... ok
+test commands::product::tests::op_params_are_unique_and_not_reserved ... ok
+test commands::product::tests::query_pairs_are_appended_and_encoded ... ok
+test commands::product::tests::scalar_boolean_field_preserves_explicit_false_and_optional_omission ... ok
+test commands::product::tests::the_async_body_targets_the_same_agent_without_inventing_fields ... ok
+test commands::product::tests::no_two_ops_share_a_coordinate ... ok
+test commands::product::tests::the_async_handle_is_unwrapped_and_validated_before_it_is_followed ... ok
+test commands::product::tests::the_columns_that_fit_are_shown_and_the_first_always ... ok
+test commands::link::network::tests::publish_sends_the_service_and_returns_its_dns ... ok
+test commands::product::tests::the_one_array_an_object_carries_is_its_list_and_an_object_is_field_rows ... ok
+test commands::product::tests::the_org_scope_is_bound_from_owner_never_asked ... ok
+test commands::product::tests::the_org_scope_is_never_a_positional_or_flag ... ok
+test commands::product::tests::the_credential_of_a_connect_has_no_flag_to_carry_it ... ok
+test commands::product::tests::there_is_no_passthrough_or_raw_path_escape ... ok
+test commands::product::tests::two_dotted_keys_under_one_parent_build_one_object ... ok
+test commands::prompt::tests::embedded_prompt_matches_canonical_hanzo_rules ... ok
+test commands::prompt::tests::progressive_skill_discovery_parses_and_ranks_matches ... ok
+test commands::scan::tests::detects_provider_keys ... ok
+test commands::scan::tests::detects_structural_shapes ... ok
+test commands::scan::tests::high_entropy_only_when_named_a_secret ... ok
+test commands::scan::tests::ignores_ordinary_prose_and_short_tokens ... ok
+test commands::scan::tests::redaction_never_prints_the_whole_secret ... ok
+test commands::product::tests::the_man_page_names_exactly_what_the_parser_mounts ... ok
+test commands::serve::tests::builds_spa_project_hermetically_with_zero_vite ... ok
+test commands::serve::tests::detects_web_spa_go_zip_and_static_projects ... ok
+test commands::serve::tests::rewrites_index_html_with_assets_and_hmr ... ok
+test commands::serve::tests::routes_proxy_paths_without_matching_spa_routes ... ok
+test commands::serve::tests::serves_spa_fallback_and_proxies_v1_to_upstream ... ok
+test commands::share::tests::a_failed_enable_says_why ... ok
+test commands::share::tests::a_published_share_names_the_person_it_is_for ... ok
+test commands::share::tests::a_refused_provision_says_cloud_s_reason ... ok
+test commands::share::tests::a_refused_sign_in_is_for_a_new_environment ... ok
+test commands::product::tests::no_kms_verb_takes_an_org ... ok
+test commands::share::tests::extracts_share_token ... ok
+test commands::share::tests::forgetting_an_environment_clears_its_two_files_and_nothing_else ... ok
+test commands::share::tests::only_an_environment_on_our_controller_is_ours_to_make_again ... ok
+test commands::share::tests::resolves_targets ... ok
+test commands::shell::tests::profile_updates_preserve_user_content_and_are_idempotent ... ok
+test commands::shell::tests::supported_hooks_parse_and_do_nothing_in_noninteractive_shells ... ok
+test commands::sources::tests::concurrent_first_source_links_share_one_persisted_keypair ... ok
+test commands::sources::tests::detects_401_auth_failure_for_heartbeat_refresh ... ok
+test commands::sources::tests::heartbeat_signing_message_matches_cloud_wire_format ... ok
+test commands::sources::tests::keypair_persists_and_verifies_signed_heartbeat ... ok
+test commands::status::tests::a_cluster_reports_its_own_node_total ... ok
+test commands::status::tests::a_node_renders_only_what_the_host_reported ... ok
+test commands::status::tests::a_refusal_carries_the_status_and_the_servers_own_reason ... ok
+test commands::status::tests::an_empty_200_is_rows_and_a_missing_list_is_not ... ok
+test commands::status::tests::an_enveloped_payload_is_read_through_data ... ok
+test commands::status::tests::an_html_error_page_is_clipped_to_one_marked_line ... ok
+test commands::status::tests::an_unavailable_surface_is_not_a_problem_and_not_a_zero ... ok
+test commands::status::tests::an_unstated_verdict_is_unknown_and_never_healthy ... ok
+test commands::status::tests::attached_byo_cluster_is_healthy_and_partial_degraded_leads_attention ... ok
+test commands::status::tests::canonical_status_and_sandbox_list_routes_and_org_table ... ok
+test commands::status::tests::degraded_empty_clusters_is_unavailable_not_none_reported ... ok
+test commands::status::tests::drift_counts_only_the_healthy_but_stale ... ok
+test commands::status::tests::only_the_broken_lead_the_page_and_drift_is_not_broken ... ok
+test commands::term::tests::a_touch_device_gets_the_keys_it_has_no_hardware_for ... ok
+test commands::term::tests::nothing_is_fetched_from_anywhere ... ok
+test commands::term::tests::only_the_workspace_chord_is_intercepted ... ok
+test commands::term::tests::the_face_travels_inside_the_page ... ok
+test commands::term::tests::the_page_has_no_holes_left_in_it ... ok
+test commands::term::tests::the_terminal_tells_its_parent_it_is_really_there ... ok
+test commands::up::compute::tests::history_takes_a_sibling_reading_once ... ok
+test commands::up::compute::tests::memory_mode_follows_dedicated_vram ... ok
+test commands::up::compute::tests::renders_the_home_page ... ok
+test commands::up::compute::tests::this_machine_leads_and_replaces_its_own_target ... ok
+test commands::up::compute::tests::values_read_like_sparkdash ... ok
+test commands::up::savings::tests::a_gateways_answer_reads_into_the_page ... ok
+test commands::product::tests::the_output_flag_is_on_every_generated_command ... ok
+test commands::up::savings::tests::a_range_is_counted_back_from_now ... ok
+test commands::up::savings::tests::a_listening_gateway_is_found_and_a_silent_port_is_not ... ok
+test commands::up::savings::tests::the_cloud_fields_show_once_it_sends_them ... ok
+test commands::up::savings::tests::measured_and_estimated_are_shown_apart ... ok
+test commands::up::tests::a_node_is_ready_when_its_status_says_so ... ok
+test commands::up::tests::endpoints_surface_direct_cloud_url_when_hanzod_is_unavailable ... ok
+test commands::up::tests::install_cmd_for_enforces_strict_registry ... ok
+test commands::up::tests::no_manifest_ever_contains_the_key ... ok
+test commands::up::tests::select_cloud_image_prefers_hanzo_oci_and_enforces_strict_registry ... ok
+test commands::up::tests::static_ts_and_json_app_manifest_parse_without_executing_ts ... ok
+test commands::up::savings::tests::what_did_not_answer_is_unavailable_never_zero ... ok
+test commands::serve::tests::cli_grammar_parses_serve_dev_build_and_preview ... ok
+test commands::up::tests::the_at_rest_key_is_outside_the_measurement ... ok
+test commands::up::tests::the_checkpoint_installs_k3s_for_this_architecture ... ok
+test commands::up::tests::the_cluster_keeps_its_state_under_our_own_name ... ok
+test commands::up::tests::the_ground_carries_no_secret ... ok
+test commands::up::tests::the_key_is_fresh_every_time ... ok
+test commands::up::tests::the_kubeconfig_is_filed_owner_only ... ok
+test commands::up::tests::the_kubeconfig_is_pointed_at_the_forwarded_port ... ok
+test commands::up::tests::stopping_what_is_already_gone_succeeds ... ok
+test commands::up::tests::the_old_up_spelling_splits_into_service_and_tail ... ok
+test commands::up::tests::the_measurement_is_filed_and_reads_back ... ok
+test commands::up::tests::the_state_file_carries_the_phase ... ok
+test commands::up::tests::the_vm_is_booted_with_the_stdio_wire_and_the_forwards ... ok
+test commands::up::tests::the_workload_deploys_the_pinned_image_on_the_forwarded_port ... ok
+test commands::up::tests::the_workload_register_covers_the_image_and_the_manifest ... ok
+test commands::up::tests::workload_for_injects_staged_iam_and_ai_env_and_changes_measurement ... ok
+test commands::link::network::tests::a_caller_acts_in_its_own_org_unless_it_selects_one ... ok
+test commands::link::network::tests::services_and_identities_decode_the_org_lists ... ok
+test commands::up::tests::stopping_a_group_leader_takes_its_children ... ok
+test commands::share::tests::a_reset_disables_through_the_helper_and_falls_back_to_the_files ... ok
+test commands::up::tests::the_pidfile_follows_a_real_process ... ok
+test commands::link::network::tests::unpublish_deletes_by_id_and_a_refusal_is_an_error ... ok
+test commands::product::tests::every_operation_of_an_absorbed_product_resolves_to_its_own_route ... ok
+test commands::product::tests::a_stdin_secret_can_never_reach_argv ... ok
+test commands::up::tui::tests::test_all_agents_running ... ok
+test commands::up::tui::tests::test_app_initialization ... ok
+test commands::up::tui::tests::test_dashboard_view_switching ... ok
+test commands::up::tui::tests::test_create_and_remove_sandbox ... ok
+test commands::up::tui::tests::test_model_and_container_actions ... ok
+test commands::up::tui::tests::test_dump_tui_for_screenshot ... ok
+test commands::up::tui::tests::test_navigation_across_views ... ok
+test commands::upgrade::tests::a_binary_uv_placed_is_a_link_into_its_tool_directory ... ok
+test commands::upgrade::tests::a_named_tool_is_sorted_to_the_way_it_upgrades ... ok
+test commands::upgrade::tests::a_release_asset_is_checked_unpacked_and_swapped_in_beside_the_old_one ... ok
+test commands::upgrade::tests::an_unknown_name_is_refused_with_the_list ... ok
+test commands::upgrade::tests::every_agent_can_be_named ... ok
+test commands::upgrade::tests::nothing_named_is_everything_hanzo_ships_and_the_agents_installed ... ok
+test commands::upgrade::tests::prefixed_product_names_upgrade_their_native_binaries ... ok
+test commands::upgrade::tests::the_engine_is_upgraded_with_hanzo_and_is_not_a_name ... ok
+test commands::upgrade::tests::the_tool_table_is_read_out_of_hanzo_sh ... ok
+test commands::version::tests::a_different_file_holding_our_name_is_reported_and_our_own_is_not ... ok
+test commands::version::tests::a_non_version_is_not_mistaken_for_one ... ok
+test commands::version::tests::a_v_prefix_is_tolerated ... ok
+test commands::version::tests::a_version_is_read_from_the_binary ... ok
+test commands::version::tests::which_finds_the_first_on_path ... ok
+test commands::vm::tests::a_vm_that_reports_no_measurement_is_refused ... ok
+test commands::up::tui::tests::test_network_metrics_calculation ... ok
+test commands::vm::tests::extract_installs_the_hanzo_vm_entry ... ok
+test commands::vm::tests::extract_refuses_a_tarball_without_the_binary ... ok
+test commands::vm::tests::linux_x86_64_preflight_distinguishes_kvm_and_cloud_hypervisor ... ok
+test commands::vm::tests::platform_strings_match_the_release_assets ... ok
+test commands::vm::tests::sha256_sidecar_accepts_the_true_digest ... ok
+test commands::vm::tests::sha256_sidecar_refuses_a_tampered_download ... ok
+test commands::vm::tests::the_checkpoint_listing_is_read_by_name ... ok
+test commands::vm::tests::the_rpc_client_speaks_the_stdio_protocol ... ok
+test commands::vm::tests::version_ordering_drives_the_update ... ok
+test commands::vm::tests::vm_virtualization_preflight_gating_skips_info_subcommands ... ok
+test commands::wallet::tests::mnemonic_derives_known_evm_address ... ok
+test commands::wallet::tests::privkey_derives_known_evm_address ... ok
+test config::tests::a_config_with_no_auth_table_loads_signed_out ... ok
+test config::tests::a_failed_update_leaves_the_config_untouched ... ok
+test config::tests::a_network_without_an_issuer_still_parses ... ok
+test config::tests::a_sparse_auth_table_loads ... ok
+test config::tests::a_write_is_atomic_and_never_leaves_a_torn_config ... ok
+test config::tests::absent_code_table_links_by_default ... ok
+test config::tests::an_update_keeps_the_invocations_org_and_never_writes_it ... ok
+test config::tests::auth_index_roundtrips ... ok
+test config::tests::code_link_defaults_on ... ok
+test config::tests::concurrent_writers_do_not_lose_each_others_updates ... ok
+test config::tests::config_with_only_code_section_loads ... ok
+test config::tests::empty_code_table_links_by_default ... ok
+test config::tests::explicit_link_false_persists_the_opt_out ... ok
+test config::tests::the_bound_network_survives_a_write_and_is_never_written ... ok
+test config::tests::update_applies_to_current_disk_state_not_a_stale_snapshot ... ok
+test iam::device::tests::classify_covers_every_branch ... ok
+test iam::device::tests::device_auth_parses_response ... ok
+test iam::device::tests::device_auth_surfaces_error ... ok
+test iam::device::tests::done_maps_into_token_set_with_default_type ... ok
+test iam::device::tests::poll_deadline_expires ... ok
+test commands::vm::tests::dropping_the_conversation_stops_the_vm ... ok
+test iam::device::tests::poll_denied_terminates ... ok
+test iam::login::tests::a_held_identity_is_hinted_by_its_subject ... ok
+test iam::login::tests::an_account_in_another_org_names_that_orgs_client ... ok
+test iam::login::tests::nothing_held_asks_nothing ... ok
+test iam::login::tests::only_a_chosen_account_replaces_the_active_identity ... ok
+test iam::login::tests::the_account_asked_for_is_recognised_in_the_token ... ok
+test iam::login::tests::the_device_grant_runs_only_headless_and_only_where_the_client_permits_it ... ok
+test iam::login::tests::the_picker_lists_held_identities_then_another_account ... ok
+test iam::login::tests::the_report_says_which_identity_is_active ... ok
+test iam::oauth::tests::a_failure_page_shows_the_reason_as_text ... ok
+test iam::oauth::tests::a_paste_decodes_and_survives_copy_noise ... ok
+test iam::oauth::tests::a_paste_is_read_from_every_shape_a_person_can_copy ... ok
+test iam::oauth::tests::a_paste_leg_with_no_terminal_refuses_at_once ... ok
+test iam::oauth::tests::a_pasted_command_or_address_is_not_a_code ... ok
+test iam::oauth::tests::a_refusal_says_the_issuers_reason ... ok
+test iam::oauth::tests::a_token_outside_the_named_org_is_refused ... ok
+test iam::oauth::tests::authorize_url_is_hip0111_pkce_s256 ... ok
+test iam::oauth::tests::finish_answers_the_tab_and_its_retry_then_closes_the_port ... ok
+test iam::oauth::tests::loopback_captures_code_then_shows_the_signed_in_page ... ok
+test iam::oauth::tests::loopback_refuses_a_state_that_is_not_ours ... ok
+test iam::oauth::tests::parse_callback_decodes_code_and_state ... ok
+test iam::oauth::tests::parse_callback_surfaces_provider_error ... ok
+test iam::oauth::tests::server_url_known_and_unknown ... ok
+test iam::oauth::tests::signed_in_page_names_the_account_and_the_one_the_terminal_uses ... ok
+test iam::oauth::tests::the_client_is_the_orgs_own_cli ... ok
+test iam::oauth::tests::the_end_session_url_names_the_client_and_its_loopback ... ok
+test iam::oauth::tests::the_sign_out_loopback_waits_for_its_own_state ... ok
+test iam::device::tests::poll_pending_then_issued ... ok
+test iam::oauth::tests::wire_a_closed_token_endpoint_is_a_failure ... ok
+test iam::oauth::tests::wire_a_paste_does_not_hold_the_runtime_when_nothing_is_typed ... ok
+test iam::oauth::tests::wire_a_refused_paste_leaves_the_sign_in_waiting ... ok
+test commands::up::tui::tests::test_pane_and_tab_switching ... ok
+test iam::oauth::tests::wire_a_client_granted_the_device_code_signs_in_by_it_as_itself ... ok
+test iam::oauth::tests::wire_after_a_refused_paste_the_browser_still_lands ... ok
+test iam::oauth::tests::wire_a_refused_refresh_is_spent_and_an_unanswered_one_is_not ... ok
+test iam::oauth::tests::wire_an_org_without_its_own_cli_is_refused_before_sign_in ... ok
+test iam::oauth::tests::wire_as_admin_signs_in_by_paste_and_renews_through_admin_cli ... ok
+test iam::oauth::tests::wire_refresh_and_revoke_present_the_credentials_own_client ... ok
+test commands::up::tui::tests::test_sandbox_navigation ... ok
+test iam::onboarding::tests::a_mismatched_provider_key_is_refused_and_nothing_is_filed ... ok
+test iam::onboarding::tests::a_native_agent_login_is_not_fresh ... ok
+test iam::onboarding::tests::a_pristine_config_is_fresh ... ok
+test iam::onboarding::tests::a_signed_in_identity_is_not_fresh ... ok
+test iam::onboarding::tests::a_stored_provider_is_not_fresh ... ok
+test iam::onboarding::tests::read_identity_token_refuses_an_argv_literal ... ok
+test iam::onboarding::tests::refuse_provider_mismatch_blocks_only_a_known_cross_vendor_key ... ok
+test iam::paths::tests::a_network_with_its_own_issuer_is_a_realm_of_its_own ... ok
+test iam::paths::tests::an_issuer_the_realm_cannot_name_is_refused ... ok
+test iam::paths::tests::brand_origins_are_canonical ... ok
+test iam::paths::tests::endpoints_are_hip0111_exact ... ok
+test iam::oauth::tests::wire_the_exchange_runs_as_the_orgs_client_and_checks_the_owner ... ok
+test iam::paths::tests::no_brand_signs_in_against_an_api_host ... ok
+test iam::paths::tests::only_a_loopback_address_signs_in_over_http ... ok
+test iam::paths::tests::trailing_slashes_are_trimmed ... ok
+test iam::pkce::tests::challenge_matches_verifier ... ok
+test iam::pkce::tests::rfc7636_appendix_b_known_answer ... ok
+test iam::pkce::tests::state_is_high_entropy_and_unique ... ok
+test iam::pkce::tests::verifier_is_43_chars_url_safe ... ok
+test iam::provider::tests::a_provider_key_never_collides_with_an_identity_or_wallet_slot ... ok
+test iam::provider::tests::check_key_rejects_unclean_secrets ... ok
+test iam::provider::tests::detect_maps_prefixes_to_providers ... ok
+test iam::provider::tests::key_roundtrips_through_the_vault_seam ... ok
+test iam::provider::tests::parse_accepts_names_and_aliases ... ok
+test iam::provider::tests::slug_and_slot_are_stable_and_disjoint ... ok
+test iam::secret::tests::read_secret_refuses_empty ... ok
+test iam::secret::tests::read_secret_strips_exactly_one_trailing_newline ... ok
+test iam::secret::tests::read_trimmed_trims_and_rejects_empty ... ok
+test iam::secret::tests::secret_source_never_takes_a_secret_from_argv ... ok
+test iam::store::tests::a_bare_owner_that_is_ambiguous_is_refused_and_lists ... ok
+test commands::up::tui::tests::test_sandboxes_arrows_switch_views_and_tui_uses_play_triangle ... ok
+test iam::store::tests::a_founder_moved_into_their_org_is_followed ... ok
+test iam::oauth::tests::wire_exchange_refresh_and_revoke_use_the_token_endpoint ... ok
+test iam::store::tests::a_migration_in_flight_cannot_revert_a_concurrent_explicit_login ... ok
+test iam::store::tests::a_realm_is_only_the_active_networks ... ok
+test iam::store::tests::a_refresh_that_comes_back_as_someone_else_is_refused_not_filed ... ok
+test iam::store::tests::a_refreshed_credential_replaces_the_one_it_was_read_from ... ok
+test commands::up::tui::tests::test_toggle_network_block ... ok
+test commands::up::tui::tests::test_savings_page_is_view_six_and_t_steps_its_range ... ok
+test commands::up::tui::tests::test_toggle_start_stop ... ok
+test iam::store::tests::a_token_with_no_readable_expiry_is_treated_as_live ... ok
+test iam::store::tests::a_token_without_claims_is_refused ... ok
+test iam::store::tests::a_missing_credential_never_falls_back_to_another_identity ... ok
+test iam::store::tests::a_tampered_index_row_cannot_relabel_a_credential ... ok
+test iam::store::tests::a_token_cannot_be_filed_under_another_principals_slot ... ok
+test iam::store::tests::an_unidentifiable_legacy_entry_fails_closed_and_login_clears_it ... ok
+test iam::store::tests::a_moved_identity_keeps_its_orgs_choice ... ok
+test iam::store::tests::as_an_org_speaks_as_its_identity_without_switching ... ok
+test iam::store::tests::as_owner_slash_name_speaks_as_that_identity_exactly ... ok
+test iam::store::tests::commands_refuse_an_unknown_brand_before_touching_the_keychain ... ok
+test iam::store::tests::bare_switch_with_more_than_two_lists_and_refuses ... ok
+test iam::store::tests::bare_switch_toggles_between_exactly_two ... ok
+test iam::store::tests::a_sign_in_is_its_orgs_active_identity ... ok
+test iam::store::tests::expiry_comes_from_the_token_itself_and_is_acted_on_early ... ok
+test iam::store::tests::as_an_org_with_no_active_identity_sends_no_token ... ok
+test iam::store::tests::as_an_org_you_hold_no_identity_in_is_refused_not_substituted ... ok
+test iam::store::tests::legacy_entry_migrates_once_and_the_old_key_is_gone ... ok
+test iam::paths::tests::hanzo_trusts_its_two_issuers_and_nobody_else ... ok
+test iam::store::tests::devnet_refuses_a_credential_its_issuer_did_not_sign ... ok
+test iam::store::tests::hanzo_files_what_either_of_its_issuers_signed ... ok
+test iam::store::tests::filing_unasked_keeps_the_active_identity ... ok
+test iam::oauth::tests::wire_only_a_refresh_that_never_arrived_is_sent_again ... ok
+test iam::store::tests::every_consumer_follows_the_active_identity ... ok
+test iam::store::tests::logout_all_is_scoped_to_one_brand ... ok
+test iam::store::tests::logout_all_removes_every_identity_and_the_pointer ... ok
+test iam::store::tests::no_consumer_bypasses_the_active_identity_seam ... ok
+test iam::store::tests::migration_does_not_touch_the_keychain_under_the_lock ... ok
+test iam::store::tests::logout_one_identity_leaves_the_other_intact_and_active ... ok
+test iam::store::tests::nothing_is_signed_in_by_default ... ok
+test iam::store::tests::only_the_same_person_outside_superadmin_is_followed ... ok
+test iam::store::tests::logout_of_the_active_identity_does_not_slide_onto_the_survivor ... ok
+test iam::store::tests::no_issuer_no_credential_and_no_other_brand_on_devnet ... ok
+test iam::store::tests::signing_in_again_names_the_identitys_own_org ... ok
+test iam::store::tests::moving_an_inactive_identity_leaves_the_active_one_alone ... ok
+test iam::store::tests::migration_never_steals_an_active_pointer ... ok
+test iam::store::tests::logout_clears_only_its_orgs_choice ... ok
+test iam::store::tests::resolving_a_credential_never_moves_the_active_pointer ... ok
+test iam::store::tests::switch_flips_the_active_identity_and_therefore_the_billing_org ... ok
+test iam::store::tests::the_credential_from_an_hour_old_login_is_already_spent ... ok
+test iam::store::tests::relogin_as_the_same_identity_updates_in_place ... ok
+test iam::store::tests::there_is_one_accessor_for_the_active_credential_and_it_is_async ... ok
+test iam::store::tests::switch_resolves_a_bare_owner_when_unambiguous ... ok
+test iam::store::tests::switching_to_an_unknown_identity_is_refused_and_changes_nothing ... ok
+test iam::store::tests::the_config_index_never_holds_token_material ... ok
+test iam::store::tests::no_keychain_access_happens_while_the_config_lock_is_held ... ok
+test iam::store::tests::switching_onto_an_indexed_but_unheld_identity_fails_closed ... ok
+test iam::store::tests::token_for_an_unindexed_identity_is_none ... ok
+test iam::store::tests::identities_never_cross_networks ... ok
+test image::tests::a_challenge_names_its_realm_and_service ... ok
+test image::tests::a_digest_reference_is_already_pinned ... ok
+test iam::store::tests::the_list_as_json_names_every_identity_and_marks_the_default ... ok
+test image::tests::a_lone_manifest_is_checked_against_its_config ... ok
+test image::tests::a_loopback_registry_is_plain_http ... ok
+test image::tests::a_reference_splits_into_registry_repository_and_version ... ok
+test image::tests::an_index_is_selected_by_platform ... ok
+test image::tests::a_pinned_reference_never_reaches_the_registry ... ok
+test image::tests::an_index_reports_what_it_does_have ... ok
+test image::tests::an_index_pins_to_this_architecture_through_the_token_dance ... ok
+test image::tests::an_index_without_this_architecture_is_refused ... ok
+test image::tests::an_unnamed_registry_is_refused ... ok
+test image::tests::docker_config_parses_auths_helpers_and_normalized_hosts ... ok
+test iam::store::tests::token_for_a_missing_credential_is_none_never_a_fallback ... ok
+test image::tests::the_architecture_is_the_one_a_registry_names ... ok
+test iam::store::tests::token_for_a_mismatched_slot_fails_closed ... ok
+test image::tests::forgejo_anonymous_token_404_retries_with_authenticated_token ... ok
+test image::tests::private_realm_refusing_anonymous_token_retries_with_basic_credential ... ok
+test iam::store::tests::token_for_refuses_an_unknown_brand ... ok
+test iam::store::tests::two_identities_coexist_and_the_second_login_does_not_clobber_the_first ... ok
+test tests::auth_owns_the_identity_verbs ... ok
+test tests::a_global_flag_still_reaches_an_absorbed_subcommand ... ok
+test tests::bare_hanzo_has_no_subcommand ... ok
+test tests::bare_hanzo_carries_top_level_code_flags ... ok
+test tests::a_lone_near_miss_names_the_command_and_a_task_still_runs ... ok
+test tests::auth_switch_list_json_and_token_as_parse ... ok
+test iam::store::tests::token_for_resolves_each_held_identitys_own_token ... ok
+test tests::chain_runs_the_hanzod_node ... ok
+test tests::a_generated_product_resolves_and_a_local_command_does_not ... ok
+test tests::contradictory_backend_spellings_are_refused ... ok
+test tests::dev_takes_the_tool_as_a_flag ... ok
+test tests::first_word_finds_the_subcommand_past_the_globals ... ok
+test tests::channels_and_connect_parse_cleanly ... ok
+test tests::help_flag_is_preserved ... ok
+test tests::build_is_a_command_not_a_task ... ok
+test tests::net_is_gone ... ok
+test tests::old_top_level_verbs_are_removed ... ok
+test tests::link_speaks_the_network_from_this_machine ... ok
+test tests::linked_ai_accounts_live_under_auth ... ok
+test tests::resource_nouns_parse ... ok
+test tests::the_duplicate_agent_spelling_is_gone_and_desktop_survives ... ok
+test tests::retired_launch_spellings_name_hanzo_dev ... ok
+test tests::dev_serve_local_bot_and_sandbox_computer_parse_while_bot_absorbs_cloud_ops ... ok
+test zap::tests::a_truncated_frame_is_an_error_not_a_panic ... ok
+test tests::vm_is_a_verbatim_passthrough ... ok
+test zap::tests::request_get_bare_is_byte_identical_to_go ... ok
+test zap::tests::a_wrong_magic_is_refused ... ok
+test zap::tests::request_get_one_header_is_byte_identical_to_go ... ok
+test zap::tests::request_get_two_headers_is_byte_identical_to_go ... ok
+test zap::tests::request_post_body_is_byte_identical_to_go ... ok
+test zap::tests::response_resp_200_json_decodes_from_go ... ok
+test zap::tests::response_resp_204_empty_decodes_from_go ... ok
+test zap::tests::response_resp_403_json_decodes_from_go ... ok
+test iam::store::tests::use_moves_one_orgs_choice_and_no_other ... ok
+test tests::every_entry_spelling_resolves_to_one_session ... ok
+test tests::up_boots_k3s_and_the_old_service_spelling_still_forwards ... ok
+test tests::a_leading_global_leaves_the_command_a_command ... ok
+test tests::the_merged_command_tree_is_valid ... ok
+test tests::code_is_the_index_and_dev_is_the_session ... ok
+test commands::up::tui::tests::test_refresh_all ... ok
+test commands::product::tests::every_coordinate_parses_and_dispatches_to_its_own_route ... ok
+
+test result: ok. 461 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.71s
+
+     Running tests/auth.rs (target/debug/deps/auth-854f05f67966790e)
+
+running 6 tests
+test an_account_never_rides_a_handed_token ... ok
+test logout_without_a_browser_prints_the_end_session_link ... ok
+test the_listing_names_each_identity_by_owner_name_and_address ... FAILED
+test as_an_org_signs_out_and_hands_out_only_its_own_identity ... ok
+test as_an_org_files_its_identity_beside_the_default_and_speaks_as_it ... ok
+test each_org_keeps_its_own_active_identity ... ok
+
+failures:
+
+---- the_listing_names_each_identity_by_owner_name_and_address stdout ----
+
+thread 'the_listing_names_each_identity_by_owner_name_and_address' (15633982) panicked at tests/auth.rs:125:5:
+  * hanzo/grundy  grundy@example.com
+  (* = active; + = what `--as <org>` speaks as; owner is the billing org)
+
+stack backtrace:
+   0:        0x102a71340 - std[9bc579fd67db55b0]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:        0x102a71340 - std[9bc579fd67db55b0]::backtrace_rs::backtrace::trace_unsynchronized::<std[9bc579fd67db55b0]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:        0x102a71340 - std[9bc579fd67db55b0]::sys::backtrace::_print_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:74:9
+   3:        0x102a71340 - <<std[9bc579fd67db55b0]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[2525d0a98ae2f2bb]::fmt::Display>::fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:44:26
+   4:        0x102a85508 - <core[2525d0a98ae2f2bb]::fmt::rt::Argument>::fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/fmt/rt.rs:152:76
+   5:        0x102a85508 - core[2525d0a98ae2f2bb]::fmt::write
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/fmt/mod.rs:1687:22
+   6:        0x102a76360 - core[2525d0a98ae2f2bb]::io::write::default_write_fmt::<alloc[654f9ea51da0cd84]::vec::Vec<u8>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/io/write.rs:402:11
+   7:        0x102a76360 - <alloc[654f9ea51da0cd84]::vec::Vec<u8> as core[2525d0a98ae2f2bb]::io::write::Write>::write_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/io/write.rs:335:13
+   8:        0x102a548c0 - <std[9bc579fd67db55b0]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:47:25
+   9:        0x102a548c0 - std[9bc579fd67db55b0]::panicking::default_hook::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:292:27
+  10:        0x102a6a7dc - std[9bc579fd67db55b0]::panicking::default_hook
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:316:9
+  11:        0x102a1dc68 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn for<'a, 'b> core[2525d0a98ae2f2bb]::ops::function::Fn<(&'a std[9bc579fd67db55b0]::panic::PanicHookInfo<'b>,), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send + core[2525d0a98ae2f2bb]::marker::Sync> as core[2525d0a98ae2f2bb]::ops::function::Fn<(&std[9bc579fd67db55b0]::panic::PanicHookInfo,)>>::call
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2334:9
+  12:        0x102a1dc68 - test[f1218eb88dc64a32]::test_main_inner::<test[f1218eb88dc64a32]::test_main_static::{closure#0}>::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:155:21
+  13:        0x102a6aba4 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn for<'a, 'b> core[2525d0a98ae2f2bb]::ops::function::Fn<(&'a std[9bc579fd67db55b0]::panic::PanicHookInfo<'b>,), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send + core[2525d0a98ae2f2bb]::marker::Sync> as core[2525d0a98ae2f2bb]::ops::function::Fn<(&std[9bc579fd67db55b0]::panic::PanicHookInfo,)>>::call
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2334:9
+  14:        0x102a6aba4 - std[9bc579fd67db55b0]::panicking::panic_with_hook
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:823:13
+  15:        0x102a54944 - std[9bc579fd67db55b0]::panicking::panic_handler::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:688:13
+  16:        0x102a4cf08 - std[9bc579fd67db55b0]::sys::backtrace::__rust_end_short_backtrace::<std[9bc579fd67db55b0]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:182:18
+  17:        0x102a55010 - __rustc[3d2f79520d6fa809]::rust_begin_unwind
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:679:5
+  18:        0x102a94138 - core[2525d0a98ae2f2bb]::panicking::panic_fmt
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panicking.rs:80:14
+  19:        0x1029db804 - auth[e7e6f7fff05295ff]::the_listing_names_each_identity_by_owner_name_and_address
+                               at /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/tests/auth.rs:125:5
+  20:        0x1029d5438 - auth[e7e6f7fff05295ff]::the_listing_names_each_identity_by_owner_name_and_address::{closure#0}
+                               at /private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/tests/auth.rs:116:63
+  21:        0x1029deb50 - <auth[e7e6f7fff05295ff]::the_listing_names_each_identity_by_owner_name_and_address::{closure#0} as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  22:        0x102a12d58 - <fn() -> core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  23:        0x102a12d58 - test[f1218eb88dc64a32]::__rust_begin_short_backtrace::<core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>, fn() -> core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:733:18
+  24:        0x102a1e28c - test[f1218eb88dc64a32]::run_test_in_process::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:756:74
+  25:        0x102a1e28c - <core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panic/unwind_safe.rs:275:9
+  26:        0x102a1e28c - std[9bc579fd67db55b0]::panicking::catch_unwind::do_call::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>, core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576:43
+  27:        0x102a1e28c - std[9bc579fd67db55b0]::panicking::catch_unwind::<core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>, core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544:19
+  28:        0x102a1e28c - std[9bc579fd67db55b0]::panic::catch_unwind::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<test[f1218eb88dc64a32]::run_test_in_process::{closure#0}>, core[2525d0a98ae2f2bb]::result::Result<(), alloc[654f9ea51da0cd84]::string::String>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359:14
+  29:        0x102a1e28c - test[f1218eb88dc64a32]::run_test_in_process
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:756:27
+  30:        0x102a1e28c - test[f1218eb88dc64a32]::run_test::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:677:43
+  31:        0x102a19e00 - test[f1218eb88dc64a32]::run_test::{closure#1}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/test/src/lib.rs:707:41
+  32:        0x102a19e00 - std[9bc579fd67db55b0]::sys::backtrace::__rust_begin_short_backtrace::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166:18
+  33:        0x102a20750 - std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/lifecycle.rs:70:13
+  34:        0x102a20750 - <core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/panic/unwind_safe.rs:275:9
+  35:        0x102a20750 - std[9bc579fd67db55b0]::panicking::catch_unwind::do_call::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576:43
+  36:        0x102a20750 - std[9bc579fd67db55b0]::panicking::catch_unwind::<(), core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544:19
+  37:        0x102a20750 - std[9bc579fd67db55b0]::panic::catch_unwind::<core[2525d0a98ae2f2bb]::panic::unwind_safe::AssertUnwindSafe<std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359:14
+  38:        0x102a20750 - std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked::<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/lifecycle.rs:68:26
+  39:        0x102a20750 - <std[9bc579fd67db55b0]::thread::lifecycle::spawn_unchecked<test[f1218eb88dc64a32]::run_test::{closure#1}, ()>::{closure#1} as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250:5
+  40:        0x102a70b08 - <alloc[654f9ea51da0cd84]::boxed::Box<dyn core[2525d0a98ae2f2bb]::ops::function::FnOnce<(), Output = ()> + core[2525d0a98ae2f2bb]::marker::Send> as core[2525d0a98ae2f2bb]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2320:9
+  41:        0x102a70b08 - <std[9bc579fd67db55b0]::sys::thread::unix::Thread>::new::thread_start
+                               at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/thread/unix.rs:123:17
+  42:        0x19ed18ce4 - __pthread_exit
+
+
+failures:
+    the_listing_names_each_identity_by_owner_name_and_address
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.01s
+
+error: test failed, to rerun pass `-p hanzo-cli --test auth`
+     Running tests/build.rs (target/debug/deps/build-041e69b8e891aea3)
+
+running 1 test
+test a_dockerfile_builds_in_the_vm_and_comes_back_as_an_oci_archive ... ignored, boots a hanzo-vm microVM: cargo test --test build -- --ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-539a174089607e2a)
+
+running 26 tests
+test live_login_whoami_usage_with_env_token ... ok
+test help_lists_the_resource_nouns ... ok
+test agent_run_offers_an_async_path_without_changing_the_default ... ok
+test login_rejects_a_garbage_token_from_stdin ... ok
+test auth_show_signed_out_refuses_with_login_hint ... ok
+test login_refuses_a_literal_token_on_argv ... ok
+test graph_asks_at_both_times ... ok
+test every_version_spelling_prints_the_one_line ... ok
+test network_add_sovereign_roundtrip ... ok
+test one_command_ships_under_one_name ... ok
+test network_list_shows_builtins_with_mainnet_active ... ok
+test network_use_unknown_fails_with_hint ... ok
+test status_is_a_command_not_a_coding_session ... ok
+test pull_is_a_command_and_engine_lists_cached_models ... ok
+test config_profile_is_what_gen_reads ... ok
+test version_is_the_cargo_version ... ok
+test the_retired_launchers_name_hanzo_dev ... ok
+test status_signed_out_refuses_and_never_shows_an_empty_fleet ... ok
+test network_use_persists_across_invocations ... ok
+test no_screen_names_a_second_product ... ok
+test wallet_list_empty_state ... ok
+test vm_passes_through_to_a_resolved_binary ... ok
+test hanzo_files_a_credential_from_hanzo_ai_and_hanzo_id_and_refuses_a_foreign_issuer ... ok
+test network_sandboxes_name_their_own_api ... ok
+test a_bare_hanzo_starts_the_coding_agent ... ok
+test identities_never_cross_networks ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.74s
+
+     Running tests/cloud_sessions.rs (target/debug/deps/cloud_sessions-bfc19a8500feb7cc)
+
+running 3 tests
+test cloud_entry_points_are_exposed ... ok
+test cloud_does_not_silently_ignore_local_execution_options ... ok
+test cloud_controls_require_a_cloud_session_and_valid_bounds ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/feedback_flows.rs (target/debug/deps/feedback_flows-2c57968d131bd43c)
+
+running 4 tests
+test mcp_cold_cache_initialize_within_timeout ... ok
+test chat_completions_typed_flags_and_data_refusal ... ok
+test auth_flow_stdin_login_show_token_and_logout_isolated ... ok
+test models_list_formats_table_json_and_yaml_anonymously ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/production.rs (target/debug/deps/production-8587b2fd3e49ec18)
+
+running 6 tests
+test production_cloud_instruction_follows_the_new_session ... ignored, leases production sandboxes to verify an in-flight instruction and handoff
+test production_cloud_session_completes ... ignored, leases a production sandbox and runs a metered read-only task
+test production_local_dev_writes_a_file ... ignored, runs a metered coding task in a temporary directory
+test production_login_and_usage ... ignored, uses a real production identity and network
+test production_mcp_cold_cache_initialize ... ignored, runs installed hanzo-mcp on a cold package cache
+test production_models_list_and_chat_completions_flags ... ignored, exercises production models list and chat completions typed flags
+
+test result: ok. 0 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/refresh.rs (target/debug/deps/refresh-e56b33151f4062c7)
+
+running 1 test
+test processes_that_need_a_refresh_at_once_spend_the_refresh_token_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.50s
+
+     Running tests/shell.rs (target/debug/deps/shell-0b457795377e936d)
+
+running 3 tests
+test malformed_profile_is_not_overwritten ... ok
+test installer_path_setup_does_not_enable_presence ... ok
+test startup_is_idempotent_singleton_and_uninstall_stops_it ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.96s
+
+     Running tests/spec_drift.rs (target/debug/deps/spec_drift-72839b902759c28d)
+
+running 3 tests
+test the_committed_spec_names_the_release_it_was_generated_from ... ok
+test generated_is_exactly_what_the_spec_derives ... ok
+test the_live_server_contradicts_this_command_tree_in_neither_direction ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.10s
+
+     Running unittests src/lib.rs (target/debug/deps/hanzo_client-31fa0c2191922e43)
+
+running 3 tests
+test retry::tests::only_a_429_is_made_again_for_a_request_that_may_have_been_processed ... ok
+test retry::tests::a_retry_after_is_seconds_or_an_http_date ... ok
+test retry::tests::the_backoff_doubles_to_its_ceiling_with_the_lower_half_fixed ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract.rs (target/debug/deps/contract-8f0b31cd602d8a7a)
+
+running 23 tests
+test a_tokenless_mint_is_an_auth_error ... ok
+test a_second_401_surfaces_rather_than_looping ... ok
+test a_refusal_carries_the_status_and_the_body ... ok
+test a_private_estate_moves_both_addresses ... ok
+test a_lifetime_iam_omitted_is_assumed_not_ignored ... ok
+test a_clone_shares_the_held_token ... ok
+test a_body_that_does_not_fit_is_a_decode_error ... ok
+test a_401_remints_and_retries_once ... ok
+test a_refused_mint_is_an_api_error ... ok
+test a_202_is_held_and_carries_the_approval ... ok
+test an_accepted_answer_is_not_a_hold ... ok
+test an_omitted_approval_field_reads_empty ... ok
+test an_unscoped_client_never_mints ... ok
+test done_on_a_held_call_is_an_error_naming_the_approval ... ok
+test each_subject_holds_its_own_token ... ok
+test mint_addresses_iam_and_names_the_subject_in_the_query ... ok
+test named_scoped_writes_can_remint_and_retry_once ... ok
+test non_idempotent_scoped_writes_stop_after_first_401 ... ok
+test the_body_rides_and_the_address_stays_v1 ... ok
+test the_call_rides_the_minted_token_not_the_operator_key ... ok
+test the_polled_approval_reads_with_the_same_shape ... ok
+test the_subject_is_encoded_not_interpolated ... ok
+test the_token_is_held_until_it_nears_expiry ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/retry.rs (target/debug/deps/retry-c1c4bf0a2f1bdc2f)
+
+running 8 tests
+test a_wait_past_the_hold_is_answered_at_once ... ok
+test a_refusal_is_never_made_again ... ok
+test a_post_is_made_again_after_a_429 ... ok
+test a_429_waits_the_retry_after_then_succeeds ... ok
+test a_dropped_connection_is_made_again ... ok
+test a_post_is_made_again_after_a_failure_only_with_a_request_id ... ok
+test a_5xx_that_later_succeeds_is_made_again ... ok
+test a_request_that_keeps_failing_is_made_four_times_and_its_last_answer_returned ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.92s
+
+     Running unittests src/lib.rs (target/debug/deps/hanzo_event-e0dafc88bebd2344)
+
+running 8 tests
+test tests::opted_out_new_is_a_noop ... ok
+test tests::disabled_handle_records_nothing ... ok
+test tests::opt_out_reads_both_variables ... ok
+test tests::device_id_is_stable_across_calls ... ok
+test tests::capture_error_builds_scrubbed_canonical_error_event ... ok
+test tests::flush_without_credential_sends_nothing ... ok
+test tests::command_builds_the_canonical_wire ... ok
+test tests::flush_posts_the_batch_to_the_endpoint ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/hanzo_identity-ea47cd859a5affe5)
+
+running 27 tests
+test discovery::tests::the_discovered_issuer_is_the_one_accepted ... ok
+test identity::tests::an_address_is_read_off_the_token_or_reported_missing ... ok
+test identity::tests::identity_is_derived_from_the_tokens_own_claims ... ok
+test identity::tests::human_usernames_are_legal_claims ... ok
+test identity::tests::owner_is_the_billing_org ... ok
+test identity::tests::the_issuing_client_is_azp_else_the_one_aud ... ok
+test token::tests::debug_never_prints_a_token ... ok
+test identity::tests::selector_parses_exact_and_bare_owner ... ok
+test identity::tests::a_non_jwt_token_has_no_derivable_identity ... ok
+test token::tests::file_vault_default_location_is_the_data_dir ... ok
+test identity::tests::claims_without_owner_or_name_are_rejected ... ok
+test identity::tests::claims_cannot_inject_the_key_separator_or_traverse ... ok
+test discovery::tests::an_address_a_credential_cannot_go_to_is_refused ... ok
+test token::tests::deleting_one_identity_leaves_the_other_intact ... ok
+test index::tests::reads_the_active_identity_of_a_brand ... ok
+test token::tests::the_key_is_brand_scoped_per_identity ... ok
+test token::tests::token_set_roundtrips_and_defaults_token_type ... ok
+test token::tests::two_identities_coexist_and_neither_clobbers_the_other ... ok
+test discovery::tests::the_issuer_may_be_another_host_than_the_origin ... ok
+test token::tests::file_vault_set_creates_a_missing_parent_dir ... ok
+test token::tests::refresh_lock_nests_with_a_vault_write ... ok
+test discovery::tests::cached_for_the_ttl_and_kept_when_a_refresh_fails ... ok
+test token::tests::file_vault_is_owner_only ... ok
+test token::tests::file_vault_roundtrips_get_set_remove ... ok
+test token::tests::file_vault_two_keys_coexist ... ok
+test token::tests::file_vault_backs_the_full_identity_flow ... ok
+test token::tests::file_vault_concurrent_writers_keep_each_others_keys ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+   Doc-tests hanzo_client
+
+running 1 test
+test crates/client/src/lib.rs - (line 19) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+   Doc-tests hanzo_event
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests hanzo_identity
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 1 target failed:
+    `-p hanzo-cli --test auth`
+make: *** [test] Error 101

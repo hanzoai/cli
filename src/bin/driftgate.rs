@@ -314,7 +314,10 @@ const AHEAD: usize = 1;
 /// 67 -> 70 on @1c63bd3c9 (v8.5.1404): three new literal routes added under
 /// existing auth-walled prefixes (2841 total coordinates, 2771 present, 0 absent,
 /// 157 products served). Nothing previously decidable went blind.
-const UNFALSIFIABLE: usize = 70;
+/// 70 -> 72 on @8ad1bcbfd (v8.5.1447): two more coordinates sit behind existing
+/// auth-walled prefixes in the re-pinned document (2885 total, 2813 present,
+/// 0 absent, 161 products served). No previously decidable route went blind.
+const UNFALSIFIABLE: usize = 72;
 
 // ---- the live route table ----------------------------------------------------
 
