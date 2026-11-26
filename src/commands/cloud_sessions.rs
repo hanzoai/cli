@@ -326,7 +326,8 @@ fn field<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
-fn finished(status: &str) -> bool {
+/// The vocabulary of a finished cloud session, shared with `agent run --wait`.
+pub(crate) fn finished(status: &str) -> bool {
     matches!(status, "done" | "error" | "stopped")
 }
 
