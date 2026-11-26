@@ -58,6 +58,10 @@ pub fn install_panic_hook(telemetry: &hanzo_event::Telemetry) {
     };
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        if crate::is_broken_pipe(info.payload()) {
+            prev(info);
+            return;
+        }
         let payload = info
             .payload()
             .downcast_ref::<&str>()
@@ -151,5 +155,136 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Share { .. } => "share",
         Commands::Shell { .. } => "shell",
         Commands::Init { .. } => "init",
+    }
+}
+
+/// Decide whether a failed command should be filed as a `CommandError` exception
+/// to `/v1/event` (Sentinel). Every failed run is still recorded as `ok: false`
+/// on `command_completed`; this gate prevents expected non-crash outcomes from
+/// paging Sentinel as CLI client bugs:
+///
+/// - Transparent child binary non-zero exits (`launch::ChildExited`: `kubectl`,
+///   `helm`, `hanzo-vm`, `buildctl`, …) — the exit code belongs to the child tool.
+/// - Upstream HTTP status responses (`product::HttpStatusError`, or a formatted
+///   `-> 4xx/5xx:` / `HTTP 4xx/5xx:` status refusal): 4xx are normal user/auth/
+///   validation refusals, and 5xx are server/edge faults already alerted server-side.
+pub fn should_capture_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if cause.is::<crate::commands::launch::ChildExited>()
+            || cause.is::<crate::commands::product::HttpStatusError>()
+        {
+            return false;
+        }
+    }
+    !is_http_status_message(&err.to_string())
+}
+
+fn is_http_status_message(msg: &str) -> bool {
+    for prefix in [" -> ", "HTTP "] {
+        let mut rest = msg;
+        while let Some(idx) = rest.find(prefix) {
+            let after = &rest[idx + prefix.len()..];
+            let bytes = after.as_bytes();
+            if bytes.len() >= 3
+                && matches!(bytes[0], b'4' | b'5')
+                && bytes[1].is_ascii_digit()
+                && bytes[2].is_ascii_digit()
+                && bytes.get(3).is_none_or(|b| !b.is_ascii_digit())
+            {
+                return true;
+            }
+            rest = after;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::{launch::ChildExited, product::HttpStatusError};
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    fn non_zero_status() -> std::process::ExitStatus {
+        #[cfg(unix)]
+        let mut cmd = {
+            let mut c = Command::new("sh");
+            c.args(["-c", "exit 1"]);
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "exit 1"]);
+            c
+        };
+        cmd.status().expect("spawn exit 1")
+    }
+
+    #[test]
+    fn skips_child_process_non_zero_exits() {
+        let err: anyhow::Error = ChildExited {
+            bin: PathBuf::from("/usr/local/bin/kubectl"),
+            status: non_zero_status(),
+        }
+        .into();
+        assert!(!should_capture_error(&err));
+        let wrapped = err.context("kubectl rollout restart deploy/cloud failed");
+        assert!(!should_capture_error(&wrapped));
+    }
+
+    #[test]
+    fn skips_http_4xx_and_5xx_api_responses() {
+        for (status, path, detail) in [
+            (
+                400,
+                "/v1/platform/apps",
+                r#"{"detail":"a repository in this organization's workspace..."}"#,
+            ),
+            (
+                403,
+                "/v1/git/workflows",
+                r#"{"code":"forbidden","detail":"forge: ..."}"#,
+            ),
+            (502, "/v1/platform/apps", "error code: 502"),
+            (
+                400,
+                "/v1/git/repos/cd-clock-test/push",
+                r#"{"detail":"invalid body: json..."}"#,
+            ),
+        ] {
+            let err: anyhow::Error = HttpStatusError {
+                path: path.to_string(),
+                status,
+                detail: detail.to_string(),
+                hint: None,
+            }
+            .into();
+            assert!(!should_capture_error(&err), "status {status} on {path}");
+        }
+    }
+
+    #[test]
+    fn skips_formatted_http_status_fallback_messages() {
+        assert!(!should_capture_error(&anyhow::anyhow!(
+            "/v1/platform/apps -> 502: error code: 502"
+        )));
+        assert!(!should_capture_error(&anyhow::anyhow!(
+            "cloud coding: HTTP 403: forbidden"
+        )));
+    }
+
+    #[test]
+    fn keeps_genuine_cli_faults() {
+        assert!(should_capture_error(&anyhow::anyhow!(
+            "reading config ~/.hanzo/config.toml: invalid TOML syntax"
+        )));
+        assert!(should_capture_error(&anyhow::anyhow!(
+            "connecting to local unix socket: permission denied"
+        )));
+        assert!(should_capture_error(&anyhow::anyhow!(
+            "migrating store schema v4 -> v5 failed"
+        )));
     }
 }

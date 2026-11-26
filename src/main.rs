@@ -871,7 +871,7 @@ enum WalletCommands {
 /// pipe on purpose. Rust's print macros panic on that write error, which turned a
 /// normal truncation into a Sentry panic storm. Quiet only that one panic; every
 /// other panic keeps the default hook and its report.
-fn is_broken_pipe(payload: &(dyn std::any::Any + Send)) -> bool {
+pub(crate) fn is_broken_pipe(payload: &(dyn std::any::Any + Send)) -> bool {
     let text = payload
         .downcast_ref::<String>()
         .map(String::as_str)
@@ -996,13 +996,15 @@ async fn run() -> Result<()> {
         let started = std::time::Instant::now();
         let outcome = commands::product::dispatch(&mut config, resolved).await;
         if let Err(ref err) = outcome {
-            telemetry.capture_error(
-                "CommandError",
-                &err.to_string(),
-                None,
-                true,
-                Some("product"),
-            );
+            if telemetry::should_capture_error(err) {
+                telemetry.capture_error(
+                    "CommandError",
+                    &err.to_string(),
+                    None,
+                    true,
+                    Some("product"),
+                );
+            }
         }
         telemetry.command("product", started.elapsed(), outcome.is_ok());
         telemetry.flush().await;
@@ -1016,13 +1018,15 @@ async fn run() -> Result<()> {
             let started = std::time::Instant::now();
             let outcome = dispatch(command, config).await;
             if let Err(ref err) = outcome {
-                telemetry.capture_error(
-                    "CommandError",
-                    &err.to_string(),
-                    None,
-                    true,
-                    Some(command_label),
-                );
+                if telemetry::should_capture_error(err) {
+                    telemetry.capture_error(
+                        "CommandError",
+                        &err.to_string(),
+                        None,
+                        true,
+                        Some(command_label),
+                    );
+                }
             }
             telemetry.command(command_label, started.elapsed(), outcome.is_ok());
             telemetry.flush().await;
@@ -1037,7 +1041,15 @@ async fn run() -> Result<()> {
             let started = std::time::Instant::now();
             let outcome = commands::dev::session(&mut config, code, Target::Repo).await;
             if let Err(ref err) = outcome {
-                telemetry.capture_error("CommandError", &err.to_string(), None, true, Some("dev"));
+                if telemetry::should_capture_error(err) {
+                    telemetry.capture_error(
+                        "CommandError",
+                        &err.to_string(),
+                        None,
+                        true,
+                        Some("dev"),
+                    );
+                }
             }
             telemetry.command("dev", started.elapsed(), outcome.is_ok());
             telemetry.flush().await;

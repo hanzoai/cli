@@ -1172,7 +1172,13 @@ async fn request(
         Value::String(s) => s.trim().to_string(),
         v => v.to_string(),
     };
-    bail!("{path} -> {}: {shown}", reply.status)
+    Err(crate::commands::product::HttpStatusError {
+        path: path.to_string(),
+        status: reply.status,
+        detail: shown,
+        hint: None,
+    }
+    .into())
 }
 
 fn post_channel_str(row: &Value) -> String {
