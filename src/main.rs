@@ -307,7 +307,7 @@ enum Commands {
         #[arg(long, default_value_t = 4096)]
         memory: u64,
         /// Disk size in MB
-        #[arg(long, default_value_t = 16384)]
+        #[arg(long, default_value_t = 32768)]
         disk_size: u64,
         /// The cloud image to deploy. A tag is resolved to a digest before it
         /// reaches the cluster; name a digest to skip the registry entirely
@@ -2289,7 +2289,7 @@ mod tests {
         else {
             panic!("expected bare up")
         };
-        assert_eq!((cpus, memory, disk_size, link), (4, 4096, 16384, None));
+        assert_eq!((cpus, memory, disk_size, link), (4, 4096, 32768, None));
         assert_eq!(cloud, commands::up::CLOUD);
         assert!(staged.is_none());
         assert!(iam_issuer.is_none());

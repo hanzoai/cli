@@ -573,6 +573,11 @@ fn workload(image: &str) -> String {
 fn workload_for(boot: &Boot) -> Result<String> {
     let image = &boot.cloud;
     let mut extra_env = String::new();
+    // Local ephemeral `hanzo up` clusters mount a blank emptyDir at /var/lib/cloud.
+    // Opt into local dev IAM bootstrap so the embedded identity store opens cleanly
+    // instead of returning 500 on admin directory sync; when no external issuer is
+    // pinned, allow host-relative issuers so local loopback tokens work out of the box.
+    extra_env.push_str(&yaml_env_block("IAM_DEV_BOOTSTRAP", "1")?);
     if let Some(v) = boot
         .staged
         .as_deref()
@@ -588,6 +593,8 @@ fn workload_for(boot: &Boot) -> Result<String> {
         .filter(|s| !s.is_empty())
     {
         extra_env.push_str(&yaml_env_block("CLOUD_IAM_ISSUER", v)?);
+    } else {
+        extra_env.push_str(&yaml_env_block("IAM_DEV_HOST_RELATIVE", "1")?);
     }
     if let Some(v) = boot
         .ai_base_url
@@ -1410,6 +1417,10 @@ mod tests {
             strict_registry: true,
         })
         .unwrap();
+        assert!(plain.contains("name: IAM_DEV_BOOTSTRAP"), "{plain}");
+        assert!(plain.contains("name: IAM_DEV_HOST_RELATIVE"), "{plain}");
+        assert!(fc.contains("name: IAM_DEV_BOOTSTRAP"), "{fc}");
+        assert!(!fc.contains("name: IAM_DEV_HOST_RELATIVE"), "{fc}");
         assert!(fc.contains("name: CLOUD_ENABLE_STAGED"), "{fc}");
         assert!(fc.contains("value: \"fanclub\""), "{fc}");
         assert!(fc.contains("name: CLOUD_IAM_ISSUER"), "{fc}");
