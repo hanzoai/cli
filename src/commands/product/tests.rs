@@ -1253,6 +1253,98 @@ fn a_stdin_secret_can_never_reach_argv() {
     }
 }
 
+/// THE THREE OPERATIONS THAT STORE A SEALED VALUE take it from stdin, never a
+/// flag: `environment secrets set`, `kms secrets create` and `notify credentials
+/// set` call the field `value`, a name no name rule catches, so it is the
+/// operation that marks it. A `--value`
+/// would put a live credential in shell history and the process list, so it must
+/// not parse, and the one secret field is the `value` stdin fills (`inject_secret`
+/// inserts it under its key).
+#[test]
+fn the_value_of_a_stored_secret_has_no_flag() {
+    let store = [
+        ("/v1/environment/{repo}/secrets/{name}", "PUT"),
+        ("/v1/kms/secrets", "POST"),
+        ("/v1/notify/credentials/{provider}/{key}", "PUT"),
+    ];
+    for (path, method) in store {
+        let op = OPS
+            .iter()
+            .find(|o| o.path == path && o.method == method)
+            .unwrap_or_else(|| panic!("{method} {path} is served"));
+        let secrets: Vec<&Field> = op.fields.iter().filter(|f| f.secret).collect();
+        assert_eq!(secrets.len(), 1, "{path}: stdin fills exactly one field");
+        assert_eq!(
+            secrets[0].key, "value",
+            "{path}: the body is {{\"value\": <stdin>}}"
+        );
+    }
+    let base = || augment(Command::new("hanzo"));
+    assert!(
+        base()
+            .try_get_matches_from([
+                "hanzo",
+                "environment",
+                "secrets",
+                "set",
+                "r",
+                "N",
+                "--value",
+                "s"
+            ])
+            .is_err(),
+        "`--value <literal>` must not parse"
+    );
+    assert!(
+        base()
+            .try_get_matches_from([
+                "hanzo", "kms", "secrets", "create", "--name", "N", "--value", "s"
+            ])
+            .is_err(),
+        "`--value <literal>` must not parse"
+    );
+    assert!(
+        base()
+            .try_get_matches_from([
+                "hanzo",
+                "notify",
+                "credentials",
+                "provider",
+                "set",
+                "p",
+                "k",
+                "--value",
+                "s"
+            ])
+            .is_err(),
+        "`--value <literal>` must not parse"
+    );
+}
+
+/// The hidden prompt names the command a person is running, in full: product,
+/// resource nodes and verb. It used to drop the nodes, so a person storing an
+/// environment secret was asked for a value for `hanzo environment set` (another
+/// real command) and a kms one for `hanzo kms create` (no such command).
+#[test]
+fn the_prompt_names_the_command_being_run() {
+    let label = |path: &str, method: &str| {
+        let op = OPS
+            .iter()
+            .find(|o| o.path == path && o.method == method)
+            .unwrap_or_else(|| panic!("{method} {path} is served"));
+        let f = op.fields.iter().find(|f| f.secret).expect("a secret field");
+        prompt_label(op, f)
+    };
+    assert_eq!(
+        label("/v1/environment/{repo}/secrets/{name}", "PUT"),
+        "value for `hanzo environment secrets set`"
+    );
+    assert_eq!(
+        label("/v1/kms/secrets", "POST"),
+        "value for `hanzo kms secrets create`"
+    );
+}
+
 /// The org binds to the active identity's owner and is never an argument: kms
 /// moved the org out of the URL, and no verb may take it back as a flag.
 #[test]

@@ -57,7 +57,7 @@ pub fn secret_source(token: Option<&str>, stdin_tty: bool) -> SecretSource {
 /// else is touched — leading and interior bytes (spaces, a PEM's inner newlines)
 /// are the value. Empty is refused rather than stored.
 ///
-/// This is the reader the `kms secrets create` value uses.
+/// This is the reader every stdin-secret field uses.
 pub fn read_secret<R: Read>(mut r: R) -> Result<String> {
     let mut v = String::new();
     r.read_to_string(&mut v)
@@ -66,7 +66,7 @@ pub fn read_secret<R: Read>(mut r: R) -> Result<String> {
         v = s.strip_suffix('\r').unwrap_or(s).to_string();
     }
     if v.is_empty() {
-        bail!("no value on stdin — pipe the secret in, e.g. `printf %s \"$V\" | hanzo kms secrets create --name NAME --env prod`");
+        bail!("no value on stdin — pipe it in (`printf %s \"$V\" | hanzo <command>`) or run the command at a terminal and type it at the prompt");
     }
     Ok(v)
 }
@@ -146,6 +146,13 @@ mod tests {
         assert_eq!(read_secret(&b"hunter2\n\n"[..]).unwrap(), "hunter2\n");
         // Interior and leading bytes are the value, never trimmed.
         assert_eq!(read_secret(&b"  a b\nc  \n"[..]).unwrap(), "  a b\nc  ");
+    }
+
+    #[test]
+    fn the_empty_input_hint_fits_any_command() {
+        let e = read_secret(&b""[..]).unwrap_err().to_string();
+        assert!(!e.contains("kms"), "{e}");
+        assert!(e.contains("pipe") && e.contains("prompt"), "{e}");
     }
 
     #[test]

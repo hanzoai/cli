@@ -399,11 +399,16 @@ fn output_of(m: &ArgMatches) -> Option<Output> {
         })
 }
 
+/// The words a person types to run an operation: product, resource nodes, verb.
+fn command_words(op: &Op) -> String {
+    let mut words = vec![op.product];
+    words.extend(op.nodes);
+    words.push(op.verb);
+    words.join(" ")
+}
+
 /// The refusal for `--data` on an operation that types its body: the flags it takes, by name.
 fn flags_not_data(op: &'static Op) -> String {
-    let mut name = vec![op.product];
-    name.extend(op.nodes);
-    name.push(op.verb);
     let flags: Vec<String> = op
         .fields
         .iter()
@@ -412,7 +417,7 @@ fn flags_not_data(op: &'static Op) -> String {
         .collect();
     format!(
         "`hanzo {}` takes its body as flags, not --data: {}",
-        name.join(" "),
+        command_words(op),
         flags.join(" ")
     )
 }
@@ -974,10 +979,7 @@ fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
     // A secret field has no flag, so `None` is the only question that can be
     // asked: nothing could have carried a literal here for the law to refuse.
     let value = match secret::secret_source(None, secret::stdin_is_tty()) {
-        secret::SecretSource::Prompt => secret::prompt(&format!(
-            "{} for `hanzo {} {}`",
-            f.flag, op.product, op.verb
-        ))?,
+        secret::SecretSource::Prompt => secret::prompt(&prompt_label(op, f))?,
         _ => secret::read_secret(std::io::stdin().lock())?,
     };
     let obj = body
@@ -985,6 +987,11 @@ fn inject_secret(op: &Op, mut body: Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("a typed body must be a JSON object"))?;
     insert_path(obj, f.key, Value::String(value));
     Ok(body)
+}
+
+/// What the hidden prompt asks for, and for which command.
+fn prompt_label(op: &Op, f: &Field) -> String {
+    format!("{} for `hanzo {}`", f.flag, command_words(op))
 }
 
 /// Fill a `/v1` template: a param preceded by `orgs` is the tenant scope, bound

@@ -295,7 +295,7 @@ struct FieldDef {
 /// `passwordHash`, `tokenFormat` and `password_file` all NAME a credential
 /// without being one, and forcing those onto stdin would be noise that teaches
 /// people to distrust the mechanism.
-fn is_secret(name: &str, pschema: &Value) -> bool {
+fn is_secret(path: &str, name: &str, pschema: &Value) -> bool {
     if pschema.get("format").and_then(Value::as_str) == Some("password") {
         return true;
     }
@@ -303,6 +303,19 @@ fn is_secret(name: &str, pschema: &Value) -> bool {
     // integer `budgetTokens` is a budget, an array `tokenFields` is a schema.
     if pschema.get("type").and_then(Value::as_str) != Some("string") {
         return false;
+    }
+    // The operation is evidence too. Three operations store a sealed value
+    // under a field called `value` (`PUT /v1/environment/{repo}/secrets/{name}`,
+    // `POST /v1/kms/secrets`, `PUT /v1/notify/credentials/{provider}/{key}`), a
+    // name no name rule can catch: a `value` written to a `secrets` or
+    // `credentials` route is the secret. Body fields only — a query field never
+    // gets here.
+    if name == "value"
+        && path
+            .split('/')
+            .any(|seg| matches!(seg, "secrets" | "credentials"))
+    {
+        return true;
     }
     let n: String = name
         .to_ascii_lowercase()
@@ -469,9 +482,9 @@ fn object_of(spec: &Value, schema: &Value) -> (Vec<(String, Value)>, BTreeSet<St
 
 /// Resolve a body schema into typed fields, or an empty vec for a freeform /
 /// non-object body (→ `--data` fallback). Faithful to the schema — no invention.
-fn fields_of(spec: &Value, schema: &Value) -> Vec<FieldDef> {
+fn fields_of(spec: &Value, path: &str, schema: &Value) -> Vec<FieldDef> {
     let mut out = Vec::new();
-    walk_object(spec, schema, "", true, 0, &mut Vec::new(), &mut out);
+    walk_object(spec, path, schema, "", true, 0, &mut Vec::new(), &mut out);
     out
 }
 
@@ -488,8 +501,10 @@ fn fields_of(spec: &Value, schema: &Value) -> Vec<FieldDef> {
 /// keeps its whole JSON value. `MAX_NEST` is the same guarantee for a schema
 /// spelled inline. A branch that expands to NOTHING (an object whose properties
 /// are all empty) falls back to one JSON flag rather than losing the property.
+#[allow(clippy::too_many_arguments)]
 fn walk_object(
     spec: &Value,
+    path: &str,
     schema: &Value,
     prefix: &str,
     req_path: bool,
@@ -517,7 +532,7 @@ fn walk_object(
             if let Some(r) = refname.clone() {
                 seen.push(r);
             }
-            walk_object(spec, d, &format!("{key}."), req, depth + 1, seen, out);
+            walk_object(spec, path, d, &format!("{key}."), req, depth + 1, seen, out);
             if refname.is_some() {
                 seen.pop();
             }
@@ -533,7 +548,7 @@ fn walk_object(
             required: req,
             choices,
             query: false,
-            secret: is_secret(&name, d),
+            secret: is_secret(path, &name, d),
             repeat,
         });
     }
@@ -765,7 +780,9 @@ fn main() {
             // Typed flags: body properties (writes) + query parameters (all ops).
             let write = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
             let schema = write.then(|| body_schema(&spec, op)).flatten();
-            let mut fields = schema.map(|s| fields_of(&spec, s)).unwrap_or_default();
+            let mut fields = schema
+                .map(|s| fields_of(&spec, path, s))
+                .unwrap_or_default();
             // WHY, decided here and nowhere else. `no-schema` is a TYPING GAP IN
             // CLOUD — the handler declares no JSON requestBody, so the document
             // states no shape and there is no shape for this generator to read.
@@ -1205,17 +1222,18 @@ fn emit_op(o: &Op) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::is_secret;
+    use super::{is_secret, query_fields};
     use serde_json::json;
 
     fn s(name: &str, ty: &str) -> bool {
-        is_secret(name, &json!({ "type": ty }))
+        is_secret("/v1/x", name, &json!({ "type": ty }))
     }
 
     /// The standard marker still decides, on its own, whatever the field is called.
     #[test]
     fn the_openapi_marker_is_honoured_first() {
         assert!(is_secret(
+            "/v1/x",
             "anything",
             &json!({ "type": "string", "format": "password" })
         ));
@@ -1287,5 +1305,56 @@ mod tests {
         ] {
             assert!(!s(name, ty), "`{name}: {ty}` is not a secret value");
         }
+    }
+
+    fn on(path: &str, name: &str) -> bool {
+        is_secret(path, name, &json!({ "type": "string" }))
+    }
+
+    /// The two operations that STORE a secret call the field `value`, a name no
+    /// name rule can catch, and the document carries `format: password` on no
+    /// field. The operation is the evidence: a `value` written to a `secrets`
+    /// route is the secret.
+    #[test]
+    fn the_value_stored_at_a_secrets_route_is_a_secret() {
+        assert!(on("/v1/environment/{repo}/secrets/{name}", "value"));
+    }
+
+    #[test]
+    fn the_value_of_a_new_kms_secret_is_a_secret() {
+        assert!(on("/v1/kms/secrets", "value"));
+    }
+
+    #[test]
+    fn the_value_of_a_notify_credential_is_a_secret() {
+        assert!(on("/v1/notify/credentials/{provider}/{key}", "value"));
+    }
+
+    /// A `credentials` route whose body has no `value` is untouched: the route
+    /// alone is not evidence, the field called `value` on it is.
+    #[test]
+    fn a_credentials_route_without_a_value_field_is_unaffected() {
+        assert!(!on("/v1/social/credentials", "clientId"));
+    }
+
+    /// A `value` anywhere else is just a value: a form field is not a credential.
+    #[test]
+    fn a_value_elsewhere_is_not_a_secret() {
+        assert!(!on(
+            "/v1/esign/o/{org}/sign/{token}/fields/{fieldId}",
+            "value"
+        ));
+    }
+
+    /// A query parameter rides the URL and is never a stdin-secret, whatever
+    /// the route is called.
+    #[test]
+    fn a_query_value_is_never_a_secret() {
+        let op = json!({ "parameters": [
+            { "name": "value", "in": "query", "schema": { "type": "string" } }
+        ]});
+        let f = query_fields(&json!({}), &op);
+        assert_eq!(f.len(), 1);
+        assert!(!f[0].secret);
     }
 }
