@@ -1841,3 +1841,161 @@ fn scalar_boolean_field_preserves_explicit_false_and_optional_omission() {
         Some(Value::Bool(false))
     );
 }
+
+// ---- one-shot bots: agent run may leave the gateway before the run does -----
+
+/// The async controls belong to ONE op. A generated command is a projection of
+/// cloud's document; a control that leaked to every write would invent a shape
+/// the document never declared.
+#[test]
+fn exactly_one_agent_run_has_the_async_controls() {
+    let hits: Vec<_> = OPS.iter().filter(|o| is_agent_run(o)).collect();
+    assert_eq!(hits.len(), 1, "the async controls must name one op");
+    assert_eq!(hits[0].path, "/v1/agent/{ref}/run");
+    assert_eq!(hits[0].method, "POST");
+
+    let merged = augment(hand());
+    assert!(
+        merged
+            .clone()
+            .try_get_matches_from(["hanzo", "agent", "coding", "create", "--async"])
+            .is_err(),
+        "--async must not leak to another op"
+    );
+    assert!(
+        merged
+            .try_get_matches_from(["hanzo", "agent", "run", "agt_1", "--wait"])
+            .is_err(),
+        "--wait without --async must be refused"
+    );
+}
+
+#[test]
+fn agent_run_stays_sync_unless_asked_and_parses_the_wait_deadline() {
+    let submit = |argv: &[&str]| -> Submit {
+        let m = matches_of(argv);
+        let Some(Resolved::Leaf { submit, .. }) = resolve(&hand(), &m) else {
+            panic!("expected a leaf: {argv:?}")
+        };
+        submit
+    };
+    assert_eq!(
+        submit(&["hanzo", "agent", "run", "agt_1"]),
+        Submit::Sync,
+        "the default contract is unchanged"
+    );
+    assert_eq!(
+        submit(&[
+            "hanzo",
+            "agent",
+            "run",
+            "agt_1",
+            "--data",
+            r#"{"prompt":"x"}"#
+        ]),
+        Submit::Sync
+    );
+    assert_eq!(
+        submit(&["hanzo", "agent", "run", "agt_1", "--async"]),
+        Submit::Async
+    );
+    assert_eq!(
+        submit(&["hanzo", "agent", "run", "agt_1", "--async", "--wait"]),
+        Submit::Wait(300)
+    );
+    assert_eq!(
+        submit(&[
+            "hanzo",
+            "agent",
+            "run",
+            "agt_1",
+            "--async",
+            "--wait",
+            "--timeout",
+            "12"
+        ]),
+        Submit::Wait(12)
+    );
+    assert!(
+        augment(hand())
+            .try_get_matches_from([
+                "hanzo",
+                "agent",
+                "run",
+                "agt_1",
+                "--async",
+                "--timeout",
+                "12"
+            ])
+            .is_err(),
+        "--timeout without --wait must be refused"
+    );
+}
+
+#[test]
+fn the_async_body_targets_the_same_agent_without_inventing_fields() {
+    let body = async_body(
+        "agt_1",
+        Some(json!({"prompt": "fix it", "repo": "acme/app"})),
+    )
+    .unwrap();
+    assert_eq!(body["agentRef"], json!("agt_1"));
+    assert_eq!(body["prompt"], json!("fix it"));
+    assert_eq!(body["repo"], json!("acme/app"));
+    assert!(
+        body["requestId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("cli-")),
+        "a retry must be one run"
+    );
+    let body = async_body("agt_1", Some(json!({"requestId": "mine"}))).unwrap();
+    assert_eq!(body["requestId"], json!("mine"), "a caller id wins");
+    assert!(async_body("agt_1", Some(json!(["x"]))).is_err());
+    assert!(async_body("", None).is_err());
+    assert_eq!(
+        async_body("agt_1", None).unwrap()["agentRef"],
+        json!("agt_1")
+    );
+}
+
+#[test]
+fn the_async_handle_is_unwrapped_and_validated_before_it_is_followed() {
+    assert_eq!(
+        accepted_session(Reply {
+            status: 202,
+            body: json!({"data": {"sessionId": "sess_1"}}),
+        })
+        .unwrap(),
+        "sess_1"
+    );
+    assert_eq!(
+        accepted_session(Reply {
+            status: 200,
+            body: json!({"sessionId": "sess_2"}),
+        })
+        .unwrap(),
+        "sess_2"
+    );
+    assert!(accepted_session(Reply {
+        status: 524,
+        body: json!({"error": "gateway timeout"}),
+    })
+    .is_err());
+    assert!(accepted_session(Reply {
+        status: 200,
+        body: json!({"status": "error", "msg": "held"}),
+    })
+    .is_err());
+    for id in ["", "../x", "s/x", "s?x=1"] {
+        assert!(
+            accepted_session(Reply {
+                status: 202,
+                body: json!({"sessionId": id}),
+            })
+            .is_err(),
+            "{id} must never reach a follow-up URL"
+        );
+    }
+    assert!(finished("done") && finished("error") && finished("stopped"));
+    assert!(!finished("running") && !finished("paused"));
+}

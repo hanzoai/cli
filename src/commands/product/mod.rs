@@ -43,6 +43,7 @@ use hanzo_client::{Http, Method, Reply, Request, Transport};
 use serde_json::{json, Map, Value};
 use std::io::{IsTerminal, Read};
 
+use crate::commands::cloud_sessions::finished;
 use crate::commands::host::{self, Origin};
 use crate::config::Config;
 use crate::iam::{paths, store};
@@ -305,7 +306,45 @@ fn leaf_named(name: &'static str, op: &'static Op) -> Command {
             data_arg()
         });
     }
+    if is_agent_run(op) {
+        // POST /v1/agent/{ref}/run is SYNCHRONOUS. A one-shot bot can hold that
+        // request open past the gateway's timeout while the routed run keeps
+        // going. The async route is POST /v1/agent/coding, which answers 202 with
+        // a session id the existing `agent sessions` commands can poll. These
+        // controls are mounted ONLY here: every other generated leaf keeps the
+        // contract cloud's document declares.
+        c = c
+            .arg(
+                Arg::new("async")
+                    .long("async")
+                    .action(ArgAction::SetTrue)
+                    .help("submit async and return the session handle at once"),
+            )
+            .arg(
+                Arg::new("wait")
+                    .long("wait")
+                    .action(ArgAction::SetTrue)
+                    .requires("async")
+                    .help("with --async, follow the session until it finishes"),
+            )
+            .arg(
+                Arg::new("timeout")
+                    .long("timeout")
+                    .value_name("SECONDS")
+                    .value_parser(clap::value_parser!(u64).range(1..))
+                    .requires("wait")
+                    .help("with --wait, stop following after SECONDS (default 300)"),
+            );
+    }
     c.arg(output_arg())
+}
+
+/// The one generated op whose POST is synchronous and long enough to outlive a
+/// gateway. Named by its coordinate (not a string match on the route) so a move
+/// in cloud shows up as a failed pin in `exactly_one_agent_run_has_async` rather
+/// than as flags silently going missing.
+fn is_agent_run(op: &Op) -> bool {
+    op.product == "agent" && op.nodes.is_empty() && op.verb == "run" && op.method == "POST"
 }
 
 /// How an answer is printed (`-o`): a table, JSON or YAML. One formatter serves every generated command.
@@ -478,6 +517,18 @@ fn data_arg() -> Arg {
 
 // ---- resolve a parse into a call, then dispatch through the ONE seam ---------
 
+/// How one call waits for the work it starts. `Sync` IS the generated contract:
+/// only `agent run` offers the other two, so every other command is unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Submit {
+    #[default]
+    Sync,
+    /// Submit through `POST /v1/agent/coding`, print the session id, return.
+    Async,
+    /// Submit async, then poll the session until it ends or SECONDS elapse.
+    Wait(u64),
+}
+
 /// What a matched generated command resolves to. Pure over the clap matches —
 /// no config, no keychain — so it is unit-testable without a network.
 pub enum Resolved {
@@ -487,6 +538,7 @@ pub enum Resolved {
         body: LeafBody,
         query: Vec<String>,
         output: Option<Output>,
+        submit: Submit,
     },
 }
 
@@ -571,12 +623,21 @@ fn resolve_leaf(op: &'static Op, m: &ArgMatches) -> Resolved {
     } else {
         LeafBody::None
     };
+    let submit = if is_agent_run(op) && m.get_flag("async") {
+        match m.get_flag("wait") {
+            false => Submit::Async,
+            true => Submit::Wait(m.get_one::<u64>("timeout").copied().unwrap_or(300)),
+        }
+    } else {
+        Submit::Sync
+    };
     Resolved::Leaf {
         op,
         values,
         body,
         query: typed_query(op, m),
         output: output_of(m),
+        submit,
     }
 }
 
@@ -706,6 +767,7 @@ pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
         body,
         query,
         output,
+        submit,
     } = resolved;
     if op.product == "iam" && op.nodes == ["memberships"] && op.verb == "get"
         && !memberships_query_ok(&query)
@@ -723,7 +785,104 @@ pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
         LeafBody::Misused => bail!("{}", flags_not_data(op)),
         LeafBody::None => None,
     };
-    call(cfg, method, path, body, query, output).await
+    match submit {
+        Submit::Sync => call(cfg, method, path, body, query, output).await,
+        Submit::Async | Submit::Wait(..) => {
+            // `agent run` has exactly one path parameter: the ref the run is of.
+            let r = values.first().ok_or_else(|| anyhow!("missing agent ref"))?;
+            let async_body = async_body(r, body)?;
+            let seam = Seam::open(cfg, paths::DEFAULT_BRAND).await?;
+            let reply = seam
+                .send(Method::POST, "/v1/agent/coding", &[], Some(async_body))
+                .await?;
+            let id = accepted_session(reply)?;
+            println!("Agent run started: {id}");
+            println!(
+                "Follow: hanzo agent sessions get {id}  ·  hanzo agent sessions events get {id}"
+            );
+            match submit {
+                Submit::Wait(seconds) => follow_session(&seam, &id, seconds).await,
+                _ => Ok(()),
+            }
+        }
+    }
+}
+
+/// The async route's body: the caller's `--data` object, addressed to the SAME
+/// agent, with an idempotency key when the caller gave none. A non-object body
+/// is refused — the coding route takes a typed object, not an array or scalar.
+fn async_body(r: &str, body: Option<Value>) -> Result<Value> {
+    let mut obj = match body {
+        Some(Value::Object(m)) => m,
+        Some(_) => bail!("--async needs a JSON object in --data (the /v1/agent/coding body)"),
+        None => Map::new(),
+    };
+    if r.trim().is_empty() {
+        bail!("an agent run needs a ref");
+    }
+    obj.entry("agentRef".to_string())
+        .or_insert_with(|| json!(r));
+    obj.entry("requestId".to_string())
+        .or_insert_with(|| json!(request_id()));
+    Ok(Value::Object(obj))
+}
+
+/// Unwrap the async route's 202 the same way `call` unwraps any other answer,
+/// and validate the session id BEFORE it is put into a follow-up URL.
+fn accepted_session(Reply { status, body }: Reply) -> Result<String> {
+    if !(200..300).contains(&status) {
+        let shown = match &body {
+            Value::Null => String::new(),
+            Value::String(s) => s.trim().to_string(),
+            v => v.to_string(),
+        };
+        bail!("/v1/agent/coding -> {status}: {shown}");
+    }
+    if let Some(msg) = envelope_error(&body) {
+        bail!("/v1/agent/coding: {msg}");
+    }
+    let value = body.get("data").cloned().unwrap_or(body);
+    let id = value.get("sessionId").and_then(Value::as_str).unwrap_or("");
+    if id.is_empty()
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        bail!("the async route answered no usable session id: {value}");
+    }
+    Ok(id.to_owned())
+}
+
+/// Poll the same session GET `hanzo agent sessions get` uses until the run ends
+/// or the deadline. Each request is short and independent, so losing this
+/// terminal costs the FOLLOW, never the run itself.
+async fn follow_session(seam: &Seam, id: &str, seconds: u64) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut last = String::new();
+    loop {
+        let Reply { status: code, body } = seam
+            .send(Method::GET, &format!("/v1/agent/sessions/{id}"), &[], None)
+            .await?;
+        if !(200..300).contains(&code) {
+            bail!("polling session {id} -> {code}: {body}");
+        }
+        let value = body.get("data").cloned().unwrap_or(body);
+        let current = value.get("status").and_then(Value::as_str).unwrap_or("");
+        if current != last {
+            println!("Session {id}: {current}");
+            last = current.to_owned();
+        }
+        if finished(current) {
+            if current == "error" {
+                bail!("agent run {id} failed");
+            }
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("agent run {id} is still {current} after {seconds}s; follow it with `hanzo agent sessions get {id}`");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
 }
 
 /// A fresh id for one invocation: the platform answers a request that carries it once, so a request made

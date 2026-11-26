@@ -55,6 +55,42 @@ fn tmp() -> tempfile::TempDir {
 
 // ── What gen reads ───────────────────────────────────────────────────────────
 
+/// A one-shot bot must be able to leave the gateway before the run does. The
+/// async controls live on `agent run` only; the default still names the
+/// synchronous POST in its help.
+#[test]
+fn agent_run_offers_an_async_path_without_changing_the_default() {
+    let out = hanzo()
+        .args(["agent", "run", "--help"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(out).expect("utf8 help");
+    for flag in ["--async", "--wait", "--timeout <SECONDS>"] {
+        assert!(help.contains(flag), "`{flag}` missing from agent run help");
+    }
+    assert!(
+        help.contains("POST /v1/agent/{ref}/run"),
+        "the default route must stay visible"
+    );
+
+    hanzo()
+        .args(["agent", "run", "agt_1", "--wait"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--async"));
+
+    // A control that leaked to every generated write would invent a shape the
+    // document never declared.
+    hanzo()
+        .args(["agent", "coding", "create", "--async"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--async"));
+}
+
 /// `gen` reads what this CLI has on file through `hanzo config profile` — the one
 /// reader of the config, so there is no second parser to drift — and holds it to
 /// its own `Profile`. A `code.link = false` here keeps a gen session local. The
