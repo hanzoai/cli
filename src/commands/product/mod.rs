@@ -691,6 +691,14 @@ fn find_op(chain: &[&str]) -> Option<&'static Op> {
 /// The org scope is filled from the active identity's `owner` (via the seam),
 /// never asked; all other params are the user's positionals. The bearer + origin
 /// are `call`'s to resolve.
+/// The membership read answers ONE question: which orgs a user is in, or who is
+/// in an org. The authored spec leaves both query fields optional, so a bare call
+/// reached the server and got a 400. Refuse it here with the one actionable fix.
+fn memberships_query_ok(query: &[String]) -> bool {
+    let has = |key: &str| query.iter().any(|q| q.starts_with(&format!("{key}=")));
+    has("user") != has("org")
+}
+
 pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
     let Resolved::Leaf {
         op,
@@ -699,6 +707,11 @@ pub async fn dispatch(cfg: &mut Config, resolved: Resolved) -> Result<()> {
         query,
         output,
     } = resolved;
+    if op.product == "iam" && op.nodes == ["memberships"] && op.verb == "get"
+        && !memberships_query_ok(&query)
+    {
+        anyhow::bail!("iam memberships get needs exactly one of --user or --org");
+    }
     let owner = store::acting(cfg, paths::DEFAULT_BRAND).map(|i| i.owner);
     let path = fill_path(op.path, op.rest, owner.as_deref(), &values)?;
     let method = parse_method(op.method)?;
@@ -1297,3 +1310,16 @@ fn lay(header: &[String], grid: &[Vec<String>], width: usize) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod membership_query_tests {
+    use super::memberships_query_ok;
+
+    #[test]
+    fn exactly_one_question_is_asked() {
+        assert!(memberships_query_ok(&["user=z".to_string()]));
+        assert!(memberships_query_ok(&["org=hanzo".to_string()]));
+        assert!(!memberships_query_ok(&[]));
+        assert!(!memberships_query_ok(&["user=z".to_string(), "org=hanzo".to_string()]));
+    }
+}

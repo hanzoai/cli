@@ -6,7 +6,7 @@
 //! body fields). No host, no absolute URL, no auth — pinned by a test.
 //!
 //! Census of this derivation, against the document `.spec-lock` names:
-//!   482 write command(s) take --data — 375 because the handler in hanzoai/cloud
+//!   479 write command(s) take --data — 372 because the handler in hanzoai/cloud
 //!   declares no requestBody (commerce 74, iam 40, ai 34, provider 15, agent 12, billing 10, git 9, audio 8, …), 107 because the schema is freeform by
 //!   construction. Only the first is a gap, and it closes where the handler lives.
 //!   17 method-override tunnel(s) dropped — a POST cloud registers so a browser
@@ -18,7 +18,7 @@
 
 use super::{Field, Op, Ty};
 
-/// 2840 coordinates across 158 products (1208 typed-flag, 480 --data-fallback writes).
+/// 2835 coordinates across 157 products (1208 typed-flag, 477 --data-fallback writes).
 pub(crate) static OPS: &[Op] = &[
     Op { product: "3d", nodes: &[], verb: "generations", method: "POST", path: "/v1/3d/generations", params: &[], rest: &[], fields: &[], sum: "Implements POST /v1/3d/generations for Zen family 3D SKUs (mori, zen-3d)." },
     Op { product: "account", nodes: &[], verb: "csrf", method: "GET", path: "/v1/account/csrf", params: &[], rest: &[], fields: &[], sum: "Mints the anti-forgery token a browser echoes as X-CSRF-Token on every change it asks for." },
@@ -2845,11 +2845,6 @@ pub(crate) static OPS: &[Op] = &[
     Op { product: "websearch", nodes: &["search"], verb: "get", method: "GET", path: "/v1/websearch/search", params: &[], rest: &[], fields: &[], sum: "Web meta-search, in the SearXNG JSON envelope." },
     Op { product: "websearch", nodes: &["search"], verb: "patch", method: "PATCH", path: "/v1/websearch/search", params: &[], rest: &[], fields: &[], sum: "Web meta-search, in the SearXNG JSON envelope." },
     Op { product: "websearch", nodes: &["search"], verb: "replace", method: "PUT", path: "/v1/websearch/search", params: &[], rest: &[], fields: &[], sum: "Web meta-search, in the SearXNG JSON envelope." },
-    Op { product: "workflow", nodes: &[], verb: "clear", method: "DELETE", path: "/v1/workflow", params: &[], rest: &[], fields: &[], sum: "Redirect to the workflow API root" },
-    Op { product: "workflow", nodes: &[], verb: "create", method: "POST", path: "/v1/workflow", params: &[], rest: &[], fields: &[], sum: "Redirect to the workflow API root" },
-    Op { product: "workflow", nodes: &[], verb: "get", method: "GET", path: "/v1/workflow", params: &[], rest: &[], fields: &[], sum: "Redirect to the workflow API root" },
-    Op { product: "workflow", nodes: &[], verb: "patch", method: "PATCH", path: "/v1/workflow", params: &[], rest: &[], fields: &[], sum: "Redirect to the workflow API root" },
-    Op { product: "workflow", nodes: &[], verb: "replace", method: "PUT", path: "/v1/workflow", params: &[], rest: &[], fields: &[], sum: "Redirect to the workflow API root" },
     Op { product: "world", nodes: &[], verb: "get", method: "GET", path: "/v1/world", params: &[], rest: &[], fields: &[], sum: "Answers GET /v1/world — the product's public endpoint, naming every wire this surface answers on." },
     Op { product: "world", nodes: &[], verb: "limits", method: "GET", path: "/v1/world/limits", params: &[], rest: &[], fields: &[Field { key: "plan", id: "query.plan", flag: "plan", ty: Ty::Str, required: false, choices: &[], query: true, secret: false, repeat: false }], sum: "Echoes a World plan's rate limits, alert quota and model-API grant, read straight from the live @hanzo/plans catalog, so agents and dashboards configure themselves against the catalog instead of hardcoding tier numbers." },
     Op { product: "world", nodes: &[], verb: "news", method: "GET", path: "/v1/world/news", params: &[], rest: &[], fields: &[], sum: "Returns the caller's merged world-news feed: every source their project's pipeline names — GDELT once per keyword, plus each allowlisted RSS or Atom feed — fetched concurrently, narrowed by the pipeline's keyword/region/source filters, deduplicated by link and sorted freshest first, capped at 50 items." },
@@ -2992,7 +2987,6 @@ pub(crate) static PRODUCTS: &[(&str, &str)] = &[
     ("web3", "The chain-access surface: which chains this deployment can reach, a JSON-RPC endpoint onto each…"),
     ("webhook", "How your app hears about events: register an endpoint, pick the events, get each one delivered and…"),
     ("websearch", "A web search and a page fetch your agents can call"),
-    ("workflow", "Hanzo Workflow: durable workflows that survive a crash, with every run visible and replayable"),
     ("world", "A live news feed filtered to what your project cares about"),
     ("x402", "Pay-per-request over HTTP 402: quote a price, take the payment, serve the resource"),
 ];
