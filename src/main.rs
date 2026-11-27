@@ -708,6 +708,13 @@ pub(crate) fn backend_flags(cmd: &clap::Command, argv: Vec<String>) -> Vec<Strin
     hanzo_gen::args::expand(cmd, argv)
 }
 
+/// A lone unquoted word that is no command but nearly one (`hanzo stauts`), or
+/// exactly ONE command deeper in the tree (`hanzo balance` for `hanzo billing
+/// balance`), is a typo, not a coding task: the flattened session positional
+/// would start an agent on it. A one-word task meant as one runs as `hanzo dev
+/// <task>`. When both fit, the exact path is named first and the near command
+/// second. A word that names two or more deeper commands is ambiguous and is
+/// judged by the near top-level match alone, as before.
 pub(crate) fn misspelled(cmd: &clap::Command, argv: &[String]) -> Option<String> {
     let at = leading_globals(argv);
     let word = argv.get(at)?;
@@ -723,11 +730,40 @@ pub(crate) fn misspelled(cmd: &clap::Command, argv: &[String]) -> Option<String>
         .flat_map(|c| std::iter::once(c.get_name()).chain(c.get_all_aliases()))
         .map(|name| (strsim::jaro_winkler(word, name), name))
         .filter(|(score, _)| *score >= 0.85)
-        .max_by(|a, b| a.0.total_cmp(&b.0))?;
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, name)| name.to_string());
+    let mut found = Vec::new();
+    nested(cmd, word, &mut Vec::new(), &mut found);
+    let exact = match found.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    };
+    let mean = match (exact, near) {
+        (Some(path), Some(name)) => format!("`hanzo {path}` or `hanzo {name}`"),
+        (Some(only), None) | (None, Some(only)) => format!("`hanzo {only}`"),
+        (None, None) => return None,
+    };
     Some(format!(
-        "no command `{word}`: did you mean `hanzo {}`? As a coding task: `hanzo dev \"{word}\"`",
-        near.1
+        "no command `{word}`: did you mean {mean}? As a coding task: `hanzo dev \"{word}\"`"
     ))
+}
+
+/// The paths, in tree order, of the visible commands under `cmd` whose name or
+/// alias is `word`. A hidden command hides its whole subtree.
+fn nested<'a>(
+    cmd: &'a clap::Command,
+    word: &str,
+    path: &mut Vec<&'a str>,
+    found: &mut Vec<String>,
+) {
+    for sub in cmd.get_subcommands().filter(|c| !c.is_hide_set()) {
+        path.push(sub.get_name());
+        if sub.get_name() == word || sub.get_all_aliases().any(|a| a == word) {
+            found.push(path.join(" "));
+        }
+        nested(sub, word, path, found);
+        path.pop();
+    }
 }
 
 pub(crate) fn hoist(cmd: &clap::Command, mut argv: Vec<String>) -> Vec<String> {
