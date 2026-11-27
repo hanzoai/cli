@@ -101,7 +101,12 @@ pub async fn publish(caller: &Caller, name: &str, target: &str) -> Result<String
         let me = s.me().await;
         s.close().await;
         let me = me?;
-        if me.platform() {
+        // A platform ZT identity may only host what the fabric bound to it; it
+        // may not publish arbitrary services. An explicit `--as <org>` is the
+        // "publish as an org's identity" case this error names: the caller has
+        // already chosen the tenant namespace for the service, so let the
+        // fabric's own Bind check decide rather than refusing here.
+        if me.platform() && caller.selected().is_none() {
             bail!(
                 "{} is the platform's identity, and its roles are universe's link-fabric.sh to set: \
                  host what it is bound to with `hanzo link host` alone, or publish as an org's identity",
