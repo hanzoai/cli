@@ -30,7 +30,7 @@ use hanzo_gen::backend::BackendKind;
 use hanzo_gen::Root;
 
 /// Hanzo's native tools, as hanzo.sh names them.
-pub const NATIVE: &[&str] = &["hanzo", "mcp", "gen", "zt", "node", "engine", "cloud"];
+pub const NATIVE: &[&str] = &["hanzo", "mcp", "gen", "zt", "node", "cloud"];
 
 /// The agent engine `hanzo` runs. hanzo.sh installs it with `hanzo`, so it is
 /// upgraded with it and is not a tool anyone names.
@@ -129,7 +129,6 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
             "hanzo-gen" => Some("gen"),
             "hanzo-zet" => Some("zt"),
             "hanzod" | "hanzo-node" => Some("node"),
-            "hanzo-engine" => Some("engine"),
             "hanzo-cloud" => Some("cloud"),
             "hanzo-cli" | "cli" => Some("hanzo"),
             other => NATIVE.iter().copied().find(|t| *t == other),
@@ -138,6 +137,10 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
             p.native.push(t.to_string());
         } else if let Some(t) = named(&n) {
             p.tools.push(t);
+        } else if matches!(n.as_str(), "engine" | "hanzo-engine") {
+            bail!(
+                "`{n}` is built into hanzod — run `hanzo upgrade node` (or `hanzo upgrade` for all tools)"
+            );
         } else {
             let mut known: Vec<&str> = NATIVE.to_vec();
             known.extend(tools().map(|t| t.name));
@@ -241,6 +244,20 @@ fn table(script: &str) -> Vec<Native> {
         .collect()
 }
 
+/// Split `native` by hanzo.sh's table: the names it ships, then the ones it
+/// does not. The installer dies on a name it lacks, so one stale name must not
+/// take the rest down with it. A table that cannot be read is its own error:
+/// reporting every name as missing would blame the tools for a changed installer.
+fn shipped(native: &[String], tools: &[Native]) -> Result<(Vec<String>, Vec<String>)> {
+    if tools.is_empty() {
+        bail!("could not read the tool table out of hanzo.sh");
+    }
+    Ok(native
+        .iter()
+        .cloned()
+        .partition(|n| tools.iter().any(|t| &t.name == n)))
+}
+
 /// `<binary>-<platform>.tar.gz` from `tool`'s latest release at `base`, checked
 /// against its `.sha256` before anything is unpacked, then put into `dir` beside
 /// the binary it replaces: a running binary is renamed aside (Windows will not
@@ -255,7 +272,10 @@ async fn fetch(
     use sha2::{Digest, Sha256};
     let asset = format!("{}-{platform}.tar.gz", tool.binary);
     let base_trimmed = base.trim_end_matches('/');
-    let latest_url = format!("{base_trimmed}/{}/releases/latest/download/{asset}", tool.repo);
+    let latest_url = format!(
+        "{base_trimmed}/{}/releases/latest/download/{asset}",
+        tool.repo
+    );
     let get = |u: String| async move {
         client
             .get(&u)
@@ -274,9 +294,7 @@ async fn fetch(
                 "{base_trimmed}/{}/releases/download/rust-v0.7.26/{asset}",
                 tool.repo
             );
-            let sum = get(format!("{pinned_url}.sha256"))
-                .await
-                .map_err(|_| err)?;
+            let sum = get(format!("{pinned_url}.sha256")).await.map_err(|_| err)?;
             (pinned_url, sum)
         }
         Err(err) => return Err(err),
@@ -365,12 +383,6 @@ pub async fn run(names: Vec<String>) -> Result<()> {
 
     if !plan.native.is_empty() {
         let dir = here()?;
-        println!(
-            "{} {} → {}",
-            "upgrading".bold(),
-            plan.native.join(", "),
-            dir.display()
-        );
         let script = reqwest::get(INSTALLER)
             .await
             .and_then(reqwest::Response::error_for_status)
@@ -381,32 +393,45 @@ pub async fn run(names: Vec<String>) -> Result<()> {
         if !script.starts_with("#!") {
             bail!("hanzo.sh did not answer with an installer");
         }
+        let tools = table(&script);
+        let (native, missing) = shipped(&plan.native, &tools)?;
+        failed.extend(
+            missing
+                .iter()
+                .map(|n| format!("{n} (not in hanzo.sh's table)")),
+        );
+        if !native.is_empty() {
+            println!(
+                "{} {} → {}",
+                "upgrading".bold(),
+                native.join(", "),
+                dir.display()
+            );
+        }
         if cfg!(windows) {
-            let tools = table(&script);
             let client = reqwest::Client::new();
-            for name in &plan.native {
-                let Some(tool) = tools.iter().find(|t| &t.name == name) else {
-                    failed.push(format!("{name} (not in hanzo.sh's table)"));
-                    continue;
-                };
+            for tool in native
+                .iter()
+                .filter_map(|n| tools.iter().find(|t| &t.name == n))
+            {
                 match fetch(&client, RELEASES, tool, "windows-amd64", &dir).await {
-                    Ok(bin) => println!("  {} {} → {}", "✓".green(), name, bin.display()),
-                    Err(e) => failed.push(format!("{name} ({e:#})")),
+                    Ok(bin) => println!("  {} {} → {}", "✓".green(), tool.name, bin.display()),
+                    Err(e) => failed.push(format!("{} ({e:#})", tool.name)),
                 }
             }
-        } else {
+        } else if !native.is_empty() {
             let status = tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(&script)
                 .arg("hanzo.sh")
                 .arg("--dir")
                 .arg(&dir)
-                .args(&plan.native)
+                .args(&native)
                 .status()
                 .await
                 .context("running the installer with sh")?;
             if !status.success() {
-                failed.push(format!("{} ({status})", plan.native.join(", ")));
+                failed.push(format!("{} ({status})", native.join(", ")));
             }
         }
     }
@@ -570,7 +595,18 @@ mod tests {
     #[test]
     fn an_unknown_name_is_refused_with_the_list() {
         let e = plan(&names(&["nope"]), |_| false).unwrap_err().to_string();
-        assert!(e.contains("upgradable: hanzo, mcp, gen, zt, node, engine, cloud, claude, codex, interpreter, cursor"), "{e}");
+        assert!(
+            e.contains(
+                "upgradable: hanzo, mcp, gen, zt, node, cloud, claude, codex, interpreter, cursor"
+            ),
+            "{e}"
+        );
+        // hanzo.sh no longer ships the engine; naming it must not reach the installer,
+        // and must point users to `hanzo upgrade node`.
+        for n in ["engine", "hanzo-engine"] {
+            let err = plan(&names(&[n]), |_| false).unwrap_err().to_string();
+            assert!(err.contains("hanzo upgrade node"), "{n}: {err}");
+        }
     }
 
     #[test]
@@ -620,6 +656,36 @@ mod tests {
             ]
         );
         assert!(table("#!/bin/sh\necho no table\n").is_empty());
+    }
+
+    /// The rows of hanzo.sh's `TOOLS` table, as the live installer serves them.
+    const LIVE_TABLE: &str = "#!/bin/sh\nTOOLS='hanzo:hanzo:hanzoai/cli:hanzo:hanzo-cli\nnode:hanzod:hanzoai/node:hanzod:hanzo-node\nzt:hanzozt:hanzozt/zt:zt:hanzozt\ngen:hanzo-gen:hanzoai/gen:gen:hanzo-gen\ndev::hanzoai/dev:dev:\nmcp:hanzo-mcp:hanzoai/mcp:hanzo-mcp:mcp\ncloud:hanzo-cloud:hanzoai/cloud:hanzo-cloud:cloud'\nrest\n";
+
+    #[test]
+    fn everything_a_bare_upgrade_asks_for_is_in_the_installers_table() {
+        let tools = table(LIVE_TABLE);
+        for name in plan(&[], |_| false).unwrap().native {
+            assert!(
+                tools.iter().any(|t| t.name == name),
+                "{name} is not in hanzo.sh's table"
+            );
+        }
+    }
+
+    #[test]
+    fn names_are_split_by_what_the_installer_ships_in_order() {
+        let (shipped, missing) =
+            shipped(&names(&["hanzo", "dev", "ghost"]), &table(LIVE_TABLE)).unwrap();
+        assert_eq!(shipped, names(&["hanzo", "dev"]));
+        assert_eq!(missing, names(&["ghost"]));
+    }
+
+    #[test]
+    fn a_table_that_cannot_be_read_is_an_error_not_every_name_missing() {
+        let e = shipped(&names(&["hanzo"]), &table("#!/bin/sh\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("could not read the tool table"), "{e}");
     }
 
     /// A release server of one asset: the tarball and its `.sha256`, as GitHub serves them.
