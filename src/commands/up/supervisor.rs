@@ -301,14 +301,9 @@ fn drive(
     let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
         .context("the guest kubeconfig is not utf-8")?;
     write_kubeconfig(&kubeconfig_path()?, &rewrite_server(&yaml))?;
-    write_state(
-        dir,
-        if runtime_only {
-            "runtime-ready"
-        } else {
-            "ready"
-        },
-    );
+    // This proves only that the runtime is reachable. The caller of `up`
+    // separately waits for the Cloud Deployment's observed generation.
+    write_state(dir, "runtime-ready");
 
     let status = rpc.child.wait().context("waiting on hanzo-vm")?;
     write_state(dir, &format!("down ({status})"));
