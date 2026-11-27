@@ -286,9 +286,9 @@ fn processes_that_need_a_refresh_at_once_spend_the_refresh_token_once() {
     );
 }
 
-/// A stand-in API that answers every request `200 {}` and hands each one's
-/// request line and body to the test. `serve` is the IAM and only answers a
-/// refresh, so it cannot do this.
+/// A stand-in API that answers every request `200 {}` (or `403` when path ends
+/// in `/deny`) and hands each one's request line and body to the test. `serve`
+/// is the IAM and only answers a refresh, so it cannot do this.
 fn record(listener: TcpListener, seen: std::sync::mpsc::Sender<(String, String)>) {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { break };
@@ -307,13 +307,18 @@ fn record(listener: TcpListener, seen: std::sync::mpsc::Sender<(String, String)>
         }
         let mut body = vec![0; length];
         let _ = reader.read_exact(&mut body);
-        let _ = seen.send((
-            request_line.trim().to_string(),
-            String::from_utf8_lossy(&body).into_owned(),
-        ));
+        let req_trimmed = request_line.trim().to_string();
+        let deny = req_trimmed.contains("/secrets/DENY ");
+        let _ = seen.send((req_trimmed, String::from_utf8_lossy(&body).into_owned()));
+        let (status, payload) = if deny {
+            ("403 Forbidden", r#"{"error":"forbidden"}"#)
+        } else {
+            ("200 OK", "{}")
+        };
         let _ = write!(
             stream,
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+            payload.len()
         );
     }
 }
@@ -409,4 +414,16 @@ fn a_piped_secret_value_reaches_the_request_body() {
         "{line}"
     );
     assert_eq!(body, r#"{"value":"s"}"#);
+
+    // Even when the server refuses with 403, the piped secret never leaks into stdout or stderr.
+    let secret_marker = "super-secret-never-echo-99";
+    let denied = run(
+        &["environment", "secrets", "set", "r", "DENY"],
+        &format!("{secret_marker}\n"),
+    );
+    assert!(!denied.status.success());
+    let out_text = String::from_utf8_lossy(&denied.stdout);
+    let err_text = String::from_utf8_lossy(&denied.stderr);
+    assert!(!out_text.contains(secret_marker), "secret leaked to stdout: {out_text}");
+    assert!(!err_text.contains(secret_marker), "secret leaked to stderr: {err_text}");
 }
