@@ -269,12 +269,16 @@ context window is survivable, a session that cannot start is not).
 a hanzo-vm microVM from the `k3s-<VM_VERSION>` disk checkpoint, writes two manifests where
 k3s applies what it finds at startup, and holds the vm in a daemonized `up
 supervise`. Three things are worth knowing:
-- **The workload goes in BEFORE k3s starts**, so the cluster's first act is to
-  apply it — there is no second tool and no window in which the cluster is up
-  running nothing. `cloud-key.yaml` (namespace + a fresh 32-byte at-rest key)
-  sorts before `cloud.yaml` (Deployment + NodePort), which is why k3s creates
-  what the workload needs first. The API lands on 127.0.0.1:3690 through a
-  vsock forward to node port 30080; kube stays on 6443.
+- **The ground goes in before k3s starts; the workload after its credentials.**
+  `cloud-ns.yaml` (the ground: namespaces, the `cloud` ServiceAccount and its
+  grants, the data volume claim) is in k3s's manifests directory and is also
+  applied by the supervisor the moment the node is Ready. The Deployment is NOT in
+  that directory: the supervisor applies it after the pull secret and the at-rest
+  key exist. It used to be there, so k3s created the pod at boot, the pod failed
+  its first pull (401), the supervisor deleted it, and its replacement was
+  scheduled beside it — `Insufficient memory`, on every first boot. The API lands
+  on 127.0.0.1:3690 through hanzod and on 127.0.0.1:36930 directly (node port
+  30080); kube stays on 6443.
 - **The image is PINNED in the foreground** (`image.rs`: the registry's
   manifest endpoint, the anonymous token dance, platform selection) and the
   digest is handed to the supervisor as `--cloud`, so what the manifest names,
@@ -1512,3 +1516,51 @@ Two things surfaced, both now fixed:
   so the generated spelling need not parse.
 - **The `UNFALSIFIABLE` ceiling went from 64 to 67.** The three new literal GETs are `/v1/agent/groups`,
   `/v1/channel/groups` and `/v1/channel/providers`. Each sits under a prefix whose made-up control route gets 401.
+
+## `hanzo up --local`, the runtime's budget, and doctor's runtime section (2026-11-27, hanzo-inc/cloud INTENT "local cloud")
+
+Four faults in one local runtime, each fixed where it starts. The cloud side (the bus's store budget) is
+hanzoai/cloud `apps/pubsub/budget.go` and `sdk/bus/budget.go`.
+
+- **`hanzo up --local[=LAYOUT]` runs Cloud from this machine's source** (`up/local.rs`). The current
+  directory's `hanzo.config.json` declares the build (`"local": {"build": "...", "image": "<OCI layout dir>"}`);
+  the CLI runs it, reads the one image the layout names (it must be named under `hanzo.local/`, which no
+  registry answers to), has the supervisor load it into the node's containerd, and replaces the Deployment
+  with that exact name and `imagePullPolicy: Never`. No docker, no registry. **It never falls back**: nothing
+  on this path resolves a name against a registry, a failed build ends the command, and the Deployment is
+  written only once the node holds the image. `hanzod`'s `/v1/lifecycle/environment` is not called for a
+  local up, because its request names an image to deploy.
+- **The control socket** (`up/control.rs`, `~/.hanzo/up/control.sock`, 0600). The supervisor is the only
+  process that can run a command in the guest, so it listens between looks at its vm and answers three
+  named operations: `load` (an OCI layout into containerd), `prune` (older local images), `facts` (the
+  runtime's shape and what it has free). JSON lines; never a command a caller wrote. A runtime booted by an
+  older `hanzo` has no socket: `--local` says to restart it once.
+- **Loading** (`up/load.rs`). `ctr content ls` says what the node holds; the archive sent is the image's
+  documents and only the layers it lacks, and `ctr images import` resolves the rest against its store
+  (verified on k3s v1.37 / containerd 2.3). The archive crosses the vm's stdio wire in 512 KiB parts:
+  hanzo-vm 2.0.2 breaks the pipe on a 1 MiB message. Measured 15-37 MiB/s, so a first load of a 3.3 GB
+  image is minutes and a one-app change seconds. A digest reference does NOT resolve under `Never`
+  (measured: `ErrImageNeverPull`), so the image's name is a tag made from its manifest digest.
+- **The budget** (`up/budget.rs`). Cloud's pod requests half of what the node does not keep for itself
+  (768 MiB), in multiples of 64: 1664 MiB on the 4 GiB default, where it was 2048 and two pods did not fit.
+  The floor is 1536, because cloud's host holds `(request-200)/71` apps resident and starts 18 with itself.
+  The bus is told its file store (`CLOUD_PUBSUB_MAX_STORE`, a sixteenth of the disk within 256 MiB..4 GiB).
+  A runtime under 3840 MiB is refused when the workload is written, with the arithmetic. On a warm runtime
+  the shape comes from the supervisor (`facts`), not from the flags of the later invocation.
+- **The account** (`up/manifest.rs` `ground`). The pod runs as `hanzo/cloud`, not `default`, with exactly the
+  requests cloud makes on a local runtime: `pods` list+watch cluster-wide (the KMS socket's attestation
+  watch; `NODE_NAME` narrows the watch, RBAC cannot), `jobs` list in `hanzo` and in `hanzo-build`.
+  `up/diagnose.rs` `GRANTS` is the same list, asked of the API server by SubjectAccessReview; a test holds
+  the two together.
+- **Data** is on the `cloud-data` volume claim (local-path), so it survives `hanzo down` and a replaced
+  pod. It does NOT survive `hanzo stop`: hanzo-vm boots every vm from the checkpoint and has no disk that
+  outlives one (`--rootfs` is copied, measured). The Deployment is replaced (PUT), not merged: a merge
+  kept the old `emptyDir` beside the claim, which the API server refuses.
+- **`hanzo stop` prunes.** A vm stopped by signal leaves its whole disk in `~/.hanzo/vm/instances/<pid>`
+  (26 GB measured, once per stop). `vm::prune` runs `hanzo-vm prune` after the vm is gone.
+- **`hanzo doctor`** prints a runtime section when one is up (`up/diagnose.rs`): shape and budget, this
+  machine's memory beside the runtime's, node disk against the kubelet's thresholds, image provenance
+  (local and never pulled, or published), whether two pods fit, whether data is on a claim, every grant, and
+  a count of refused stream declarations (JetStream 10047) and refused API requests in the pod's log.
+- `is_system_checkout` knows `github.com/hanzo-inc/cloud`, so `hanzo up` there does not deploy the
+  checkout as a user app.
