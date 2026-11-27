@@ -137,6 +137,10 @@ pub fn plan(names: &[String], installed: impl Fn(&Tool) -> bool) -> Result<Plan>
             p.native.push(t.to_string());
         } else if let Some(t) = named(&n) {
             p.tools.push(t);
+        } else if matches!(n.as_str(), "engine" | "hanzo-engine") {
+            bail!(
+                "`{n}` is built into hanzod — run `hanzo upgrade node` (or `hanzo upgrade` for all tools)"
+            );
         } else {
             let mut known: Vec<&str> = NATIVE.to_vec();
             known.extend(tools().map(|t| t.name));
@@ -597,9 +601,11 @@ mod tests {
             ),
             "{e}"
         );
-        // hanzo.sh no longer ships the engine; naming it must not reach the installer.
+        // hanzo.sh no longer ships the engine; naming it must not reach the installer,
+        // and must point users to `hanzo upgrade node`.
         for n in ["engine", "hanzo-engine"] {
-            assert!(plan(&names(&[n]), |_| false).is_err(), "{n}");
+            let err = plan(&names(&[n]), |_| false).unwrap_err().to_string();
+            assert!(err.contains("hanzo upgrade node"), "{n}: {err}");
         }
     }
 
