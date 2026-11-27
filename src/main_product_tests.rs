@@ -130,3 +130,34 @@ fn dev_serve_local_bot_and_sandbox_computer_parse_while_bot_absorbs_cloud_ops() 
         Cli::try_parse_from(["hanzo", "sandbox", "computer", "http://127.0.0.1:5173"]).is_ok()
     );
 }
+
+#[test]
+fn local_mcp_commands_parse_while_absorbing_cloud_mcp_create() {
+    let hand = Cli::command();
+    let merged = commands::product::augment(hand.clone());
+
+    for argv in [
+        ["hanzo", "mcp"].as_slice(),
+        ["hanzo", "mcp", "--transport", "stdio"].as_slice(),
+        ["hanzo", "mcp", "doctor", "--fix"].as_slice(),
+        ["hanzo", "mcp", "install", "all", "--dry-run"].as_slice(),
+        ["hanzo", "mcp", "pair"].as_slice(),
+    ] {
+        let m = merged
+            .clone()
+            .try_get_matches_from(argv)
+            .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+        assert!(commands::product::resolve(&hand, &m).is_none(), "{argv:?} should be local");
+        assert!(matches!(Cli::from_arg_matches(&m).unwrap().command, Some(Commands::Mcp { .. })));
+    }
+
+    let cloud = merged
+        .try_get_matches_from(["hanzo", "mcp", "create", "--method", "tools/list"])
+        .expect("absorbed cloud `hanzo mcp create` must parse");
+    let Some(commands::product::Resolved::Leaf { op, .. }) =
+        commands::product::resolve(&hand, &cloud)
+    else {
+        panic!("`hanzo mcp create` must resolve to /v1/mcp")
+    };
+    assert_eq!(op.path, "/v1/mcp");
+}

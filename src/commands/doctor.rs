@@ -5,7 +5,11 @@ use sha2::{Digest, Sha256};
 use std::{io::Read, path::Path, time::Duration};
 use tokio::process::Command;
 
-use crate::{commands::product::Seam, config::Config};
+use crate::{
+    commands::product::Seam,
+    config::Config,
+    iam::{paths::DEFAULT_BRAND, store},
+};
 
 const TOOLS: &[(&str, &str, &str, &str)] = &[
     ("hanzo", "hanzo", "hanzoai/cli", ""),
@@ -114,6 +118,20 @@ pub async fn run(
         println!("INFO Release integrity not checked; use hanzo doctor --verify (downloads current releases)");
     }
 
+    if let Ok(mcp_bin) = crate::commands::mcp::resolve_binary() {
+        if let Ok(result) = output(Command::new(&mcp_bin).args(["doctor", "--json"]), 8).await {
+            if let Ok(report) = serde_json::from_slice::<serde_json::Value>(&result.stdout) {
+                for line in summarize_mcp_doctor(&report) {
+                    println!("{line}");
+                }
+            }
+        }
+    }
+
+    for line in check_machine_link_alignment(cfg) {
+        println!("{line}");
+    }
+
     if let Ok(local_diag) = crate::commands::lifecycle::doctor_checks(cfg).await {
         println!("Local 3-layer lifecycle diagnostics");
         for check in &local_diag.checks {
@@ -213,9 +231,192 @@ pub async fn share_report(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Format a concise summary of `hanzo-mcp doctor --json` covering native computer
+/// control, MCP client wiring, and ZAP/browser extension connectivity.
+pub(crate) fn summarize_mcp_doctor(report: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(comp) = report.get("computer") {
+        let native = comp
+            .get("native_available")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let ax = comp.get("accessibility_granted").and_then(serde_json::Value::as_bool);
+        let screen = comp
+            .get("screen_recording_granted")
+            .and_then(serde_json::Value::as_bool);
+        let detail = comp
+            .get("detail")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let tag = if native && ax != Some(false) && screen != Some(false) {
+            "OK  "
+        } else {
+            "WARN"
+        };
+        lines.push(format!("{tag} Computer Control: {detail}"));
+    }
+    if let Some(clients) = report.get("clients").and_then(serde_json::Value::as_array) {
+        let total = clients.len();
+        let registered = clients
+            .iter()
+            .filter(|c| c.get("registered").and_then(serde_json::Value::as_bool) == Some(true))
+            .count();
+        let computer_ready = clients
+            .iter()
+            .filter(|c| c.get("computer_enabled").and_then(serde_json::Value::as_bool) == Some(true))
+            .count();
+        let missing_computer: Vec<&str> = clients
+            .iter()
+            .filter(|c| {
+                c.get("registered").and_then(serde_json::Value::as_bool) == Some(true)
+                    && c.get("computer_enabled").and_then(serde_json::Value::as_bool) == Some(false)
+            })
+            .filter_map(|c| c.get("client").and_then(serde_json::Value::as_str))
+            .collect();
+        if !missing_computer.is_empty() {
+            lines.push(format!(
+                "WARN MCP Clients: {registered}/{total} registered, but {} lack native computer control — run `hanzo mcp install all`",
+                missing_computer.join(", ")
+            ));
+        } else if registered == 0 {
+            lines.push("WARN MCP Clients: none registered — run `hanzo mcp install all`".into());
+        } else {
+            lines.push(format!(
+                "OK   MCP Clients: {registered}/{total} registered ({computer_ready} with native computer control)"
+            ));
+        }
+    }
+    if let Some(ext) = report.get("extension") {
+        let connected = ext
+            .get("connected")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if connected {
+            let tabs = ext
+                .get("tab_count")
+                .and_then(serde_json::Value::as_u64)
+                .map(|n| format!("{n} tabs"))
+                .unwrap_or_else(|| "connected".into());
+            lines.push(format!("OK   Browser Extension (ZAP): {tabs}"));
+        } else {
+            let hint = ext
+                .pointer("/diagnostic/hint")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("open Chrome with the Hanzo Browser Extension or run `hanzo mcp doctor --fix`");
+            lines.push(format!("INFO Browser Extension (ZAP): not connected — {hint}"));
+        }
+    }
+    lines
+}
+
+/// Detect token expiry or org/auth drift between active CLI identity and local
+/// background machine-link services (`beat` / `hanzod`), so a cross-org miss or
+/// expired beat credential surfaces explicitly instead of looking like a deleted machine.
+fn check_machine_link_alignment(cfg: &Config) -> Vec<String> {
+    let active_id = store::active(cfg, DEFAULT_BRAND);
+    let active_org = cfg
+        .org
+        .as_deref()
+        .map(str::to_string)
+        .or_else(|| active_id.as_ref().map(|id| id.owner.clone()));
+
+    let mut lines = Vec::new();
+    if let Some(ref id) = active_id {
+        if let Ok(Some(tok)) = store::token_for(cfg, DEFAULT_BRAND, id) {
+            if store::spent(&tok.access_token) {
+                lines.push(format!(
+                    "WARN Machine Link: active identity {id} has an expired access token — run `hanzo auth login` and restart beat/hanzod"
+                ));
+            }
+        }
+    }
+
+    let Some(home) = dirs::home_dir() else {
+        return lines;
+    };
+    let log_candidates = [
+        home.join("Library/Logs/Hanzo/beat.err.log"),
+        home.join("Library/Logs/Hanzo/beat.log"),
+        home.join("Library/Logs/Hanzo/hanzod.err.log"),
+        home.join(".hanzo/logs/beat.err.log"),
+        home.join(".hanzo/logs/hanzod.err.log"),
+    ];
+    let mut combined_tail = String::new();
+    for path in &log_candidates {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            let start = raw.len().saturating_sub(4096);
+            combined_tail.push_str(&raw[start..]);
+            combined_tail.push('\n');
+        }
+    }
+    lines.extend(diagnose_beat_log(
+        active_id.as_ref().map(|id| id.to_string()).as_deref(),
+        active_org.as_deref(),
+        &combined_tail,
+    ));
+    lines
+}
+
+pub(crate) fn diagnose_beat_log(
+    active_identity: Option<&str>,
+    active_org: Option<&str>,
+    log_tail: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if log_tail.trim().is_empty() {
+        return out;
+    }
+    // Look for "could not refresh the <owner>/<name> credential" or "401" / "Unauthorized"
+    let mut beat_identity: Option<String> = None;
+    let mut saw_auth_failure = false;
+    for line in log_tail.lines().rev() {
+        let lower = line.to_lowercase();
+        if lower.contains("401")
+            || lower.contains("unauthorized")
+            || lower.contains("could not refresh the ")
+            || lower.contains("session has ended")
+        {
+            saw_auth_failure = true;
+        }
+        if beat_identity.is_none() {
+            if let Some(idx) = line.find("could not refresh the ") {
+                let rest = &line[idx + "could not refresh the ".len()..];
+                if let Some(tok) = rest.split_whitespace().next() {
+                    if tok.contains('/') {
+                        beat_identity = Some(tok.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let (Some(beat_id), Some(active_org)) = (beat_identity.as_deref(), active_org) {
+        if let Some((beat_org, _)) = beat_id.split_once('/') {
+            if beat_org != active_org {
+                out.push(format!(
+                    "WARN Machine Link: background beat is running under `{beat_id}` (org `{beat_org}`), which differs from active org `{active_org}` ({}) — machines only appear in the org they beat into; sign in to `{active_org}` and restart beat/hanzod",
+                    active_identity.unwrap_or(active_org),
+                ));
+                return out;
+            }
+        }
+    }
+    if saw_auth_failure {
+        #[cfg(target_os = "macos")]
+        let restart = "launchctl kickstart -k gui/$(id -u)/com.ai.hanzo.beat gui/$(id -u)/ai.hanzo.hanzod";
+        #[cfg(not(target_os = "macos"))]
+        let restart = "restart your hanzo beat / hanzod service";
+        out.push(format!(
+            "WARN Machine Link: recent beat/hanzod logs show auth failure (401 / refresh error) — run `hanzo auth login` then `{restart}`"
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
     #[test]
     fn integrity_comparison_reads_bytes_not_filenames() {
         let dir = tempfile::tempdir().unwrap();
@@ -226,5 +427,39 @@ mod tests {
         assert_eq!(digest(&a).unwrap(), digest(&b).unwrap());
         std::fs::write(&b, b"changed").unwrap();
         assert_ne!(digest(&a).unwrap(), digest(&b).unwrap());
+    }
+
+    #[test]
+    fn summarizes_mcp_doctor_report_and_flags_missing_computer() {
+        let report = json!({
+            "computer": {
+                "native_available": true,
+                "accessibility_granted": true,
+                "screen_recording_granted": true,
+                "detail": "native Quartz ready"
+            },
+            "clients": [
+                {"client": "hanzo", "registered": true, "computer_enabled": true},
+                {"client": "cursor", "registered": true, "computer_enabled": false}
+            ],
+            "extension": { "connected": true, "tab_count": 4 }
+        });
+        let lines = summarize_mcp_doctor(&report);
+        assert!(lines.iter().any(|l| l.starts_with("OK   Computer Control:")));
+        assert!(lines.iter().any(|l| l.contains("cursor lack native computer control")));
+        assert!(lines.iter().any(|l| l.contains("4 tabs")));
+    }
+
+    #[test]
+    fn detects_cross_org_beat_drift_and_401_auth_failure() {
+        let log = "warn: could not refresh the admin/z credential (503) — sending expired token\n401 Unauthorized";
+        let drift = diagnose_beat_log(Some("hanzo/z"), Some("hanzo"), log);
+        assert_eq!(drift.len(), 1);
+        assert!(drift[0].contains("org `admin`"));
+        assert!(drift[0].contains("active org `hanzo`"));
+
+        let same_org = diagnose_beat_log(Some("hanzo/z"), Some("hanzo"), "HTTP 401 Unauthorized");
+        assert_eq!(same_org.len(), 1);
+        assert!(same_org[0].contains("auth failure"));
     }
 }

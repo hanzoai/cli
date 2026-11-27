@@ -99,6 +99,16 @@ enum Commands {
     #[command(alias = "source")]
     Sources(commands::sources::SourcesArgs),
 
+    /// Run or configure the local Hanzo MCP server (`hanzo mcp`, `doctor`, `install`, `pair`)
+    #[command(args_conflicts_with_subcommands = true)]
+    Mcp {
+        #[command(subcommand)]
+        command: Option<McpCommands>,
+        /// Arguments passed through when launching `hanzo-mcp` directly (e.g. `--transport stdio`)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Canonical unified Hanzo system prompt (`# Hanzo Rules`, `hanzoai/prompt`) & progressive `hanzoskills.com` discovery
     Prompt(commands::prompt::PromptArgs),
 

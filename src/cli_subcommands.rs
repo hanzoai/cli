@@ -4,6 +4,73 @@ use std::path::PathBuf;
 use crate::{commands, iam};
 
 #[derive(Subcommand)]
+pub(crate) enum McpCommands {
+    /// Diagnose MCP clients, native computer control, ZAP router, and browser extension
+    Doctor {
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// Self-repair browser native messaging registrations before checking
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Configure Hanzo MCP for one or all local AI clients (`all`, `hanzo`, `codex`, `claude`, `claude-desktop`, `cursor`, `gemini`, `antigravity`)
+    Install {
+        /// Target client (`all` configures every supported local AI client)
+        #[arg(default_value = "all")]
+        target: String,
+        /// Optional path to the hanzo-mcp binary to register
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        /// Preview changes without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Print or reset this user's browser pairing code for ZAP
+    Pair {
+        #[arg(long)]
+        reset: bool,
+    },
+    /// Build tgrep's trigram index for a directory
+    Index {
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Serve a single explicitly shared browser tab over stdio
+    Share {
+        #[arg(long)]
+        browser: String,
+        #[arg(long)]
+        tab: String,
+        #[arg(long)]
+        url: String,
+    },
+    /// Run a Kai action via hanzo-mcp
+    Kai {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Connect this machine to Hanzo Cloud (`wss://api.hanzo.ai/v1/node/connect`) for mobile, cloud agents, and third-party MCP clients
+    Connect {
+        /// Cloud WebSocket node endpoint (defaults to wss://api.hanzo.ai/v1/node/connect)
+        #[arg(long)]
+        url: Option<String>,
+        /// Stable node identifier within your org (defaults to `<hostname>-mcp`)
+        #[arg(long)]
+        node_id: Option<String>,
+        /// Human-readable display name shown in mobile/console
+        #[arg(long)]
+        name: Option<String>,
+        /// Optional comma-separated subset of tools to expose remotely (default: all)
+        #[arg(long)]
+        tools: Option<String>,
+        /// Verify cloud handshake, print connected node info, and exit
+        #[arg(long)]
+        once: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub(crate) enum ServiceCommands {
     /// Start a local platform service (`cloud`, `engine`, `iam`, `datastore`, `analytics`, `insights`, `storage`, `commerce`)
     Start { name: String },

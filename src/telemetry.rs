@@ -122,6 +122,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Dev(..) => "dev",
         Commands::Desktop(..) => "desktop",
         Commands::Sources(..) => "sources",
+        Commands::Mcp { .. } => "mcp",
         Commands::Prompt(..) => "prompt",
         Commands::Config { .. } => "config",
         Commands::Engine { .. } | Commands::Pull { .. } => "engine",

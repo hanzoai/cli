@@ -17,6 +17,7 @@ pub mod engine;
 pub mod graph;
 pub mod lifecycle;
 pub mod man;
+pub mod mcp;
 pub mod monitor;
 pub mod runner;
 pub mod savings;

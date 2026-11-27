@@ -7,8 +7,8 @@ use crate::commands::dev::Target;
 use crate::commands::lifecycle::{self, resources, UpMode};
 use crate::{
     first_word, iam, warn, AppCommands, AuthCommands, BotCommands, ChainCommands, Commands,
-    ConfigCommands, EngineCommands, HostCommands, LinkCommands, ModelCommands, NetworkCommands,
-    RunnerCommands, SandboxCommands, ServiceCommands, UpCommands, WalletCommands,
+    ConfigCommands, EngineCommands, HostCommands, LinkCommands, ModelCommands,
+    NetworkCommands, RunnerCommands, SandboxCommands, ServiceCommands, UpCommands, WalletCommands,
 };
 use crate::{commands, config};
 
@@ -23,6 +23,7 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
         }
         Commands::Daemon(args) => commands::daemon::run(&mut config, args).await?,
         Commands::Sources(args) => commands::sources::run(&mut config, args).await?,
+        Commands::Mcp { command, args } => commands::mcp::run(command, args)?,
         Commands::Prompt(args) => commands::prompt::run(args).await?,
 
         Commands::Dev(args) => {
