@@ -370,7 +370,7 @@ fn old_top_level_verbs_are_removed_and_canonical_nouns_exist() {
         .get_subcommands()
         .map(|s| s.get_name().to_string())
         .collect();
-    for gone in ["logout", "switch", "deploy"] {
+    for gone in ["logout", "deploy"] {
         assert!(
             !names.iter().any(|n| n == gone),
             "`{gone}` must no longer be a top-level subcommand"
@@ -385,8 +385,8 @@ fn old_top_level_verbs_are_removed_and_canonical_nouns_exist() {
         );
     }
     for present in [
-        "app", "auth", "build", "code", "config", "desktop", "dev", "engine", "model", "ps",
-        "run", "runner", "scan", "service", "up",
+        "app", "auth", "build", "code", "config", "desktop", "dev", "engine", "login", "model",
+        "ps", "run", "runner", "scan", "service", "switch", "up", "whoami",
     ] {
         assert!(
             names.iter().any(|n| n == present),
@@ -397,11 +397,23 @@ fn old_top_level_verbs_are_removed_and_canonical_nouns_exist() {
 
 #[test]
 fn auth_owns_the_identity_verbs() {
+    Cli::command().debug_assert();
     assert!(Cli::try_parse_from(["hanzo", "auth", "login"]).is_ok());
     assert!(Cli::try_parse_from(["hanzo", "auth", "logout"]).is_ok());
     assert!(Cli::try_parse_from(["hanzo", "auth", "show"]).is_ok());
     assert!(Cli::try_parse_from(["hanzo", "auth", "list"]).is_ok());
     assert!(Cli::try_parse_from(["hanzo", "auth", "use", "admin/z"]).is_ok());
+    assert!(Cli::try_parse_from(["hanzo", "auth", "switch", "carbon-district"]).is_ok());
+    assert!(
+        Cli::try_parse_from(["hanzo", "auth", "switch", "hanzo/james", "--org", "acme"]).is_ok()
+    );
+    assert!(Cli::try_parse_from(["hanzo", "auth", "switch", "--clear-org"]).is_ok());
+    assert!(Cli::try_parse_from(["hanzo", "switch", "carbon-district"]).is_ok());
+    assert!(Cli::try_parse_from(["hanzo", "switch", "--org", "carbon-district"]).is_ok());
+    assert!(Cli::try_parse_from(["hanzo", "switch", "--clear-org"]).is_ok());
+    assert!(
+        Cli::try_parse_from(["hanzo", "switch", "--org", "acme", "--clear-org"]).is_err()
+    );
     assert!(Cli::try_parse_from(["hanzo", "auth", "token"]).is_ok());
     assert!(Cli::try_parse_from(["hanzo", "auth", "show", "--org", "x"]).is_err());
 }

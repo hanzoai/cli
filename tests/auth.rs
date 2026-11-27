@@ -408,3 +408,158 @@ fn each_org_keeps_its_own_active_identity() {
     assert!(!refused.status.success() && refused.stdout.is_empty());
     assert_eq!(token(&["auth", "token"]), jwt("admin", "z", None));
 }
+
+#[test]
+fn switch_persists_org_context_for_subsequent_commands_without_as_flag() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let home = Home::new();
+    sign_in(&home, &jwt("hanzo", "james", Some("james@hanzo.ai")));
+
+    // Top-level `hanzo switch carbon-district` persists default_org in config.toml.
+    let switched = hanzo(&home)
+        .args(["switch", "carbon-district"])
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&switched.get_output().stdout).into_owned();
+    assert!(
+        out.contains("hanzo/james acting as org carbon-district"),
+        "{out}"
+    );
+
+    let cfg_get = hanzo(&home)
+        .args(["config", "get", "default_org"])
+        .assert()
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&cfg_get.get_output().stdout).trim(),
+        "carbon-district"
+    );
+
+    // `hanzo auth list` and `hanzo whoami` surface the saved context org.
+    let list = listed(&home);
+    assert!(
+        list.contains("* hanzo/james")
+            && list.contains("context org: carbon-district (saved; `hanzo auth switch --clear-org` to reset)"),
+        "{list}"
+    );
+    let shown = hanzo(&home).args(["whoami"]).output().unwrap();
+    let shown_out = String::from_utf8_lossy(&shown.stdout);
+    assert!(shown_out.contains("identity: hanzo/james"), "{shown_out}");
+    assert!(
+        shown_out.contains("context org: carbon-district (saved; `hanzo auth switch --clear-org` to reset)"),
+        "{shown_out}"
+    );
+
+    // Verify a subsequent Cloud API call (WITHOUT `--as`!) sends `x-org-id: carbon-district`.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut headers = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                headers.push(line.trim().to_ascii_lowercase());
+            }
+            let _ = tx.send(headers);
+            let body = r#"{"balance":0}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+
+    hanzo(&home)
+        .args([
+            "network",
+            "add",
+            "ctx-net",
+            "--network-id",
+            "1337",
+            "--rpc",
+            "http://rpc.ctx.invalid",
+            "--api",
+            "http://api.ctx.invalid",
+            "--iam",
+            "https://hanzo.id",
+            "--activate",
+        ])
+        .assert()
+        .success();
+
+    hanzo(&home)
+        .args(["billing", "balance"])
+        .env("HTTP_PROXY", &proxy)
+        .env("http_proxy", &proxy)
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .assert()
+        .success();
+
+    let headers = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(
+        headers.iter().any(|h| h == "x-org-id: carbon-district"),
+        "expected x-org-id: carbon-district in headers: {headers:?}"
+    );
+
+    // `hanzo auth switch hanzo/james --org acme` sets both; `hanzo auth switch hanzo/james` resets.
+    hanzo(&home)
+        .args(["auth", "switch", "hanzo/james", "--org", "acme"])
+        .assert()
+        .success();
+    let cfg_get = hanzo(&home)
+        .args(["config", "get", "default_org"])
+        .assert()
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&cfg_get.get_output().stdout).trim(),
+        "acme"
+    );
+
+    hanzo(&home)
+        .args(["auth", "switch", "hanzo/james"])
+        .assert()
+        .success();
+    let cleared_get = hanzo(&home)
+        .args(["config", "get", "default_org"])
+        .assert()
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&cleared_get.get_output().stdout).trim(),
+        "null"
+    );
+
+    // `hanzo auth switch --org carbon-district` then `hanzo switch --clear-org` clears X-Org-Id.
+    hanzo(&home)
+        .args(["auth", "switch", "--org", "carbon-district"])
+        .assert()
+        .success();
+    hanzo(&home)
+        .args(["switch", "--clear-org"])
+        .assert()
+        .success();
+
+    hanzo(&home)
+        .args(["billing", "balance"])
+        .env("HTTP_PROXY", &proxy)
+        .env("http_proxy", &proxy)
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .assert()
+        .success();
+
+    let headers = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(
+        !headers.iter().any(|h| h.starts_with("x-org-id:")),
+        "expected no x-org-id after --clear-org, got: {headers:?}"
+    );
+}

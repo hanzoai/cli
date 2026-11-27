@@ -18,7 +18,7 @@
 use anyhow::{anyhow, bail, Result};
 
 use crate::config::Config;
-use crate::iam::{login as iam, onboarding, store};
+use crate::iam::{context_switch, login as iam, onboarding, store};
 
 /// `hanzo auth login` — sign in through Hanzo IAM (OIDC), or store a provider key.
 /// Bare on a terminal shows the interactive picker; `--provider`/`--token -` is
@@ -63,10 +63,16 @@ pub async fn list(cfg: &mut Config, brand: &str, output: Option<String>) -> Resu
     }
 }
 
-/// `hanzo auth use [IDENTITY]` — select the active identity (bare toggles when
-/// exactly two are held). Verifies the credential is actually held.
-pub fn use_identity(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result<()> {
-    iam::switch(cfg, brand, identity)
+/// `hanzo auth use` / `hanzo auth switch` / `hanzo switch` — select the active
+/// identity and/or persist default organization context (`Config::default_org`).
+pub fn switch_context(
+    cfg: &mut Config,
+    brand: &str,
+    target: Option<String>,
+    org: Option<String>,
+    clear_org: bool,
+) -> Result<()> {
+    context_switch::switch(cfg, brand, target, org, clear_org)
 }
 
 /// `hanzo auth token [--as owner|owner/name]` — print the active identity's
@@ -76,7 +82,9 @@ pub fn use_identity(cfg: &mut Config, brand: &str, identity: Option<String>) -> 
 /// printed, so it pipes byte-exactly; it is never written to disk or the config.
 pub async fn token(cfg: &mut Config, brand: &str) -> Result<()> {
     store::pin(cfg, brand)?;
-    store::within(cfg, brand)?;
+    if !context_switch::is_saved_org_override(cfg, brand) {
+        store::within(cfg, brand)?;
+    }
     let (id, tok) = store::active_token(cfg, brand)
         .await?
         .ok_or_else(|| anyhow!("not signed in — run `hanzo auth login`"))?;

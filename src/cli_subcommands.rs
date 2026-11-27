@@ -99,10 +99,18 @@ pub(crate) enum AuthCommands {
         #[arg(short = 'o', long = "output", value_name = "FORMAT")]
         output: Option<String>,
     },
-    #[command(alias = "switch")]
+    /// Switch active identity (`owner/name`) and/or default organization context (`<org>`)
+    #[command(visible_alias = "switch")]
     Use {
-        #[arg(value_name = "IDENTITY")]
+        /// Identity (`owner/name`) or organization (`<org>`) to switch to
+        #[arg(value_name = "TARGET")]
         identity: Option<String>,
+        /// Persist default organization context (`X-Org-Id`) for subsequent commands
+        #[arg(long = "org", value_name = "ORG", conflicts_with = "clear_org")]
+        context_org: Option<String>,
+        /// Clear persisted organization override back to the active identity's home org
+        #[arg(long)]
+        clear_org: bool,
         #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
         brand: String,
     },

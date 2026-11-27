@@ -83,6 +83,32 @@ pub fn issuer(access_token: &str) -> Option<String> {
     (!claims.iss.trim().is_empty()).then_some(claims.iss)
 }
 
+/// Organization slugs the token's `orgs` claim lists, validated and deduplicated.
+///
+/// Same unverified decode as [`email`] and [`Identity::from_access_token`]: used
+/// only to populate local UI suggestions (`hanzo auth switch`), never as an
+/// authorization check (the gateway verifies `orgs` server-side).
+pub fn orgs(access_token: &str) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct Orgs {
+        #[serde(default)]
+        orgs: Vec<String>,
+    }
+    let Some(raw) = payload(access_token) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = serde_json::from_slice::<Orgs>(&raw) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for org in parsed.orgs {
+        if claim("org", &org).is_ok() && !out.contains(&org) {
+            out.push(org);
+        }
+    }
+    out
+}
+
 /// The client a token was issued to: its `azp`, else its one `aud`, or `None`.
 /// Which client to present when refreshing or revoking it; IAM checks it.
 pub fn party(access_token: &str) -> Option<String> {
@@ -381,5 +407,15 @@ mod tests {
         assert!("admin/".parse::<Selector>().is_err());
         assert!("/z".parse::<Selector>().is_err());
         assert!("a/b/c".parse::<Selector>().is_err());
+    }
+
+    #[test]
+    fn orgs_decodes_valid_unique_org_claims() {
+        let tok = claims_jwt(
+            r#"{"owner":"hanzo","name":"james","orgs":["hanzo","carbon-district","hanzo","","../bad","lux"]}"#,
+        );
+        assert_eq!(orgs(&tok), vec!["hanzo", "carbon-district", "lux"]);
+        assert!(orgs(&jwt("hanzo", "james")).is_empty());
+        assert!(orgs("hk-not-a-jwt").is_empty());
     }
 }

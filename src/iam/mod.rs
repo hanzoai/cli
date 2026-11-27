@@ -18,6 +18,7 @@
 //!   (keys + identity tokens), the `kms` secret plane, and `connector add`
 //!   (`resolve_token`: `--token -`/pipe/hidden-prompt, argv refused).
 
+pub mod context_switch;
 pub mod device;
 pub mod login;
 pub mod oauth;

@@ -126,6 +126,21 @@ enum Commands {
         brand: String,
     },
 
+    /// Switch active identity (`owner/name`) or persisted org context (`<org>`) — `hanzo auth switch` at the top level
+    Switch {
+        /// Identity (`owner/name`) or organization (`<org>`) to switch to
+        #[arg(value_name = "TARGET")]
+        target: Option<String>,
+        /// Persist default organization context (`X-Org-Id`) for subsequent commands
+        #[arg(long = "org", value_name = "ORG", conflicts_with = "clear_org")]
+        context_org: Option<String>,
+        /// Clear persisted organization override back to the active identity's home org
+        #[arg(long)]
+        clear_org: bool,
+        #[arg(long, default_value_t = iam::paths::DEFAULT_BRAND.to_string())]
+        brand: String,
+    },
+
     /// Link this machine to Hanzo cloud: on the org's network over Hanzo ZT, on
     /// the fleet, and with a shell the console can drive
     #[command(args_conflicts_with_subcommands = true)]

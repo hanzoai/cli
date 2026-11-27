@@ -38,6 +38,12 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             account,
         } => commands::auth::login(&mut config, &brand, provider, token, account).await?,
         Commands::Whoami { brand } => commands::auth::show(&mut config, &brand).await?,
+        Commands::Switch {
+            target,
+            context_org,
+            clear_org,
+            brand,
+        } => commands::auth::switch_context(&mut config, &brand, target, context_org, clear_org)?,
         Commands::Auth { command } => match command {
             AuthCommands::Login {
                 brand,
@@ -54,9 +60,18 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             AuthCommands::List { brand, output } => {
                 commands::auth::list(&mut config, &brand, output).await?
             }
-            AuthCommands::Use { identity, brand } => {
-                commands::auth::use_identity(&mut config, &brand, identity)?
-            }
+            AuthCommands::Use {
+                identity,
+                context_org,
+                clear_org,
+                brand,
+            } => commands::auth::switch_context(
+                &mut config,
+                &brand,
+                identity,
+                context_org,
+                clear_org,
+            )?,
             AuthCommands::Token { brand, network } => {
                 if let Some(network) = network {
                     commands::network::bind(&mut config, &network)?;

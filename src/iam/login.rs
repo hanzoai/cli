@@ -405,6 +405,11 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
             );
         }
         println!("{}", listing(cfg, brand));
+        if let Some(act) = store::active(cfg, brand) {
+            if let Some(note) = super::context_switch::context_org_note(cfg, &act) {
+                println!("  {} {note}", "context org:".dimmed());
+            }
+        }
         println!(
             "{}",
             "  (* = active; + = what `--as <org>` speaks as; owner is the billing org)".dimmed()
@@ -412,7 +417,9 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
         return Ok(());
     }
 
-    store::within(cfg, brand)?;
+    if !super::context_switch::is_saved_org_override(cfg, brand) {
+        store::within(cfg, brand)?;
+    }
     let Some((id, tokens)) = store::active_token(cfg, brand).await? else {
         bail!(
             "not signed in to {brand} — run `hanzo auth login{}`",
@@ -428,6 +435,9 @@ pub async fn whoami(cfg: &mut Config, brand: &str, all: bool) -> Result<()> {
         "org:".dimmed(),
         format!("{} (billed here)", id.owner).cyan()
     );
+    if let Some(note) = super::context_switch::context_org_note(cfg, &id) {
+        println!("{} {note}", "context org:".dimmed());
+    }
 
     let who = oauth::userinfo(brand, &tokens.access_token).await?;
     println!("{} {}", "sub:".dimmed(), who.sub);
@@ -468,21 +478,6 @@ fn listing(cfg: &Config, brand: &str) -> String {
         .join("\n")
 }
 
-/// `hanzo auth use [IDENTITY] [--brand]`: select the active identity.
-pub fn switch(cfg: &mut Config, brand: &str, identity: Option<String>) -> Result<()> {
-    let brand: &str = &store::realm(cfg, brand)?;
-    let sel = identity.map(|s| s.parse::<Selector>()).transpose()?;
-    let id = store::switch(cfg, brand, sel)?;
-    println!(
-        "{} Active identity on {}: {} — billing to {}",
-        "✓".green(),
-        brand.cyan(),
-        id.to_string().bold(),
-        id.owner.cyan()
-    );
-    Ok(())
-}
-
 /// `hanzo auth logout [IDENTITY] [--brand] [--all]`: remove one identity, or every
 /// identity for the brand. Signing out of the active identity signs you OUT — it
 /// never silently promotes whatever identity remains.
@@ -509,6 +504,13 @@ pub async fn logout(
             bail!("`hanzo auth logout --all` removes every identity; do not also name one");
         }
         let removed = store::remove_all(cfg, brand)?;
+        if brand == DEFAULT_BRAND && cfg.default_org.is_some() {
+            cfg.update(|c| {
+                c.default_org = None;
+                Ok(())
+            })?;
+            cfg.org = None;
+        }
         revoke_all(brand, &removed).await;
         let cleared = clear_providers(cfg, brand)?;
         if removed.is_empty() && cleared.is_empty() {
@@ -539,12 +541,21 @@ pub async fn logout(
     }
 
     // Unnamed under `--as <org>`, the identity signed out is the one held there,
-    // never the default.
+    // never the default — unless `cfg.org` is a saved Cloud tenant context where
+    // no separate identity is held locally.
     let sel = match identity {
         Some(s) => Some(s.parse::<Selector>()?),
+        None if super::context_switch::is_saved_org_override(cfg, brand) => None,
         None => store::within(cfg, brand)?.map(Selector::Exact),
     };
     let removed = store::remove(cfg, brand, sel)?;
+    if brand == DEFAULT_BRAND && store::active(cfg, brand).is_none() && cfg.default_org.is_some() {
+        cfg.update(|c| {
+            c.default_org = None;
+            Ok(())
+        })?;
+        cfg.org = None;
+    }
     revoke_all(brand, std::slice::from_ref(&removed)).await;
     println!(
         "{} Signed out of {} as {}",
