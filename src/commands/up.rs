@@ -251,91 +251,6 @@ pub async fn up(
         return finish_link(cfg, link).await;
     }
 
-    let native_warm = running(&dir, SUPERVISOR).is_none() && host_native_k3s_active();
-    if running(&dir, SUPERVISOR).is_some() || native_warm {
-        let pid = running(&dir, SUPERVISOR).unwrap_or(0);
-        let state = read_state(&dir).unwrap_or_else(|| {
-            if native_warm {
-                "native-linux".into()
-            } else {
-                "unknown".into()
-            }
-        });
-        let kc = if native_warm {
-            adopt_native_linux_kubeconfig()?
-        } else {
-            kubeconfig_path()?
-        };
-        let overrides = has_workload_overrides(&boot);
-        if kc.exists() {
-            if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
-                let replicas = kube.cloud_replicas().await.ok().flatten();
-                if overrides || replicas.is_none() {
-                    let has_hanzo_oci =
-                        !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
-                    let selected_image =
-                        select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
-                    let pinned = Boot {
-                        cloud: image::pin_with_config(
-                            &reqwest::Client::new(),
-                            &selected_image,
-                            image::architecture(),
-                            cfg,
-                        )
-                        .await?,
-                        ..boot
-                    };
-                    let manifest = workload_for(&pinned)?;
-                    kube.apply_workload(&manifest).await?;
-                    write_state(&dir, "ready");
-                    let verb = if replicas.is_none() {
-                        "deployed"
-                    } else {
-                        "updated & started"
-                    };
-                    if native_warm {
-                        println!("{} hanzo {verb} on native Linux k3s", "✓".green());
-                    } else {
-                        println!(
-                            "{} hanzo {verb} on warm k3s (supervisor pid {pid} — skipped VM boot & kube-system pulls)",
-                            "✓".green()
-                        );
-                    }
-                } else if state == "stopped" || replicas == Some(0) {
-                    kube.scale_cloud(1).await?;
-                    write_state(&dir, "ready");
-                    println!(
-                        "{} hanzo started on warm k3s (skipped VM boot & image pulls)",
-                        "✓".green()
-                    );
-                } else if native_warm {
-                    println!("{} already running (native Linux k3s, {state})", "●".green());
-                } else {
-                    println!(
-                        "{} already running (supervisor pid {pid}, {state})",
-                        "●".green()
-                    );
-                }
-            }
-        }
-        endpoints()?;
-        let res = finish_link(cfg, link).await;
-        if ui || (!no_ui && std::io::stdout().is_terminal()) {
-            return tui::run_dashboard();
-        }
-        return res;
-    }
-
-    if let Some(pid) = running(&dir, VM) {
-        crate::warn(&format!(
-            "collecting an orphaned vm (pid {pid}) from an earlier boot"
-        ));
-        if !stop(pid, Duration::from_secs(10)) {
-            bail!("an earlier vm (pid {pid}) is still running — `hanzo down` first");
-        }
-        clear_pid(&dir, VM);
-    }
-
     let mut boot = boot;
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(m) = discover_app_manifest(&cwd)? {
@@ -355,6 +270,96 @@ pub async fn up(
             }
             boot.strict_registry = boot.strict_registry || m.strict_registry;
         }
+    }
+
+    let native_warm = running(&dir, SUPERVISOR).is_none() && host_native_k3s_active();
+    if running(&dir, SUPERVISOR).is_some() || native_warm {
+        let pid = running(&dir, SUPERVISOR).unwrap_or(0);
+        let state = read_state(&dir).unwrap_or_else(|| {
+            if native_warm {
+                "native-linux".into()
+            } else {
+                "unknown".into()
+            }
+        });
+        let kc = if native_warm {
+            adopt_native_linux_kubeconfig()?
+        } else {
+            kubeconfig_path()?
+        };
+        let overrides = has_workload_overrides(&boot);
+        let kube = KubeClient::from_kubeconfig(&kc)?;
+        let replicas = kube.cloud_replicas().await?;
+        if overrides || replicas.is_none() {
+            let has_hanzo_oci =
+                !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
+            let selected_image =
+                select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
+            let pinned = Boot {
+                cloud: image::pin_with_config(
+                    &reqwest::Client::new(),
+                    &selected_image,
+                    image::architecture(),
+                    cfg,
+                )
+                .await?,
+                ..boot
+            };
+            let manifest = workload_for(&pinned)?;
+            kube.apply_workload(&manifest).await?;
+            write_state(&dir, "cloud-starting");
+            kube.wait_cloud_ready(UP_TIMEOUT).await?;
+            write_state(&dir, "ready");
+            let verb = if replicas.is_none() {
+                "deployed"
+            } else {
+                "updated & started"
+            };
+            if native_warm {
+                println!("{} hanzo {verb} on native Linux k3s", "✓".green());
+            } else {
+                println!(
+                    "{} hanzo {verb} on warm k3s (supervisor pid {pid} — skipped VM boot & kube-system pulls)",
+                    "✓".green()
+                );
+            }
+        } else if state == "stopped" || replicas == Some(0) {
+            kube.scale_cloud(1).await?;
+            write_state(&dir, "cloud-starting");
+            kube.wait_cloud_ready(UP_TIMEOUT).await?;
+            write_state(&dir, "ready");
+            println!(
+                "{} hanzo started on warm k3s (skipped VM boot & image pulls)",
+                "✓".green()
+            );
+        } else {
+            kube.wait_cloud_ready(UP_TIMEOUT).await?;
+            write_state(&dir, "ready");
+            if native_warm {
+                println!("{} already running (native Linux k3s, ready)", "●".green());
+            } else {
+                println!(
+                    "{} already running (supervisor pid {pid}, ready)",
+                    "●".green()
+                );
+            }
+        }
+        endpoints()?;
+        let res = finish_link(cfg, link).await;
+        if ui || (!no_ui && std::io::stdout().is_terminal()) {
+            return tui::run_dashboard();
+        }
+        return res;
+    }
+
+    if let Some(pid) = running(&dir, VM) {
+        crate::warn(&format!(
+            "collecting an orphaned vm (pid {pid}) from an earlier boot"
+        ));
+        if !stop(pid, Duration::from_secs(10)) {
+            bail!("an earlier vm (pid {pid}) is still running — `hanzo down` first");
+        }
+        clear_pid(&dir, VM);
     }
 
     let has_hanzo_oci = !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
@@ -377,8 +382,12 @@ pub async fn up(
     write_state(&dir, "starting");
     spawn_supervisor(&dir, &boot, cfg.org.as_deref(), false)?;
     wait_ready_state(&dir)?;
+    write_state(&dir, "cloud-starting");
+    let kube = KubeClient::from_kubeconfig(&kubeconfig_path()?)?;
+    kube.wait_cloud_ready(UP_TIMEOUT).await?;
+    write_state(&dir, "ready");
     println!(
-        "{} k3s is up — API at https://127.0.0.1:{K3S_PORT}",
+        "{} k3s and Cloud are ready — Kubernetes API at https://127.0.0.1:{K3S_PORT}",
         "✓".green()
     );
     let hanzod_ready = match host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await
