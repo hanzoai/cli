@@ -61,6 +61,24 @@ pub enum DaemonCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Drive `hanzod`'s local computer-control route (read and act ops)
+    Computer {
+        /// Action to run (default: info), e.g. screenshot, list_windows, click
+        #[arg(value_name = "ACTION")]
+        action: Option<String>,
+        /// JSON object of action arguments, e.g. '{"x":100,"y":200}'
+        #[arg(long, value_name = "JSON")]
+        data: Option<String>,
+        /// Action argument as key=value (repeatable; values parse as JSON when possible)
+        #[arg(long = "arg", value_name = "KEY=VALUE")]
+        args: Vec<String>,
+        /// Approve an act op (sends `{"approval": true}` with the request)
+        #[arg(long)]
+        approve: bool,
+        /// Emit the raw JSON body on one line
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -125,6 +143,13 @@ pub async fn run(cfg: &mut Config, args: DaemonArgs) -> Result<()> {
             }
             run_turn(cfg, &text, session, workspace, model, label, json).await
         }
+        DaemonCommand::Computer {
+            action,
+            data,
+            args,
+            approve,
+            json,
+        } => computer(cfg, action, data, &args, approve, json).await,
     }
 }
 
@@ -360,6 +385,85 @@ async fn delete_session(cfg: &mut Config, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Build `/v1/computer/{action}`, defaulting the action to `info`. Actions are
+/// single path segments: reject anything else rather than letting an argument
+/// rewrite the URL.
+fn computer_path(action: Option<&str>) -> Result<String> {
+    let action = action
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .unwrap_or("info");
+    if !action
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        bail!("invalid computer action `{action}`: use letters, digits, `_` or `-`");
+    }
+    Ok(format!("/v1/computer/{action}"))
+}
+
+/// Values in `--arg key=value` are JSON when they parse as such (`5`, `true`,
+/// `{"x":1}`), plain strings otherwise (`hello`).
+fn parse_arg_value(raw: &str) -> Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+}
+
+/// Merge `--data` and the repeatable `--arg` pairs into one request body, then
+/// stamp approval on it when asked. The body field is accepted by both wires
+/// (ZAP on Unix, HTTP on Windows), so no transport-specific header is needed.
+fn computer_body(data: Option<&str>, args: &[String], approve: bool) -> Result<Value> {
+    let mut body = match data {
+        Some(raw) => match serde_json::from_str(raw)
+            .with_context(|| format!("parsing --data as JSON: {raw}"))?
+        {
+            Value::Object(obj) => Value::Object(obj),
+            other => bail!("--data must be a JSON object, got {other}"),
+        },
+        None => json!({}),
+    };
+    for arg in args {
+        let (key, raw) = arg
+            .split_once('=')
+            .ok_or_else(|| anyhow!("invalid --arg `{arg}`: expected key=value"))?;
+        if key.is_empty() {
+            bail!("invalid --arg `{arg}`: key is empty");
+        }
+        body[key] = parse_arg_value(raw);
+    }
+    if approve {
+        body["approval"] = json!(true);
+    }
+    Ok(body)
+}
+
+async fn computer(
+    cfg: &mut Config,
+    action: Option<String>,
+    data: Option<String>,
+    args: &[String],
+    approve: bool,
+    as_json: bool,
+) -> Result<()> {
+    let path = computer_path(action.as_deref())?;
+    let body = computer_body(data.as_deref(), args, approve)?;
+    let token = bearer(cfg).await?;
+    let label = format!("computer {}", path.rsplit('/').next().unwrap_or("action"));
+    let val = expect_ok(
+        call(&Method::POST, &path, &token, Some(body)).await?,
+        &label,
+    )?;
+
+    // The body is the result: screenshot paths and all other fields stay in it.
+    // `--json` is the compact, pipeable form; the default is the same JSON,
+    // indented for a person.
+    if as_json {
+        println!("{}", serde_json::to_string(&val)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&val)?);
+    }
+    Ok(())
+}
+
 pub(crate) async fn bearer(cfg: &mut Config) -> Result<String> {
     if let Ok(key) = std::env::var("HANZO_API_KEY") {
         let trimmed = key.trim();
@@ -483,6 +587,7 @@ pub(crate) fn create_session_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn create_session_body_omits_blank_fields() {
@@ -517,5 +622,103 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("a bearer is required"));
+    }
+
+    #[test]
+    fn computer_path_defaults_to_info_and_stays_one_segment() {
+        assert_eq!(computer_path(None).unwrap(), "/v1/computer/info");
+        assert_eq!(computer_path(Some("  ")).unwrap(), "/v1/computer/info");
+        assert_eq!(
+            computer_path(Some(" list_windows ")).unwrap(),
+            "/v1/computer/list_windows"
+        );
+        assert_eq!(
+            computer_path(Some("set-failsafe_2")).unwrap(),
+            "/v1/computer/set-failsafe_2"
+        );
+        assert!(computer_path(Some("../dev/sessions")).is_err());
+        assert!(computer_path(Some("a/b")).is_err());
+    }
+
+    #[test]
+    fn computer_body_merges_data_and_args() {
+        let body = computer_body(
+            Some(r#"{"x":1,"label":"old"}"#),
+            &[
+                "x=5".into(),
+                "enabled=true".into(),
+                "label=hello world".into(),
+                r#"payload={"k":1}"#.into(),
+            ],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            body,
+            json!({"x": 5, "enabled": true, "label": "hello world", "payload": {"k": 1}})
+        );
+    }
+
+    #[test]
+    fn computer_body_rejects_bad_data_and_args() {
+        assert!(computer_body(Some("[1,2]"), &[], false).is_err());
+        assert!(computer_body(Some("{"), &[], false).is_err());
+        assert!(computer_body(None, &["no-equals".into()], false).is_err());
+        assert!(computer_body(None, &["=v".into()], false).is_err());
+    }
+
+    #[test]
+    fn computer_body_approval_is_explicit_and_wins() {
+        assert_eq!(computer_body(None, &[], false).unwrap(), json!({}));
+        assert_eq!(
+            computer_body(None, &[], true).unwrap(),
+            json!({"approval": true})
+        );
+        let overridden = computer_body(
+            Some(r#"{"approval":false}"#),
+            &["approval=false".into()],
+            true,
+        )
+        .unwrap();
+        assert_eq!(overridden, json!({"approval": true}));
+    }
+
+    #[test]
+    fn daemon_computer_clap_parses_action_args_and_flags() {
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            daemon: DaemonArgs,
+        }
+
+        let parsed = Cli::try_parse_from([
+            "hanzo",
+            "computer",
+            "click",
+            "--data",
+            r#"{"x":1}"#,
+            "--arg",
+            "y=2",
+            "--arg",
+            "text=hi",
+            "--approve",
+            "--json",
+        ])
+        .unwrap();
+        match parsed.daemon.command.unwrap() {
+            DaemonCommand::Computer {
+                action,
+                data,
+                args,
+                approve,
+                json,
+            } => {
+                assert_eq!(action.as_deref(), Some("click"));
+                assert_eq!(data.as_deref(), Some(r#"{"x":1}"#));
+                assert_eq!(args, ["y=2", "text=hi"]);
+                assert!(approve && json);
+            }
+            _ => panic!("expected a computer command"),
+        }
     }
 }
