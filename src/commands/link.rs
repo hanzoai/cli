@@ -59,6 +59,7 @@ use colored::*;
 use hanzo_gen::event::Status;
 use hanzo_gen::session::SessionClient;
 use hanzo_gen::{context, target, Root};
+use std::future::Future;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -265,7 +266,7 @@ pub async fn run(
     // detached and best-effort, never on the critical path of getting a shell up.
     let root = Root::need()?;
     let host = context::hostname(&root);
-    let (_machine, _runner) = target::beat_and_serve(
+    let (machine, _runner) = target::beat_and_serve(
         crate::commands::dev::Store::host(cfg.clone()),
         &root,
         DEFAULT_BRAND,
@@ -383,8 +384,23 @@ pub async fn run(
     // From here the registry may hold a LIVE row, so every way out — including
     // the ones that are errors — has to travel through `finish`.
     let tmux = Tmux::default();
-    let out = serve(&client, listing.as_deref(), &mut sh, &tmux).await;
+    let url = sh.url.clone();
+    let out = on_machine(&machine, &url, serve(&client, listing.as_deref(), &mut sh, &tmux)).await;
     finish(&tmux, &client, listing.as_deref(), out).await
+}
+
+/// Hold `url` on the machine's own run-target for as long as `held` runs.
+///
+/// The terminal is a fact about the MACHINE, so it rides the beat that already
+/// keeps the machine live: cloud stops a session an hour after its last activity,
+/// and the shell is still serving then. The session row keeps carrying the same
+/// url, which Tabs older than the machine field read.
+async fn on_machine<T>(machine: &target::Beat, url: &str, held: impl Future<Output = T>) -> T {
+    machine.terminal(Some(url));
+    let out = held.await;
+    // Heard before the guard drops: dropping it stops the beat that would say it.
+    machine.withdraw().await;
+    out
 }
 
 /// The tmux server a link works in: the user's own (its default socket), or one
@@ -1284,6 +1300,64 @@ mod tests {
         );
         cfg.org = Some("lux".into());
         assert!(!command(&cfg).contains("--as"), "{}", command(&cfg));
+    }
+
+    /// While a link serves, the machine's own heartbeat carries the shell's url, and
+    /// when it ends the machine says it is gone — before its beat is dropped.
+    #[tokio::test]
+    async fn while_serving_the_machines_beat_carries_the_terminal() {
+        struct Signed;
+        impl hanzo_gen::Host for Signed {
+            fn profile(&self) -> hanzo_gen::host::Pending<'_, hanzo_gen::Profile> {
+                Box::pin(async { hanzo_gen::Profile::unread() })
+            }
+            fn account<'a>(
+                &'a self,
+                _: &'a str,
+            ) -> hanzo_gen::host::Pending<'a, Result<Option<hanzo_gen::Account>>> {
+                Box::pin(async {
+                    Ok(Some(hanzo_gen::Account {
+                        owner: "acme".into(),
+                        name: "box".into(),
+                        token: "T".into(),
+                    }))
+                })
+            }
+            fn refresh(&self, _: &str) -> Vec<String> {
+                Vec::new()
+            }
+            fn key(&self, _: hanzo_gen::Provider) -> Result<Option<String>> {
+                Ok(None)
+            }
+            fn meter<'a>(
+                &'a self,
+                _: &'a str,
+                _: &'a [String],
+            ) -> hanzo_gen::host::Pending<'a, std::result::Result<serde_json::Value, String>> {
+                Box::pin(async { Err("no meter".to_string()) })
+            }
+        }
+        let fake = Fake::serve(200, r#"{"id":"tgt_1"}"#).await;
+        let dir = tempfile::tempdir().unwrap();
+        let root = Root::at(dir.path());
+        let machine = target::beat(std::sync::Arc::new(Signed), &root, "hanzo", &fake.base, "mach_1", "box");
+        let said = |url: &str| {
+            fake.all()
+                .iter()
+                .any(|r| r.1.starts_with("/v1/agent/targets") && r.4.contains(&format!(r#""terminal":"{url}""#)))
+        };
+
+        let held = async {
+            for _ in 0..3000 {
+                if said("https://box.share.hanzo.ai") {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("the machine never stated the terminal");
+        };
+        on_machine(&machine, "https://box.share.hanzo.ai", held).await;
+        assert!(said(""), "the machine withdrew the terminal when the link ended");
     }
 
     /// A link that ended cleanly is DONE — and saying so is what stops the row

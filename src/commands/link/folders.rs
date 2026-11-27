@@ -110,7 +110,7 @@ async fn this_machine(caller: &Caller) -> Result<String> {
         caller.selected(),
         &machine,
         &host,
-        &sample,
+        target::Register::from_machine(&host, &sample),
     )
     .await
     .ok_or_else(|| {
