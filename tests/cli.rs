@@ -267,21 +267,24 @@ fn pull_is_a_command_and_engine_lists_cached_models() {
         );
 }
 
-/// Signed out, `status` REFUSES and names the way in — it never renders an empty
-/// cloud as though that were the truth.
+/// Signed out / offline, `hanzo status` renders the 3-layer local system status
+/// prominently and explicitly reports `cloud fleet: not signed in` — never
+/// rendering an empty cloud as `"all clear"`.
 #[test]
-fn status_signed_out_refuses_and_never_shows_an_empty_fleet() {
+fn status_signed_out_shows_local_layers_and_never_shows_an_empty_fleet() {
     let cfg = tmp();
     hanzo()
         .args(["status"])
         .args(cfg_args(&cfg))
         .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("not signed in")
-                .and(predicate::str::contains("hanzo auth login")),
-        )
-        .stdout(predicate::str::contains("all clear").not());
+        .success()
+        .stdout(
+            predicate::str::contains("local system (3-layer)")
+                .and(predicate::str::contains("Hanzo Runtime"))
+                .and(predicate::str::contains("not signed in"))
+                .and(predicate::str::contains("hanzo auth login"))
+                .and(predicate::str::contains("all clear").not()),
+        );
 }
 
 /// A bare `hanzo` is the coding session, like `hanzo dev`: it reaches for the
@@ -314,29 +317,20 @@ fn a_bare_hanzo_starts_the_coding_agent() {
     );
 }
 
-/// `hanzo run` is gone: it exits 2 with one line naming `hanzo dev`, and starts
-/// nothing. `hanzo code` in its session form IS `hanzo dev`, so it answers what
-/// `hanzo dev` answers: the tool is a flag.
+/// `hanzo code` in its session form IS `hanzo dev`, so it answers what `hanzo dev`
+/// answers: the tool is a flag. Bare `hanzo run` (missing target) and removed
+/// flags like `--no-route` exit 2.
 #[test]
-fn the_retired_launchers_name_hanzo_dev() {
+fn code_session_form_and_bare_run_validation() {
     let out = hanzo().args(["code", "claude"]).assert().failure();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
     assert!(
         stderr.contains("hanzo dev --claude"),
         "`hanzo code claude` is `hanzo dev claude`: {stderr}"
     );
-    for argv in [
-        vec!["run"],
-        vec!["run", "claude"],
-        vec!["run", "--runc", "dev"],
-        vec!["--no-route"],
-    ] {
+    for argv in [vec!["run"], vec!["--no-route"]] {
         let out = hanzo().args(&argv).assert().failure().code(2);
         let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-        assert!(
-            stderr.contains("hanzo dev") || argv == ["--no-route"],
-            "{argv:?}: {stderr}"
-        );
         assert!(
             stderr.lines().filter(|l| l.starts_with("error:")).count() == 1,
             "{argv:?}: {stderr}"

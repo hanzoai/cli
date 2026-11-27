@@ -96,6 +96,35 @@ pub struct CloudArgs {
     /// Existing `hanzod` session id to continue when `--daemon` is set.
     #[arg(long, value_name = "SESSION_ID", requires = "daemon")]
     pub daemon_session: Option<String>,
+    /// Enable verbose debug logging and agent session inspector (`HANZO_DEBUG=1`).
+    #[arg(long)]
+    pub debug: bool,
+}
+
+impl Default for CloudArgs {
+    fn default() -> Self {
+        Self {
+            cloud_execution: false,
+            cloud_prompt: None,
+            repo: None,
+            base: None,
+            mode: None,
+            target: None,
+            timeout_seconds: None,
+            effort: None,
+            watch: false,
+            await_followup: false,
+            teleport: None,
+            serve: false,
+            port: 5173,
+            engine_url: "http://127.0.0.1:1234".to_string(),
+            build_on_change: false,
+            dir: std::path::PathBuf::from("."),
+            daemon: false,
+            daemon_session: None,
+            debug: false,
+        }
+    }
 }
 
 pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> Result<()> {

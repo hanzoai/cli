@@ -178,6 +178,19 @@ pub enum Target {
 /// Do not add a second launcher for a new spelling: add the spelling to
 /// `select` and let it land here like the rest.
 pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> Result<()> {
+    if args.remote.debug {
+        std::env::set_var("HANZO_DEBUG", "1");
+        if std::env::var_os("RUST_LOG").is_none() {
+            std::env::set_var("RUST_LOG", "debug");
+        }
+        eprintln!(
+            "debug: coding session inspector enabled (network={}, dir={})",
+            network::active(config).name,
+            std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| ".".into())
+        );
+    }
     if args.remote.serve {
         return super::dev_server::run(
             config,

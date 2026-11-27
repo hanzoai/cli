@@ -113,6 +113,28 @@ pub async fn run(
     if !verify_releases {
         println!("INFO Release integrity not checked; use hanzo doctor --verify (downloads current releases)");
     }
+
+    if let Ok(local_diag) = crate::commands::lifecycle::doctor_checks(cfg).await {
+        println!("Local 3-layer lifecycle diagnostics");
+        for check in &local_diag.checks {
+            let tag = match check.status.to_ascii_lowercase().as_str() {
+                "ok" | "healthy" => "OK  ",
+                "warn" | "warning" => "WARN",
+                "fail" | "failed" | "error" => {
+                    failures += 1;
+                    "FAIL"
+                }
+                _ => "INFO",
+            };
+            println!(
+                "{tag} [{}] {}: {}",
+                check.layer, check.name, check.detail
+            );
+        }
+        if let Some(summary) = local_diag.summary.as_deref().filter(|s| !s.is_empty()) {
+            println!("INFO Lifecycle summary: {summary}");
+        }
+    }
     if offline {
         println!("INFO Authentication not checked in offline mode");
     } else {

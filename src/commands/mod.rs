@@ -15,6 +15,7 @@ pub mod config;
 pub mod doctor;
 pub mod engine;
 pub mod graph;
+pub mod lifecycle;
 pub mod man;
 pub mod monitor;
 pub mod runner;

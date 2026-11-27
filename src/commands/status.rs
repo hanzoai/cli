@@ -36,7 +36,7 @@
 //! whose list we cannot find prints "unreadable". One failing surface never
 //! fails the command; only failing to read ANY of them does.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use colored::*;
 use hanzo_client::{Method, Reply};
 use serde_json::Value;
@@ -65,19 +65,35 @@ pub(crate) const APPS_ROUTE: &str = "/v1/deploy/applications";
 pub(crate) const WORKERS_ROUTE: &str = "/v1/compute/fleet/workers";
 pub(crate) const SANDBOXES_ROUTE: &str = "/v1/sandbox";
 
-pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
+pub async fn run(cfg: &mut Config, infer_only: bool, local_only: bool) -> Result<()> {
     if infer_only {
         let telem = crate::commands::monitor::collect_telemetry().await;
         crate::commands::monitor::render_dashboard(&telem);
         return Ok(());
     }
 
-    // Signed out, this refuses and names the way in: an empty cloud is never
-    // rendered as though it were the truth. The local GPU machines are
-    // `--infer`, and never stand in for a cloud that did not answer.
-    let seam = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await?;
+    // Always render the 3-layer local system status first, even when offline or
+    // not signed into a remote cloud organization.
+    let _ = crate::commands::lifecycle::render_local_status_section(cfg).await;
+    if local_only || crate::commands::network::active(cfg).name == "local" {
+        return Ok(());
+    }
+
+    let Ok(seam) = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await else {
+        println!(
+            "{}: {} (offline or unreachable)",
+            "cloud fleet".bold(),
+            "unavailable".yellow()
+        );
+        return Ok(());
+    };
     if seam.token.is_empty() {
-        bail!("not signed in — run `hanzo auth login`");
+        println!(
+            "{}: {} (run `hanzo auth login` to include remote clusters, applications & nodes)",
+            "cloud fleet".bold(),
+            "not signed in".yellow()
+        );
+        return Ok(());
     }
     // Concurrent: three independent reads, so the page costs one round trip.
     let (clusters, apps, nodes) = tokio::join!(
@@ -86,11 +102,15 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
         read_surface(&seam, WORKERS_ROUTE, "workers"),
     );
 
-    render(&clusters, &apps, &nodes);
-
     if clusters.is_err() && apps.is_err() && nodes.is_err() {
-        bail!("no surface answered — nothing above was read from the cloud");
+        println!(
+            "{}: {} (no remote surface answered — check network or auth)",
+            "cloud fleet".bold(),
+            "unavailable".yellow()
+        );
+        return Ok(());
     }
+    render(&clusters, &apps, &nodes);
     Ok(())
 }
 

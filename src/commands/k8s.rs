@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+const LOCAL_K3S_PORT: u16 = 6443;
 const K8S_TUNNEL_PORT: u16 = 26443;
 const SQL_TUNNEL_PORT: u16 = 5433;
 const K8S_SERVICE: &str = "k8s.hanzo";
@@ -38,18 +39,28 @@ const K8S_UNIT: &str = "hanzo-link-dial-k8s.hanzo.service";
 const SQL_UNIT: &str = "hanzo-sql-forward.service";
 const DEFAULT_NS: &str = "hanzo";
 
-/// Resolve the kubeconfig to use when the caller did not pass `--kubeconfig`
-/// or set `KUBECONFIG`. Prefers `~/.kube/hanzo-aws.yaml` (the ZT-tunneled
-/// production cluster), then `~/.kube/hanzo.yaml` (local `hanzo up`), then
-/// `~/.kube/config`.
-pub fn resolve_kubeconfig() -> Option<PathBuf> {
-    if let Ok(env_val) = std::env::var("KUBECONFIG") {
+/// Pure kubeconfig selector:
+/// - Explicit `KUBECONFIG` env var always wins.
+/// - Unless `remote_requested` (`--remote` or `tunnel`/`connect`), prefers local
+///   `~/.kube/hanzo.yaml` whenever it exists AND `127.0.0.1:6443` is reachable.
+/// - Otherwise falls back to `~/.kube/hanzo-aws.yaml`, `~/.kube/hanzo.yaml`, `~/.kube/config`.
+pub(crate) fn select_kubeconfig_from(
+    home: Option<&Path>,
+    env_kubeconfig: Option<&str>,
+    remote_requested: bool,
+    local_k3s_open: bool,
+) -> Option<PathBuf> {
+    if let Some(env_val) = env_kubeconfig {
         let trimmed = env_val.trim();
         if !trimmed.is_empty() {
             return Some(PathBuf::from(trimmed));
         }
     }
-    let home = dirs::home_dir()?;
+    let home = home?;
+    let local_hanzo = home.join(".kube/hanzo.yaml");
+    if !remote_requested && local_k3s_open && local_hanzo.is_file() {
+        return Some(local_hanzo);
+    }
     for rel in [".kube/hanzo-aws.yaml", ".kube/hanzo.yaml", ".kube/config"] {
         let candidate = home.join(rel);
         if candidate.is_file() {
@@ -57,6 +68,16 @@ pub fn resolve_kubeconfig() -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn resolve_kubeconfig_for(remote_requested: bool) -> Option<PathBuf> {
+    let env_val = std::env::var("KUBECONFIG").ok();
+    select_kubeconfig_from(
+        dirs::home_dir().as_deref(),
+        env_val.as_deref(),
+        remote_requested,
+        port_open(LOCAL_K3S_PORT),
+    )
 }
 
 fn port_open(port: u16) -> bool {
@@ -175,9 +196,26 @@ fn cmd_tunnel(kubeconfig: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Print cluster tunnel status, nodes, and pod summary in namespace `hanzo`.
+/// Print cluster tunnel/local status, nodes, and pod summary in namespace `hanzo`.
 fn cmd_status(kubeconfig: &Path) -> Result<()> {
-    cmd_tunnel(kubeconfig)?;
+    if uses_zt_tunnel(kubeconfig) {
+        cmd_tunnel(kubeconfig)?;
+    } else {
+        let local_state = if port_open(LOCAL_K3S_PORT) {
+            "listening".green().bold()
+        } else {
+            "not listening".yellow()
+        };
+        println!(
+            "{} local k3s  127.0.0.1:{LOCAL_K3S_PORT}   {local_state} (Hanzo Runtime)",
+            "•".cyan()
+        );
+        println!(
+            "{} kubeconfig {}",
+            "•".cyan(),
+            kubeconfig.display().to_string().dimmed()
+        );
+    }
     println!();
 
     let kubectl = which::which("kubectl").context("kubectl is not installed on PATH")?;
@@ -344,9 +382,26 @@ pub async fn run(args: Vec<String>) -> Result<()> {
         return launch::exec(&exe, &link_args);
     }
 
-    let kubeconfig = resolve_kubeconfig().ok_or_else(|| {
+    let mut force_remote = false;
+    let args: Vec<String> = args
+        .into_iter()
+        .filter(|a| {
+            if a == "--remote" {
+                force_remote = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    let is_tunnel_cmd = matches!(
+        args.first().map(String::as_str),
+        Some("tunnel" | "connect") if args.len() == 1
+    );
+
+    let kubeconfig = resolve_kubeconfig_for(force_remote || is_tunnel_cmd).ok_or_else(|| {
         anyhow!(
-            "no kubeconfig found at ~/.kube/hanzo-aws.yaml, ~/.kube/hanzo.yaml, or ~/.kube/config"
+            "no kubeconfig found at ~/.kube/hanzo.yaml, ~/.kube/hanzo-aws.yaml, or ~/.kube/config"
         )
     })?;
 
@@ -422,5 +477,32 @@ mod tests {
 
         let explicit = vec!["list".to_string(), "-A".to_string()];
         assert_eq!(expand_helm_args(&explicit), vec!["list", "-A"]);
+    }
+
+    #[test]
+    fn local_hanzo_kubeconfig_wins_when_6443_is_reachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let kube = dir.path().join(".kube");
+        std::fs::create_dir_all(&kube).unwrap();
+        let aws = kube.join("hanzo-aws.yaml");
+        let local = kube.join("hanzo.yaml");
+        std::fs::write(&aws, "apiVersion: v1\n").unwrap();
+        std::fs::write(&local, "apiVersion: v1\n").unwrap();
+
+        // Local :6443 reachable -> ~/.kube/hanzo.yaml wins over hanzo-aws.yaml
+        assert_eq!(
+            select_kubeconfig_from(Some(dir.path()), None, false, true),
+            Some(local.clone())
+        );
+        // --remote / tunnel requested -> ~/.kube/hanzo-aws.yaml wins
+        assert_eq!(
+            select_kubeconfig_from(Some(dir.path()), None, true, true),
+            Some(aws.clone())
+        );
+        // Local :6443 closed -> falls back to ~/.kube/hanzo-aws.yaml
+        assert_eq!(
+            select_kubeconfig_from(Some(dir.path()), None, false, false),
+            Some(aws)
+        );
     }
 }

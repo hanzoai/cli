@@ -360,7 +360,7 @@ async fn delete_session(cfg: &mut Config, id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn bearer(cfg: &mut Config) -> Result<String> {
+pub(crate) async fn bearer(cfg: &mut Config) -> Result<String> {
     if let Ok(key) = std::env::var("HANZO_API_KEY") {
         let trimmed = key.trim();
         if !trimmed.is_empty() {
@@ -371,6 +371,53 @@ async fn bearer(cfg: &mut Config) -> Result<String> {
         .await?
         .map(|(_, t)| t.access_token)
         .unwrap_or_default())
+}
+
+/// Read-only probe against a running `hanzod` without auto-spawning it.
+pub(crate) async fn probe_no_spawn(method: &Method, path: &str) -> Option<Reply> {
+    #[cfg(unix)]
+    {
+        let sock = host::zap_socket().ok()?;
+        if !sock.exists() {
+            return None;
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(400),
+            crate::zap::send(&sock, method, path, "", None),
+        )
+        .await
+        .ok()?
+        .ok()
+    }
+    #[cfg(not(unix))]
+    {
+        let url = format!("http://{HANZOD_HTTP_ADDR}{path}");
+        let req = Request::new(method.clone(), url);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(400),
+            Http::default().send(req),
+        )
+        .await
+        .ok()?
+        .ok()
+    }
+}
+
+/// Probe `hanzod` `/v1/dev/health` if `hanzod` is running (never spawns).
+pub(crate) async fn probe_dev_health() -> Option<Value> {
+    probe_no_spawn(&Method::GET, "/v1/dev/health")
+        .await
+        .filter(|r| (200..300).contains(&r.status))
+        .map(|r| r.body)
+}
+
+/// Probe `hanzod` `/v1/engine/catalog` (spawning `hanzod` if available, else `None`).
+pub(crate) async fn probe_engine_catalog() -> Option<Value> {
+    let _ = host::ensure(HANZOD_HTTP_ADDR).await;
+    probe_no_spawn(&Method::GET, "/v1/engine/catalog")
+        .await
+        .filter(|r| (200..300).contains(&r.status))
+        .map(|r| r.body)
 }
 
 /// Ensure `hanzod` is running and send a request over native ZAP-HTTP (Unix) or
