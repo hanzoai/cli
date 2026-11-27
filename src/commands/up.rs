@@ -546,8 +546,9 @@ fn plant_pull_secret(rpc: &mut Rpc, dockerconfigjson: &str) -> Result<()> {
 /// own request through the downward API, exactly as production does it,
 /// because the host sizes how many plugin children it holds from that number
 /// and a value it cannot read means it assumes the 6 GiB reservation it was
-/// tuned against. `CLOUD_HEALTH_LISTEN` opens the ops port on the pod address:
-/// its default binds loopback, where no probe can reach it.
+/// tuned against. Liveness (`/healthz`) and readiness (`/readyz`) probes target
+/// the main HTTP port (`8080`), matching production: the light `cmd/cloud` host
+/// serves both probes there and does not bind the legacy `:9090` ops port.
 ///
 /// The security context is production's, and `fsGroup` is the load-bearing
 /// line: the image runs as 65532, an `emptyDir` arrives owned by root, and the
@@ -604,6 +605,12 @@ fn workload_for(boot: &Boot) -> Result<String> {
     {
         extra_env.push_str(&yaml_env_block("CLOUD_AI_BASE_URL", v)?);
     }
+    // Size the pod's memory request at half the VM's RAM (2048Mi on the default
+    // 4 GiB VM, clamped to 1024..=4096Mi). The host derives its Warm plugin
+    // ceiling from CLOUD_MEMORY_REQUEST_MIB: 2048Mi yields Warm=26, covering
+    // all 18 pinned subsystems (ai + 17 eager apps) plus lazy headroom instead
+    // of starving at Warm=11 under a 1Gi request.
+    let cloud_memory_mi = (boot.memory_mb / 2).clamp(1024, 4096);
     Ok(format!(
         "apiVersion: apps/v1
 kind: Deployment
@@ -640,8 +647,6 @@ spec:
             - name: api
               containerPort: {CLOUD_PORT}
           env:
-            - name: CLOUD_HEALTH_LISTEN
-              value: \":9090\"
             - name: ZIP_RUNTIME_DIR
               value: /var/lib/cloud/run
             - name: CLOUD_KMS_MASTER_KEY_REF
@@ -657,17 +662,17 @@ spec:
                   divisor: 1Mi
 {extra_env}          resources:
             requests:
-              memory: 1Gi
+              memory: {cloud_memory_mi}Mi
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 9090
+              port: {CLOUD_PORT}
             periodSeconds: 5
             failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 9090
+              port: {CLOUD_PORT}
             periodSeconds: 10
             failureThreshold: 30
           volumeMounts:
@@ -1481,10 +1486,10 @@ mod tests {
     }
 
     /// The workload names the pinned image, publishes the API on the node port
-    /// the host forwards, and carries the three environment values a cluster
-    /// this small still has to state: the ops listener on the pod address, the
-    /// plugin sockets inside the writable volume, and the memory reservation
-    /// the host sizes itself from.
+    /// the host forwards, probes `/healthz` and `/readyz` on the API port
+    /// (`8080`, NOT the unbound legacy `:9090` ops port), and carries the
+    /// writable socket directory and memory reservation the host sizes its Warm
+    /// plugin ceiling from.
     #[test]
     fn the_workload_deploys_the_pinned_image_on_the_forwarded_port() {
         let y = workload("ghcr.io/hanzoai/cloud@sha256:c10d");
@@ -1495,11 +1500,23 @@ mod tests {
         assert!(y.contains("nodePort: 30080"), "{y}");
         assert!(y.contains("containerPort: 8080"), "{y}");
         assert!(y.contains("namespace: hanzo"), "{y}");
-        for env in [
-            "CLOUD_HEALTH_LISTEN",
-            "ZIP_RUNTIME_DIR",
-            "CLOUD_MEMORY_REQUEST_MIB",
-        ] {
+        assert!(
+            y.contains("path: /readyz\n              port: 8080"),
+            "readinessProbe must target API port 8080:\n{y}"
+        );
+        assert!(
+            y.contains("path: /healthz\n              port: 8080"),
+            "livenessProbe must target API port 8080:\n{y}"
+        );
+        assert!(
+            !y.contains("port: 9090"),
+            "probes must not target unbound legacy port 9090:\n{y}"
+        );
+        assert!(
+            y.contains("memory: 2048Mi"),
+            "default 4GiB VM must request 2048Mi so Warm covers pinned subsystems:\n{y}"
+        );
+        for env in ["ZIP_RUNTIME_DIR", "CLOUD_MEMORY_REQUEST_MIB"] {
             assert!(y.contains(env), "{env} missing from\n{y}");
         }
         // The at-rest key is referenced, never inlined.
