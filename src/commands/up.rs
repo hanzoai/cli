@@ -44,6 +44,7 @@ pub mod tui;
 
 /// The VM's shape and what it runs — one value through every layer, so the
 /// supervisor boots exactly what the caller asked for.
+#[derive(Clone)]
 pub struct Boot {
     pub cpus: u32,
     pub memory_mb: u64,
@@ -227,11 +228,11 @@ const KUBECONFIG: &str = "/etc/hanzo/kubeconfig";
 /// it. Neither carries the at-rest key; see [`plant_key`].
 const GROUND: &str = "/var/lib/hanzo/server/manifests/cloud-ns.yaml";
 const WORKLOAD: &str = "/var/lib/hanzo/server/manifests/cloud.yaml";
-/// The disk checkpoint every boot starts from — keyed by [`vm::VM_VERSION`] so
-/// an upgrade of `hanzo-vm` (whose `/usr/bin/vm-guest` lives inside the rootfs
-/// disk image) never boots a stale checkpoint speaking an older guest protocol.
+/// The disk checkpoint every boot starts from — keyed by [`vm::VM_VERSION`] and
+/// `-airgap` so an upgrade of `hanzo-vm` or pre-baked k3s airgap images never
+/// boots a stale checkpoint that re-pulls kube-system images on every cold boot.
 fn checkpoint() -> String {
-    format!("k3s-{}", vm::VM_VERSION)
+    format!("k3s-{}-airgap", vm::VM_VERSION)
 }
 /// How long the guest gets to report a Ready node.
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
@@ -765,6 +766,18 @@ fn k3s_asset() -> &'static str {
     }
 }
 
+/// Which k3s airgap image tarball this host's architecture needs. Placing it in
+/// `{DATA}/agent/images/` inside the checkpoint lets k3s load `kube-system`
+/// images (`coredns`, `local-path-provisioner`, `pause`) directly from disk on
+/// every cold boot without re-pulling them from Docker Hub.
+fn k3s_airgap_asset() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "k3s-airgap-images-arm64.tar.zst"
+    } else {
+        "k3s-airgap-images-amd64.tar.zst"
+    }
+}
+
 fn is_hanzo_artifact_url(url: &str) -> bool {
     let trimmed = url.trim();
     [
@@ -779,27 +792,33 @@ fn is_hanzo_artifact_url(url: &str) -> bool {
 }
 
 fn install_cmd_for(strict_registry: bool, k3s_url_override: Option<&str>) -> Result<String> {
-    let url = if let Some(u) = k3s_url_override.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(u) = k3s_url_override.map(str::trim).filter(|s| !s.is_empty()) {
         if strict_registry && !is_hanzo_artifact_url(u) {
             bail!(
                 "refusing non-Hanzo k3s artifact URL '{u}' under --strict-registry; \
                  set HANZO_K3S_URL to a verified Hanzo-owned endpoint (pkg.hanzo.ai / oci.hanzo.ai)"
             );
         }
-        u.to_string()
-    } else if strict_registry {
+        return Ok(format!(
+            "curl -fsSLo /usr/local/bin/k3s '{u}' && chmod +x /usr/local/bin/k3s"
+        ));
+    }
+    if strict_registry {
         bail!(
             "refusing GitHub k3s download under --strict-registry; \
              set HANZO_K3S_URL to a verified Hanzo-owned k3s mirror (pkg.hanzo.ai / oci.hanzo.ai)"
         );
-    } else {
-        format!(
-            "https://github.com/k3s-io/k3s/releases/latest/download/{}",
-            k3s_asset()
-        )
-    };
+    }
+    let bin_url = format!(
+        "https://github.com/k3s-io/k3s/releases/latest/download/{}",
+        k3s_asset()
+    );
+    let airgap = k3s_airgap_asset();
+    let airgap_url = format!("https://github.com/k3s-io/k3s/releases/latest/download/{airgap}");
     Ok(format!(
-        "curl -fsSLo /usr/local/bin/k3s '{url}' && chmod +x /usr/local/bin/k3s"
+        "curl -fsSLo /usr/local/bin/k3s '{bin_url}' && chmod +x /usr/local/bin/k3s && \
+         mkdir -p {DATA}/agent/images && \
+         curl -fsSLo {DATA}/agent/images/{airgap} '{airgap_url}'"
     ))
 }
 
@@ -1006,10 +1025,58 @@ pub async fn up(
 
     if let Some(pid) = running(&dir, SUPERVISOR) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
-        println!(
-            "{} already running (supervisor pid {pid}, {state})",
-            "●".green()
-        );
+        let kc = kubeconfig_path()?;
+        let overrides = has_workload_overrides(&boot);
+        if kc.exists() {
+            if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
+                let replicas = kube.cloud_replicas().await.ok().flatten();
+                if overrides {
+                    let has_hanzo_oci =
+                        !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
+                    let selected_image =
+                        select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
+                    let pinned = Boot {
+                        cloud: image::pin_with_config(
+                            &reqwest::Client::new(),
+                            &selected_image,
+                            image::architecture(),
+                            cfg,
+                        )
+                        .await?,
+                        ..boot
+                    };
+                    let manifest = workload_for(&pinned)?;
+                    kube.apply_cloud_deployment(&manifest).await?;
+                    write_state(&dir, "ready");
+                    println!(
+                        "{} hanzo updated & started on warm k3s (supervisor pid {pid} — skipped VM boot & kube-system pulls)",
+                        "✓".green()
+                    );
+                } else if state == "stopped" || replicas == Some(0) {
+                    kube.scale_cloud(1).await?;
+                    write_state(&dir, "ready");
+                    println!(
+                        "{} hanzo started on warm k3s (supervisor pid {pid} — skipped VM boot & image pulls)",
+                        "✓".green()
+                    );
+                } else {
+                    println!(
+                        "{} already running (supervisor pid {pid}, {state})",
+                        "●".green()
+                    );
+                }
+            } else {
+                println!(
+                    "{} already running (supervisor pid {pid}, {state})",
+                    "●".green()
+                );
+            }
+        } else {
+            println!(
+                "{} already running (supervisor pid {pid}, {state})",
+                "●".green()
+            );
+        }
         endpoints()?;
         let res = finish_link(cfg, link).await;
         if ui || (!no_ui && std::io::stdout().is_terminal()) {
@@ -1307,17 +1374,195 @@ pub async fn status() -> Result<()> {
     Ok(())
 }
 
-/// `hanzo down` (and `hanzo up down`) — stop the supervisor, then make sure the
-/// vm it held is gone.
-///
-/// The supervisor first: closing the vm's stdin is the designed shutdown, and a
-/// guest that stops on the EOF flushes its disk. The vm second, because that
-/// path is not the only way this ends. A supervisor that was SIGKILLed, or died
-/// with the machine, never closed anything — and the vm it left behind holds
-/// 6443 against the next boot while nothing on the system explains why. Its
-/// recorded pid is how we collect it, and a pid we recorded is the only thing
-/// we will signal.
-pub fn down() -> Result<()> {
+// ---- native k3s API client (keeps k3s warm across hanzo down / up) -----------
+
+struct KubeAuth {
+    server: String,
+    ca_pem: Vec<u8>,
+    client_pem: Vec<u8>,
+}
+
+struct KubeClient {
+    server: String,
+    http: reqwest::Client,
+}
+
+impl KubeClient {
+    fn parse_kubeconfig(yaml: &str) -> Result<KubeAuth> {
+        let doc: serde_norway::Value =
+            serde_norway::from_str(yaml).context("parsing kubeconfig YAML")?;
+        let cluster = doc
+            .get("clusters")
+            .and_then(|v| v.as_sequence())
+            .and_then(|s| s.first())
+            .and_then(|c| c.get("cluster"))
+            .ok_or_else(|| anyhow!("kubeconfig missing clusters[0].cluster"))?;
+        let server = cluster
+            .get("server")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("kubeconfig missing cluster.server"))?
+            .trim_end_matches('/')
+            .to_string();
+        let ca_b64 = cluster
+            .get("certificate-authority-data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("kubeconfig missing certificate-authority-data"))?;
+        let user = doc
+            .get("users")
+            .and_then(|v| v.as_sequence())
+            .and_then(|s| s.first())
+            .and_then(|u| u.get("user"))
+            .ok_or_else(|| anyhow!("kubeconfig missing users[0].user"))?;
+        let cert_b64 = user
+            .get("client-certificate-data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("kubeconfig missing client-certificate-data"))?;
+        let key_b64 = user
+            .get("client-key-data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("kubeconfig missing client-key-data"))?;
+
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let ca_pem = b64
+            .decode(ca_b64.trim())
+            .context("decoding kubeconfig CA cert")?;
+        let mut client_pem = b64
+            .decode(cert_b64.trim())
+            .context("decoding kubeconfig client cert")?;
+        if !client_pem.ends_with(b"\n") {
+            client_pem.push(b'\n');
+        }
+        let key_pem = b64
+            .decode(key_b64.trim())
+            .context("decoding kubeconfig client key")?;
+        client_pem.extend_from_slice(&key_pem);
+
+        Ok(KubeAuth {
+            server,
+            ca_pem,
+            client_pem,
+        })
+    }
+
+    fn from_kubeconfig(path: &Path) -> Result<Self> {
+        let yaml = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let auth = Self::parse_kubeconfig(&yaml)?;
+        let ca = reqwest::Certificate::from_pem(&auth.ca_pem)
+            .context("loading kubeconfig CA certificate")?;
+        let identity = reqwest::Identity::from_pem(&auth.client_pem)
+            .context("loading kubeconfig client identity")?;
+        let http = reqwest::Client::builder()
+            .use_rustls_tls()
+            .add_root_certificate(ca)
+            .identity(identity)
+            .timeout(Duration::from_secs(15))
+            .build()
+            .context("building k3s API client")?;
+        Ok(Self {
+            server: auth.server,
+            http,
+        })
+    }
+
+    async fn cloud_replicas(&self) -> Result<Option<u32>> {
+        let url = format!("{}/apis/apps/v1/namespaces/hanzo/deployments/cloud/scale", self.server);
+        let resp = self.http.get(&url).send().await.context("reading cloud scale")?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("k3s GET scale returned {status}: {}", body.trim());
+        }
+        let v: serde_json::Value = resp.json().await.context("decoding cloud scale")?;
+        Ok(v.pointer("/spec/replicas")
+            .and_then(|r| r.as_u64())
+            .map(|r| r as u32))
+    }
+
+    async fn scale_cloud(&self, replicas: u32) -> Result<()> {
+        let url = format!("{}/apis/apps/v1/namespaces/hanzo/deployments/cloud/scale", self.server);
+        let resp = self
+            .http
+            .patch(&url)
+            .header("Content-Type", "application/merge-patch+json")
+            .json(&serde_json::json!({ "spec": { "replicas": replicas } }))
+            .send()
+            .await
+            .context("scaling cloud deployment")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("k3s PATCH scale returned {status}: {}", body.trim());
+        }
+        Ok(())
+    }
+
+    async fn apply_cloud_deployment(&self, workload_yaml: &str) -> Result<()> {
+        let deploy_yaml = extract_deployment_yaml(workload_yaml)?;
+        let url = format!(
+            "{}/apis/apps/v1/namespaces/hanzo/deployments/cloud?fieldManager=hanzo-cli&force=true",
+            self.server
+        );
+        let resp = self
+            .http
+            .patch(&url)
+            .header("Content-Type", "application/apply-patch+yaml")
+            .body(deploy_yaml.to_string())
+            .send()
+            .await
+            .context("applying cloud deployment")?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            let create_url = format!("{}/apis/apps/v1/namespaces/hanzo/deployments", self.server);
+            let doc: serde_json::Value =
+                serde_norway::from_str(deploy_yaml).context("converting deployment YAML to JSON")?;
+            let create = self
+                .http
+                .post(&create_url)
+                .json(&doc)
+                .send()
+                .await
+                .context("creating cloud deployment")?;
+            if !create.status().is_success() {
+                let status = create.status();
+                let body = create.text().await.unwrap_or_default();
+                bail!("k3s POST deployment returned {status}: {}", body.trim());
+            }
+            return Ok(());
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("k3s PATCH deployment returned {status}: {}", body.trim());
+        }
+        Ok(())
+    }
+}
+
+fn extract_deployment_yaml(workload_yaml: &str) -> Result<&str> {
+    workload_yaml
+        .split("\n---\n")
+        .find(|doc| doc.contains("kind: Deployment"))
+        .map(str::trim)
+        .filter(|doc| !doc.is_empty())
+        .ok_or_else(|| anyhow!("workload manifest missing Deployment document"))
+}
+
+fn has_workload_overrides(boot: &Boot) -> bool {
+    boot.cloud != CLOUD
+        || boot.staged.is_some()
+        || boot.iam_issuer.is_some()
+        || boot.ai_base_url.is_some()
+}
+
+/// `hanzo down` (and `hanzo up down`) — stops only the Hanzo Cloud workload by
+/// default so the local k3s microVM, `kube-system`, and containerd image cache
+/// stay warm across `hanzo down` / `hanzo up` cycles. Pass `--vm` (`--all`) to
+/// shut down the k3s microVM completely.
+pub async fn down(stop_vm: bool) -> Result<()> {
     #[cfg(windows)]
     if let Some(_pid) = host::stop_recorded_pid()? {
         let dir = up_dir()?;
@@ -1335,22 +1580,64 @@ pub fn down() -> Result<()> {
         return Ok(());
     }
 
+    if !stop_vm && supervisor.is_some() {
+        let kc = kubeconfig_path()?;
+        if kc.exists() {
+            match KubeClient::from_kubeconfig(&kc) {
+                Ok(kube) => match kube.scale_cloud(0).await {
+                    Ok(()) => {
+                        write_state(&dir, "stopped");
+                        println!(
+                            "{} hanzo stopped (k3s microVM kept warm — next `hanzo up` skips image pulls; run `hanzo down --vm` to stop the VM too)",
+                            "✓".green()
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        crate::warn(&format!(
+                            "could not scale cloud deployment on local k3s ({e:#}); stopping the microVM instead"
+                        ));
+                    }
+                },
+                Err(e) => {
+                    crate::warn(&format!(
+                        "could not load {} ({e:#}); stopping the microVM instead",
+                        kc.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    down_vm(&dir, supervisor)
+}
+
+/// Full teardown of the supervisor and k3s microVM.
+///
+/// The supervisor first: closing the vm's stdin is the designed shutdown, and a
+/// guest that stops on the EOF flushes its disk. The vm second, because that
+/// path is not the only way this ends. A supervisor that was SIGKILLed, or died
+/// with the machine, never closed anything — and the vm it left behind holds
+/// 6443 against the next boot while nothing on the system explains why. Its
+/// recorded pid is how we collect it, and a pid we recorded is the only thing
+/// we will signal.
+fn down_vm(dir: &Path, supervisor: Option<i32>) -> Result<()> {
     if let Some(pid) = supervisor {
         if !stop(pid, Duration::from_secs(30)) {
             bail!("supervisor (pid {pid}) did not exit");
         }
-        clear_pid(&dir, SUPERVISOR);
+        clear_pid(dir, SUPERVISOR);
     }
     // Re-read: a supervisor that exited cleanly reaped the vm and cleared it.
-    if let Some(pid) = running(&dir, VM) {
+    if let Some(pid) = running(dir, VM) {
         if !stop(pid, Duration::from_secs(10)) {
             bail!("the vm (pid {pid}) did not exit");
         }
     }
-    clear_pid(&dir, VM);
+    clear_pid(dir, VM);
 
-    write_state(&dir, "down");
-    println!("{} down", "✓".green());
+    write_state(dir, "down");
+    println!("{} down (k3s microVM stopped)", "✓".green());
     Ok(())
 }
 
@@ -1654,10 +1941,14 @@ mod tests {
         assert!(cmd.contains("k3s-io/k3s/releases/latest/download"), "{cmd}");
         assert!(cmd.contains(k3s_asset()), "{cmd}");
         assert!(cmd.contains("chmod +x /usr/local/bin/k3s"), "{cmd}");
+        assert!(cmd.contains(k3s_airgap_asset()), "{cmd}");
+        assert!(cmd.contains("/var/lib/hanzo/agent/images"), "{cmd}");
         if cfg!(target_arch = "aarch64") {
             assert_eq!(k3s_asset(), "k3s-arm64");
+            assert_eq!(k3s_airgap_asset(), "k3s-airgap-images-arm64.tar.zst");
         } else {
             assert_eq!(k3s_asset(), "k3s");
+            assert_eq!(k3s_airgap_asset(), "k3s-airgap-images-amd64.tar.zst");
         }
     }
 
@@ -1918,5 +2209,52 @@ mod tests {
         assert!(without_hanzod.contains("http://127.0.0.1:36930"));
         assert!(without_hanzod.contains("http://127.0.0.1:3690 requires hanzod"));
         assert!(without_hanzod.contains("hanzo upgrade hanzod"));
+    }
+
+    #[test]
+    fn kubeconfig_parses_mtls_credentials_and_server() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let ca = b64.encode(b"CA-PEM");
+        let cert = b64.encode(b"CERT-PEM");
+        let key = b64.encode(b"KEY-PEM");
+        let yaml = format!(
+            "apiVersion: v1\nclusters:\n- cluster:\n    server: https://127.0.0.1:6443/\n    certificate-authority-data: {ca}\n  name: default\nusers:\n- name: default\n  user:\n    client-certificate-data: {cert}\n    client-key-data: {key}\n"
+        );
+        let auth = KubeClient::parse_kubeconfig(&yaml).unwrap();
+        assert_eq!(auth.server, "https://127.0.0.1:6443");
+        assert_eq!(auth.ca_pem, b"CA-PEM");
+        assert_eq!(auth.client_pem, b"CERT-PEM\nKEY-PEM");
+    }
+
+    #[test]
+    fn extract_deployment_yaml_isolates_cloud_deployment() {
+        let manifest = workload("ghcr.io/hanzo-inc/cloud@sha256:abc");
+        let deploy = extract_deployment_yaml(&manifest).unwrap();
+        assert!(deploy.contains("kind: Deployment"), "{deploy}");
+        assert!(!deploy.contains("kind: Service"), "{deploy}");
+    }
+
+    #[test]
+    fn has_workload_overrides_detects_changed_flags() {
+        let base = Boot {
+            cpus: 4,
+            memory_mb: 4096,
+            disk_mb: 32768,
+            cloud: CLOUD.to_string(),
+            staged: None,
+            iam_issuer: None,
+            ai_base_url: None,
+            strict_registry: false,
+        };
+        assert!(!has_workload_overrides(&base));
+        assert!(has_workload_overrides(&Boot {
+            cloud: "ghcr.io/hanzo-inc/cloud:v8.5.1453".into(),
+            ..base.clone()
+        }));
+        assert!(has_workload_overrides(&Boot {
+            staged: Some("fanclub".into()),
+            ..base
+        }));
     }
 }
