@@ -97,10 +97,12 @@ pub async fn run(cfg: &mut Config, infer_only: bool) -> Result<()> {
 /// `hanzo sandbox list` / `hanzo ls` — lists the calling org's live sandboxes
 /// from `GET /v1/sandbox` instead of printing local TUI sample fixtures.
 pub async fn list_sandboxes(cfg: &mut Config) -> Result<()> {
+    let _ = crate::commands::up::ps().await;
     let seam = Seam::open(cfg, crate::iam::paths::DEFAULT_BRAND).await?;
     if seam.token.is_empty() {
-        bail!("not signed in — run `hanzo auth login`");
+        return Ok(());
     }
+    println!();
     let rows = read(&seam, SANDBOXES_ROUTE, "sandboxes")
         .await
         .map_err(|e| anyhow::anyhow!("sandbox list unavailable — {e}"))?;

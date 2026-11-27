@@ -339,13 +339,70 @@ enum Commands {
         /// Suppress the interactive Sandboxes TUI dashboard
         #[arg(long, conflicts_with = "ui")]
         no_ui: bool,
+        /// Bring up Hanzo Cloud only (skip project-level workloads)
+        #[arg(long)]
+        cloud_only: bool,
     },
 
-    /// Stop Hanzo Cloud (keeps local k3s + image cache warm; pass `--vm` to stop the microVM too)
+    /// Stop Hanzo Cloud and local workloads while keeping the local k3s runtime warm
     Down {
-        /// Also shut down the local k3s microVM (reclaims RAM/CPU; next `hanzo up` cold-boots k3s)
+        /// Also shut down the local k3s microVM (equivalent to `hanzo stop`)
         #[arg(long, alias = "all")]
         vm: bool,
+    },
+
+    /// Start the local Hanzo runtime (microVM, k3s, containerd) without deploying Cloud
+    Start {
+        /// CPUs for the VM
+        #[arg(long, default_value_t = 4)]
+        cpus: u32,
+        /// Memory in MB
+        #[arg(long, default_value_t = 4096)]
+        memory: u64,
+        /// Disk size in MB
+        #[arg(long, alias = "disk", default_value_t = 32768)]
+        disk_size: u64,
+        /// Refuse non-Hanzo container registries (`ghcr.io`, Docker Hub) and require `oci.hanzo.ai`
+        #[arg(long, env = "HANZO_STRICT_REGISTRY")]
+        strict_registry: bool,
+    },
+
+    /// Gracefully stop the entire local Hanzo runtime (drain workloads, stop k3s & microVM)
+    Stop,
+
+    /// Restart the local Hanzo runtime and restore previously running workloads
+    Restart {
+        /// CPUs for the VM
+        #[arg(long, default_value_t = 4)]
+        cpus: u32,
+        /// Memory in MB
+        #[arg(long, default_value_t = 4096)]
+        memory: u64,
+        /// Disk size in MB
+        #[arg(long, alias = "disk", default_value_t = 32768)]
+        disk_size: u64,
+        /// The cloud image to deploy if Cloud was running
+        #[arg(long, value_name = "IMAGE", default_value = commands::up::CLOUD)]
+        cloud: String,
+        /// Opt-in staged Cloud subsystems (`CLOUD_ENABLE_STAGED`)
+        #[arg(long, value_name = "SUBSYSTEMS", env = "CLOUD_ENABLE_STAGED")]
+        staged: Option<String>,
+        /// Hanzo IAM OIDC issuer URL (`CLOUD_IAM_ISSUER`)
+        #[arg(long, value_name = "URL", env = "CLOUD_IAM_ISSUER")]
+        iam_issuer: Option<String>,
+        /// Hanzo AI / Engine HTTP base URL (`CLOUD_AI_BASE_URL`)
+        #[arg(long, value_name = "URL", env = "CLOUD_AI_BASE_URL")]
+        ai_base_url: Option<String>,
+        /// Refuse non-Hanzo container registries
+        #[arg(long, env = "HANZO_STRICT_REGISTRY")]
+        strict_registry: bool,
+    },
+
+    /// Explicitly reset local Hanzo dev environment state (stop runtime, remove ~/.hanzo/up & kubeconfig)
+    Reset {
+        /// Also delete cached `hanzo-vm` k3s checkpoints so the next boot rebuilds them from scratch
+        #[arg(long, alias = "vm-cache")]
+        all: bool,
     },
 
     /// Show the whole cloud: what is unhealthy first, then clusters,
@@ -686,6 +743,7 @@ enum UpCommands {
     #[command(alias = "dashboard", alias = "ui")]
     Console,
     /// Supervisor and node status (node via ~/.kube/hanzo.yaml)
+    #[command(alias = "ps")]
     Status,
     /// Stop Hanzo Cloud (keeps k3s warm by default; pass `--vm` to stop the microVM too)
     Down {
@@ -693,9 +751,13 @@ enum UpCommands {
         #[arg(long, alias = "all")]
         vm: bool,
     },
-    /// The daemonized supervisor `hanzo up` leaves behind (internal)
+    /// The daemonized supervisor `hanzo up` / `hanzo start` leaves behind (internal)
     #[command(hide = true)]
-    Supervise,
+    Supervise {
+        /// Boot only the k3s runtime without deploying the Cloud workload
+        #[arg(long)]
+        runtime_only: bool,
+    },
     /// The old `hanzo up <service>` — forwarded to `hanzo host serve`
     #[command(external_subcommand)]
     Service(Vec<String>),
@@ -1360,6 +1422,7 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
             link,
             ui,
             no_ui,
+            cloud_only: _,
         } => {
             let boot = commands::up::Boot {
                 cpus,
@@ -1379,11 +1442,55 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 Some(UpCommands::Console) => commands::up::dashboard()?,
                 Some(UpCommands::Status) => commands::up::status().await?,
                 Some(UpCommands::Down { vm }) => commands::up::down(vm).await?,
-                Some(UpCommands::Supervise) => commands::up::supervise(&mut config, boot).await?,
+                Some(UpCommands::Supervise { runtime_only }) => {
+                    commands::up::supervise(&mut config, boot, runtime_only).await?
+                }
                 Some(UpCommands::Service(argv)) => commands::up::deprecated_service(argv).await?,
             }
         }
         Commands::Down { vm } => commands::up::down(vm).await?,
+        Commands::Start {
+            cpus,
+            memory,
+            disk_size,
+            strict_registry,
+        } => {
+            let boot = commands::up::Boot {
+                cpus,
+                memory_mb: memory,
+                disk_mb: disk_size,
+                cloud: commands::up::CLOUD.to_string(),
+                staged: None,
+                iam_issuer: None,
+                ai_base_url: None,
+                strict_registry,
+            };
+            commands::up::start(&mut config, boot).await?;
+        }
+        Commands::Stop => commands::up::stop_runtime().await?,
+        Commands::Restart {
+            cpus,
+            memory,
+            disk_size,
+            cloud,
+            staged,
+            iam_issuer,
+            ai_base_url,
+            strict_registry,
+        } => {
+            let boot = commands::up::Boot {
+                cpus,
+                memory_mb: memory,
+                disk_mb: disk_size,
+                cloud,
+                staged,
+                iam_issuer,
+                ai_base_url,
+                strict_registry,
+            };
+            commands::up::restart(&mut config, boot).await?;
+        }
+        Commands::Reset { all } => commands::up::reset(all).await?,
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
@@ -2293,6 +2400,7 @@ mod tests {
             link,
             ui,
             no_ui,
+            cloud_only,
         }) = cli.command
         else {
             panic!("expected bare up")
@@ -2306,6 +2414,35 @@ mod tests {
         assert!(!attest);
         assert!(!ui);
         assert!(!no_ui);
+        assert!(!cloud_only);
+
+        // Canonical lifecycle commands parse cleanly.
+        assert!(matches!(
+            Cli::try_parse_from(["hanzo", "start", "--cpus", "8", "--memory", "8192", "--disk", "65536"])
+                .expect("start parses")
+                .command,
+            Some(Commands::Start { cpus: 8, memory: 8192, disk_size: 65536, .. })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["hanzo", "stop"]).expect("stop parses").command,
+            Some(Commands::Stop)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["hanzo", "restart"]).expect("restart parses").command,
+            Some(Commands::Restart { .. })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["hanzo", "down"]).expect("down parses").command,
+            Some(Commands::Down { vm: false })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["hanzo", "down", "--vm"]).expect("down --vm parses").command,
+            Some(Commands::Down { vm: true })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["hanzo", "reset", "--all"]).expect("reset --all parses").command,
+            Some(Commands::Reset { all: true })
+        ));
 
         // UI flags parse cleanly and conflict properly
         let cli = Cli::try_parse_from(["hanzo", "up", "--ui"]).expect("--ui parses");

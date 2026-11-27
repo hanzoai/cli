@@ -892,17 +892,21 @@ fn write_kubeconfig(path: &Path, yaml: &str) -> Result<()> {
 
 // ---- the supervisor -----------------------------------------------------------
 
-/// `hanzo up supervise` (hidden): the daemon `hanzo up` leaves behind. Owns the
-/// vm for its whole life; this process dying — `up down`, a crash, a logout —
-/// closes the vm's stdin, and EOF is how the guest stops.
-pub async fn supervise(cfg: &mut Config, boot: Boot) -> Result<()> {
+/// `hanzo up supervise` (hidden): the daemon `hanzo up` / `hanzo start` leaves
+/// behind. Owns the vm for its whole life; this process dying — `hanzo stop`,
+/// a crash, a logout — closes the vm's stdin, and EOF is how the guest stops.
+pub async fn supervise(cfg: &mut Config, boot: Boot, runtime_only: bool) -> Result<()> {
     let dir = up_dir()?;
     write_pid(&dir, SUPERVISOR, std::process::id())?;
     // The same one resolver `hanzo up` used — by now the binary exists, but a
     // supervisor started by hand on a bare box bootstraps identically.
     let bin = vm::resolve_or_install().await?;
-    let pull_secret = image::pull_secret_for(&reqwest::Client::new(), &boot.cloud, cfg).await;
-    let out = drive(&dir, &boot, &bin, pull_secret.as_deref());
+    let pull_secret = if runtime_only {
+        None
+    } else {
+        image::pull_secret_for(&reqwest::Client::new(), &boot.cloud, cfg).await
+    };
+    let out = drive(&dir, &boot, &bin, pull_secret.as_deref(), runtime_only);
     if let Err(e) = &out {
         write_state(&dir, &format!("error: {e:#}"));
     }
@@ -914,9 +918,16 @@ pub async fn supervise(cfg: &mut Config, boot: Boot) -> Result<()> {
     out
 }
 
-/// Boot → workload → k3s → Ready → kubeconfig → hold. Every phase lands in the
-/// state file so the foreground (and `up status`) reads facts, not hope.
-fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Result<()> {
+/// Boot → workload (unless runtime_only) → k3s → Ready → kubeconfig → hold.
+/// Every phase lands in the state file so the foreground (and `up status`) reads
+/// facts, not hope.
+fn drive(
+    dir: &Path,
+    boot: &Boot,
+    bin: &Path,
+    pull_secret: Option<&str>,
+    runtime_only: bool,
+) -> Result<()> {
     write_state(dir, "boot");
     let log = dir.join("supervisor.log");
     let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
@@ -927,14 +938,14 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Resu
     write_pid(dir, VM, rpc.child.id())?;
     let launch = rpc.wait_ready()?;
 
-    // The workload goes in before k3s starts, so the cluster's first act is to
-    // apply it — no second tool, no window in which the cluster is up and
-    // running nothing. It is written and MEASURED in the same breath: what the
-    // register covers is the file the cluster will read.
-    let manifest = workload_for(boot)?;
+    // Always write the `hanzo` namespace ground manifest; write the Cloud
+    // workload manifest only when booting full `hanzo up` (not `hanzo start`).
     rpc.write_file(GROUND, &ground())?;
-    rpc.write_file(WORKLOAD, &manifest)?;
-    record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
+    if !runtime_only {
+        let manifest = workload_for(boot)?;
+        rpc.write_file(WORKLOAD, &manifest)?;
+        record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
+    }
 
     write_state(dir, "k3s");
     rpc.spawn(&server_argv())?;
@@ -969,7 +980,7 @@ fn drive(dir: &Path, boot: &Boot, bin: &Path, pull_secret: Option<&str>) -> Resu
     let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
         .context("the guest kubeconfig is not utf-8")?;
     write_kubeconfig(&kubeconfig_path()?, &rewrite_server(&yaml))?;
-    write_state(dir, "ready");
+    write_state(dir, if runtime_only { "runtime-ready" } else { "ready" });
 
     // Hold the vm for as long as we live; its exit ends the watch either way.
     let status = rpc.child.wait().context("waiting on hanzo-vm")?;
@@ -1030,7 +1041,7 @@ pub async fn up(
         if kc.exists() {
             if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
                 let replicas = kube.cloud_replicas().await.ok().flatten();
-                if overrides {
+                if overrides || replicas.is_none() {
                     let has_hanzo_oci =
                         !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
                     let selected_image =
@@ -1046,10 +1057,15 @@ pub async fn up(
                         ..boot
                     };
                     let manifest = workload_for(&pinned)?;
-                    kube.apply_cloud_deployment(&manifest).await?;
+                    kube.apply_workload(&manifest).await?;
                     write_state(&dir, "ready");
+                    let verb = if replicas.is_none() {
+                        "deployed"
+                    } else {
+                        "updated & started"
+                    };
                     println!(
-                        "{} hanzo updated & started on warm k3s (supervisor pid {pid} — skipped VM boot & kube-system pulls)",
+                        "{} hanzo {verb} on warm k3s (supervisor pid {pid} — skipped VM boot & kube-system pulls)",
                         "✓".green()
                     );
                 } else if state == "stopped" || replicas == Some(0) {
@@ -1142,7 +1158,7 @@ pub async fn up(
     vm::ensure_checkpoint(&bin, &checkpoint(), &k3s_install)?;
 
     write_state(&dir, "starting");
-    spawn_supervisor(&dir, &boot, cfg.org.as_deref())?;
+    spawn_supervisor(&dir, &boot, cfg.org.as_deref(), false)?;
     wait_ready_state(&dir)?;
     println!(
         "{} k3s is up — API at https://127.0.0.1:{K3S_PORT}",
@@ -1208,7 +1224,12 @@ fn format_endpoints(kubeconfig: &Path, hanzod_ready: bool) -> String {
 /// Leave the supervisor behind: our own binary, re-run as the hidden
 /// `up supervise`, detached into its own process group with its stdio on the
 /// log — so it survives this command and Ctrl-C never reaches it.
-fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>) -> Result<u32> {
+fn spawn_supervisor(
+    dir: &Path,
+    boot: &Boot,
+    org: Option<&str>,
+    runtime_only: bool,
+) -> Result<u32> {
     let exe = std::env::current_exe().context("resolving our own binary")?;
     // Emptied here, then APPENDED to. The supervisor and the vm it holds both
     // write to this file from separate processes; an offset of their own would
@@ -1250,8 +1271,11 @@ fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>) -> Result<u32> {
     if boot.strict_registry {
         cmd.arg("--strict-registry");
     }
-    cmd.arg("supervise")
-        .stdin(Stdio::null())
+    cmd.arg("supervise");
+    if runtime_only {
+        cmd.arg("--runtime-only");
+    }
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::from(
             log.try_clone().context("duplicating the log handle")?,
         ))
@@ -1265,13 +1289,14 @@ fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>) -> Result<u32> {
     Ok(child.id())
 }
 
-/// Watch the state file until the supervisor says `ready` — or says why not.
+/// Watch the state file until the supervisor says `ready` or `runtime-ready` —
+/// or says why not.
 fn wait_ready_state(dir: &Path) -> Result<()> {
     let log = dir.join("supervisor.log");
     let deadline = Instant::now() + UP_TIMEOUT;
     loop {
         match read_state(dir).as_deref() {
-            Some("ready") => return Ok(()),
+            Some("ready") | Some("runtime-ready") => return Ok(()),
             Some(s) if s.starts_with("error") || s.starts_with("down") => {
                 bail!("{s} — see {}", log.display())
             }
@@ -1501,6 +1526,46 @@ impl KubeClient {
         Ok(())
     }
 
+    async fn apply_workload(&self, workload_yaml: &str) -> Result<()> {
+        self.apply_cloud_deployment(workload_yaml).await?;
+        if let Ok(svc_yaml) = extract_service_yaml(workload_yaml) {
+            let url = format!(
+                "{}/api/v1/namespaces/hanzo/services/cloud?fieldManager=hanzo-cli&force=true",
+                self.server
+            );
+            let resp = self
+                .http
+                .patch(&url)
+                .header("Content-Type", "application/apply-patch+yaml")
+                .body(svc_yaml.to_string())
+                .send()
+                .await
+                .context("applying cloud service")?;
+            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                let create_url = format!("{}/api/v1/namespaces/hanzo/services", self.server);
+                let doc: serde_json::Value = serde_norway::from_str(svc_yaml)
+                    .context("converting service YAML to JSON")?;
+                let create = self
+                    .http
+                    .post(&create_url)
+                    .json(&doc)
+                    .send()
+                    .await
+                    .context("creating cloud service")?;
+                if !create.status().is_success() {
+                    let status = create.status();
+                    let body = create.text().await.unwrap_or_default();
+                    bail!("k3s POST service returned {status}: {}", body.trim());
+                }
+            } else if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                bail!("k3s PATCH service returned {status}: {}", body.trim());
+            }
+        }
+        Ok(())
+    }
+
     async fn apply_cloud_deployment(&self, workload_yaml: &str) -> Result<()> {
         let deploy_yaml = extract_deployment_yaml(workload_yaml)?;
         let url = format!(
@@ -1551,6 +1616,15 @@ fn extract_deployment_yaml(workload_yaml: &str) -> Result<&str> {
         .ok_or_else(|| anyhow!("workload manifest missing Deployment document"))
 }
 
+fn extract_service_yaml(workload_yaml: &str) -> Result<&str> {
+    workload_yaml
+        .split("\n---\n")
+        .find(|doc| doc.contains("kind: Service"))
+        .map(str::trim)
+        .filter(|doc| !doc.is_empty())
+        .ok_or_else(|| anyhow!("workload manifest missing Service document"))
+}
+
 fn has_workload_overrides(boot: &Boot) -> bool {
     boot.cloud != CLOUD
         || boot.staged.is_some()
@@ -1558,11 +1632,200 @@ fn has_workload_overrides(boot: &Boot) -> bool {
         || boot.ai_base_url.is_some()
 }
 
+/// `hanzo start` — boot the local Hanzo runtime (microVM, k3s, containerd)
+/// without deploying Cloud or user workloads.
+pub async fn start(cfg: &mut Config, boot: Boot) -> Result<()> {
+    let dir = up_dir()?;
+    if let Some(pid) = running(&dir, SUPERVISOR) {
+        let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
+        println!(
+            "{} Hanzo runtime already running (supervisor pid {pid}, {state})",
+            "●".green()
+        );
+        return Ok(());
+    }
+    if let Some(pid) = running(&dir, VM) {
+        crate::warn(&format!(
+            "collecting an orphaned vm (pid {pid}) from an earlier boot"
+        ));
+        if !stop(pid, Duration::from_secs(10)) {
+            bail!("an earlier vm (pid {pid}) is still running — `hanzo stop` first");
+        }
+        clear_pid(&dir, VM);
+    }
+    let bin = vm::resolve_or_install().await?;
+    let k3s_install = install_cmd(boot.strict_registry)?;
+    vm::ensure_checkpoint(&bin, &checkpoint(), &k3s_install)?;
+
+    write_state(&dir, "starting");
+    spawn_supervisor(&dir, &boot, cfg.org.as_deref(), true)?;
+    wait_ready_state(&dir)?;
+    println!(
+        "{} Hanzo runtime started — k3s Ready at https://127.0.0.1:{K3S_PORT} (run `hanzo up` to start Cloud)",
+        "✓".green()
+    );
+    println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
+    Ok(())
+}
+
+/// `hanzo stop` — gracefully shut down the entire local runtime (drain Cloud,
+/// stop k3s, shut down the microVM, release CPU/memory/ports; `hanzod` stays up).
+pub async fn stop_runtime() -> Result<()> {
+    #[cfg(windows)]
+    if let Some(_pid) = host::stop_recorded_pid()? {
+        let dir = up_dir()?;
+        write_state(&dir, "down");
+        println!("{} local cloud stopped", "✓".green());
+        return Ok(());
+    }
+
+    let dir = up_dir()?;
+    let (supervisor, vm) = (running(&dir, SUPERVISOR), running(&dir, VM));
+    if supervisor.is_none() && vm.is_none() {
+        clear_pid(&dir, SUPERVISOR);
+        clear_pid(&dir, VM);
+        println!("{} not running", "○".dimmed());
+        return Ok(());
+    }
+    // Gracefully drain Cloud before tearing down k3s so databases flush cleanly.
+    if supervisor.is_some() {
+        if let Ok(kc) = kubeconfig_path() {
+            if kc.exists() {
+                if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
+                    let _ = kube.scale_cloud(0).await;
+                }
+            }
+        }
+    }
+    down_vm(&dir, supervisor)
+}
+
+/// `hanzo restart` — restart the local runtime and restore previously running
+/// workloads (Cloud if it was running, else runtime-only).
+pub async fn restart(cfg: &mut Config, boot: Boot) -> Result<()> {
+    let was_cloud_running = match kubeconfig_path() {
+        Ok(kc) if kc.exists() => match KubeClient::from_kubeconfig(&kc) {
+            Ok(kube) => kube
+                .cloud_replicas()
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|r| r > 0),
+            Err(_) => false,
+        },
+        _ => false,
+    };
+    stop_runtime().await?;
+    if was_cloud_running {
+        up(cfg, boot, None, false, true).await
+    } else {
+        start(cfg, boot).await
+    }
+}
+
+/// `hanzo ps` — show concise status of the local Hanzo runtime, k3s, Cloud, and daemon.
+pub async fn ps() -> Result<()> {
+    let dir = up_dir()?;
+    let sup = running(&dir, SUPERVISOR);
+    let state = read_state(&dir).unwrap_or_else(|| "stopped".into());
+    let runtime_status = if let Some(pid) = sup {
+        format!("{} (pid {pid}, {state})", "Running".green())
+    } else {
+        "Stopped".dimmed().to_string()
+    };
+
+    let mut k3s_status = "Stopped".dimmed().to_string();
+    let mut cloud_status = "Stopped".dimmed().to_string();
+    if sup.is_some() {
+        if let Ok(kc) = kubeconfig_path() {
+            if kc.exists() {
+                if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
+                    match kube.cloud_replicas().await {
+                        Ok(Some(n)) if n > 0 => {
+                            k3s_status = "Ready".green().to_string();
+                            cloud_status = format!("{} ({n} replica)", "Running".green());
+                        }
+                        Ok(Some(_)) => {
+                            k3s_status = "Ready".green().to_string();
+                            cloud_status = "Stopped (0 replicas — run `hanzo up`)".yellow().to_string();
+                        }
+                        Ok(None) => {
+                            k3s_status = "Ready".green().to_string();
+                            cloud_status = "Not deployed (run `hanzo up`)".dimmed().to_string();
+                        }
+                        Err(_) => {
+                            k3s_status = "Starting".yellow().to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let hanzod_up = tokio::time::timeout(
+        Duration::from_millis(500),
+        tokio::net::TcpStream::connect("127.0.0.1:3690"),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok());
+    let hanzod_status = if hanzod_up {
+        "Running (http://127.0.0.1:3690)".green().to_string()
+    } else {
+        "Stopped".dimmed().to_string()
+    };
+
+    println!("{:<18} {}", "Hanzo Runtime", runtime_status);
+    println!("{:<18} {}", "k3s", k3s_status);
+    println!("{:<18} {}", "Hanzo Cloud", cloud_status);
+    println!("{:<18} {}", "hanzod", hanzod_status);
+    Ok(())
+}
+
+/// `hanzo reset` — explicitly wipe local dev state (`~/.hanzo/up`, `~/.kube/hanzo.yaml`,
+/// and with `--all`/`--vm-cache`, cached `hanzo-vm` k3s checkpoints).
+pub async fn reset(all: bool) -> Result<()> {
+    let _ = stop_runtime().await;
+    if let Ok(dir) = up_dir() {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("removing {}", dir.display()))?;
+            println!("{} removed {}", "✓".green(), dir.display());
+        }
+    }
+    if let Ok(kc) = kubeconfig_path() {
+        if kc.exists() {
+            std::fs::remove_file(&kc).with_context(|| format!("removing {}", kc.display()))?;
+            println!("{} removed {}", "✓".green(), kc.display());
+        }
+    }
+    if all {
+        if let Ok(bin) = vm::resolve_or_install().await {
+            let cp = checkpoint();
+            let _ = Command::new(&bin)
+                .args(["checkpoint", "delete", &cp])
+                .status();
+            let legacy = format!("k3s-{}", vm::VM_VERSION);
+            let _ = Command::new(&bin)
+                .args(["checkpoint", "delete", &legacy])
+                .status();
+            println!("{} cleared k3s microVM checkpoints", "✓".green());
+        }
+    }
+    println!(
+        "{} local environment reset (run `hanzo up` to boot fresh)",
+        "✓".green()
+    );
+    Ok(())
+}
+
 /// `hanzo down` (and `hanzo up down`) — stops only the Hanzo Cloud workload by
 /// default so the local k3s microVM, `kube-system`, and containerd image cache
 /// stay warm across `hanzo down` / `hanzo up` cycles. Pass `--vm` (`--all`) to
-/// shut down the k3s microVM completely.
+/// shut down the k3s microVM completely (equivalent to `hanzo stop`).
 pub async fn down(stop_vm: bool) -> Result<()> {
+    if stop_vm {
+        return stop_runtime().await;
+    }
     #[cfg(windows)]
     if let Some(_pid) = host::stop_recorded_pid()? {
         let dir = up_dir()?;
@@ -1580,7 +1843,7 @@ pub async fn down(stop_vm: bool) -> Result<()> {
         return Ok(());
     }
 
-    if !stop_vm && supervisor.is_some() {
+    if supervisor.is_some() {
         let kc = kubeconfig_path()?;
         if kc.exists() {
             match KubeClient::from_kubeconfig(&kc) {
@@ -1588,20 +1851,20 @@ pub async fn down(stop_vm: bool) -> Result<()> {
                     Ok(()) => {
                         write_state(&dir, "stopped");
                         println!(
-                            "{} hanzo stopped (k3s microVM kept warm — next `hanzo up` skips image pulls; run `hanzo down --vm` to stop the VM too)",
+                            "{} hanzo stopped (k3s runtime kept warm — next `hanzo up` skips image pulls; run `hanzo stop` to shut down the runtime too)",
                             "✓".green()
                         );
                         return Ok(());
                     }
                     Err(e) => {
                         crate::warn(&format!(
-                            "could not scale cloud deployment on local k3s ({e:#}); stopping the microVM instead"
+                            "could not scale cloud deployment on local k3s ({e:#}); stopping the runtime instead"
                         ));
                     }
                 },
                 Err(e) => {
                     crate::warn(&format!(
-                        "could not load {} ({e:#}); stopping the microVM instead",
+                        "could not load {} ({e:#}); stopping the runtime instead",
                         kc.display()
                     ));
                 }
@@ -2233,6 +2496,10 @@ mod tests {
         let deploy = extract_deployment_yaml(&manifest).unwrap();
         assert!(deploy.contains("kind: Deployment"), "{deploy}");
         assert!(!deploy.contains("kind: Service"), "{deploy}");
+        let svc = extract_service_yaml(&manifest).unwrap();
+        assert!(svc.contains("kind: Service"), "{svc}");
+        assert!(svc.contains("nodePort: 30080"), "{svc}");
+        assert!(!svc.contains("kind: Deployment"), "{svc}");
     }
 
     #[test]
