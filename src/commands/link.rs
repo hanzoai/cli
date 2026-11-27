@@ -53,12 +53,12 @@ pub use network::Caller;
 use crate::commands::share;
 use crate::config::Config;
 use crate::iam::paths::DEFAULT_BRAND;
-use crate::iam::store;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use colored::*;
 use hanzo_gen::event::Status;
 use hanzo_gen::session::SessionClient;
 use hanzo_gen::{context, target, Root};
+use std::future::Future;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -265,7 +265,7 @@ pub async fn run(
     // detached and best-effort, never on the critical path of getting a shell up.
     let root = Root::need()?;
     let host = context::hostname(&root);
-    let (_machine, _runner) = target::beat_and_serve(
+    let (machine, _runner) = target::beat_and_serve(
         crate::commands::dev::Store::host(cfg.clone()),
         &root,
         DEFAULT_BRAND,
@@ -383,15 +383,30 @@ pub async fn run(
     // From here the registry may hold a LIVE row, so every way out — including
     // the ones that are errors — has to travel through `finish`.
     let tmux = Tmux::default();
-    let out = serve(&client, listing.as_deref(), &mut sh, &tmux).await;
+    let url = sh.url.clone();
+    let out = on_machine(&machine, &url, serve(&client, listing.as_deref(), &mut sh, &tmux)).await;
     finish(&tmux, &client, listing.as_deref(), out).await
+}
+
+/// Hold `url` on the machine's own run-target for as long as `held` runs.
+///
+/// The terminal is a fact about the MACHINE, so it rides the beat that already
+/// keeps the machine live: cloud stops a session an hour after its last activity,
+/// and the shell is still serving then. The session row keeps carrying the same
+/// url, which Tabs older than the machine field read.
+async fn on_machine<T>(machine: &target::Beat, url: &str, held: impl Future<Output = T>) -> T {
+    machine.terminal(Some(url));
+    let out = held.await;
+    // Heard before the guard drops: dropping it stops the beat that would say it.
+    machine.withdraw().await;
+    out
 }
 
 /// The tmux server a link works in: the user's own (its default socket), or one
 /// at a socket of its own — what a test runs, so a test never touches the
 /// session a person is working in.
 #[derive(Clone, Default)]
-struct Tmux(Option<PathBuf>);
+pub(super) struct Tmux(pub(super) Option<PathBuf>);
 
 impl Tmux {
     /// tmux, by its full path (`exe::find`), at this server's socket. `None` when
@@ -529,12 +544,12 @@ fn follow(client: SessionClient, id: String, tmux: Tmux) -> Where {
 /// Only a CHANGE is reported. Ticking a PATCH every interval regardless would be
 /// a write loop that says nothing, and it would move the row's `updatedAt`
 /// forever — making a long-idle session look busy to anything reading recency.
-fn worth_reporting(last: &str, now: &str) -> bool {
+pub(super) fn worth_reporting(last: &str, now: &str) -> bool {
     !now.is_empty() && now != last
 }
 
 /// Where the shared session's active pane is, as tmux reports it.
-async fn active_path(tmux: &Tmux) -> Option<String> {
+pub(super) async fn active_path(tmux: &Tmux) -> Option<String> {
     let out = tmux
         .command()?
         .args([
@@ -574,7 +589,7 @@ async fn active_path(tmux: &Tmux) -> Option<String> {
 /// on: ttyd does not run its command until a browser connects, so at publish time
 /// the session may not exist yet. Creating it is idempotent — an existing session
 /// makes `new-session` fail, which is exactly the outcome that needs no action.
-async fn pin(tmux: &Tmux, url: Option<&str>) {
+pub(super) async fn pin(tmux: &Tmux, url: Option<&str>) {
     let Some(mut new) = tmux.command() else {
         return;
     };
@@ -598,7 +613,7 @@ async fn pin(tmux: &Tmux, url: Option<&str>) {
 }
 
 /// The tmux options that put `url` on the bar, or clear it when there is none.
-fn bar_args(url: Option<&str>) -> [Vec<String>; 2] {
+pub(super) fn bar_args(url: Option<&str>) -> [Vec<String>; 2] {
     let bar = url.map(|u| format!(" {u} ")).unwrap_or_default();
     [
         vec![
@@ -642,7 +657,7 @@ async fn attach(tmux: &Tmux) -> Option<i32> {
 /// one, so treating "it returned" as "the shell exited" ended the link immediately
 /// on every machine that could not attach — while the tunnel it had just published
 /// was serving perfectly well.
-fn took_over(code: Option<i32>) -> bool {
+pub(super) fn took_over(code: Option<i32>) -> bool {
     code == Some(0)
 }
 
@@ -663,7 +678,7 @@ async fn hold_runner(host: &str) -> Result<()> {
     Ok(())
 }
 
-async fn finish(
+pub(super) async fn finish(
     tmux: &Tmux,
     client: &SessionClient,
     id: Option<&str>,
@@ -688,7 +703,7 @@ async fn finish(
 /// cannot register for is one that simply never arrives, which is not the same as
 /// being asked to stop, so it waits forever instead of reporting a false ending.
 #[cfg(unix)]
-async fn stopped() {
+pub(super) async fn stopped() {
     use tokio::signal::unix::{signal, SignalKind};
     async fn on(kind: SignalKind) {
         match signal(kind) {
@@ -706,784 +721,16 @@ async fn stopped() {
 }
 
 #[cfg(not(unix))]
-async fn stopped() {
+pub(super) async fn stopped() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
 // ---- the network: host, dial, status, rm ------------------------------------
 
-/// Who a tunnel, and the calls before it, sign in as.
-#[derive(clap::Args, Debug, Clone, Default)]
-pub struct Signer {
-    /// Sign in with what this command prints instead of your hanzo.id session: a
-    /// machine's own IAM client (e.g. /etc/hanzo/link/token). Run without a shell
-    /// and split on spaces, as zt runs it
-    #[arg(long, value_name = "CMD")]
-    pub token_command: Option<String>,
-}
 
-impl Signer {
-    /// The command the tunnel signs in with: the one given, else this binary's
-    /// own `auth token` — the identity every other command here speaks as.
-    fn tunnel_command(&self, cfg: &Config) -> Result<String> {
-        if let Some(cmd) = &self.token_command {
-            return Ok(cmd.clone());
-        }
-        let exe = std::env::current_exe().context("resolving our own binary")?;
-        let exe = exe.to_str().context("this binary's path is not UTF-8")?;
-        if exe.contains(char::is_whitespace) {
-            bail!("{exe} has a space in it, and zt splits its token command on spaces: pass --token-command");
-        }
-        // `--as` rides along only when it names an identity held in that org;
-        // otherwise the default signs in and the org stays a selection.
-        Ok(match store::within(cfg, DEFAULT_BRAND).ok().flatten() {
-            Some(id) => format!("{exe} --as {} auth token", id.owner),
-            None => format!("{exe} auth token"),
-        })
-    }
-}
-
-/// Whether a tunnel runs here and now or under the service manager.
-#[derive(clap::Args, Debug, Clone, Default)]
-pub struct Install {
-    /// Keep it running: write and start a systemd unit (a launchd job on macOS)
-    #[arg(long)]
-    pub install: bool,
-    /// With --install: a system unit that starts at boot (run it with sudo)
-    #[arg(long, requires = "install")]
-    pub system: bool,
-}
-
-/// `hanzo link host [NAME HOST:PORT]` — host this identity's services on the
-/// network. With a name, publish it first and take its host role.
-pub async fn host(
-    cfg: &mut Config,
-    publish: Option<(String, String)>,
-    signer: Signer,
-    install: Install,
-) -> Result<()> {
-    if let Some((name, target)) = publish {
-        let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
-        let dns = self::publish(&caller, &name, &target).await?;
-        println!("{} {} → {target}", "✓".green(), dns.cyan().bold());
-    }
-    let what = "host this identity's services on Hanzo ZT".to_string();
-    tunnel(
-        cfg,
-        &signer,
-        &install,
-        "host",
-        what,
-        zt::Mode::Host,
-        vec!["host".into()],
-    )
-    .await
-}
-
-/// Make sure the caller is on its org's network, unless the platform holds its
-/// identity: those roles are universe's `link-fabric.sh` to set, and an org role
-/// would put the identity in reach of a tenant steward's DELETE. `session` is the
-/// caller's own, `None` when it has no identity on the fabric yet. Returns the
-/// identity's name.
-async fn join(caller: &Caller, session: Option<&zt::Session>) -> Result<String> {
-    if let Some(s) = session {
-        let me = s.me().await?;
-        if me.platform() {
-            return Ok(format!("{} (the platform's)", me.name));
-        }
-    }
-    Ok(caller.ensure(&[]).await?.name)
-}
-
-/// Put `name` on the caller's org network, forwarding to `target`, and make the
-/// caller its host. Idempotent. Returns the name the fabric answers at.
-pub async fn publish(caller: &Caller, name: &str, target: &str) -> Result<String> {
-    let name = network::label(name)?;
-    let (host, port) = network::host_port(target)?;
-    if let Some(s) = zt::Session::open(&caller.token).await? {
-        let me = s.me().await;
-        s.close().await;
-        let me = me?;
-        if me.platform() {
-            bail!(
-                "{} is the platform's identity, and its roles are universe's link-fabric.sh to set: \
-                 host what it is bound to with `hanzo link host` alone, or publish as an org's identity",
-                me.name
-            );
-        }
-    }
-    let fqn = format!("{name}.{}", caller.org);
-    let dns = if caller.services().await?.iter().any(|s| s.service == fqn) {
-        println!(
-            "{} {fqn} is already published (`hanzo link rm {name}` first to point it elsewhere)",
-            "·".dimmed()
-        );
-        format!("{fqn}.zt")
-    } else {
-        caller.publish(&name, &host, port).await?.dns
-    };
-    // The role names the service, and cloud refuses one for a service the org
-    // does not have — so it is taken after the publish, never before.
-    caller.ensure(&[format!("{name}-host")]).await?;
-    Ok(dns)
-}
-
-/// `hanzo link dial SERVICE PORT` — carry local `PORT` to a service.
-pub async fn dial(
-    cfg: &mut Config,
-    service: String,
-    port: u16,
-    signer: Signer,
-    install: Install,
-) -> Result<()> {
-    let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
-    let fqn = caller.scope(&service)?;
-    // The org's own service admits the org's identities, so make sure this one is
-    // among them. A service the org does not list is the platform's or another
-    // org's: its own policy decides who dials it, and the identity is left alone.
-    let listed = match caller.services().await {
-        Ok(list) => list.iter().any(|s| s.service == fqn),
-        Err(e) => {
-            crate::warn(&format!(
-                "could not read {}'s services ({e}); dialing {fqn} anyway",
-                caller.org
-            ));
-            false
-        }
-    };
-    let who = format!("{}/{}", caller.who.owner, caller.who.name);
-    let mut session = zt::Session::open(&caller.token).await?;
-    if listed {
-        join(&caller, session.as_ref()).await?;
-        if session.is_none() {
-            session = zt::Session::open(&caller.token).await?;
-        }
-    }
-    let session = session.ok_or_else(|| {
-        anyhow!(
-            "{who} has no identity on Hanzo ZT, and {fqn} is not {}'s to put it there",
-            caller.org
-        )
-    })?;
-    let checked = session.dial_only(&who).await;
-    session.close().await;
-    checked?;
-    let (id, what) = (format!("dial-{fqn}"), format!("dial {fqn} on :{port}"));
-    let verb = vec!["dial".into(), fqn.clone(), port.to_string()];
-    tunnel(
-        cfg,
-        &signer,
-        &install,
-        &id,
-        what,
-        zt::Mode::Proxy { service: fqn, port },
-        verb,
-    )
-    .await
-}
-
-/// Run a tunnel here, supervised, or install a unit that runs this same command.
-///
-/// `verb` is the command that runs the tunnel with nothing left to publish
-/// (`host`, or `dial SERVICE PORT`): a unit runs `hanzo link <verb>
-/// --token-command CMD`, so it keeps the supervisor — zt alone does not rebind
-/// after the controller restarts under it.
-#[allow(clippy::too_many_arguments)]
-async fn tunnel(
-    cfg: &Config,
-    signer: &Signer,
-    install: &Install,
-    id: &str,
-    description: String,
-    mode: zt::Mode,
-    verb: Vec<String>,
-) -> Result<()> {
-    let bin = zt::resolve_or_install().await?;
-    let command = signer.tunnel_command(cfg)?;
-    if !install.install {
-        if let zt::Mode::Proxy { port, .. } = &mode {
-            println!(
-                "{} listening on every interface at :{port} (zt's proxy mode)",
-                "→".green()
-            );
-        }
-        let guard = match &mode {
-            zt::Mode::Host => Guard::Host(zt::Watch::new(&command)),
-            zt::Mode::Proxy { port, .. } => Guard::Proxy(*port),
-        };
-        return supervise(&bin, &zt::args(&mode, &command), guard).await;
-    }
-    // A unit that can never sign in is not worth installing.
-    network::run_token_command(&command)
-        .await
-        .context("checking the tunnel's token command")?;
-    let exe = std::env::current_exe().context("resolving our own binary")?;
-    let scope = if install.system {
-        unit::Scope::System
-    } else {
-        unit::Scope::User
-    };
-    if scope == unit::Scope::System && !unit::root_only(&exe) {
-        crate::warn(&format!(
-            "a system unit runs {} as root, and a user other than root can write it",
-            exe.display()
-        ));
-    }
-    let argv = [exe.display().to_string(), "link".into()]
-        .into_iter()
-        .chain(verb)
-        .chain(["--token-command".to_string(), command])
-        .collect();
-    let u = unit::Unit {
-        id: id.to_string(),
-        description,
-        argv,
-        source: invocation(),
-    };
-    let file = unit::install(&u, scope)?;
-    let name = if cfg!(target_os = "macos") {
-        u.launchd_label()
-    } else {
-        u.systemd_name()
-    };
-    println!(
-        "{} {} → {}",
-        "✓".green(),
-        name.cyan().bold(),
-        file.display()
-    );
-    if unit::lingers(scope) == Some(false) {
-        println!("  it starts at login; `loginctl enable-linger` starts it at boot");
-    }
-    Ok(())
-}
-
-/// How long zt is given to come up before its guard starts asking.
-const GRACE: Duration = Duration::from_secs(45);
-/// How often a guard asks.
-const POLL: Duration = Duration::from_secs(20);
-/// The first wait before zt starts again, doubled per failure up to the last.
-const BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(60));
-/// A run this long was healthy, so the next failure starts the backoff over.
-const STEADY: Duration = Duration::from_secs(300);
-
-/// What a supervised tunnel watches beside zt's own exit.
-///
-/// zt does not always recover on its own: after a controller restart a host's
-/// service refresh can fail mid-restart and never be retried, leaving it running
-/// with no terminator, and a proxy closes its listener for good when its service
-/// leaves view. Both look alive from outside, so each is asked about directly.
-enum Guard {
-    /// Every service this identity may host has a terminator on the fabric.
-    Host(zt::Watch),
-    /// The local port still listens.
-    Proxy(u16),
-}
-
-impl Guard {
-    /// Resolve with the reason to start zt again: after [`GRACE`], two failed
-    /// checks in a row, [`POLL`] apart. A check that could not be made decides
-    /// nothing.
-    async fn lost(&mut self) -> String {
-        tokio::time::sleep(GRACE).await;
-        let mut misses = 0;
-        loop {
-            let finding = match self {
-                Guard::Host(watch) => match watch.unhosted().await {
-                    Ok(none) if none.is_empty() => Some(None),
-                    Ok(bare) => Some(Some(format!("{} has no host on Hanzo ZT", bare.join(", ")))),
-                    Err(e) => {
-                        tracing::debug!("reading this identity's services: {e:#}");
-                        None
-                    }
-                },
-                Guard::Proxy(port) => {
-                    listening(*port).map(|up| (!up).then(|| format!(":{port} stopped listening")))
-                }
-            };
-            match finding {
-                Some(Some(why)) => {
-                    misses += 1;
-                    if misses >= 2 {
-                        return why;
-                    }
-                }
-                Some(None) => misses = 0,
-                None => {}
-            }
-            tokio::time::sleep(POLL).await;
-        }
-    }
-}
-
-/// Run zt until the link is asked to stop, and start it again — with backoff —
-/// whenever it exits or its guard finds it lost.
-async fn supervise(bin: &std::path::Path, args: &[String], mut guard: Guard) -> Result<()> {
-    let stop = stopped();
-    tokio::pin!(stop);
-    let mut backoff = BACKOFF.0;
-    loop {
-        let started = std::time::Instant::now();
-        let mut child = tokio::process::Command::from(hanzo_gen::exe::command(bin))
-            .args(args)
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("starting {}", bin.display()))?;
-        let why = tokio::select! {
-            biased;
-            _ = &mut stop => {
-                let _ = child.kill().await;
-                return Ok(());
-            }
-            status = child.wait() => match status {
-                Ok(s) => format!("zt exited ({s})"),
-                Err(e) => format!("zt could not be waited on ({e})"),
-            },
-            why = guard.lost() => why,
-        };
-        let _ = child.kill().await;
-        if started.elapsed() >= STEADY {
-            backoff = BACKOFF.0;
-        }
-        crate::warn(&format!(
-            "{why}: starting zt again in {}s",
-            backoff.as_secs()
-        ));
-        tokio::select! {
-            biased;
-            _ = &mut stop => return Ok(()),
-            _ = tokio::time::sleep(backoff) => {}
-        }
-        backoff = (backoff * 2).min(BACKOFF.1);
-    }
-}
-
-/// Whether something listens on `port`, from the kernel's own socket tables.
-/// `None` where those cannot be read, which is every system but Linux.
-fn listening(port: u16) -> Option<bool> {
-    let tables: Vec<String> = ["/proc/net/tcp", "/proc/net/tcp6"]
-        .iter()
-        .filter_map(|t| std::fs::read_to_string(t).ok())
-        .collect();
-    if tables.is_empty() {
-        return None;
-    }
-    Some(tables.iter().any(|t| listens_in(t, port)))
-}
-
-/// Whether a `/proc/net/tcp` table holds a LISTEN socket (state `0A`) on `port`.
-fn listens_in(table: &str, port: u16) -> bool {
-    let want = format!("{port:04X}");
-    table.lines().skip(1).any(|l| {
-        let mut f = l.split_whitespace();
-        let local = f.nth(1).unwrap_or_default();
-        let state = f.nth(1).unwrap_or_default();
-        state == "0A" && local.rsplit(':').next() == Some(want.as_str())
-    })
-}
-
-/// The command line that ran, as a person would type it again.
-fn invocation() -> String {
-    std::iter::once("hanzo".to_string())
-        .chain(std::env::args().skip(1).map(|a| {
-            if a.is_empty() || a.contains(char::is_whitespace) {
-                format!("'{a}'")
-            } else {
-                a
-            }
-        }))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// `hanzo link status` — this identity on the network, what the org publishes,
-/// and which tunnels run here.
-pub async fn status(cfg: &mut Config, signer: Signer) -> Result<()> {
-    let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
-    println!(
-        "{} {}/{} in {}",
-        "identity".bold(),
-        caller.who.owner,
-        caller.who.name,
-        caller.org.cyan()
-    );
-    match caller.identities().await {
-        Ok(ids) => match ids.iter().find(|i| i.external_id == caller.sub) {
-            Some(i) => println!("  on {}'s network as {} [{}]", caller.org, i.name.cyan(), i.roles.join(", ")),
-            None => println!(
-                "  not in {}'s list: `hanzo link` joins it (an identity the platform holds is never listed)",
-                caller.org
-            ),
-        },
-        Err(e) => println!("  {} {e}", "unreadable:".red()),
-    }
-    println!("{}", "services".bold());
-    match caller.services().await {
-        Ok(s) if s.is_empty() => println!("  none published by {}", caller.org),
-        Ok(s) => s
-            .iter()
-            .for_each(|svc| println!("  {}  {}.zt", svc.service.cyan(), svc.service)),
-        Err(e) => println!("  {} {e}", "unreadable:".red()),
-    }
-    println!("{}", "tunnels".bold());
-    let ps = hanzo_gen::exe::find("ps").and_then(|ps| {
-        hanzo_gen::exe::command(ps)
-            .args(["-eo", "pid=,args="])
-            .output()
-            .ok()
-    });
-    let running = ps
-        .map(|o| tunnels(&String::from_utf8_lossy(&o.stdout)))
-        .unwrap_or_default();
-    if running.is_empty() {
-        println!("  no zt tunnel is running here");
-    }
-    for t in &running {
-        let listening = t.port.map(|p| {
-            let up = std::net::TcpStream::connect_timeout(
-                &([127, 0, 0, 1], p).into(),
-                Duration::from_millis(500),
-            )
-            .is_ok();
-            if up {
-                format!(" :{p} listening").green()
-            } else {
-                format!(" :{p} not listening").red()
-            }
-        });
-        println!(
-            "  pid {}  {}{}",
-            t.pid,
-            t.what,
-            listening.map(|l| l.to_string()).unwrap_or_default()
-        );
-    }
-    for (name, scope) in unit::installed() {
-        let state = unit::state(&name, scope);
-        let painted = if state == "active" || state == "loaded" {
-            state.green()
-        } else {
-            state.yellow()
-        };
-        println!(
-            "  {name} ({}) {painted}",
-            if scope == unit::Scope::System {
-                "system"
-            } else {
-                "user"
-            }
-        );
-    }
-    Ok(())
-}
-
-/// A running `zt tunnel`, read off the process table.
-#[derive(Debug, PartialEq, Eq)]
-struct Tunnel {
-    pid: u32,
-    /// `host`, or `proxy k8s.hanzo:26443`.
-    what: String,
-    /// The local port a proxy listens on.
-    port: Option<u16>,
-}
-
-/// Every `zt tunnel …` in `ps -eo pid=,args=` output.
-fn tunnels(ps: &str) -> Vec<Tunnel> {
-    ps.lines()
-        .filter_map(|line| {
-            let mut words = line.split_whitespace();
-            let pid = words.next()?.parse().ok()?;
-            let bin = words.next()?;
-            if std::path::Path::new(bin).file_name()? != "zt" || words.next()? != "tunnel" {
-                return None;
-            }
-            let mode = words.next()?;
-            let pairs: Vec<&str> = words.take_while(|w| !w.starts_with('-')).collect();
-            let port = pairs
-                .first()
-                .and_then(|p| p.rsplit(':').next()?.parse().ok());
-            let what = std::iter::once(mode)
-                .chain(pairs)
-                .collect::<Vec<_>>()
-                .join(" ");
-            Some(Tunnel { pid, what, port })
-        })
-        .collect()
-}
-
-/// `hanzo link rm NAME` — take a published service off the org's network.
-pub async fn rm(cfg: &mut Config, name: String, signer: Signer) -> Result<()> {
-    let caller = Caller::sign_in(cfg, signer.token_command.as_deref()).await?;
-    let fqn = caller.scope(&name)?;
-    let svc = caller
-        .services()
-        .await?
-        .into_iter()
-        .find(|s| s.service == fqn)
-        .ok_or_else(|| anyhow!("{fqn} is not published on {}'s network", caller.org))?;
-    caller.unpublish(&svc.id).await?;
-    println!("{} {fqn} is off {}'s network", "✓".green(), caller.org);
-    Ok(())
-}
+mod fabric;
+pub use fabric::{dial, host, publish, rm, status, Install, Signer};
+use fabric::join;
 
 #[cfg(test)]
-mod tests {
-    use super::network::tests::Fake;
-    use super::*;
-
-    /// A tmux server of the test's own, at a socket in a temp dir, stopped when
-    /// the test ends: a link test must never reach the server a person works in.
-    struct Server {
-        _dir: tempfile::TempDir,
-        tmux: Tmux,
-    }
-
-    impl Server {
-        fn start() -> Server {
-            let dir = tempfile::tempdir().unwrap();
-            let tmux = Tmux(Some(dir.path().join("tmux.sock")));
-            Server { _dir: dir, tmux }
-        }
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            if let (Some(bin), Some(socket)) = (hanzo_gen::exe::find("tmux"), &self.tmux.0) {
-                let _ = hanzo_gen::exe::command(bin)
-                    .arg("-S")
-                    .arg(socket)
-                    .arg("kill-server")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-        }
-    }
-    use anyhow::anyhow;
-
-    /// The tunnel signs in with `--as <org>` only for an identity held in that
-    /// org; for any other `--as` the default signs in, as before.
-    #[test]
-    fn the_tunnel_carries_as_only_for_a_held_identity() {
-        let mut cfg = Config::default();
-        for owner in ["hanzo", "admin"] {
-            cfg.auth.identities.push(crate::config::StoredIdentity {
-                brand: "hanzo".into(),
-                owner: owner.into(),
-                name: "z".into(),
-            });
-        }
-        cfg.auth.active.insert("hanzo".into(), "hanzo/z".into());
-        let command = |cfg: &Config| Signer::default().tunnel_command(cfg).unwrap();
-        assert!(command(&cfg).ends_with(" auth token") && !command(&cfg).contains("--as"));
-        cfg.org = Some("admin".into());
-        assert!(
-            command(&cfg).ends_with(" --as admin auth token"),
-            "{}",
-            command(&cfg)
-        );
-        cfg.org = Some("lux".into());
-        assert!(!command(&cfg).contains("--as"), "{}", command(&cfg));
-    }
-
-    /// A link that ended cleanly is DONE — and saying so is what stops the row
-    /// from outliving the shell. The ending is one PATCH carrying both facts, so
-    /// the console can never see a finished session still advertising a terminal.
-    #[tokio::test]
-    async fn a_clean_exit_closes_the_session_and_withdraws_the_terminal() {
-        let fake = Fake::serve(200, "{}").await;
-        let client = SessionClient::new(&fake.base, "T").unwrap();
-
-        let server = Server::start();
-        finish(&server.tmux, &client, Some("sess_1"), Ok(()))
-            .await
-            .unwrap();
-        // The bar it cleared was the test's own server's, not the one a person works in.
-        if hanzo_gen::exe::find("tmux").is_some() {
-            assert!(
-                server.tmux.0.as_ref().unwrap().exists(),
-                "finish spoke to some other tmux server"
-            );
-        }
-
-        // One act, one request.
-        let (method, path, _, _, body) = fake.one();
-        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(method, "PATCH");
-        assert_eq!(path, "/v1/agents/sessions/sess_1");
-        assert_eq!(body["status"], "done");
-        assert_eq!(body["terminal"], "");
-    }
-
-    /// The failing exits are the ones that used to leak: a tunnel that died, a
-    /// publish that never landed, a shell that could not start. They END the
-    /// session too — as an error — and the caller still gets its error back
-    /// unchanged, because recording an ending must not swallow one.
-    #[tokio::test]
-    async fn a_failed_link_ends_as_an_error_and_still_reports_it() {
-        let fake = Fake::serve(200, "{}").await;
-        let client = SessionClient::new(&fake.base, "T").unwrap();
-
-        let server = Server::start();
-        let err = finish(
-            &server.tmux,
-            &client,
-            Some("sess_1"),
-            Err(anyhow!("share ended: exit 1")),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.to_string().contains("share ended"), "got: {err}");
-        let reqs = fake.all();
-        assert_eq!(
-            reqs.len(),
-            2,
-            "failed link emits closing status event then terminal PATCH: {reqs:?}"
-        );
-        let ev: serde_json::Value = serde_json::from_str(&reqs[0].4).unwrap();
-        assert_eq!(reqs[0].0, "POST");
-        assert_eq!(reqs[0].1, "/v1/agents/sessions/sess_1/events");
-        assert_eq!(ev["kind"], "status");
-        assert_eq!(ev["payload"]["status"], "error");
-        assert_eq!(ev["payload"]["error"], "share ended: exit 1");
-
-        let body: serde_json::Value = serde_json::from_str(&reqs[1].4).unwrap();
-        assert_eq!(reqs[1].0, "PATCH");
-        assert_eq!(reqs[1].1, "/v1/agents/sessions/sess_1");
-        assert_eq!(body["status"], "error");
-        assert_eq!(body["terminal"], "");
-        assert_eq!(body["error"], "share ended: exit 1");
-    }
-
-    /// Cloud being unreachable costs a stale row, never a failed command: the
-    /// shell already ran, and refusing to return its result because a PATCH 403'd
-    /// would be reporting the wrong thing.
-    #[tokio::test]
-    async fn a_control_plane_that_refuses_the_close_does_not_fail_the_link() {
-        let fake = Fake::serve(403, "{}").await;
-        let client = SessionClient::new(&fake.base, "T").unwrap();
-
-        let server = Server::start();
-        assert!(finish(&server.tmux, &client, Some("sess_1"), Ok(()))
-            .await
-            .is_ok());
-    }
-
-    // ONE LINK, MANY SHELLS. The default runs a wrapper rather than a fixed tmux
-    // command, so a pane can ask for a shell by name over the SAME tunnel — one
-    // port, one gate sign-in, N independent tmux sessions. Proven against ttyd
-    // 1.7.7: connecting with ?arg=alpha and ?arg=beta created two separate
-    // sessions from one server.
-    #[test]
-    fn the_default_serves_a_shell_the_url_can_name() {
-        let sh = Shell::from_flag(None);
-        assert!(sh.url_arg(), "the query has to be able to name a shell");
-        let argv = sh.argv();
-        // `sh -c SCRIPT $0` — the placeholder is what puts the client's arg in $1.
-        assert_eq!(argv[0], "sh");
-        assert_eq!(argv[1], "-c");
-        assert_eq!(
-            argv[3], "hanzo-shell",
-            "a $0 placeholder, so the arg lands in $1"
-        );
-        assert!(argv[2].contains("tmux new -A -s"), "{}", argv[2]);
-    }
-
-    // `tmux` names what the default already is; it must not become a second way.
-    #[test]
-    fn asking_for_tmux_asks_for_the_default() {
-        assert_eq!(
-            Shell::from_flag(Some("tmux")).argv(),
-            Shell::from_flag(None).argv()
-        );
-    }
-
-    // A NAMED COMMAND TAKES NO URL ARGUMENT, and this is the security-critical
-    // half. `--url-arg` appends the query to argv, so `--shell bash` plus
-    // `?arg=-c&arg=whoami` would be `bash -c whoami` — remote execution handed
-    // over by a query string. The wrapper is written to be given arguments; a raw
-    // command is not, so it is never offered them.
-    #[test]
-    fn a_named_shell_is_never_given_the_url() {
-        for cmd in ["bash", "zsh", "fish"] {
-            let sh = Shell::from_flag(Some(cmd));
-            assert_eq!(sh.argv(), vec![cmd.to_string()]);
-            assert!(!sh.url_arg(), "`--shell {cmd}` must not read the query");
-        }
-    }
-
-    /// The kernel's own table decides whether a proxy still listens: LISTEN is
-    /// state 0A, and the port is the hex after the local address's colon.
-    #[test]
-    fn a_listener_is_read_off_the_kernels_socket_table() {
-        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 00000000:66DB 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 1 0 100 0 0 10 0
-   1: 0100007F:1F90 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1000        0 2 1 0 20 4 30 10 -1";
-        assert!(listens_in(table, 26331), "0x66DB listens");
-        assert!(
-            !listens_in(table, 8080),
-            "0x1F90 is an established connection, not a listener"
-        );
-        assert!(!listens_in(table, 26443));
-    }
-
-    /// A tunnel is found by what it runs, whichever unit or shell started it.
-    #[test]
-    fn tunnels_are_read_off_the_process_table() {
-        let ps = "\
-            1 /sbin/init\n\
-            4021838 /usr/local/bin/zt tunnel host --controller https://zt-api.hanzo.ai --token-command /etc/hanzo/link/token\n\
-            3804505 /usr/local/bin/zt tunnel proxy k8s.hanzo:26443 --controller https://zt-api.hanzo.ai --token-command /home/z/.local/bin/hanzo auth token\n\
-            77 /usr/bin/vim zt tunnel\n\
-            78 zt version\n";
-        assert_eq!(
-            tunnels(ps),
-            [
-                Tunnel {
-                    pid: 4021838,
-                    what: "host".into(),
-                    port: None
-                },
-                Tunnel {
-                    pid: 3804505,
-                    what: "proxy k8s.hanzo:26443".into(),
-                    port: Some(26443)
-                },
-            ]
-        );
-    }
-
-    // The name reaching tmux is bounded BEFORE tmux sees it: `;` is tmux's own
-    // command separator, and --url-arg lets a caller send several args.
-    #[test]
-    fn named_shell_skips_tmux_check_and_falls_back_cleanly_without_ttyd() {
-        let zsh = Shell::from_flag(Some("zsh"));
-        assert_eq!(
-            dependencies::missing(matches!(zsh, Shell::Multiplexed), |_| false),
-            ["ttyd"]
-        );
-        let mux = Shell::from_flag(None);
-        assert_eq!(
-            dependencies::missing(matches!(mux, Shell::Multiplexed), |b| b == "sh"
-                || b == "tr"
-                || b == "cut"),
-            ["ttyd", "tmux"]
-        );
-    }
-
-    #[test]
-    fn the_wrapper_strips_a_name_down_to_something_safe() {
-        let script = &Shell::from_flag(None).argv()[2];
-        assert!(
-            script.contains("tr -cd"),
-            "the name must be reduced to a rune set"
-        );
-        assert!(script.contains("cut -c1-32"), "and bounded in length");
-        assert!(script.contains("${1:-hanzo}"), "and read from $1 alone");
-        assert!(
-            !script.contains("$2"),
-            "extra arguments are ignored, never used"
-        );
-    }
-}
+mod tests;
