@@ -285,3 +285,145 @@ fn processes_that_need_a_refresh_at_once_spend_the_refresh_token_once() {
         "not the refreshed credential"
     );
 }
+
+/// A stand-in API that answers every request `200 {}` (or `403` when path ends
+/// in `/deny`) and hands each one's request line and body to the test. `serve`
+/// is the IAM and only answers a refresh, so it cannot do this.
+fn record(listener: TcpListener, seen: std::sync::mpsc::Sender<(String, String)>) {
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else { break };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request_line = String::new();
+        let _ = reader.read_line(&mut request_line);
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                break;
+            }
+            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = v.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0; length];
+        let _ = reader.read_exact(&mut body);
+        let req_trimmed = request_line.trim().to_string();
+        let deny = req_trimmed.contains("/secrets/DENY ");
+        let _ = seen.send((req_trimmed, String::from_utf8_lossy(&body).into_owned()));
+        let (status, payload) = if deny {
+            ("403 Forbidden", r#"{"error":"forbidden"}"#)
+        } else {
+            ("200 OK", "{}")
+        };
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+            payload.len()
+        );
+    }
+}
+
+/// The value of a stored secret travels from standard input to the request body,
+/// against the shipped binary: it is piped, never an argument, and the server
+/// receives `{"value":"s"}`. The API is reached through `HTTP_PROXY` because a
+/// loopback API origin would start a local host instead.
+#[test]
+fn a_piped_secret_value_reaches_the_request_body() {
+    // A HOME of its own, created without touching this process's environment:
+    // the other test here reads it.
+    let home =
+        Home(std::env::temp_dir().join(format!("hanzo-secret-{}-{}", std::process::id(), now())));
+    std::fs::create_dir_all(home.path()).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || record(listener, tx));
+
+    let run = |args: &[&str], stdin: &str| {
+        let mut child = home
+            .hanzo()
+            .args(args)
+            .env("HTTP_PROXY", &proxy)
+            .env("http_proxy", &proxy)
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .env_remove("HANZO_API_KEY")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let added = run(
+        &[
+            "network",
+            "add",
+            "secret-store",
+            "--network-id",
+            "1337",
+            "--chain-id",
+            "1337",
+            "--rpc",
+            "http://127.0.0.1:1",
+            "--api",
+            "http://api.secret-store.test",
+            "--iam",
+            "http://127.0.0.1:1",
+        ],
+        "",
+    );
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    assert!(run(&["network", "use", "secret-store"], "")
+        .status
+        .success());
+    let token = jwt("http://127.0.0.1:1", now() + 3600, 0);
+    let signed = run(
+        &["auth", "login", "--provider", "hanzo", "--token", "-"],
+        &format!("{token}\n"),
+    );
+    assert!(
+        signed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&signed.stderr)
+    );
+
+    let stored = run(&["environment", "secrets", "set", "r", "N"], "s\n");
+    assert!(
+        stored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+    // The IAM the network names is reached through the same stand-in, so other
+    // calls arrive too: the one under test is the PUT.
+    let (line, body) = std::iter::from_fn(|| rx.recv_timeout(Duration::from_secs(10)).ok())
+        .find(|(line, _)| line.starts_with("PUT "))
+        .expect("the API received the PUT");
+    assert!(
+        line.starts_with("PUT http://api.secret-store.test/v1/environment/r/secrets/N "),
+        "{line}"
+    );
+    assert_eq!(body, r#"{"value":"s"}"#);
+
+    // Even when the server refuses with 403, the piped secret never leaks into stdout or stderr.
+    let secret_marker = "super-secret-never-echo-99";
+    let denied = run(
+        &["environment", "secrets", "set", "r", "DENY"],
+        &format!("{secret_marker}\n"),
+    );
+    assert!(!denied.status.success());
+    let out_text = String::from_utf8_lossy(&denied.stdout);
+    let err_text = String::from_utf8_lossy(&denied.stderr);
+    assert!(!out_text.contains(secret_marker), "secret leaked to stdout: {out_text}");
+    assert!(!err_text.contains(secret_marker), "secret leaked to stderr: {err_text}");
+}
