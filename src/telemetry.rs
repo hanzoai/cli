@@ -137,7 +137,7 @@ pub fn label(command: &Commands) -> &'static str {
         Commands::Vm { .. } => "vm",
         Commands::K8s { .. } => "k8s",
         Commands::Up { .. } => "up",
-        Commands::Down => "down",
+        Commands::Down { .. } => "down",
         Commands::Status { .. } => "status",
         Commands::Monitor(..) => "monitor",
         Commands::Version => "version",

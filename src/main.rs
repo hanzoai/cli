@@ -341,8 +341,12 @@ enum Commands {
         no_ui: bool,
     },
 
-    /// Stop the local k3s microVM started by `hanzo up`
-    Down,
+    /// Stop Hanzo Cloud (keeps local k3s + image cache warm; pass `--vm` to stop the microVM too)
+    Down {
+        /// Also shut down the local k3s microVM (reclaims RAM/CPU; next `hanzo up` cold-boots k3s)
+        #[arg(long, alias = "all")]
+        vm: bool,
+    },
 
     /// Show the whole cloud: what is unhealthy first, then clusters,
     /// applications and the machines on the fleet
@@ -683,8 +687,12 @@ enum UpCommands {
     Console,
     /// Supervisor and node status (node via ~/.kube/hanzo.yaml)
     Status,
-    /// Stop the supervisor — the VM dies with it
-    Down,
+    /// Stop Hanzo Cloud (keeps k3s warm by default; pass `--vm` to stop the microVM too)
+    Down {
+        /// Also shut down the local k3s microVM
+        #[arg(long, alias = "all")]
+        vm: bool,
+    },
     /// The daemonized supervisor `hanzo up` leaves behind (internal)
     #[command(hide = true)]
     Supervise,
@@ -1370,12 +1378,12 @@ async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
                 None => commands::up::up(&mut config, boot, link, ui, no_ui).await?,
                 Some(UpCommands::Console) => commands::up::dashboard()?,
                 Some(UpCommands::Status) => commands::up::status().await?,
-                Some(UpCommands::Down) => commands::up::down()?,
+                Some(UpCommands::Down { vm }) => commands::up::down(vm).await?,
                 Some(UpCommands::Supervise) => commands::up::supervise(&mut config, boot).await?,
                 Some(UpCommands::Service(argv)) => commands::up::deprecated_service(argv).await?,
             }
         }
-        Commands::Down => commands::up::down()?,
+        Commands::Down { vm } => commands::up::down(vm).await?,
         Commands::Status { infer } => commands::status::run(&mut config, infer).await?,
         Commands::Monitor(args) => commands::monitor::run(&args).await?,
         Commands::Version => commands::version::run(),
