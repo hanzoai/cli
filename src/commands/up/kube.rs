@@ -182,21 +182,34 @@ impl KubeClient {
     /// or a successful PATCH. A stale Ready replica is not the requested image.
     pub(crate) async fn wait_cloud_ready(&self, timeout: Duration) -> Result<()> {
         let deadline = tokio::time::Instant::now() + timeout;
-        let url = format!("{}/apis/apps/v1/namespaces/hanzo/deployments/cloud", self.server);
+        let url = format!(
+            "{}/apis/apps/v1/namespaces/hanzo/deployments/cloud",
+            self.server
+        );
         loop {
-            let resp = self.auth_req(self.http.get(&url)).send().await
+            let resp = self
+                .auth_req(self.http.get(&url))
+                .send()
+                .await
                 .context("reading local Cloud deployment readiness")?;
             let detail = if resp.status() == reqwest::StatusCode::NOT_FOUND {
                 "deployment not created yet".to_string()
             } else {
-                let v: serde_json::Value = resp.error_for_status()?.json().await
+                let v: serde_json::Value = resp
+                    .error_for_status()?
+                    .json()
+                    .await
                     .context("decoding local Cloud deployment readiness")?;
                 if cloud_deployment_ready(&v) {
                     return Ok(());
                 }
-                format!("generation {:?}, observed {:?}, ready {:?}, available {:?}",
-                    v.pointer("/metadata/generation"), v.pointer("/status/observedGeneration"),
-                    v.pointer("/status/readyReplicas"), v.pointer("/status/availableReplicas"))
+                format!(
+                    "generation {:?}, observed {:?}, ready {:?}, available {:?}",
+                    v.pointer("/metadata/generation"),
+                    v.pointer("/status/observedGeneration"),
+                    v.pointer("/status/readyReplicas"),
+                    v.pointer("/status/availableReplicas")
+                )
             };
             if tokio::time::Instant::now() >= deadline {
                 bail!("Cloud is not ready: {detail}. Runtime remains running; inspect `hanzo ps` and `hanzo k8s get events -n hanzo`");
@@ -458,7 +471,8 @@ pub(crate) fn cloud_deployment_ready(v: &serde_json::Value) -> bool {
     let number = |path: &str| v.pointer(path).and_then(|n| n.as_u64()).unwrap_or(0);
     let generation = number("/metadata/generation");
     let desired = number("/spec/replicas");
-    generation > 0 && desired > 0
+    generation > 0
+        && desired > 0
         && number("/status/observedGeneration") >= generation
         && number("/status/updatedReplicas") == desired
         && number("/status/readyReplicas") == desired
