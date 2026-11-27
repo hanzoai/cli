@@ -169,9 +169,19 @@ impl KubeClient {
             bail!("k3s GET scale returned {status}: {}", body.trim());
         }
         let v: serde_json::Value = resp.json().await.context("decoding deployment scale")?;
-        Ok(v.pointer("/spec/replicas")
-            .and_then(|r| r.as_u64())
-            .map(|r| r as u32))
+        Ok(Some(scale_replicas(&v)))
+    }
+
+    /// The image the Cloud Deployment names, or `None` when there is no Deployment.
+    pub(crate) async fn cloud_image(&self) -> Result<Option<String>> {
+        Ok(self
+            .get("/apis/apps/v1/namespaces/hanzo/deployments/cloud")
+            .await?
+            .and_then(|d| {
+                d.pointer("/spec/template/spec/containers/0/image")
+                    .and_then(|i| i.as_str())
+                    .map(str::to_string)
+            }))
     }
 
     pub(crate) async fn cloud_replicas(&self) -> Result<Option<u32>> {
@@ -323,14 +333,237 @@ impl KubeClient {
         Ok(())
     }
 
-    pub(crate) async fn apply_workload(&self, workload_yaml: &str) -> Result<()> {
-        self.ensure_namespace("hanzo").await?;
+    /// Put Cloud on the cluster: the ground it stands on, then the workload.
+    ///
+    /// The Deployment is REPLACED, not merged. A merge keeps every field some
+    /// earlier writer set and this one no longer states — an `emptyDir` beside the
+    /// volume claim that replaced it, which the API server refuses — so what runs
+    /// would depend on what ran before. Replaced, it is the manifest.
+    pub(crate) async fn apply_workload(&self, ground_yaml: &str, workload_yaml: &str) -> Result<()> {
+        self.apply_docs(ground_yaml).await?;
         let deploy_yaml = extract_deployment_yaml(workload_yaml)?;
-        self.apply_deployment_doc("hanzo", "cloud", deploy_yaml).await?;
+        self.replace_deployment("hanzo", "cloud", deploy_yaml).await?;
         if let Ok(svc_yaml) = extract_service_yaml(workload_yaml) {
             self.apply_service_doc("hanzo", "cloud", svc_yaml).await?;
         }
         Ok(())
+    }
+
+    /// Apply each document of a manifest by its own kind. A volume claim is made
+    /// once and then left: its size is not something a later run may restate.
+    pub(crate) async fn apply_docs(&self, yaml: &str) -> Result<()> {
+        for raw in yaml.split("\n---\n") {
+            let doc = raw.trim();
+            if doc.is_empty() {
+                continue;
+            }
+            let v: serde_json::Value =
+                serde_norway::from_str(doc).context("parsing a manifest document")?;
+            let s = |ptr: &str| v.pointer(ptr).and_then(|x| x.as_str()).unwrap_or("");
+            let (api, kind, name, ns) = (
+                s("/apiVersion"),
+                s("/kind"),
+                s("/metadata/name"),
+                s("/metadata/namespace"),
+            );
+            if kind == "Namespace" {
+                self.ensure_namespace(name).await?;
+                continue;
+            }
+            let url = resource_url(&self.server, api, kind, ns, name)?;
+            if kind == "PersistentVolumeClaim" {
+                let have = self
+                    .auth_req(self.http.get(&url))
+                    .send()
+                    .await
+                    .with_context(|| format!("reading {kind} {ns}/{name}"))?;
+                if have.status().is_success() {
+                    continue;
+                }
+            }
+            let resp = self
+                .auth_req(self.http.patch(format!("{url}?fieldManager=hanzo-cli&force=true")))
+                .header("Content-Type", "application/apply-patch+yaml")
+                .body(doc.to_string())
+                .send()
+                .await
+                .with_context(|| format!("applying {kind} {ns}/{name}"))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                bail!("applying {kind} {name}: {status}: {}", body.trim());
+            }
+        }
+        Ok(())
+    }
+
+    /// Make the Deployment exactly `deploy_yaml`: created when absent, replaced
+    /// when present. A replace that races another writer is tried once more.
+    pub(crate) async fn replace_deployment(
+        &self,
+        namespace: &str,
+        name: &str,
+        deploy_yaml: &str,
+    ) -> Result<()> {
+        let mut doc: serde_json::Value =
+            serde_norway::from_str(deploy_yaml).context("converting deployment YAML to JSON")?;
+        let all = format!("{}/apis/apps/v1/namespaces/{namespace}/deployments", self.server);
+        let one = format!("{all}/{name}");
+        for attempt in 0..2 {
+            let have = self
+                .auth_req(self.http.get(&one))
+                .send()
+                .await
+                .with_context(|| format!("reading deployment {namespace}/{name}"))?;
+            let resp = if have.status() == reqwest::StatusCode::NOT_FOUND {
+                self.auth_req(self.http.post(&all)).json(&doc).send().await
+            } else if have.status().is_success() {
+                let live: serde_json::Value =
+                    have.json().await.context("decoding the live deployment")?;
+                let version = live
+                    .pointer("/metadata/resourceVersion")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                doc["metadata"]["resourceVersion"] = version;
+                self.auth_req(self.http.put(&one)).json(&doc).send().await
+            } else {
+                bail!("k3s GET deployment returned {}", have.status());
+            }
+            .with_context(|| format!("writing deployment {namespace}/{name}"))?;
+            if resp.status().is_success() {
+                return Ok(());
+            }
+            let status = resp.status();
+            if status == reqwest::StatusCode::CONFLICT && attempt == 0 {
+                continue;
+            }
+            let body = resp.text().await.unwrap_or_default();
+            bail!("writing deployment {namespace}/{name}: {status}: {}", body.trim());
+        }
+        Ok(())
+    }
+
+    /// One object, or `None` when the cluster has none by that name.
+    pub(crate) async fn get(&self, path: &str) -> Result<Option<serde_json::Value>> {
+        let resp = self
+            .auth_req(self.http.get(format!("{}{path}", self.server)))
+            .send()
+            .await
+            .with_context(|| format!("reading {path}"))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            bail!("k3s GET {path} returned {}", resp.status());
+        }
+        Ok(Some(resp.json().await.with_context(|| format!("decoding {path}"))?))
+    }
+
+    /// Wait until the Deployment runs what it was last told to: its newest
+    /// generation observed, every replica updated and available. A wait that runs
+    /// out says what the pod is doing instead, because "not ready" is not a reason.
+    pub(crate) async fn rollout(&self, namespace: &str, name: &str, patience: Duration) -> Result<()> {
+        let deadline = std::time::Instant::now() + patience;
+        let path = format!("/apis/apps/v1/namespaces/{namespace}/deployments/{name}");
+        loop {
+            if let Some(d) = self.get(&path).await? {
+                let n = |ptr: &str| d.pointer(ptr).and_then(|x| x.as_i64()).unwrap_or(0);
+                let want = n("/spec/replicas");
+                if n("/status/observedGeneration") >= n("/metadata/generation")
+                    && n("/status/updatedReplicas") == want
+                    && n("/status/availableReplicas") == want
+                    && n("/status/replicas") == want
+                {
+                    return Ok(());
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                bail!(
+                    "{namespace}/{name} is not ready after {}s — {}",
+                    patience.as_secs(),
+                    self.pod_trouble(namespace, &format!("app={name}")).await
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Why the pods behind a selector are not running, in the kubelet's own words.
+    pub(crate) async fn pod_trouble(&self, namespace: &str, selector: &str) -> String {
+        let path = format!("/api/v1/namespaces/{namespace}/pods?labelSelector={selector}");
+        let Ok(Some(list)) = self.get(&path).await else {
+            return "its pods could not be read".into();
+        };
+        let mut said = Vec::new();
+        for pod in list.pointer("/items").and_then(|i| i.as_array()).into_iter().flatten() {
+            let name = pod.pointer("/metadata/name").and_then(|x| x.as_str()).unwrap_or("?");
+            let phase = pod.pointer("/status/phase").and_then(|x| x.as_str()).unwrap_or("?");
+            let mut why = String::new();
+            for c in pod
+                .pointer("/status/containerStatuses")
+                .and_then(|x| x.as_array())
+                .into_iter()
+                .flatten()
+            {
+                for state in ["waiting", "terminated"] {
+                    if let Some(st) = c.pointer(&format!("/state/{state}")) {
+                        let g = |k: &str| st.get(k).and_then(|x| x.as_str()).unwrap_or("");
+                        why = format!(" {} {}", g("reason"), g("message"));
+                    }
+                }
+            }
+            if why.is_empty() {
+                for c in pod.pointer("/status/conditions").and_then(|x| x.as_array()).into_iter().flatten() {
+                    if c.get("status").and_then(|x| x.as_str()) == Some("False") {
+                        let g = |k: &str| c.get(k).and_then(|x| x.as_str()).unwrap_or("");
+                        why = format!(" {} {}", g("reason"), g("message"));
+                        break;
+                    }
+                }
+            }
+            said.push(format!("pod {name} is {phase}:{}", why.trim_end()));
+        }
+        if said.is_empty() {
+            "it has no pod".into()
+        } else {
+            said.join("; ")
+        }
+    }
+
+    /// Whether `user` may do this, asked of the API server itself
+    /// (a SubjectAccessReview), so a grant is checked the way it is enforced.
+    pub(crate) async fn allowed(
+        &self,
+        user: &str,
+        verb: &str,
+        group: &str,
+        resource: &str,
+        namespace: &str,
+    ) -> Result<bool> {
+        let body = serde_json::json!({
+            "apiVersion": "authorization.k8s.io/v1",
+            "kind": "SubjectAccessReview",
+            "spec": {
+                "user": user,
+                "resourceAttributes": {
+                    "verb": verb, "group": group, "resource": resource, "namespace": namespace
+                }
+            }
+        });
+        let resp = self
+            .auth_req(self.http.post(format!(
+                "{}/apis/authorization.k8s.io/v1/subjectaccessreviews",
+                self.server
+            )))
+            .json(&body)
+            .send()
+            .await
+            .context("asking the API server about a grant")?;
+        if !resp.status().is_success() {
+            bail!("k3s POST subjectaccessreviews returned {}", resp.status());
+        }
+        let v: serde_json::Value = resp.json().await.context("decoding the review")?;
+        Ok(v.pointer("/status/allowed").and_then(|x| x.as_bool()).unwrap_or(false))
     }
 
     /// Apply a multi-document YAML bundle (`Namespace`, `Deployment`, `Service`)
@@ -425,4 +658,51 @@ pub(crate) fn extract_service_yaml(workload_yaml: &str) -> Result<&str> {
         .map(str::trim)
         .filter(|doc| !doc.is_empty())
         .ok_or_else(|| anyhow!("workload manifest missing Service document"))
+}
+
+/// The API path of one object, from what its own manifest says it is. The kinds are
+/// the ones this CLI writes; anything else is a manifest it has no business applying.
+pub(crate) fn resource_url(
+    server: &str,
+    api_version: &str,
+    kind: &str,
+    namespace: &str,
+    name: &str,
+) -> Result<String> {
+    let (plural, namespaced) = match kind {
+        "ServiceAccount" => ("serviceaccounts", true),
+        "Service" => ("services", true),
+        "PersistentVolumeClaim" => ("persistentvolumeclaims", true),
+        "Deployment" => ("deployments", true),
+        "Role" => ("roles", true),
+        "RoleBinding" => ("rolebindings", true),
+        "ClusterRole" => ("clusterroles", false),
+        "ClusterRoleBinding" => ("clusterrolebindings", false),
+        other => bail!("no API path for a {other}"),
+    };
+    if name.is_empty() {
+        bail!("a {kind} with no name");
+    }
+    let root = if api_version.contains('/') {
+        format!("{server}/apis/{api_version}")
+    } else {
+        format!("{server}/api/{api_version}")
+    };
+    Ok(match (namespaced, namespace) {
+        (true, "") => bail!("{kind} {name} names no namespace"),
+        (true, ns) => format!("{root}/namespaces/{ns}/{plural}/{name}"),
+        (false, _) => format!("{root}/{plural}/{name}"),
+    })
+}
+
+/// The replicas a Scale object states. Kubernetes leaves `spec.replicas` OUT of the
+/// document when it is zero, so an absent field is a Deployment scaled to nothing
+/// and not the absence of a Deployment — that is a 404, and the caller's `None`.
+/// Read the other way, `hanzo up` after `hanzo down` found "no Deployment" and
+/// deployed its default image over whatever the stopped one named.
+pub(crate) fn scale_replicas(scale: &serde_json::Value) -> u32 {
+    scale
+        .pointer("/spec/replicas")
+        .and_then(|r| r.as_u64())
+        .unwrap_or(0) as u32
 }

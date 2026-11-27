@@ -153,6 +153,22 @@ pub async fn run(
             println!("INFO Lifecycle summary: {summary}");
         }
     }
+    let runtime = crate::commands::up::diagnose::checks().await;
+    if !runtime.is_empty() {
+        println!("Local runtime: resources, image and configuration");
+        for check in &runtime {
+            let tag = match check.status {
+                "ok" => "OK  ",
+                "warn" => "WARN",
+                "fail" => {
+                    failures += 1;
+                    "FAIL"
+                }
+                _ => "INFO",
+            };
+            println!("{tag} {}: {}", check.name, check.detail);
+        }
+    }
     if offline {
         println!("INFO Authentication not checked in offline mode");
     } else {

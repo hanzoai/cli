@@ -214,6 +214,7 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             memory,
             disk_size,
             cloud,
+            local,
             staged,
             iam_issuer,
             ai_base_url,
@@ -226,6 +227,12 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             cloud_only,
             native,
         } => {
+            if local.is_some() && cloud != commands::up::CLOUD {
+                anyhow::bail!(
+                    "--local runs the image this machine builds and --cloud names a published \
+                     one: give one of them"
+                );
+            }
             let boot = commands::up::Boot {
                 cpus,
                 memory_mb: memory,
@@ -235,6 +242,7 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
                 iam_issuer,
                 ai_base_url,
                 strict_registry,
+                local: None,
             };
             let mode = if ai_only {
                 UpMode::AiOnly
@@ -246,7 +254,8 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             match command {
                 None if attest => commands::up::attest()?,
                 None => {
-                    lifecycle::env_up(&mut config, boot, mode, link, ui, no_ui, native).await?
+                    lifecycle::env_up(&mut config, boot, mode, link, ui, no_ui, native, local)
+                        .await?
                 }
                 Some(UpCommands::Console) => commands::up::dashboard()?,
                 Some(UpCommands::Status) => commands::up::status().await?,
@@ -295,6 +304,7 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
                 iam_issuer,
                 ai_base_url,
                 strict_registry,
+                local: None,
             };
             lifecycle::runtime_restart(&mut config, boot, native).await?;
         }

@@ -4,6 +4,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
+use super::budget;
 use super::{Boot, CLOUD, CLOUD_NODE_PORT, CLOUD_OCI, CLOUD_PORT, DATA};
 use crate::image;
 
@@ -21,6 +22,21 @@ pub struct AppManifest {
     pub ai_base_url: Option<String>,
     #[serde(default)]
     pub strict_registry: bool,
+    /// How this directory becomes a Cloud image on this machine (`hanzo up --local`).
+    pub local: Option<LocalBuild>,
+}
+
+/// A checkout's own build of Cloud: the command that makes it and where it leaves
+/// the image. Read only when the person asks for `--local`; a `hanzo.config.ts`
+/// cannot declare one, since nothing here runs TypeScript to find it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalBuild {
+    /// Run with `sh -c` in the directory that holds the config. Optional: a layout
+    /// something else keeps current needs no command.
+    pub build: Option<String>,
+    /// The OCI image layout directory the build writes, relative to the config.
+    pub image: String,
 }
 
 /// Returns true when `reference` targets a Hanzo-owned OCI registry.
@@ -126,6 +142,7 @@ pub(crate) fn parse_static_ts_manifest(src: &str) -> AppManifest {
         iam_issuer: extract_str("iamIssuer"),
         ai_base_url: extract_str("aiBaseUrl"),
         strict_registry,
+        local: None,
     }
 }
 
@@ -139,14 +156,151 @@ pub(crate) fn yaml_env_block(name: &str, value: &str) -> Result<String> {
     ))
 }
 
-/// The cluster's ground: the namespace the workload lands in.
-pub(crate) fn ground() -> String {
-    "apiVersion: v1
+/// Images this machine built carry this registry name, which is no registry: the
+/// name cannot be pulled, so an image under it is one that was loaded.
+pub(crate) const LOCAL_REGISTRY: &str = "hanzo.local";
+
+/// Whether a reference names an image this machine built.
+pub(crate) fn is_local(reference: &str) -> bool {
+    reference
+        .strip_prefix(LOCAL_REGISTRY)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// The account Cloud's pod runs as. Its own, so what it may ask the API server is
+/// what is granted below and nothing an unrelated pod in the namespace inherits.
+pub(crate) const ACCOUNT: &str = "cloud";
+
+/// The volume Cloud's data is kept on.
+pub(crate) const DATA_CLAIM: &str = "cloud-data";
+
+/// Where a build line would run. Cloud reads it; nothing here populates it.
+const BUILD_NAMESPACE: &str = "hanzo-build";
+
+/// The cluster's ground: everything the workload stands on and none of the
+/// workload. The namespace, the account the pod runs as, what that account may ask
+/// the API server, and the volume its data outlives a pod on.
+///
+/// **The grants are the requests Cloud makes, verb for verb.** Each was read off a
+/// refusal in the pod's log when it ran as the namespace's default account:
+///
+/// - `pods` list and watch, cluster-wide: the KMS socket places a caller by the pod
+///   it runs in, from a watch of the pods on this node (`NODE_NAME` narrows the
+///   watch; RBAC cannot, so the grant is the cluster's).
+/// - `jobs` list in its own namespace: the runner queue counts the runners in flight.
+/// - `jobs` list in `hanzo-build`: the build line is read before a build is admitted.
+///
+/// Reading, in every case. A local runtime has no builders and no runners, so the
+/// verbs that would start one are not granted, and asking for one is refused by
+/// name rather than half done.
+pub(crate) fn ground(data_mb: u64) -> String {
+    format!(
+        "apiVersion: v1
 kind: Namespace
 metadata:
   name: hanzo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {BUILD_NAMESPACE}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {ACCOUNT}
+  namespace: hanzo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hanzo-cloud
+rules:
+  - apiGroups: [\"\"]
+    resources: [\"pods\"]
+    verbs: [\"list\", \"watch\"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hanzo-cloud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hanzo-cloud
+subjects:
+  - kind: ServiceAccount
+    name: {ACCOUNT}
+    namespace: hanzo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {ACCOUNT}
+  namespace: hanzo
+rules:
+  - apiGroups: [\"batch\"]
+    resources: [\"jobs\"]
+    verbs: [\"list\"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {ACCOUNT}
+  namespace: hanzo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {ACCOUNT}
+subjects:
+  - kind: ServiceAccount
+    name: {ACCOUNT}
+    namespace: hanzo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {ACCOUNT}
+  namespace: {BUILD_NAMESPACE}
+rules:
+  - apiGroups: [\"batch\"]
+    resources: [\"jobs\"]
+    verbs: [\"list\"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {ACCOUNT}
+  namespace: {BUILD_NAMESPACE}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {ACCOUNT}
+subjects:
+  - kind: ServiceAccount
+    name: {ACCOUNT}
+    namespace: hanzo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {DATA_CLAIM}
+  namespace: hanzo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {data_mb}Mi
 "
-    .to_string()
+    )
+}
+
+/// The ground for a runtime of this shape. It is laid under every runtime, one
+/// too small for Cloud included: a runtime started for something else still has a
+/// namespace, and the size check belongs to the workload.
+pub(crate) fn ground_for(boot: &Boot) -> String {
+    ground(budget::data_mb(boot.disk_mb))
 }
 
 #[cfg(test)]
@@ -160,6 +314,7 @@ pub(crate) fn workload(image: &str) -> String {
         iam_issuer: None,
         ai_base_url: None,
         strict_registry: false,
+        local: None,
     })
     .expect("default workload renders")
 }
@@ -194,7 +349,15 @@ pub(crate) fn workload_for(boot: &Boot) -> Result<String> {
     {
         extra_env.push_str(&yaml_env_block("CLOUD_AI_BASE_URL", v)?);
     }
-    let cloud_memory_mi = (boot.memory_mb / 2).clamp(1024, 4096);
+    // The pod's share of the node, the bus's share of the disk: budget.rs.
+    let budget = budget::plan(boot.memory_mb, boot.disk_mb)?;
+    let cloud_memory_mi = budget.cloud_mb;
+    let store_bytes = budget.store_bytes;
+    // An image this machine built is in the node's store or it is nowhere: the
+    // kubelet is told never to pull, so a missing one is `ErrImageNeverPull` and
+    // not a registry's image under the same name. Decided by the name, which is
+    // the fact about the image; how this invocation came by it is not.
+    let pull_policy = if is_local(image) { "Never" } else { "IfNotPresent" };
     Ok(format!(
         "apiVersion: apps/v1
 kind: Deployment
@@ -213,6 +376,7 @@ spec:
       labels:
         app: cloud
     spec:
+      serviceAccountName: {ACCOUNT}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -221,6 +385,7 @@ spec:
       containers:
         - name: cloud
           image: {image}
+          imagePullPolicy: {pull_policy}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -244,6 +409,12 @@ spec:
                   containerName: cloud
                   resource: requests.memory
                   divisor: 1Mi
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CLOUD_PUBSUB_MAX_STORE
+              value: \"{store_bytes}\"
 {extra_env}          resources:
             requests:
               memory: {cloud_memory_mi}Mi
@@ -251,6 +422,7 @@ spec:
             httpGet:
               path: /readyz
               port: {CLOUD_PORT}
+            initialDelaySeconds: 3
             periodSeconds: 5
             failureThreshold: 60
           livenessProbe:
@@ -266,7 +438,8 @@ spec:
               mountPath: /tmp
       volumes:
         - name: data
-          emptyDir: {{}}
+          persistentVolumeClaim:
+            claimName: {DATA_CLAIM}
         - name: tmp
           emptyDir: {{}}
 ---
@@ -358,6 +531,7 @@ pub(crate) fn install_cmd(strict_registry: bool) -> Result<String> {
 
 pub(crate) fn has_workload_overrides(boot: &Boot) -> bool {
     boot.cloud != CLOUD
+        || boot.local.is_some()
         || boot.staged.is_some()
         || boot.iam_issuer.is_some()
         || boot.ai_base_url.is_some()

@@ -21,8 +21,16 @@ use crate::commands::vm::{self, alive};
 use crate::config::Config;
 use crate::image;
 
+pub(crate) mod budget;
 pub mod compute;
+pub mod diagnose;
+#[cfg(unix)]
+pub(crate) mod control;
 pub(crate) mod kube;
+#[cfg(unix)]
+pub(crate) mod load;
+#[cfg(unix)]
+pub(crate) mod local;
 pub(crate) mod manifest;
 pub mod savings;
 pub(crate) mod supervisor;
@@ -30,9 +38,7 @@ pub mod tui;
 
 pub(crate) use kube::KubeClient;
 pub use manifest::{discover_app_manifest, select_cloud_image};
-#[cfg(test)]
-use manifest::ground;
-use manifest::{has_workload_overrides, install_cmd, workload_for};
+use manifest::{ground_for, has_workload_overrides, install_cmd, workload_for};
 pub use supervisor::{attest, supervise};
 #[cfg(test)]
 pub(crate) use supervisor::{deployed, measured, node_ready, record, run_args, server_argv};
@@ -53,6 +59,10 @@ pub struct Boot {
     pub iam_issuer: Option<String>,
     pub ai_base_url: Option<String>,
     pub strict_registry: bool,
+    /// The OCI image layout `cloud` was loaded from, when it names an image this
+    /// machine built (`hanzo up --local`). Such an image is in the runtime's own
+    /// store or nowhere: it is never resolved against a registry and never pulled.
+    pub local: Option<String>,
 }
 
 pub(crate) const K3S_PORT: u16 = 6443;
@@ -68,7 +78,9 @@ pub const CLOUD_OCI: &str = "oci.hanzo.ai/hanzoai/cloud-oss:main";
 pub(crate) const DATA: &str = "/var/lib/hanzo";
 pub(crate) const KUBECONFIG: &str = "/etc/hanzo/kubeconfig";
 pub(crate) const GROUND: &str = "/var/lib/hanzo/server/manifests/cloud-ns.yaml";
-pub(crate) const WORKLOAD: &str = "/var/lib/hanzo/server/manifests/cloud.yaml";
+/// Outside k3s's manifests directory on purpose: the supervisor applies it, once
+/// the pod's credentials exist (`supervisor::apply_workload`).
+pub(crate) const WORKLOAD: &str = "/var/lib/hanzo/workload/cloud.yaml";
 pub(crate) const KEYFILE: &str = "/dev/shm/.hanzo-cloud-master";
 pub(crate) const KEYFILE_FALLBACK: &str = "/run/.hanzo-cloud-master";
 pub(crate) const PULLFILE: &str = "/dev/shm/.hanzo-registry-pull";
@@ -251,6 +263,12 @@ pub async fn up(
         return finish_link(cfg, link).await;
     }
 
+    // An image this machine built takes its own road: it is loaded, never resolved
+    // against a registry, so none of what follows applies to it.
+    if boot.local.is_some() {
+        return up_local(cfg, boot, None, link, ui, no_ui).await;
+    }
+
     let native_warm = running(&dir, SUPERVISOR).is_none() && host_native_k3s_active();
     if running(&dir, SUPERVISOR).is_some() || native_warm {
         let pid = running(&dir, SUPERVISOR).unwrap_or(0);
@@ -271,22 +289,40 @@ pub async fn up(
             if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
                 let replicas = kube.cloud_replicas().await.ok().flatten();
                 if overrides || replicas.is_none() {
-                    let has_hanzo_oci =
-                        !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
-                    let selected_image =
-                        select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
+                    // THE IMAGE CHANGES ONLY WHEN THIS INVOCATION NAMES ONE. An
+                    // `up` that changes something else (a staged subsystem, an
+                    // issuer) keeps the image the Deployment already runs, a build
+                    // from this machine included: the default of a flag nobody
+                    // typed is not a request to replace it with a published image.
+                    let live = match replicas {
+                        Some(_) if boot.cloud == CLOUD => kube.cloud_image().await.ok().flatten(),
+                        _ => None,
+                    };
+                    let cloud = match live {
+                        Some(image) => image,
+                        None => {
+                            let has_hanzo_oci =
+                                !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
+                            let selected_image = select_cloud_image(
+                                &boot.cloud,
+                                boot.strict_registry,
+                                has_hanzo_oci,
+                            )?;
+                            image::pin_with_config(
+                                &reqwest::Client::new(),
+                                &selected_image,
+                                image::architecture(),
+                                cfg,
+                            )
+                            .await?
+                        }
+                    };
                     let pinned = Boot {
-                        cloud: image::pin_with_config(
-                            &reqwest::Client::new(),
-                            &selected_image,
-                            image::architecture(),
-                            cfg,
-                        )
-                        .await?,
-                        ..boot
+                        cloud,
+                        ..running_shape(&dir, boot)
                     };
                     let manifest = workload_for(&pinned)?;
-                    kube.apply_workload(&manifest).await?;
+                    kube.apply_workload(&ground_for(&pinned), &manifest).await?;
                     write_state(&dir, "ready");
                     let verb = if replicas.is_none() {
                         "deployed"
@@ -400,6 +436,68 @@ pub async fn up(
         return tui::run_dashboard();
     }
     res
+}
+
+/// `hanzo up --local`: Cloud from an image this machine built (`up/local.rs`).
+/// `built` is how long the checkout's own build took, when this invocation ran it.
+#[cfg(unix)]
+pub async fn up_local(
+    cfg: &mut Config,
+    boot: Boot,
+    built: Option<Duration>,
+    link: Option<String>,
+    ui: bool,
+    no_ui: bool,
+) -> Result<()> {
+    local::up(cfg, boot, built).await?;
+    let res = finish_link(cfg, link).await;
+    if ui || (!no_ui && std::io::stdout().is_terminal()) {
+        return tui::run_dashboard();
+    }
+    res
+}
+
+#[cfg(not(unix))]
+pub async fn up_local(
+    _cfg: &mut Config,
+    _boot: Boot,
+    _built: Option<Duration>,
+    _link: Option<String>,
+    _ui: bool,
+    _no_ui: bool,
+) -> Result<()> {
+    bail!("`hanzo up --local` needs the microVM runtime, which this platform does not have")
+}
+
+/// Run a checkout's declared local build and answer the image layout it wrote.
+#[cfg(unix)]
+pub fn prepare_local(arg: &str, cwd: &Path) -> Result<(String, Duration)> {
+    local::prepare(arg, cwd)
+}
+
+#[cfg(not(unix))]
+pub fn prepare_local(_arg: &str, _cwd: &Path) -> Result<(String, Duration)> {
+    bail!("`hanzo up --local` needs the microVM runtime, which this platform does not have")
+}
+
+/// `boot` with the shape of the runtime that is actually running. The flags of a
+/// later invocation carry defaults, not the vm an earlier one booted, and a budget
+/// worked out from the wrong size is a request that does not fit the node.
+fn running_shape(dir: &Path, boot: Boot) -> Boot {
+    #[cfg(unix)]
+    if let Ok(facts) = control::call(dir, &control::Request::Facts, |_| {}) {
+        let n = |k: &str| facts.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+        if n("memory_mb") > 0 && n("disk_mb") > 0 {
+            return Boot {
+                cpus: n("cpus").max(1) as u32,
+                memory_mb: n("memory_mb"),
+                disk_mb: n("disk_mb"),
+                ..boot
+            };
+        }
+    }
+    let _ = dir;
+    boot
 }
 
 pub fn dashboard() -> Result<()> {
@@ -819,6 +917,9 @@ fn down_vm(dir: &Path, supervisor: Option<i32>) -> Result<()> {
         }
     }
     clear_pid(dir, VM);
+    // A vm that is stopped by signal leaves its disk behind — the whole of it, 32 GiB
+    // by default, once for every stop — and nothing boots from it again.
+    vm::prune();
 
     write_state(dir, "down");
     println!("{} down (k3s microVM stopped)", "✓".green());

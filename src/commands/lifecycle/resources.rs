@@ -746,6 +746,7 @@ pub(crate) fn boot_from_state(state: &super::project::DesiredState) -> up::Boot 
         iam_issuer: state.platform.iam_issuer.clone(),
         ai_base_url: state.platform.ai_base_url.clone(),
         strict_registry: state.runtime.strict_registry,
+        local: state.platform.cloud_local.clone(),
     }
 }
 

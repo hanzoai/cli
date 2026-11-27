@@ -15,6 +15,7 @@ fn boot() -> Boot {
         iam_issuer: None,
         ai_base_url: None,
         strict_registry: false,
+        local: None,
     }
 }
 
@@ -42,6 +43,7 @@ fn workload_for_injects_staged_iam_and_ai_env_and_changes_measurement() {
         iam_issuer: Some("https://hanzo.ai".into()),
         ai_base_url: Some("https://api.hanzo.ai".into()),
         strict_registry: true,
+        local: None,
     })
     .unwrap();
     assert!(plain.contains("name: IAM_DEV_BOOTSTRAP"), "{plain}");
@@ -127,10 +129,21 @@ fn the_workload_deploys_the_pinned_image_on_the_forwarded_port() {
         !y.contains("port: 9090"),
         "probes must not target unbound legacy port 9090:\n{y}"
     );
+    // Half of what the node does not keep for itself, so two fit (budget.rs), and
+    // enough for the host to hold the apps it starts with itself.
     assert!(
-        y.contains("memory: 2048Mi"),
-        "default 4GiB VM must request 2048Mi so Warm covers pinned subsystems:\n{y}"
+        y.contains("memory: 1664Mi"),
+        "default 4GiB VM must request 1664Mi: two fit the node, and Warm covers the pinned apps:\n{y}"
     );
+    assert!(y.contains("serviceAccountName: cloud"), "{y}");
+    assert!(y.contains("imagePullPolicy: IfNotPresent"), "{y}");
+    assert!(y.contains("claimName: cloud-data"), "{y}");
+    assert!(!y.contains("name: data\n          emptyDir"), "{y}");
+    assert!(
+        y.contains("name: CLOUD_PUBSUB_MAX_STORE\n              value: \"1073741824\""),
+        "a 16 GiB disk gives the bus a 1 GiB store:\n{y}"
+    );
+    assert!(y.contains("fieldPath: spec.nodeName"), "{y}");
     for env in ["ZIP_RUNTIME_DIR", "CLOUD_MEMORY_REQUEST_MIB"] {
         assert!(y.contains(env), "{env} missing from\n{y}");
     }
@@ -153,15 +166,62 @@ fn the_key_is_fresh_every_time() {
 
 #[test]
 fn the_ground_carries_no_secret() {
-    let y = ground();
+    let y = ground(8192);
     assert!(y.contains("kind: Namespace"), "{y}");
-    for leak in ["Secret", "stringData", "master:"] {
+    for leak in ["kind: Secret", "stringData", "master:"] {
         assert!(
             !y.contains(leak),
             "the ground must not carry `{leak}`:\n{y}"
         );
     }
-    assert!(GROUND < WORKLOAD, "{GROUND} must sort before {WORKLOAD}");
+    // The workload is not in k3s's manifests directory: the supervisor applies it
+    // once the pod's credentials exist.
+    assert!(GROUND.contains("/server/manifests/"), "{GROUND}");
+    assert!(!WORKLOAD.contains("/server/manifests/"), "{WORKLOAD}");
+}
+
+/// Cloud runs as its own account, and what that account may ask is the requests
+/// Cloud makes: reads, each in the one place it is made. Never a wildcard, never a
+/// verb that writes, never the namespace's default account.
+#[test]
+fn the_ground_grants_what_cloud_asks_and_no_more() {
+    let y = ground(8192);
+    assert!(y.contains("kind: ServiceAccount\nmetadata:\n  name: cloud\n  namespace: hanzo"), "{y}");
+    assert!(y.contains("kind: PersistentVolumeClaim\nmetadata:\n  name: cloud-data"), "{y}");
+    assert!(y.contains("storage: 8192Mi"), "{y}");
+    for forbidden in ["cluster-admin", "\"*\"", "name: default", "create", "delete", "patch", "update", "secrets"] {
+        assert!(!y.contains(forbidden), "the ground must not grant `{forbidden}`:\n{y}");
+    }
+    let rules: Vec<&str> = y.lines().filter(|l| l.trim_start().starts_with("verbs:")).collect();
+    assert_eq!(rules.len(), 3, "{rules:?}");
+    assert_eq!(rules.iter().filter(|r| r.contains("[\"list\", \"watch\"]")).count(), 1, "{rules:?}");
+    assert_eq!(rules.iter().filter(|r| r.contains("[\"list\"]")).count(), 2, "{rules:?}");
+    // Every binding names the one account, in the one namespace.
+    assert_eq!(y.matches("kind: ServiceAccount\n    name: cloud\n    namespace: hanzo").count(), 3, "{y}");
+}
+
+/// A local build is in the node's store or nowhere: the kubelet is told never to
+/// pull it, so its absence is an error and not another image.
+#[test]
+fn a_local_build_is_never_pulled() {
+    let y = workload_for(&Boot {
+        cloud: "hanzo.local/hanzo-inc/cloud:0123456789abcdef".into(),
+        ..boot()
+    })
+    .unwrap();
+    assert!(y.contains("image: hanzo.local/hanzo-inc/cloud:0123456789abcdef"), "{y}");
+    assert!(y.contains("imagePullPolicy: Never"), "{y}");
+    assert!(!y.contains("IfNotPresent"), "{y}");
+}
+
+/// A runtime too small for Cloud is refused when the workload is written, with the
+/// arithmetic, rather than left to the scheduler to refuse a pod at a time.
+#[test]
+fn the_workload_is_refused_on_a_runtime_it_does_not_fit() {
+    let e = workload_for(&Boot { memory_mb: 2048, ..boot() }).unwrap_err().to_string();
+    assert!(e.contains("2048 MiB of memory"), "{e}");
+    // The ground is still laid: a runtime started for something else has a namespace.
+    assert!(ground_for(&Boot { memory_mb: 2048, ..boot() }).contains("kind: Namespace"));
 }
 
 #[test]
@@ -183,7 +243,7 @@ fn the_cluster_keeps_its_state_under_our_own_name() {
 #[test]
 fn no_manifest_ever_contains_the_key() {
     let k = key();
-    let g = ground();
+    let g = ground(8192);
     let w = workload("ghcr.io/hanzoai/cloud@sha256:aa");
     assert!(!g.contains(&k), "the ground leaked the key");
     assert!(!w.contains(&k), "the workload leaked the key");
@@ -218,7 +278,7 @@ fn the_at_rest_key_is_outside_the_measurement() {
     let manifest = workload("ghcr.io/hanzoai/cloud@sha256:aa");
     let register = deployed("ghcr.io/hanzoai/cloud@sha256:aa", &manifest).register();
     for _ in 0..2 {
-        let _ = (ground(), key());
+        let _ = (ground(8192), key());
         assert_eq!(
             deployed("ghcr.io/hanzoai/cloud@sha256:aa", &manifest).register(),
             register
@@ -515,8 +575,13 @@ fn has_workload_overrides_detects_changed_flags() {
         iam_issuer: None,
         ai_base_url: None,
         strict_registry: false,
+        local: None,
     };
     assert!(!has_workload_overrides(&base));
+    assert!(has_workload_overrides(&Boot {
+        local: Some("/x/image".into()),
+        ..base.clone()
+    }));
     assert!(has_workload_overrides(&Boot {
         cloud: "ghcr.io/hanzoai/cloud-oss:v8.5.1453".into(),
         ..base.clone()
@@ -525,4 +590,44 @@ fn has_workload_overrides_detects_changed_flags() {
         staged: Some("fanclub".into()),
         ..base
     }));
+}
+
+/// `hanzo down` scales the Deployment to zero, and Kubernetes then leaves
+/// `spec.replicas` out of the Scale document. That is a stopped Deployment, which
+/// `hanzo up` scales back to one on the image it names. Read as "no Deployment" it
+/// was redeployed with the default image, over a local build.
+#[test]
+fn a_deployment_scaled_to_zero_is_still_a_deployment() {
+    assert_eq!(scale_replicas(&json!({"kind": "Scale", "spec": {}})), 0);
+    assert_eq!(scale_replicas(&json!({"kind": "Scale", "spec": {"replicas": 0}})), 0);
+    assert_eq!(scale_replicas(&json!({"kind": "Scale", "spec": {"replicas": 1}})), 1);
+}
+
+#[test]
+fn every_kind_the_cli_writes_has_its_api_path() {
+    let at = |api: &str, kind: &str, ns: &str, name: &str| {
+        resource_url("https://127.0.0.1:6443", api, kind, ns, name).unwrap()
+    };
+    assert_eq!(
+        at("v1", "ServiceAccount", "hanzo", "cloud"),
+        "https://127.0.0.1:6443/api/v1/namespaces/hanzo/serviceaccounts/cloud"
+    );
+    assert_eq!(
+        at("rbac.authorization.k8s.io/v1", "ClusterRole", "", "hanzo-cloud"),
+        "https://127.0.0.1:6443/apis/rbac.authorization.k8s.io/v1/clusterroles/hanzo-cloud"
+    );
+    assert_eq!(
+        at("rbac.authorization.k8s.io/v1", "RoleBinding", "hanzo-build", "cloud"),
+        "https://127.0.0.1:6443/apis/rbac.authorization.k8s.io/v1/namespaces/hanzo-build/rolebindings/cloud"
+    );
+    // Every document of the ground is one of them.
+    for doc in ground(8192).split("\n---\n") {
+        let v: serde_json::Value = serde_norway::from_str(doc).unwrap();
+        let s = |p: &str| v.pointer(p).and_then(|x| x.as_str()).unwrap_or("");
+        if s("/kind") != "Namespace" {
+            at(s("/apiVersion"), s("/kind"), s("/metadata/namespace"), s("/metadata/name"));
+        }
+    }
+    assert!(resource_url("https://x", "v1", "Secret", "hanzo", "cloud").is_err());
+    assert!(resource_url("https://x", "v1", "ServiceAccount", "", "cloud").is_err());
 }

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use vm_measure::{Log, Measurement};
 
-use super::manifest::{ground, workload_for};
+use super::manifest::{ground_for, workload_for, ACCOUNT};
 use super::{
     checkpoint, clear_pid, kubeconfig_path, measure_path, up_dir, write_pid, write_state, Boot,
     CLOUD_NODE_PORT, DATA, GROUND, K3S_PORT, KEYFILE, KEYFILE_FALLBACK, KUBECONFIG, LOCAL_PORT,
@@ -26,12 +26,34 @@ pub(crate) fn run_args(boot: &Boot) -> Vec<String> {
     )
 }
 
+/// Lay the ground now, by our own hand. k3s would apply the same file from its
+/// manifests directory in its own time; the steps after this one need the namespace
+/// and the account to exist when they run, not eventually.
 fn ensure_ground(rpc: &mut Rpc) -> Result<()> {
-    match rpc.exec(&["k3s", "kubectl", "create", "namespace", "hanzo"])? {
-        (_, err, code) if code != 0 && !err.contains("already exists") => {
-            bail!("creating the namespace: {}", err.trim())
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match rpc.exec(&["k3s", "kubectl", "apply", "-f", GROUND])? {
+            (_, _, 0) => return Ok(()),
+            // The API server answers before every group it serves is ready (rbac
+            // among the last); the same apply succeeds a moment later.
+            (_, _, _) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            (_, err, _) => bail!("laying the ground: {}", err.trim()),
         }
-        _ => Ok(()),
+    }
+}
+
+/// Give the cluster the workload: the Deployment and its Service, after everything
+/// they need is in place. Applied here rather than left in k3s's manifests
+/// directory, which would create the pod at boot, before its pull credential and
+/// its key exist — the pod that failed its first pull and had to be deleted, and
+/// whose replacement was scheduled beside it.
+fn apply_workload(rpc: &mut Rpc, manifest: &str) -> Result<()> {
+    rpc.write_file(WORKLOAD, manifest)?;
+    match rpc.exec(&["k3s", "kubectl", "apply", "-f", WORKLOAD])? {
+        (_, _, 0) => Ok(()),
+        (_, err, _) => bail!("deploying the workload: {}", err.trim()),
     }
 }
 
@@ -106,45 +128,23 @@ fn plant_pull_secret(rpc: &mut Rpc, dockerconfigjson: &str) -> Result<()> {
         Err(e) => return Err(e),
     }
 
+    // On the account the pod runs as, which the ground has already made. The pod
+    // does not exist yet, so there is none to restart.
     let patch = format!(r#"{{"imagePullSecrets":[{{"name":"{PULL_SECRET}"}}]}}"#);
-    let sa_deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        match rpc.exec(&[
-            "k3s",
-            "kubectl",
-            "patch",
-            "serviceaccount",
-            "default",
-            "-n",
-            "hanzo",
-            "-p",
-            &patch,
-        ]) {
-            Ok((_, _, 0)) => break,
-            Ok((_, err, _))
-                if Instant::now() < sa_deadline
-                    && (err.contains("NotFound") || err.contains("not found")) =>
-            {
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            Ok((_, err, _)) => bail!("attaching registry pull secret: {}", err.trim()),
-            Err(e) => return Err(e),
-        }
-    }
-
-    let _ = rpc.exec(&[
+    match rpc.exec(&[
         "k3s",
         "kubectl",
-        "delete",
-        "pod",
+        "patch",
+        "serviceaccount",
+        ACCOUNT,
         "-n",
         "hanzo",
-        "-l",
-        "app=cloud",
-        "--ignore-not-found",
-        "--wait=false",
-    ]);
-    Ok(())
+        "-p",
+        &patch,
+    ])? {
+        (_, _, 0) => Ok(()),
+        (_, err, _) => bail!("attaching registry pull secret: {}", err.trim()),
+    }
 }
 
 pub(crate) fn deployed(image: &str, manifest: &str) -> Log {
@@ -266,12 +266,14 @@ fn drive(
     write_pid(dir, VM, rpc.child.id())?;
     let launch = rpc.wait_ready()?;
 
-    rpc.write_file(GROUND, &ground())?;
-    if !runtime_only {
+    rpc.write_file(GROUND, &ground_for(boot))?;
+    let manifest = if runtime_only {
+        None
+    } else {
         let manifest = workload_for(boot)?;
-        rpc.write_file(WORKLOAD, &manifest)?;
         record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
-    }
+        Some(manifest)
+    };
 
     write_state(dir, "k3s");
     rpc.spawn(&server_argv())?;
@@ -297,6 +299,9 @@ fn drive(
         plant_pull_secret(&mut rpc, secret)?;
     }
     plant_key(&mut rpc)?;
+    if let Some(manifest) = &manifest {
+        apply_workload(&mut rpc, manifest)?;
+    }
 
     let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
         .context("the guest kubeconfig is not utf-8")?;
@@ -310,7 +315,20 @@ fn drive(
         },
     );
 
-    let status = rpc.child.wait().context("waiting on hanzo-vm")?;
+    // Hold the vm, and between looks at it answer whoever asks through the
+    // control socket: this process is the only one that can reach the guest.
+    #[cfg(unix)]
+    let listener = super::control::listen(dir)?;
+    let status = loop {
+        if let Some(status) = rpc.exited() {
+            break status;
+        }
+        #[cfg(unix)]
+        super::control::serve_pending(&listener, &mut rpc, boot);
+        std::thread::sleep(Duration::from_millis(150));
+    };
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(super::control::socket_path(dir));
     write_state(dir, &format!("down ({status})"));
     Ok(())
 }

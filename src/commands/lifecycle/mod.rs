@@ -143,6 +143,23 @@ pub async fn runtime_restart(cfg: &mut Config, boot: up::Boot, native: bool) -> 
         None => false,
     };
     let restore_cloud = state.platform.cloud_enabled || live_cloud;
+    // Whether what runs now is this machine's own build, read off the cluster
+    // before it is stopped: the Deployment says what is deployed, the state file
+    // only what was last asked for.
+    let live_local = match local_kube_client() {
+        Some(k) => k
+            .get("/apis/apps/v1/namespaces/hanzo/deployments/cloud")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|d| {
+                d.pointer("/spec/template/spec/containers/0/image")
+                    .and_then(|i| i.as_str())
+                    .map(|i| i.starts_with("hanzo.local/"))
+            })
+            .unwrap_or(false),
+        None => false,
+    };
     let restore_engine = state.platform.engine_enabled || local_engine_healthy().await;
     let restore_apps: Vec<project::RegisteredApp> = state
         .apps
@@ -186,6 +203,16 @@ pub async fn runtime_restart(cfg: &mut Config, boot: up::Boot, native: bool) -> 
     if restore_cloud {
         state.platform.cloud_enabled = true;
         save_state(&state)?;
+        // What ran before the restart is what runs after it: a local build is
+        // loaded again from the layout it came from, not replaced by a published
+        // image because the restart's flags name the default one.
+        let boot = match &state.platform.cloud_local {
+            Some(layout) if live_local && boot.cloud == up::CLOUD => up::Boot {
+                local: Some(layout.clone()),
+                ..boot
+            },
+            _ => boot,
+        };
         up::up(cfg, boot, None, false, true).await?;
     } else {
         up::start(cfg, boot, native).await?;
@@ -289,7 +316,11 @@ pub async fn env_up(
     ui: bool,
     no_ui: bool,
     native: bool,
+    local: Option<String>,
 ) -> Result<()> {
+    if let Some(arg) = local {
+        return env_up_local(cfg, boot, &arg, link, ui, no_ui).await;
+    }
     let cwd = std::env::current_dir().ok();
     let project_dir_str = cwd
         .as_ref()
@@ -385,6 +416,41 @@ pub async fn env_up(
         return up::dashboard();
     }
     Ok(())
+}
+
+/// `hanzo up --local` — Cloud from this machine's source.
+///
+/// `hanzod` is not asked to bring the environment up, as it is for a published
+/// image: its request names an image to deploy, and here there is none to name. The
+/// local build runs first, and only a build that succeeded reaches the runtime.
+async fn env_up_local(
+    cfg: &mut Config,
+    mut boot: up::Boot,
+    arg: &str,
+    link: Option<String>,
+    ui: bool,
+    no_ui: bool,
+) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let (layout, built) = up::prepare_local(arg, &cwd)?;
+    boot.local = Some(layout.clone());
+
+    let mut state = load_state().unwrap_or_default();
+    state.runtime.desired_running = true;
+    state.platform.cloud_enabled = true;
+    state.platform.cloud_local = Some(layout);
+    if boot.staged.is_some() {
+        state.platform.staged = boot.staged.clone();
+    }
+    if boot.iam_issuer.is_some() {
+        state.platform.iam_issuer = boot.iam_issuer.clone();
+    }
+    if boot.ai_base_url.is_some() {
+        state.platform.ai_base_url = boot.ai_base_url.clone();
+    }
+    save_state(&state)?;
+
+    up::up_local(cfg, boot, Some(built), link, ui, no_ui).await
 }
 
 /// `hanzo down` — stop workloads belonging to the selected environment while

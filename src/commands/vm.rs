@@ -354,6 +354,21 @@ fn has_checkpoint(listing: &str, name: &str) -> bool {
         .any(|first| first == name)
 }
 
+/// Remove the disks of vms that are no longer running. `hanzo-vm` keeps an
+/// instance's disk when the vm did not shut itself down, which is how every vm this
+/// CLI stops ends; `prune` is its own collector for those and leaves a live vm's
+/// alone. Best effort: a disk that stays is space, not an error.
+pub(crate) fn prune() {
+    if let Some(bin) = resolve() {
+        let _ = Command::new(bin)
+            .arg("prune")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 // ---- the processes ----------------------------------------------------------------
 
 /// Signal 0 — the standard liveness test, and the only way to tell a live
@@ -546,6 +561,20 @@ impl Rpc {
     pub(crate) fn write_file(&mut self, path: &str, content: &str) -> Result<()> {
         let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("/");
         self.call("mkdir", json!({ "path": dir, "recursive": true }))?;
+        let content = base64::engine::general_purpose::STANDARD.encode(content);
+        self.call("write_file", json!({ "path": path, "content": content }))?;
+        Ok(())
+    }
+
+    /// Create a guest directory and its parents.
+    pub(crate) fn mkdir(&mut self, path: &str) -> Result<()> {
+        self.call("mkdir", json!({ "path": path, "recursive": true }))?;
+        Ok(())
+    }
+
+    /// Write bytes to a guest file whose directory already exists. One call, where
+    /// [`Rpc::write_file`] is two: this is the one a large transfer is cut into.
+    pub(crate) fn write_bytes(&mut self, path: &str, content: &[u8]) -> Result<()> {
         let content = base64::engine::general_purpose::STANDARD.encode(content);
         self.call("write_file", json!({ "path": path, "content": content }))?;
         Ok(())

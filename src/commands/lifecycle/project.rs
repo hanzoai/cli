@@ -72,6 +72,9 @@ impl Default for RuntimeDesired {
 pub struct PlatformDesired {
     pub cloud_enabled: bool,
     pub cloud_image: String,
+    /// The OCI image layout Cloud was loaded from, when `cloud_image` is a local
+    /// build (`hanzo up --local`): what a restart loads again.
+    pub cloud_local: Option<String>,
     pub staged: Option<String>,
     pub iam_issuer: Option<String>,
     pub ai_base_url: Option<String>,
@@ -107,6 +110,7 @@ impl Default for PlatformDesired {
         Self {
             cloud_enabled: false,
             cloud_image: up::CLOUD.to_string(),
+            cloud_local: None,
             staged: None,
             iam_issuer: None,
             ai_base_url: None,
@@ -256,7 +260,10 @@ pub fn is_system_checkout(dir: &Path) -> bool {
     if let Ok(gomod) = std::fs::read_to_string(dir.join("go.mod")) {
         if let Some(first) = gomod.lines().find(|l| l.starts_with("module ")) {
             let m = first.trim_start_matches("module ").trim();
-            if m == "github.com/hanzoai/cloud" || m == "hanzo.ai/cloud" {
+            if m == "github.com/hanzoai/cloud"
+                || m == "github.com/hanzo-inc/cloud"
+                || m == "hanzo.ai/cloud"
+            {
                 return true;
             }
         }
