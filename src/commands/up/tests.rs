@@ -526,3 +526,34 @@ fn has_workload_overrides_detects_changed_flags() {
         ..base
     }));
 }
+
+#[test]
+fn cloud_readiness_requires_the_current_rollout_and_nonzero_replicas() {
+    let mut v = json!({
+        "metadata": {"generation": 2},
+        "spec": {"replicas": 1},
+        "status": {"observedGeneration": 1, "updatedReplicas": 1, "readyReplicas": 1, "availableReplicas": 1}
+    });
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["observedGeneration"] = json!(2);
+    assert!(cloud_deployment_ready(&v));
+    v["status"]["updatedReplicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["updatedReplicas"] = json!(1);
+    v["status"]["readyReplicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["readyReplicas"] = json!(1);
+    v["status"]["availableReplicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+    v["spec"]["replicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+}
+
+#[test]
+fn strict_registry_is_a_workload_override_on_warm_runtime() {
+    let mut b = boot();
+    b.cloud = CLOUD.into();
+    assert!(!has_workload_overrides(&b));
+    b.strict_registry = true;
+    assert!(has_workload_overrides(&b));
+}
