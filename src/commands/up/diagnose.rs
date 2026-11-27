@@ -31,11 +31,12 @@ fn check(name: &'static str, status: &'static str, detail: impl Into<String>) ->
 /// The Kubernetes requests Cloud makes on a local runtime: verb, API group,
 /// resource, namespace ("" is the cluster). The grants in `manifest::ground` are
 /// this list; doctor asks the API server about each.
-pub(crate) const GRANTS: [(&str, &str, &str, &str); 4] = [
+pub(crate) const GRANTS: [(&str, &str, &str, &str); 5] = [
     ("list", "", "pods", ""),
     ("watch", "", "pods", ""),
     ("list", "batch", "jobs", "hanzo"),
     ("list", "batch", "jobs", "hanzo-build"),
+    ("list", "hanzo.ai", "apps", "hanzo"),
 ];
 
 /// This machine's memory, in MiB, when it can be read.

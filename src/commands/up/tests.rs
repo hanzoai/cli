@@ -193,9 +193,9 @@ fn the_ground_grants_what_cloud_asks_and_no_more() {
         assert!(!y.contains(forbidden), "the ground must not grant `{forbidden}`:\n{y}");
     }
     let rules: Vec<&str> = y.lines().filter(|l| l.trim_start().starts_with("verbs:")).collect();
-    assert_eq!(rules.len(), 3, "{rules:?}");
+    assert_eq!(rules.len(), 4, "{rules:?}");
     assert_eq!(rules.iter().filter(|r| r.contains("[\"list\", \"watch\"]")).count(), 1, "{rules:?}");
-    assert_eq!(rules.iter().filter(|r| r.contains("[\"list\"]")).count(), 2, "{rules:?}");
+    assert_eq!(rules.iter().filter(|r| r.contains("[\"list\"]")).count(), 3, "{rules:?}");
     // Every binding names the one account, in the one namespace.
     assert_eq!(y.matches("kind: ServiceAccount\n    name: cloud\n    namespace: hanzo").count(), 3, "{y}");
 }

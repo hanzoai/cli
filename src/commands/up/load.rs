@@ -40,11 +40,16 @@ const STAGING: &str = "/var/lib/hanzo/load";
 /// base64 makes four bytes of three.
 const PART: usize = 512 << 10;
 
-/// What the node must have free beyond the bytes sent: the parts, the same bytes
-/// again in containerd's store, and the layers unpacked, which for compressed Go
-/// binaries is under three times their size.
-const ROOM_FACTOR: u64 = 5;
-const ROOM_SLACK: u64 = 512 << 20;
+/// The layers one import carries. The parts of an archive wait on the node's disk
+/// until its import returns, so this is what a load holds there beyond the image
+/// itself; a layer larger than it travels alone.
+const BATCH: u64 = 256 << 20;
+
+/// What the node must have free for the new layers: the bytes in containerd's
+/// store, and the same layers unpacked, which for compressed Go binaries is under
+/// three times their size. Beyond that, one batch in transit.
+const ROOM_FACTOR: u64 = 4;
+const ROOM_SLACK: u64 = BATCH + (256 << 20);
 
 #[derive(Debug, Deserialize)]
 struct Descriptor {
@@ -299,14 +304,11 @@ fn header(size: u64) -> tar::Header {
     h
 }
 
-/// Write the archive of `image` that a node holding `have` needs: the layout's two
-/// fixed files, the image's documents, and the layers the node lacks.
-fn archive<W: Write>(
-    out: W,
-    image: &Image,
-    have: &HashSet<String>,
-    mut each: impl FnMut(usize, usize),
-) -> Result<(W, usize)> {
+/// Write an archive of `image` carrying `layers`: the layout's two fixed files, the
+/// image's documents, and those layers. The documents are in every archive because
+/// they are what names the image; containerd resolves the layers an archive does
+/// not carry against its own store.
+fn archive<W: Write>(out: W, image: &Image, layers: &[&Descriptor]) -> Result<W> {
     let mut tar = tar::Builder::new(out);
     let put = |tar: &mut tar::Builder<W>, name: &str, path: &Path| -> Result<()> {
         let f = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
@@ -320,89 +322,45 @@ fn archive<W: Write>(
         let name = format!("blobs/sha256/{}", d.digest.trim_start_matches("sha256:"));
         put(&mut tar, &name, &image.blob(&d.digest))?;
     }
-    let missing: Vec<&Descriptor> = image
-        .layers
-        .iter()
-        .filter(|l| !have.contains(&l.digest))
-        .collect();
-    for (i, l) in missing.iter().enumerate() {
+    for l in layers {
         let name = format!("blobs/sha256/{}", l.digest.trim_start_matches("sha256:"));
         put(&mut tar, &name, &image.blob(&l.digest))?;
-        each(i + 1, missing.len());
     }
-    Ok((
-        tar.into_inner().context("closing the archive")?,
-        missing.len(),
-    ))
+    tar.into_inner().context("closing the archive")
 }
 
-/// Put the image of `layout` into the node's store and answer what was sent.
-pub(crate) fn load(rpc: &mut Rpc, layout: &Path, progress: &mut dyn FnMut(&str)) -> Result<Loaded> {
-    let started = Instant::now();
-    let image = read_layout(layout)?;
-    let have = held(rpc)?;
-    let need: u64 = image
-        .layers
-        .iter()
-        .filter(|l| !have.contains(&l.digest))
-        .map(|l| l.size)
-        .sum();
-    let layers_sent = image
-        .layers
-        .iter()
-        .filter(|l| !have.contains(&l.digest))
-        .count();
-
-    // Nothing to send and the name already there: the node has this build.
-    if need == 0 && named(rpc, &image.reference)? {
-        return Ok(Loaded {
-            reference: image.reference.clone(),
-            layers: image.layers.len(),
-            layers_sent: 0,
-            bytes: image.size(),
-            bytes_sent: 0,
-            seconds: started.elapsed().as_secs_f64(),
-        });
+/// Cut the layers a node lacks into imports of about `limit` bytes each, in order.
+/// Always at least one, which may be empty: the last import is the one that names
+/// the image and unpacks it, and that happens even when no layer is new.
+fn batches<'a>(missing: &[&'a Descriptor], limit: u64) -> Vec<Vec<&'a Descriptor>> {
+    let mut out: Vec<Vec<&Descriptor>> = vec![Vec::new()];
+    let mut size = 0u64;
+    for l in missing {
+        if size > 0 && size + l.size > limit {
+            out.push(Vec::new());
+            size = 0;
+        }
+        out.last_mut().expect("never empty").push(l);
+        size += l.size;
     }
+    out
+}
 
-    let free = free_bytes(rpc)?;
-    let room = need.saturating_mul(ROOM_FACTOR).saturating_add(ROOM_SLACK);
-    if free < room {
-        bail!(
-            "the runtime has {} MiB of disk free and loading this image takes about {} \
-             ({} MiB of new layers, stored and unpacked). Images no pod uses are removed by \
-             `hanzo stop` and a fresh start; a larger disk is `hanzo start --disk-size`",
-            free >> 20,
-            room >> 20,
-            need >> 20,
-        );
-    }
-
+/// Send one archive to the node in parts and import it. Every import but the last
+/// only stores what it carries; the last unpacks the whole image.
+fn import(rpc: &mut Rpc, image: &Image, layers: &[&Descriptor], last: bool) -> Result<u64> {
     let dir = format!("{STAGING}/{}", std::process::id());
     let _ = rpc.exec(&["rm", "-rf", STAGING]);
     rpc.mkdir(&dir)?;
-    progress(&format!(
-        "sending {} of {} layers ({} MiB of {})",
-        layers_sent,
-        image.layers.len(),
-        need >> 20,
-        image.size() >> 20,
-    ));
     let sent = (|| -> Result<u64> {
         let parts = Parts {
-            rpc,
+            rpc: &mut *rpc,
             dir: dir.clone(),
             buf: Vec::with_capacity(PART * 2),
             next: 0,
             sent: 0,
         };
-        let mut last = Instant::now();
-        let (mut parts, _) = archive(parts, &image, &have, |i, n| {
-            if last.elapsed().as_secs() >= 2 || i == n {
-                last = Instant::now();
-                progress(&format!("{i} of {n} layers sent"));
-            }
-        })?;
+        let mut parts = archive(parts, image, layers)?;
         if !parts.buf.is_empty() {
             let rest = parts.buf.len();
             parts.send(rest).map_err(|e| anyhow!("{e}"))?;
@@ -416,10 +374,12 @@ pub(crate) fn load(rpc: &mut Rpc, layout: &Path, progress: &mut dyn FnMut(&str))
             return Err(e.context("sending the image to the runtime"));
         }
     };
-
-    progress("importing into containerd");
-    let import = format!("cat {dir}/part-* | {} images import -", CTR.join(" "));
-    let out = rpc.exec(&["sh", "-c", &import]);
+    let script = format!(
+        "cat {dir}/part-* | {} images import {}-",
+        CTR.join(" "),
+        if last { "" } else { "--no-unpack " }
+    );
+    let out = rpc.exec(&["sh", "-c", &script]);
     let _ = rpc.exec(&["rm", "-rf", STAGING]);
     let (stdout, stderr, code) = out?;
     if code != 0 {
@@ -432,6 +392,61 @@ pub(crate) fn load(rpc: &mut Rpc, layout: &Path, progress: &mut dyn FnMut(&str))
             }
         );
     }
+    Ok(sent)
+}
+
+/// Put the image of `layout` into the node's store and answer what was sent.
+pub(crate) fn load(rpc: &mut Rpc, layout: &Path, progress: &mut dyn FnMut(&str)) -> Result<Loaded> {
+    let started = Instant::now();
+    let image = read_layout(layout)?;
+    let have = held(rpc)?;
+    let missing: Vec<&Descriptor> = image
+        .layers
+        .iter()
+        .filter(|l| !have.contains(&l.digest))
+        .collect();
+    let need: u64 = missing.iter().map(|l| l.size).sum();
+
+    if need > 0 {
+        let free = free_bytes(rpc)?;
+        let room = need.saturating_mul(ROOM_FACTOR).saturating_add(ROOM_SLACK);
+        if free < room {
+            bail!(
+                "the runtime has {} MiB of disk free and loading this image takes about {} \
+                 ({} MiB of new layers, stored and unpacked). `hanzo down` and this again frees \
+                 what the running build holds; a stopped runtime starts empty (`hanzo stop`); \
+                 a larger disk is `hanzo up --local --disk-size 64GiB` on a stopped one",
+                free >> 20,
+                room >> 20,
+                need >> 20,
+            );
+        }
+        progress(&format!(
+            "sending {} of {} layers ({} MiB of {})",
+            missing.len(),
+            image.layers.len(),
+            need >> 20,
+            image.size() >> 20,
+        ));
+    }
+
+    // The last import always runs, with no new layer when there is none: it is what
+    // names the image and unpacks it, and a node that holds every layer has not
+    // thereby done either.
+    let plan = batches(&missing, BATCH);
+    let mut sent = 0u64;
+    let mut done = 0usize;
+    for (i, batch) in plan.iter().enumerate() {
+        let last = i + 1 == plan.len();
+        if last && need > 0 {
+            progress("importing into containerd");
+        }
+        sent += import(rpc, &image, batch, last)?;
+        done += batch.len();
+        if !last {
+            progress(&format!("{done} of {} layers sent", missing.len()));
+        }
+    }
     if !named(rpc, &image.reference)? {
         bail!(
             "containerd imported the archive and holds no {} — its store is not what the kubelet reads",
@@ -441,9 +456,9 @@ pub(crate) fn load(rpc: &mut Rpc, layout: &Path, progress: &mut dyn FnMut(&str))
     Ok(Loaded {
         reference: image.reference.clone(),
         layers: image.layers.len(),
-        layers_sent,
+        layers_sent: missing.len(),
         bytes: image.size(),
-        bytes_sent: sent,
+        bytes_sent: if need > 0 { sent } else { 0 },
         seconds: started.elapsed().as_secs_f64(),
     })
 }
@@ -641,7 +656,7 @@ mod tests {
     }
 
     /// What makes the second load small: the node says what it holds, and only the
-    /// layers it lacks are in the archive. The documents always are, because they
+    /// layers it lacks are in an archive. The documents always are, because they
     /// are what names the image.
     #[test]
     fn only_the_layers_the_node_lacks_are_sent() {
@@ -654,20 +669,47 @@ mod tests {
         let image = read_layout(dir.path()).unwrap();
         let blob = |d: &str| format!("blobs/sha256/{}", d.trim_start_matches("sha256:"));
 
-        let (all, sent) = archive(Vec::new(), &image, &HashSet::new(), |_, _| {}).unwrap();
-        assert_eq!(sent, 3);
-        let all = names(&all);
+        let every: Vec<&Descriptor> = image.layers.iter().collect();
+        let all = names(&archive(Vec::new(), &image, &every).unwrap());
         assert_eq!(&all[..2], ["oci-layout", "index.json"]);
         assert_eq!(all.len(), 2 + 2 + 3);
 
-        let have: HashSet<String> = digests[..2].iter().cloned().collect();
-        let (some, sent) = archive(Vec::new(), &image, &have, |_, _| {}).unwrap();
-        assert_eq!(sent, 1);
-        let some = names(&some);
+        let top: Vec<&Descriptor> = image.layers[2..].iter().collect();
+        let some = names(&archive(Vec::new(), &image, &top).unwrap());
         assert_eq!(some.len(), 2 + 2 + 1);
         assert!(some.contains(&blob(&digests[2])));
         assert!(!some.contains(&blob(&digests[0])));
         assert!(some.contains(&blob(&image.manifest.digest)));
         assert!(some.contains(&blob(&image.config.digest)));
+
+        // Nothing new still names the image: the documents, and no layer.
+        let none = names(&archive(Vec::new(), &image, &[]).unwrap());
+        assert_eq!(none.len(), 2 + 2);
+    }
+
+    /// A load is cut so the node never holds more than about a batch in transit,
+    /// and it always ends in one import that names and unpacks the image.
+    #[test]
+    fn layers_travel_in_batches_and_the_last_one_always_runs() {
+        let d = |size: u64| Descriptor {
+            digest: format!("sha256:{size}"),
+            size,
+            annotations: Default::default(),
+            platform: None,
+        };
+        let layers = [d(100), d(100), d(150), d(400), d(10)];
+        let refs: Vec<&Descriptor> = layers.iter().collect();
+        let sizes = |b: Vec<Vec<&Descriptor>>| -> Vec<Vec<u64>> {
+            b.into_iter()
+                .map(|g| g.into_iter().map(|l| l.size).collect())
+                .collect()
+        };
+        assert_eq!(
+            sizes(batches(&refs, 256)),
+            vec![vec![100, 100], vec![150], vec![400], vec![10]],
+            "a batch closes before it passes the limit; a layer over it travels alone"
+        );
+        assert_eq!(sizes(batches(&[], 256)), vec![Vec::<u64>::new()]);
+        assert_eq!(sizes(batches(&refs, u64::MAX)).len(), 1);
     }
 }

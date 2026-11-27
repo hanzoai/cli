@@ -1549,7 +1549,8 @@ hanzoai/cloud `apps/pubsub/budget.go` and `sdk/bus/budget.go`.
   the shape comes from the supervisor (`facts`), not from the flags of the later invocation.
 - **The account** (`up/manifest.rs` `ground`). The pod runs as `hanzo/cloud`, not `default`, with exactly the
   requests cloud makes on a local runtime: `pods` list+watch cluster-wide (the KMS socket's attestation
-  watch; `NODE_NAME` narrows the watch, RBAC cannot), `jobs` list in `hanzo` and in `hanzo-build`.
+  watch; `NODE_NAME` narrows the watch, RBAC cannot), `jobs` list in `hanzo` and in `hanzo-build`, and
+  `apps.hanzo.ai` list in `hanzo` (the deploy plane's health; a local cluster answers 404, not 403).
   `up/diagnose.rs` `GRANTS` is the same list, asked of the API server by SubjectAccessReview; a test holds
   the two together.
 - **Data** is on the `cloud-data` volume claim (local-path), so it survives `hanzo down` and a replaced

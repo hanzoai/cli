@@ -189,6 +189,9 @@ const BUILD_NAMESPACE: &str = "hanzo-build";
 ///   watch; RBAC cannot, so the grant is the cluster's).
 /// - `jobs` list in its own namespace: the runner queue counts the runners in flight.
 /// - `jobs` list in `hanzo-build`: the build line is read before a build is admitted.
+/// - `apps.hanzo.ai` list in its own namespace: the deploy plane's health reads its
+///   own resource kind. A local cluster has no such kind, and granted the read it
+///   is told so (404) where it was told it may not ask.
 ///
 /// Reading, in every case. A local runtime has no builders and no runners, so the
 /// verbs that would start one are not granted, and asking for one is refused by
@@ -241,6 +244,9 @@ metadata:
 rules:
   - apiGroups: [\"batch\"]
     resources: [\"jobs\"]
+    verbs: [\"list\"]
+  - apiGroups: [\"hanzo.ai\"]
+    resources: [\"apps\"]
     verbs: [\"list\"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
