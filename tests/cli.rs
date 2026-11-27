@@ -818,3 +818,18 @@ fn live_login_whoami_usage_with_env_token() {
         .as_str()
         .is_some_and(|v| !v.is_empty()));
 }
+
+#[test]
+fn shipped_binary_intercepts_unique_nested_subcommand_typo() {
+    hanzo()
+        .arg("balance")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("did you mean `hanzo billing balance`?"))
+        .stderr(predicate::str::contains("`hanzo dev \"balance\"`"));
+    hanzo()
+        .arg("quota")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("did you mean `hanzo sandbox quota`?"));
+}

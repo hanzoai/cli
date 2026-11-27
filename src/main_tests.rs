@@ -228,6 +228,74 @@ fn a_lone_near_miss_names_the_command_and_a_task_still_runs() {
 }
 
 #[test]
+fn a_lone_word_that_is_one_nested_command_names_its_path() {
+    let merged = commands::product::augment(Cli::command());
+    let line = |words: &[&str]| -> Vec<String> {
+        std::iter::once("hanzo")
+            .chain(words.iter().copied())
+            .map(String::from)
+            .collect()
+    };
+    let e = misspelled(&merged, &line(&["balance"])).expect("a nested command");
+    assert!(e.contains("did you mean `hanzo billing balance`?"), "{e}");
+    assert!(e.contains("`hanzo dev \"balance\"`"), "{e}");
+    let e = misspelled(&merged, &line(&["quota"])).expect("a nested command");
+    assert!(e.contains("did you mean `hanzo sandbox quota`?"), "{e}");
+    let e = misspelled(&merged, &line(&["undeploy"])).expect("a nested command");
+    assert!(
+        e.contains("did you mean `hanzo ai deployments owner undeploy`"),
+        "{e}"
+    );
+    // An exact nested command (`billing mode`) and a near top-level one (`model`):
+    // the exact path comes first, the near command second.
+    let e = misspelled(&merged, &line(&["mode"])).expect("exact nested + near top-level");
+    assert!(
+        e.contains("did you mean `hanzo billing mode` or `hanzo model`?"),
+        "{e}"
+    );
+
+    // `create` is a verb in dozens of groups: ambiguous, so still a task.
+    assert!(misspelled(&merged, &line(&["create"])).is_none());
+    // Explicit `hanzo dev balance` is never intercepted by `misspelled`.
+    assert!(misspelled(&merged, &line(&["dev", "balance"])).is_none());
+    assert!(
+        misspelled(&merged, &line(&["nowhere-in-the-tree"])).is_none(),
+        "a word that is no command anywhere is a task"
+    );
+}
+
+#[test]
+fn only_a_unique_nested_match_is_named() {
+    use clap::Command;
+    let tree = Command::new("hanzo")
+        .subcommand(Command::new("status"))
+        .subcommand(
+            Command::new("ops")
+                .subcommand(Command::new("go"))
+                .subcommand(Command::new("stauts"))
+                .subcommand(Command::new("only").alias("solo"))
+                .subcommand(
+                    Command::new("quiet")
+                        .hide(true)
+                        .subcommand(Command::new("hush")),
+                ),
+        )
+        .subcommand(Command::new("ci").subcommand(Command::new("go")));
+    let line = |w: &str| vec!["hanzo".to_string(), w.to_string()];
+    assert!(misspelled(&tree, &line("go")).is_none(), "two: a task");
+    let e = misspelled(&tree, &line("solo")).expect("an alias");
+    assert!(e.contains("did you mean `hanzo ops only`?"), "{e}");
+    assert!(misspelled(&tree, &line("hush")).is_none(), "hidden");
+    let e = misspelled(&tree, &line("stauts")).expect("exact, and near status");
+    assert!(
+        e.contains("did you mean `hanzo ops stauts` or `hanzo status`?"),
+        "{e}"
+    );
+    let e = misspelled(&tree, &line("statuss")).expect("a near top-level command");
+    assert!(e.contains("did you mean `hanzo status`?"), "{e}");
+}
+
+#[test]
 fn code_session_alias_rewrites_to_dev_while_code_index_ops_stay() {
     let merged = commands::product::augment(Cli::command());
     let argv = |line: &str| -> Vec<String> {
