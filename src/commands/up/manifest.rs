@@ -358,6 +358,7 @@ pub(crate) fn install_cmd(strict_registry: bool) -> Result<String> {
 
 pub(crate) fn has_workload_overrides(boot: &Boot) -> bool {
     boot.cloud != CLOUD
+        || boot.strict_registry
         || boot.staged.is_some()
         || boot.iam_issuer.is_some()
         || boot.ai_base_url.is_some()
