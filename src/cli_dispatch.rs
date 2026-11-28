@@ -5,12 +5,12 @@ use colored::*;
 
 use crate::commands::dev::Target;
 use crate::commands::lifecycle::{self, resources, UpMode};
+use crate::{commands, config};
 use crate::{
     first_word, iam, warn, AppCommands, AuthCommands, BotCommands, ChainCommands, Commands,
-    ConfigCommands, EngineCommands, HostCommands, LinkCommands, ModelCommands,
-    NetworkCommands, RunnerCommands, SandboxCommands, ServiceCommands, UpCommands, WalletCommands,
+    ConfigCommands, EngineCommands, HostCommands, LinkCommands, ModelCommands, NetworkCommands,
+    RunnerCommands, SandboxCommands, ServiceCommands, UpCommands, WalletCommands,
 };
-use crate::{commands, config};
 
 pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> Result<()> {
     match command {
@@ -29,9 +29,7 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
         Commands::Dev(args) => {
             commands::dev::session(&mut config, args.dev("hanzo dev")?, Target::Repo).await?
         }
-        Commands::Run { target, args } => {
-            resources::run_target(&mut config, target, args).await?
-        }
+        Commands::Run { target, args } => resources::run_target(&mut config, target, args).await?,
         Commands::Login {
             brand,
             provider,
@@ -259,9 +257,11 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
                 }
                 Some(UpCommands::Console) => commands::up::dashboard()?,
                 Some(UpCommands::Status) => commands::up::status().await?,
-                Some(UpCommands::Down { vm }) => {
-                    lifecycle::env_down(&mut config, vm, false, false).await?
-                }
+                Some(UpCommands::Down {
+                    vm,
+                    cloud,
+                    all_workloads,
+                }) => lifecycle::env_down(&mut config, vm, cloud, all_workloads).await?,
                 Some(UpCommands::Supervise { runtime_only }) => {
                     commands::up::supervise(&mut config, boot, runtime_only).await?
                 }
@@ -280,8 +280,15 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             native,
             strict_registry,
         } => {
-            lifecycle::runtime_start(&mut config, cpus, memory, disk_size, native, strict_registry)
-                .await?;
+            lifecycle::runtime_start(
+                &mut config,
+                cpus,
+                memory,
+                disk_size,
+                native,
+                strict_registry,
+            )
+            .await?;
         }
         Commands::Stop => lifecycle::runtime_stop(&mut config).await?,
         Commands::Restart {

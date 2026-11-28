@@ -210,19 +210,66 @@ pub(crate) fn host_native_k3s_active() -> bool {
 /// Sync host-native Linux k3s kubeconfig into `~/.kube/hanzo.yaml` when readable.
 pub(crate) fn adopt_native_linux_kubeconfig() -> Result<PathBuf> {
     let dest = kubeconfig_path()?;
-    for src in ["/etc/hanzo/kubeconfig", "/etc/rancher/k3s/k3s.yaml"] {
-        let p = Path::new(src);
-        if let Ok(raw) = std::fs::read_to_string(p) {
-            write_kubeconfig(&dest, &rewrite_server(&raw))?;
-            return Ok(dest);
+    adopt_native_linux_kubeconfig_from(
+        &[
+            Path::new("/etc/hanzo/kubeconfig"),
+            Path::new("/etc/rancher/k3s/k3s.yaml"),
+        ],
+        &dest,
+    )
+}
+
+pub(crate) fn adopt_native_linux_kubeconfig_from(
+    candidates: &[&Path],
+    dest: &Path,
+) -> Result<PathBuf> {
+    let mut permission_denied: Option<PathBuf> = None;
+    for p in candidates {
+        match std::fs::read_to_string(p) {
+            Ok(raw) => {
+                write_kubeconfig(dest, &rewrite_server(&raw))?;
+                return Ok(dest.to_path_buf());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                if permission_denied.is_none() {
+                    permission_denied = Some((*p).to_path_buf());
+                }
+            }
+            Err(_) => {}
         }
     }
     if dest.is_file() {
-        return Ok(dest);
+        return Ok(dest.to_path_buf());
     }
-    bail!(
-        "native Linux k3s requested, but no readable kubeconfig was found at \
-         /etc/hanzo/kubeconfig, /etc/rancher/k3s/k3s.yaml, or {}",
+    Err(classify_kubeconfig_adoption_error(
+        permission_denied.as_deref(),
+        candidates,
+        dest,
+    ))
+}
+
+pub(crate) fn classify_kubeconfig_adoption_error(
+    denied: Option<&Path>,
+    candidates: &[&Path],
+    dest: &Path,
+) -> anyhow::Error {
+    if let Some(src) = denied {
+        return anyhow!(
+            "permission denied reading {} for native Linux k3s.\n\
+             Copy it with readable permissions (or configure k3s `--write-kubeconfig-mode 644`):\n  \
+               mkdir -p ~/.kube && sudo install -m 600 -o $USER {} {}",
+            src.display(),
+            src.display(),
+            dest.display()
+        );
+    }
+    let searched = candidates
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow!(
+        "native Linux k3s requested, but no readable kubeconfig was found at {searched}, or {}",
         dest.display()
     )
 }
@@ -298,6 +345,7 @@ pub async fn up(
     let mut resumed_from_state = false;
     let native_warm = running(&dir, SUPERVISOR).is_none() && host_native_k3s_active();
     if running(&dir, SUPERVISOR).is_none() && !native_warm && persist::has_state_checkpoint() {
+        vm::preflight_host()?;
         collect_orphan_vm(&dir, "hanzo down")?;
         let _ = vm::resolve_or_install().await?;
         write_state(&dir, "starting");
@@ -317,6 +365,7 @@ pub async fn up(
         return res;
     }
 
+    vm::preflight_host()?;
     collect_orphan_vm(&dir, "hanzo down")?;
 
     let has_hanzo_oci = !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
@@ -615,7 +664,17 @@ pub async fn status() -> Result<()> {
 
 /// `hanzo start` — boot the local Hanzo runtime (microVM or native Linux k3s)
 /// without deploying Cloud or user workloads.
+#[cfg_attr(windows, allow(unreachable_code, unused_variables))]
 pub async fn start(cfg: &mut Config, boot: Boot, prefer_native: bool) -> Result<()> {
+    #[cfg(windows)]
+    {
+        bail!(
+            "`hanzo start` boots a Linux k3s microVM (`hanzo-vm`), which is not supported natively on Windows.\n\
+             Either run `hanzo up` for the native Windows local Cloud host, or run `hanzo start` inside WSL2:\n  \
+               wsl --install   # if WSL2 is not set up yet"
+        );
+    }
+
     let dir = up_dir()?;
     if let Some(pid) = running(&dir, SUPERVISOR) {
         let state = read_state(&dir).unwrap_or_else(|| "unknown".into());
@@ -663,6 +722,7 @@ pub async fn start(cfg: &mut Config, boot: Boot, prefer_native: bool) -> Result<
         }
     }
 
+    vm::preflight_host()?;
     collect_orphan_vm(&dir, "hanzo stop")?;
     let bin = vm::resolve_or_install().await?;
     if !persist::has_state_checkpoint() {

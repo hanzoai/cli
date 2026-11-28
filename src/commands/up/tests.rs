@@ -838,3 +838,56 @@ fn resuming_preserves_local_image_and_bound_pvc_size() {
     let saved_ground = ground(8192);
     assert_eq!(persist::existing_claim_mb(&saved_ground), Some(8192));
 }
+
+#[test]
+fn native_linux_kubeconfig_and_stale_kubeconfig_errors_include_remediation() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("k3s.yaml");
+    let dest = dir.path().join("hanzo.yaml");
+    std::fs::write(&src, "server: https://0.0.0.0:6443\n").unwrap();
+
+    let adopted = adopt_native_linux_kubeconfig_from(&[&src], &dest).unwrap();
+    assert_eq!(adopted, dest);
+    assert_eq!(
+        std::fs::read_to_string(&dest).unwrap(),
+        "server: https://127.0.0.1:6443\n"
+    );
+
+    let missing_dest = dir.path().join("absent-dest.yaml");
+    let missing_src = dir.path().join("absent-src.yaml");
+    let missing_err = adopt_native_linux_kubeconfig_from(&[&missing_src], &missing_dest)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        missing_err.contains("no readable kubeconfig was found"),
+        "{missing_err}"
+    );
+
+    let denied_err = classify_kubeconfig_adoption_error(
+        Some(Path::new("/etc/rancher/k3s/k3s.yaml")),
+        &[Path::new("/etc/rancher/k3s/k3s.yaml")],
+        Path::new("/home/dev/.kube/hanzo.yaml"),
+    )
+    .to_string();
+    assert!(
+        denied_err.contains("permission denied reading"),
+        "{denied_err}"
+    );
+    assert!(denied_err.contains("sudo install -m 600"), "{denied_err}");
+
+    let corrupt = dir.path().join("corrupt.yaml");
+    std::fs::write(&corrupt, "not: [valid: kubeconfig").unwrap();
+    let err = KubeClient::from_kubeconfig(&corrupt)
+        .err()
+        .expect("corrupt kubeconfig must fail")
+        .to_string();
+    assert!(err.contains("rm -f"), "{err}");
+    assert!(err.contains("hanzo start"), "{err}");
+
+    let absent = dir.path().join("does-not-exist.yaml");
+    let err = KubeClient::from_kubeconfig(&absent)
+        .err()
+        .expect("missing kubeconfig must fail")
+        .to_string();
+    assert!(err.contains("rm -f"), "{err}");
+}

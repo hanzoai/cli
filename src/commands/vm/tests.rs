@@ -294,3 +294,44 @@ fn vm_virtualization_preflight_gating_skips_info_subcommands() {
     ])));
     assert!(args_need_virtualization(&s(&["run", "--stdio"])));
 }
+
+#[test]
+fn linux_aarch64_and_macos_virtualization_preflight_return_actionable_errors() {
+    let missing_arm = check_linux_kvm(KvmState::Missing, "aarch64")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        missing_arm.contains("/dev/kvm does not exist"),
+        "{missing_arm}"
+    );
+    assert!(missing_arm.contains("modprobe kvm"), "{missing_arm}");
+
+    let perm_arm = check_linux_kvm(KvmState::Unreadable, "aarch64")
+        .unwrap_err()
+        .to_string();
+    assert!(perm_arm.contains("usermod -aG kvm $USER"), "{perm_arm}");
+    assert!(perm_arm.contains("newgrp kvm"), "{perm_arm}");
+    check_linux_kvm(KvmState::Available, "aarch64").unwrap();
+
+    let intel_mac = check_macos_virtualization_host("x86_64", Some(1), Some(true))
+        .unwrap_err()
+        .to_string();
+    assert!(intel_mac.contains("Apple Silicon"), "{intel_mac}");
+
+    let no_hv = check_macos_virtualization_host("aarch64", Some(0), Some(true))
+        .unwrap_err()
+        .to_string();
+    assert!(no_hv.contains("kern.hv_support=0"), "{no_hv}");
+
+    let unsigned = check_macos_virtualization_host("aarch64", Some(1), Some(false))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        unsigned.contains("com.apple.security.virtualization"),
+        "{unsigned}"
+    );
+    assert!(unsigned.contains("hanzo reset --all"), "{unsigned}");
+
+    check_macos_virtualization_host("aarch64", Some(1), Some(true)).unwrap();
+    check_macos_virtualization_host("aarch64", Some(1), None).unwrap();
+}

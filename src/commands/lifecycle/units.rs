@@ -1,5 +1,51 @@
-//! Human-readable memory & disk size parsing and formatting for canonical
+//! Human-readable memory, disk & CPU parsing and formatting for canonical
 //! lifecycle commands (`32GiB`, `8GiB`, `8192MiB`, `512MiB`, plain `4096` = MiB).
+
+pub const MAX_CPUS: u32 = 256;
+pub const MIN_MEMORY_MB: u64 = 256;
+pub const MIN_DISK_MB: u64 = 1024;
+
+/// Parse a `--cpus` value (`1..=256`) with actionable remediation guidance.
+pub fn parse_cpus(input: &str) -> std::result::Result<u32, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("`--cpus` cannot be empty (expected 1..=256, e.g. `--cpus 4`)".into());
+    }
+    let n: u32 = trimmed.parse().map_err(|_| {
+        format!("invalid `--cpus` value `{input}`: expected a whole number 1..={MAX_CPUS} (e.g. `--cpus 4`)")
+    })?;
+    if n == 0 {
+        return Err("`--cpus` must be at least 1 (e.g. `--cpus 4`)".into());
+    }
+    if n > MAX_CPUS {
+        return Err(format!(
+            "`--cpus {n}` exceeds maximum {MAX_CPUS} vCPUs; pass a value in 1..={MAX_CPUS}"
+        ));
+    }
+    Ok(n)
+}
+
+/// Parse a `--memory` value into MiB (`>= 256 MiB`).
+pub fn parse_memory_mb(input: &str) -> std::result::Result<u64, String> {
+    let mb = parse_size_mb(input)?;
+    if mb < MIN_MEMORY_MB {
+        return Err(format!(
+            "`--memory {input}` ({mb} MiB) is below minimum {MIN_MEMORY_MB} MiB (e.g. `--memory 4GiB` or `--memory 512MiB`)"
+        ));
+    }
+    Ok(mb)
+}
+
+/// Parse a `--disk` / `--disk-size` value into MiB (`>= 1 GiB / 1024 MiB`).
+pub fn parse_disk_mb(input: &str) -> std::result::Result<u64, String> {
+    let mb = parse_size_mb(input)?;
+    if mb < MIN_DISK_MB {
+        return Err(format!(
+            "`--disk {input}` ({mb} MiB) is below minimum 1 GiB / {MIN_DISK_MB} MiB (e.g. `--disk 32GiB` or `--disk 8192MiB`)"
+        ));
+    }
+    Ok(mb)
+}
 
 /// Parse a size specification into MiB (`u64`).
 ///
@@ -32,8 +78,8 @@ pub fn parse_size_mb(input: &str) -> std::result::Result<u64, String> {
         "t" | "tb" | "tib" => parse_scaled(&num_part, 1024 * 1024, input)?,
         _ => {
             return Err(format!(
-                "unsupported unit in `{input}` (use GiB, GB, G, MiB, MB, M, TiB, or plain MiB integer)"
-            ))
+            "unsupported unit in `{input}` (use GiB, GB, G, MiB, MB, M, TiB, or plain MiB integer)"
+        ))
         }
     };
 

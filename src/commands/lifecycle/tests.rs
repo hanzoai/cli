@@ -13,7 +13,7 @@ use super::project::{
     resolve_registered_app, save_state_to, slugify, upsert_detected_app, DesiredState,
 };
 use super::resources::{is_vm_lifecycle_verb, parse_vm_lifecycle, VmLifecycleCommand};
-use super::units::{format_size_mb, parse_size_mb};
+use super::units::{format_size_mb, parse_cpus, parse_disk_mb, parse_memory_mb, parse_size_mb};
 
 #[test]
 fn parse_size_mb_conformance() {
@@ -48,20 +48,15 @@ fn vm_lifecycle_subcommands_parse_and_preserve_passthrough() {
     assert!(is_vm_lifecycle_verb(&s(&["status"])));
 
     // Verbatim passthrough subcommands stay untouched
-    assert!(!is_vm_lifecycle_verb(&s(&["run", "--cpus", "2", "echo", "hi"])));
+    assert!(!is_vm_lifecycle_verb(&s(&[
+        "run", "--cpus", "2", "echo", "hi"
+    ])));
     assert!(!is_vm_lifecycle_verb(&s(&["checkpoint", "list"])));
     assert!(!is_vm_lifecycle_verb(&s(&["--help"])));
     assert!(!is_vm_lifecycle_verb(&s(&["--version"])));
 
     let start = parse_vm_lifecycle(&s(&[
-        "start",
-        "--cpus",
-        "8",
-        "--memory",
-        "8GiB",
-        "--disk",
-        "32GiB",
-        "--native",
+        "start", "--cpus", "8", "--memory", "8GiB", "--disk", "32GiB", "--native",
     ]))
     .expect("vm start parses");
     match start.command {
@@ -185,7 +180,10 @@ services:
     // Isolated K8s manifest uses dedicated namespace `hanzo-app-solar-crm`
     let k8s_yaml = render_app_k8s_manifest(&solar_reg, "ghcr.io/acme/solar-crm:1.0.0");
     assert!(k8s_yaml.contains("name: hanzo-app-solar-crm"), "{k8s_yaml}");
-    assert!(k8s_yaml.contains("namespace: hanzo-app-solar-crm"), "{k8s_yaml}");
+    assert!(
+        k8s_yaml.contains("namespace: hanzo-app-solar-crm"),
+        "{k8s_yaml}"
+    );
     assert!(k8s_yaml.contains("containerPort: 3000"), "{k8s_yaml}");
 
     // Simulate `hanzo down` inside `solar-crm`: stops ONLY `solar-crm`, preserving Cloud & `billing-portal`!
@@ -298,4 +296,23 @@ fn hanzod_wire_contract_deserializes_live_ps_and_doctor_and_404_falls_back() {
         "/v1/lifecycle/runtime"
     )
     .is_err());
+}
+
+#[test]
+fn resource_flag_parsers_validate_bounds_and_vm_subcommands() {
+    assert_eq!(parse_cpus("1").unwrap(), 1);
+    assert_eq!(parse_cpus("256").unwrap(), 256);
+    assert!(parse_cpus("").is_err());
+    assert!(parse_cpus("0").is_err());
+    assert!(parse_cpus("257").is_err());
+
+    assert_eq!(parse_memory_mb("256MiB").unwrap(), 256);
+    assert!(parse_memory_mb("128MiB").is_err());
+    assert_eq!(parse_disk_mb("1GiB").unwrap(), 1024);
+    assert!(parse_disk_mb("512MiB").is_err());
+
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert!(parse_vm_lifecycle(&s(&["start", "--cpus", "0"])).is_err());
+    assert!(parse_vm_lifecycle(&s(&["start", "--memory", "128MiB"])).is_err());
+    assert!(parse_vm_lifecycle(&s(&["resize", "--disk", "512MiB"])).is_err());
 }

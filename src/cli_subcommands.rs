@@ -192,8 +192,13 @@ pub(crate) enum AuthCommands {
 #[derive(Subcommand)]
 pub(crate) enum ConfigCommands {
     List,
-    Get { key: String },
-    Set { key: String, value: String },
+    Get {
+        key: String,
+    },
+    Set {
+        key: String,
+        value: String,
+    },
     #[command(hide = true)]
     Profile,
 }
@@ -287,8 +292,12 @@ pub(crate) enum UpCommands {
     #[command(alias = "ps")]
     Status,
     Down {
-        #[arg(long, alias = "all")]
+        #[arg(long, alias = "all", conflicts_with_all = ["cloud", "all_workloads"])]
         vm: bool,
+        #[arg(long, conflicts_with_all = ["vm", "all_workloads"])]
+        cloud: bool,
+        #[arg(long, conflicts_with_all = ["vm", "cloud"])]
+        all_workloads: bool,
     },
     #[command(hide = true)]
     Supervise {
@@ -366,7 +375,9 @@ pub(crate) enum SandboxCommands {
 pub(crate) enum NetworkCommands {
     List,
     Current,
-    Use { name: String },
+    Use {
+        name: String,
+    },
     Add {
         name: String,
         #[arg(long)]
@@ -444,6 +455,8 @@ pub(crate) enum WalletCommands {
         #[arg(long)]
         name: Option<String>,
     },
-    Use { address: String },
+    Use {
+        address: String,
+    },
     List,
 }

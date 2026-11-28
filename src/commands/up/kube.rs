@@ -109,10 +109,25 @@ impl KubeClient {
         })
     }
 
+    pub(crate) fn wrap_kubeconfig_error(path: &Path, err: anyhow::Error) -> anyhow::Error {
+        let msg = format!("{err:#}");
+        if msg.contains("hanzo start") || msg.contains("hanzo reset") {
+            return err;
+        }
+        anyhow!(
+            "{msg}\n\
+             Remove the stale/corrupt kubeconfig and recreate it with:\n  \
+               rm -f {} && hanzo start   # or `hanzo reset` for a clean environment",
+            path.display()
+        )
+    }
+
     pub(crate) fn from_kubeconfig(path: &Path) -> Result<Self> {
-        let yaml =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let auth = Self::parse_kubeconfig(&yaml)?;
+        let yaml = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {}", path.display()))
+            .map_err(|e| Self::wrap_kubeconfig_error(path, e))?;
+        let auth =
+            Self::parse_kubeconfig(&yaml).map_err(|e| Self::wrap_kubeconfig_error(path, e))?;
         let mut builder = reqwest::Client::builder()
             .use_rustls_tls()
             .timeout(Duration::from_secs(15));
@@ -121,12 +136,14 @@ impl KubeClient {
         }
         if let Some(ca_bytes) = &auth.ca_pem {
             let ca = reqwest::Certificate::from_pem(ca_bytes)
-                .context("loading kubeconfig CA certificate")?;
+                .context("loading kubeconfig CA certificate")
+                .map_err(|e| Self::wrap_kubeconfig_error(path, e))?;
             builder = builder.add_root_certificate(ca);
         }
         if let Some(client_bytes) = &auth.client_pem {
             let identity = reqwest::Identity::from_pem(client_bytes)
-                .context("loading kubeconfig client identity")?;
+                .context("loading kubeconfig client identity")
+                .map_err(|e| Self::wrap_kubeconfig_error(path, e))?;
             builder = builder.identity(identity);
         }
         let http = builder.build().context("building k3s API client")?;

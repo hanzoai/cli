@@ -37,15 +37,7 @@ fn canonical_runtime_and_environment_commands_parse_with_human_units() {
 
     // Human-readable size flags on `hanzo start`
     let cli = Cli::try_parse_from([
-        "hanzo",
-        "start",
-        "--disk",
-        "32GiB",
-        "--memory",
-        "8GiB",
-        "--cpus",
-        "8",
-        "--native",
+        "hanzo", "start", "--disk", "32GiB", "--memory", "8GiB", "--cpus", "8", "--native",
     ])
     .expect("start with 32GiB/8GiB parses");
     assert!(matches!(
@@ -119,8 +111,8 @@ fn canonical_runtime_and_environment_commands_parse_with_human_units() {
         })
     ));
 
-    let cloud_only = Cli::try_parse_from(["hanzo", "up", "--cloud-only"])
-        .expect("up --cloud-only parses");
+    let cloud_only =
+        Cli::try_parse_from(["hanzo", "up", "--cloud-only"]).expect("up --cloud-only parses");
     assert!(matches!(
         cloud_only.command,
         Some(Commands::Up {
@@ -227,8 +219,8 @@ fn canonical_resource_vocabulary_parses_cleanly() {
     ));
 
     // Models: `hanzo model pull|run|list` AND `hanzo models list` cloud catalog stays untouched!
-    let m_pull = Cli::try_parse_from(["hanzo", "model", "pull", "zenlm/zen-nano-0.6b"])
-        .expect("model pull");
+    let m_pull =
+        Cli::try_parse_from(["hanzo", "model", "pull", "zenlm/zen-nano-0.6b"]).expect("model pull");
     assert!(matches!(
         m_pull.command,
         Some(Commands::Model {
@@ -315,6 +307,87 @@ fn canonical_resource_vocabulary_parses_cleanly() {
         Some(Commands::Status {
             infer: false,
             local: true
+        })
+    ));
+}
+
+#[test]
+fn lifecycle_resource_flags_and_down_conflicts_validate_cleanly() {
+    // `--cpus` accepts 1..=256 and rejects out-of-range or non-numeric values.
+    assert!(matches!(
+        Cli::try_parse_from(["hanzo", "start", "--cpus", "1"])
+            .unwrap()
+            .command,
+        Some(Commands::Start { cpus: 1, .. })
+    ));
+    assert!(matches!(
+        Cli::try_parse_from(["hanzo", "start", "--cpus", "256"])
+            .unwrap()
+            .command,
+        Some(Commands::Start { cpus: 256, .. })
+    ));
+    for bad in ["0", "257", "abc"] {
+        let err = Cli::try_parse_from(["hanzo", "start", "--cpus", bad])
+            .err()
+            .expect("invalid --cpus must fail")
+            .to_string();
+        assert!(err.contains("--cpus"), "{err}");
+    }
+
+    // `--memory` enforces >= 256 MiB and `--disk` / `--disk-size` enforces >= 1 GiB.
+    assert!(matches!(
+        Cli::try_parse_from([
+            "hanzo",
+            "up",
+            "--memory",
+            "256MiB",
+            "--disk",
+            "1GiB",
+            "--cloud-only"
+        ])
+        .unwrap()
+        .command,
+        Some(Commands::Up {
+            memory: 256,
+            disk_size: 1024,
+            cloud_only: true,
+            ..
+        })
+    ));
+    let low_mem = Cli::try_parse_from(["hanzo", "up", "--memory", "128MiB"])
+        .err()
+        .expect("under-minimum memory must fail")
+        .to_string();
+    assert!(low_mem.contains("256 MiB"), "{low_mem}");
+
+    let low_disk = Cli::try_parse_from(["hanzo", "start", "--disk", "512MiB"])
+        .err()
+        .expect("under-minimum disk must fail")
+        .to_string();
+    assert!(low_disk.contains("1024 MiB"), "{low_disk}");
+
+    let restart_low_cpu = Cli::try_parse_from(["hanzo", "restart", "--cpus", "0"])
+        .err()
+        .expect("restart --cpus 0 must fail")
+        .to_string();
+    assert!(restart_low_cpu.contains("--cpus"), "{restart_low_cpu}");
+
+    // `hanzo down` and `hanzo up down` reject conflicting scope flags and support `--vm` / `--cloud` / `--all-workloads`.
+    assert!(Cli::try_parse_from(["hanzo", "down", "--vm", "--cloud"]).is_err());
+    assert!(Cli::try_parse_from(["hanzo", "down", "--vm", "--all-workloads"]).is_err());
+    assert!(Cli::try_parse_from(["hanzo", "down", "--cloud", "--all-workloads"]).is_err());
+    assert!(Cli::try_parse_from(["hanzo", "up", "down", "--vm", "--cloud"]).is_err());
+    assert!(matches!(
+        Cli::try_parse_from(["hanzo", "up", "down", "--cloud"])
+            .unwrap()
+            .command,
+        Some(Commands::Up {
+            command: Some(UpCommands::Down {
+                vm: false,
+                cloud: true,
+                all_workloads: false,
+            }),
+            ..
         })
     ));
 }
