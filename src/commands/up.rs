@@ -21,21 +21,32 @@ use crate::commands::vm::{self, alive};
 use crate::config::Config;
 use crate::image;
 
+pub(crate) mod budget;
 pub mod compute;
+#[cfg(unix)]
+pub(crate) mod control;
+pub mod diagnose;
 pub(crate) mod kube;
+#[cfg(unix)]
+pub(crate) mod load;
+#[cfg(unix)]
+pub(crate) mod local;
 pub(crate) mod manifest;
+pub(crate) mod persist;
 pub mod savings;
 pub(crate) mod supervisor;
 pub mod tui;
 
 pub(crate) use kube::KubeClient;
+use manifest::install_cmd;
 pub use manifest::{discover_app_manifest, select_cloud_image};
 #[cfg(test)]
-use manifest::ground;
-use manifest::{has_workload_overrides, install_cmd, workload_for};
+use manifest::{ground_for, has_workload_overrides, workload_for};
 pub use supervisor::{attest, supervise};
 #[cfg(test)]
-pub(crate) use supervisor::{deployed, measured, node_ready, record, run_args, server_argv};
+pub(crate) use supervisor::{
+    deployed, measured, node_ready, record, run_args, run_args_in, server_argv,
+};
 pub(crate) use supervisor::{rewrite_server, write_kubeconfig};
 
 #[cfg(test)]
@@ -53,6 +64,10 @@ pub struct Boot {
     pub iam_issuer: Option<String>,
     pub ai_base_url: Option<String>,
     pub strict_registry: bool,
+    /// The OCI image layout `cloud` was loaded from, when it names an image this
+    /// machine built (`hanzo up --local`). Such an image is in the runtime's own
+    /// store or nowhere: it is never resolved against a registry and never pulled.
+    pub local: Option<String>,
 }
 
 pub(crate) const K3S_PORT: u16 = 6443;
@@ -68,7 +83,9 @@ pub const CLOUD_OCI: &str = "oci.hanzo.ai/hanzoai/cloud-oss:main";
 pub(crate) const DATA: &str = "/var/lib/hanzo";
 pub(crate) const KUBECONFIG: &str = "/etc/hanzo/kubeconfig";
 pub(crate) const GROUND: &str = "/var/lib/hanzo/server/manifests/cloud-ns.yaml";
-pub(crate) const WORKLOAD: &str = "/var/lib/hanzo/server/manifests/cloud.yaml";
+/// Outside k3s's manifests directory on purpose: the supervisor applies it, once
+/// the pod's credentials exist (`supervisor::apply_workload`).
+pub(crate) const WORKLOAD: &str = "/var/lib/hanzo/workload/cloud.yaml";
 pub(crate) const KEYFILE: &str = "/dev/shm/.hanzo-cloud-master";
 pub(crate) const KEYFILE_FALLBACK: &str = "/run/.hanzo-cloud-master";
 pub(crate) const PULLFILE: &str = "/dev/shm/.hanzo-registry-pull";
@@ -251,89 +268,10 @@ pub async fn up(
         return finish_link(cfg, link).await;
     }
 
-    let native_warm = running(&dir, SUPERVISOR).is_none() && host_native_k3s_active();
-    if running(&dir, SUPERVISOR).is_some() || native_warm {
-        let pid = running(&dir, SUPERVISOR).unwrap_or(0);
-        let state = read_state(&dir).unwrap_or_else(|| {
-            if native_warm {
-                "native-linux".into()
-            } else {
-                "unknown".into()
-            }
-        });
-        let kc = if native_warm {
-            adopt_native_linux_kubeconfig()?
-        } else {
-            kubeconfig_path()?
-        };
-        let overrides = has_workload_overrides(&boot);
-        if kc.exists() {
-            if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
-                let replicas = kube.cloud_replicas().await.ok().flatten();
-                if overrides || replicas.is_none() {
-                    let has_hanzo_oci =
-                        !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
-                    let selected_image =
-                        select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
-                    let pinned = Boot {
-                        cloud: image::pin_with_config(
-                            &reqwest::Client::new(),
-                            &selected_image,
-                            image::architecture(),
-                            cfg,
-                        )
-                        .await?,
-                        ..boot
-                    };
-                    let manifest = workload_for(&pinned)?;
-                    kube.apply_workload(&manifest).await?;
-                    write_state(&dir, "ready");
-                    let verb = if replicas.is_none() {
-                        "deployed"
-                    } else {
-                        "updated & started"
-                    };
-                    if native_warm {
-                        println!("{} hanzo {verb} on native Linux k3s", "✓".green());
-                    } else {
-                        println!(
-                            "{} hanzo {verb} on warm k3s (supervisor pid {pid} — skipped VM boot & kube-system pulls)",
-                            "✓".green()
-                        );
-                    }
-                } else if state == "stopped" || replicas == Some(0) {
-                    kube.scale_cloud(1).await?;
-                    write_state(&dir, "ready");
-                    println!(
-                        "{} hanzo started on warm k3s (skipped VM boot & image pulls)",
-                        "✓".green()
-                    );
-                } else if native_warm {
-                    println!("{} already running (native Linux k3s, {state})", "●".green());
-                } else {
-                    println!(
-                        "{} already running (supervisor pid {pid}, {state})",
-                        "●".green()
-                    );
-                }
-            }
-        }
-        endpoints()?;
-        let res = finish_link(cfg, link).await;
-        if ui || (!no_ui && std::io::stdout().is_terminal()) {
-            return tui::run_dashboard();
-        }
-        return res;
-    }
-
-    if let Some(pid) = running(&dir, VM) {
-        crate::warn(&format!(
-            "collecting an orphaned vm (pid {pid}) from an earlier boot"
-        ));
-        if !stop(pid, Duration::from_secs(10)) {
-            bail!("an earlier vm (pid {pid}) is still running — `hanzo down` first");
-        }
-        clear_pid(&dir, VM);
+    // An image this machine built takes its own road: it is loaded, never resolved
+    // against a registry, so none of what follows applies to it.
+    if boot.local.is_some() {
+        return up_local(cfg, boot, None, link, ui, no_ui).await;
     }
 
     let mut boot = boot;
@@ -357,6 +295,30 @@ pub async fn up(
         }
     }
 
+    let mut resumed_from_state = false;
+    let native_warm = running(&dir, SUPERVISOR).is_none() && host_native_k3s_active();
+    if running(&dir, SUPERVISOR).is_none() && !native_warm && persist::has_state_checkpoint() {
+        collect_orphan_vm(&dir, "hanzo down")?;
+        let _ = vm::resolve_or_install().await?;
+        write_state(&dir, "starting");
+        spawn_supervisor(&dir, &boot, cfg.org.as_deref(), true)?;
+        wait_ready_state(&dir)?;
+        resumed_from_state = true;
+    }
+
+    if running(&dir, SUPERVISOR).is_some() || native_warm {
+        persist::reconcile_warm_cluster(cfg, &dir, boot, native_warm, resumed_from_state).await?;
+        let hanzod_ready = register_hanzod_upstream().await;
+        endpoints_with_hanzod(hanzod_ready)?;
+        let res = finish_link(cfg, link).await;
+        if ui || (!no_ui && std::io::stdout().is_terminal()) {
+            return tui::run_dashboard();
+        }
+        return res;
+    }
+
+    collect_orphan_vm(&dir, "hanzo down")?;
+
     let has_hanzo_oci = !image::credentials_for("oci.hanzo.ai", cfg).await.is_empty();
     let selected_image = select_cloud_image(&boot.cloud, boot.strict_registry, has_hanzo_oci)?;
 
@@ -377,12 +339,39 @@ pub async fn up(
     write_state(&dir, "starting");
     spawn_supervisor(&dir, &boot, cfg.org.as_deref(), false)?;
     wait_ready_state(&dir)?;
+    write_state(&dir, "cloud-starting");
+    KubeClient::from_kubeconfig(&kubeconfig_path()?)?
+        .rollout("hanzo", "cloud", UP_TIMEOUT)
+        .await?;
+    write_state(&dir, "ready");
     println!(
-        "{} k3s is up — API at https://127.0.0.1:{K3S_PORT}",
+        "{} k3s & Cloud are up — API at https://127.0.0.1:{K3S_PORT}",
         "✓".green()
     );
-    let hanzod_ready = match host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await
-    {
+    let hanzod_ready = register_hanzod_upstream().await;
+    endpoints_with_hanzod(hanzod_ready)?;
+    let res = finish_link(cfg, link).await;
+    if ui || (!no_ui && std::io::stdout().is_terminal()) {
+        return tui::run_dashboard();
+    }
+    res
+}
+
+fn collect_orphan_vm(dir: &Path, hint: &str) -> Result<()> {
+    if let Some(pid) = running(dir, VM) {
+        crate::warn(&format!(
+            "collecting an orphaned vm (pid {pid}) from an earlier boot"
+        ));
+        if !stop(pid, Duration::from_secs(10)) {
+            bail!("an earlier vm (pid {pid}) is still running — `{hint}` first");
+        }
+        clear_pid(dir, VM);
+    }
+    Ok(())
+}
+
+async fn register_hanzod_upstream() -> bool {
+    match host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await {
         Ok(()) => true,
         Err(e) => {
             eprintln!(
@@ -393,13 +382,49 @@ pub async fn up(
             );
             false
         }
-    };
-    endpoints_with_hanzod(hanzod_ready)?;
+    }
+}
+
+/// `hanzo up --local`: Cloud from an image this machine built (`up/local.rs`).
+/// `built` is how long the checkout's own build took, when this invocation ran it.
+#[cfg(unix)]
+pub async fn up_local(
+    cfg: &mut Config,
+    boot: Boot,
+    built: Option<Duration>,
+    link: Option<String>,
+    ui: bool,
+    no_ui: bool,
+) -> Result<()> {
+    local::up(cfg, boot, built).await?;
     let res = finish_link(cfg, link).await;
     if ui || (!no_ui && std::io::stdout().is_terminal()) {
         return tui::run_dashboard();
     }
     res
+}
+
+#[cfg(not(unix))]
+pub async fn up_local(
+    _cfg: &mut Config,
+    _boot: Boot,
+    _built: Option<Duration>,
+    _link: Option<String>,
+    _ui: bool,
+    _no_ui: bool,
+) -> Result<()> {
+    bail!("`hanzo up --local` needs the microVM runtime, which this platform does not have")
+}
+
+/// Run a checkout's declared local build and answer the image layout it wrote.
+#[cfg(unix)]
+pub fn prepare_local(arg: &str, cwd: &Path) -> Result<(String, Duration)> {
+    local::prepare(arg, cwd)
+}
+
+#[cfg(not(unix))]
+pub fn prepare_local(_arg: &str, _cwd: &Path) -> Result<(String, Duration)> {
+    bail!("`hanzo up --local` needs the microVM runtime, which this platform does not have")
 }
 
 pub fn dashboard() -> Result<()> {
@@ -411,6 +436,7 @@ pub fn console() -> Result<()> {
     tui::run_dashboard()
 }
 
+#[cfg(windows)]
 fn endpoints() -> Result<()> {
     endpoints_with_hanzod(true)
 }
@@ -436,12 +462,7 @@ pub(crate) fn format_endpoints(kubeconfig: &Path, hanzod_ready: bool) -> String 
     )
 }
 
-fn spawn_supervisor(
-    dir: &Path,
-    boot: &Boot,
-    org: Option<&str>,
-    runtime_only: bool,
-) -> Result<u32> {
+fn spawn_supervisor(dir: &Path, boot: &Boot, org: Option<&str>, runtime_only: bool) -> Result<u32> {
     let exe = std::env::current_exe().context("resolving our own binary")?;
     let path = dir.join("supervisor.log");
     let log = std::fs::OpenOptions::new()
@@ -604,9 +625,12 @@ pub async fn start(cfg: &mut Config, boot: Boot, prefer_native: bool) -> Result<
         );
         return Ok(());
     }
-    let env_native = std::env::var("HANZO_RUNTIME")
-        .ok()
-        .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "native" | "native-linux"));
+    let env_native = std::env::var("HANZO_RUNTIME").ok().is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "native" | "native-linux"
+        )
+    });
     if (prefer_native || env_native || host_native_k3s_active()) && cfg!(target_os = "linux") {
         if host_native_k3s_active() {
             let kc = adopt_native_linux_kubeconfig()?;
@@ -639,35 +663,58 @@ pub async fn start(cfg: &mut Config, boot: Boot, prefer_native: bool) -> Result<
         }
     }
 
-    if let Some(pid) = running(&dir, VM) {
-        crate::warn(&format!(
-            "collecting an orphaned vm (pid {pid}) from an earlier boot"
-        ));
-        if !stop(pid, Duration::from_secs(10)) {
-            bail!("an earlier vm (pid {pid}) is still running — `hanzo stop` first");
-        }
-        clear_pid(&dir, VM);
-    }
+    collect_orphan_vm(&dir, "hanzo stop")?;
     let bin = vm::resolve_or_install().await?;
-    let k3s_install = install_cmd(boot.strict_registry)?;
-    vm::ensure_checkpoint(&bin, &checkpoint(), &k3s_install)?;
+    if !persist::has_state_checkpoint() {
+        let k3s_install = install_cmd(boot.strict_registry)?;
+        vm::ensure_checkpoint(&bin, &checkpoint(), &k3s_install)?;
+    }
 
     write_state(&dir, "starting");
     spawn_supervisor(&dir, &boot, cfg.org.as_deref(), true)?;
     wait_ready_state(&dir)?;
+
+    let kc = kubeconfig_path()?;
+    if kc.is_file() {
+        if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
+            if kube
+                .cloud_replicas()
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|r| r > 0)
+            {
+                kube.rollout("hanzo", "cloud", UP_TIMEOUT).await?;
+                write_state(&dir, "ready");
+                let _ = host::register_upstream(Some(&format!("127.0.0.1:{LOCAL_PORT}"))).await;
+                println!(
+                    "{} Hanzo runtime & Cloud resumed — Ready at http://127.0.0.1:{LOCAL_PORT} (API at https://127.0.0.1:{K3S_PORT})",
+                    "✓".green()
+                );
+                println!("  export KUBECONFIG={}", kc.display());
+                return Ok(());
+            }
+        }
+    }
+
     println!(
         "{} Hanzo runtime started — k3s Ready at https://127.0.0.1:{K3S_PORT} (run `hanzo up` to start Cloud)",
         "✓".green()
     );
-    println!("  export KUBECONFIG={}", kubeconfig_path()?.display());
+    println!("  export KUBECONFIG={}", kc.display());
     Ok(())
 }
 
-/// `hanzo stop` — gracefully drain workloads (Cloud + user apps), stop k3s and
-/// shut down the microVM; leave `hanzod` running.
+/// `hanzo stop` — gracefully drain workloads (Cloud + user apps), checkpoint
+/// the live ext4 disk, stop k3s and shut down the microVM; leave `hanzod` running.
 pub async fn stop_runtime() -> Result<()> {
+    stop_runtime_saving(true).await
+}
+
+pub(crate) async fn stop_runtime_saving(save: bool) -> Result<()> {
     #[cfg(windows)]
     if let Some(_pid) = host::stop_recorded_pid()? {
+        let _ = save;
         let dir = up_dir()?;
         write_state(&dir, "down");
         println!("{} local cloud stopped", "✓".green());
@@ -697,15 +744,45 @@ pub async fn stop_runtime() -> Result<()> {
         println!("{} not running", "○".dimmed());
         return Ok(());
     }
-    if supervisor.is_some() {
-        if let Ok(kc) = kubeconfig_path() {
-            if kc.exists() {
-                if let Ok(kube) = KubeClient::from_kubeconfig(&kc) {
-                    let _ = kube.scale_cloud(0).await;
+
+    #[cfg(unix)]
+    if let Some(pid) = supervisor {
+        match control::call(&dir, &control::Request::Stop { save }, |msg| {
+            println!("  {}", msg.dimmed());
+        }) {
+            Ok(_) => {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while alive(pid) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(50));
                 }
+                clear_pid(&dir, SUPERVISOR);
+                clear_pid(&dir, VM);
+                vm::prune();
+                write_state(&dir, "down");
+                if save {
+                    println!(
+                        "{} stopped (k3s microVM checkpoint saved — data & local images preserved)",
+                        "✓".green()
+                    );
+                } else {
+                    println!("{} down (k3s microVM stopped)", "✓".green());
+                }
+                return Ok(());
             }
+            Err(control::Unreachable::NoSocket) if save => {
+                crate::warn(
+                    "running runtime predates checkpoint-on-stop; stopping without saving disk",
+                );
+            }
+            Err(control::Unreachable::Other(e)) if save => {
+                crate::warn(&format!(
+                    "could not checkpoint runtime disk before stop ({e:#}); stopping microVM"
+                ));
+            }
+            Err(_) => {}
         }
     }
+
     down_vm(&dir, supervisor)
 }
 
@@ -714,11 +791,10 @@ pub async fn ps() -> Result<()> {
 }
 
 pub async fn reset(all: bool) -> Result<()> {
-    let _ = stop_runtime().await;
+    let _ = stop_runtime_saving(false).await;
     if let Ok(dir) = up_dir() {
         if dir.exists() {
-            std::fs::remove_dir_all(&dir)
-                .with_context(|| format!("removing {}", dir.display()))?;
+            std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
             println!("{} removed {}", "✓".green(), dir.display());
         }
     }
@@ -727,6 +803,9 @@ pub async fn reset(all: bool) -> Result<()> {
             std::fs::remove_file(&kc).with_context(|| format!("removing {}", kc.display()))?;
             println!("{} removed {}", "✓".green(), kc.display());
         }
+    }
+    if persist::delete_state_checkpoint() {
+        println!("{} cleared saved runtime state checkpoint", "✓".green());
     }
     if all {
         if let Ok(bin) = vm::resolve_or_install().await {
@@ -772,7 +851,8 @@ pub async fn down(stop_vm: bool) -> Result<()> {
 
     if supervisor.is_some() || native {
         let kc = if native {
-            adopt_native_linux_kubeconfig().unwrap_or_else(|_| kubeconfig_path().unwrap_or_default())
+            adopt_native_linux_kubeconfig()
+                .unwrap_or_else(|_| kubeconfig_path().unwrap_or_default())
         } else {
             kubeconfig_path()?
         };
@@ -817,8 +897,12 @@ fn down_vm(dir: &Path, supervisor: Option<i32>) -> Result<()> {
         if !stop(pid, Duration::from_secs(10)) {
             bail!("the vm (pid {pid}) did not exit");
         }
+        vm::remove_instance_dir(pid as u32);
     }
     clear_pid(dir, VM);
+    // A vm that is stopped by signal leaves its disk behind — the whole of it, 32 GiB
+    // by default, once for every stop — and nothing boots from it again.
+    vm::prune();
 
     write_state(dir, "down");
     println!("{} down (k3s microVM stopped)", "✓".green());

@@ -280,6 +280,18 @@ enum Commands {
         /// The cloud image to deploy
         #[arg(long, value_name = "IMAGE", default_value = commands::up::CLOUD)]
         cloud: String,
+        /// Run Cloud from THIS machine's source: build the current directory's
+        /// declared local image (`hanzo.config.json` `local`), or take the OCI image
+        /// layout named, load it into the runtime and start it with pull policy
+        /// Never. Fails rather than deploy a published image
+        #[arg(
+            long,
+            value_name = "LAYOUT",
+            num_args = 0..=1,
+            default_missing_value = "",
+            conflicts_with_all = ["ai_only", "native", "strict_registry"]
+        )]
+        local: Option<String>,
         /// Opt-in staged Cloud subsystems (`CLOUD_ENABLE_STAGED`)
         #[arg(long, value_name = "SUBSYSTEMS", env = "CLOUD_ENABLE_STAGED")]
         staged: Option<String>,

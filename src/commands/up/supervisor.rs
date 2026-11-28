@@ -5,33 +5,67 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use vm_measure::{Log, Measurement};
 
-use super::manifest::{ground, workload_for};
+use super::manifest::{ground, workload_for, ACCOUNT};
 use super::{
-    checkpoint, clear_pid, kubeconfig_path, measure_path, up_dir, write_pid, write_state, Boot,
-    CLOUD_NODE_PORT, DATA, GROUND, K3S_PORT, KEYFILE, KEYFILE_FALLBACK, KUBECONFIG, LOCAL_PORT,
-    PULLFILE, PULLFILE_FALLBACK, PULL_SECRET, READY_TIMEOUT, SUPERVISOR, VM, WORKLOAD,
+    budget, clear_pid, kubeconfig_path, measure_path, persist, up_dir, write_pid, write_state,
+    Boot, CLOUD_NODE_PORT, DATA, GROUND, K3S_PORT, KEYFILE, KEYFILE_FALLBACK, KUBECONFIG,
+    LOCAL_PORT, PULLFILE, PULLFILE_FALLBACK, PULL_SECRET, READY_TIMEOUT, SUPERVISOR, VM, WORKLOAD,
 };
 use crate::commands::host::key;
 use crate::commands::vm::{self, Rpc};
 use crate::config::Config;
 use crate::image;
 
+#[cfg(test)]
 pub(crate) fn run_args(boot: &Boot) -> Vec<String> {
     vm::run_args(
         boot.cpus,
         boot.memory_mb,
         boot.disk_mb,
         &[(K3S_PORT, K3S_PORT), (LOCAL_PORT, CLOUD_NODE_PORT)],
-        &checkpoint(),
+        &super::checkpoint(),
     )
 }
 
+pub(crate) fn run_args_in(boot: &Boot, vm_home: &Path) -> Vec<String> {
+    let (disk_mb, from) = persist::boot_target_in(boot, vm_home);
+    vm::run_args(
+        boot.cpus,
+        boot.memory_mb,
+        disk_mb,
+        &[(K3S_PORT, K3S_PORT), (LOCAL_PORT, CLOUD_NODE_PORT)],
+        &from,
+    )
+}
+
+/// Lay the ground now, by our own hand. k3s would apply the same file from its
+/// manifests directory in its own time; the steps after this one need the namespace
+/// and the account to exist when they run, not eventually.
 fn ensure_ground(rpc: &mut Rpc) -> Result<()> {
-    match rpc.exec(&["k3s", "kubectl", "create", "namespace", "hanzo"])? {
-        (_, err, code) if code != 0 && !err.contains("already exists") => {
-            bail!("creating the namespace: {}", err.trim())
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match rpc.exec(&["k3s", "kubectl", "apply", "-f", GROUND])? {
+            (_, _, 0) => return Ok(()),
+            // The API server answers before every group it serves is ready (rbac
+            // among the last); the same apply succeeds a moment later.
+            (_, _, _) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            (_, err, _) => bail!("laying the ground: {}", err.trim()),
         }
-        _ => Ok(()),
+    }
+}
+
+/// Give the cluster the workload: the Deployment and its Service, after everything
+/// they need is in place. Applied here rather than left in k3s's manifests
+/// directory, which would create the pod at boot, before its pull credential and
+/// its key exist — the pod that failed its first pull and had to be deleted, and
+/// whose replacement was scheduled beside it.
+fn apply_workload(rpc: &mut Rpc, manifest: &str) -> Result<()> {
+    rpc.write_file(WORKLOAD, manifest)?;
+    match rpc.exec(&["k3s", "kubectl", "apply", "-f", WORKLOAD])? {
+        (_, _, 0) => Ok(()),
+        (_, err, _) => bail!("deploying the workload: {}", err.trim()),
     }
 }
 
@@ -106,45 +140,23 @@ fn plant_pull_secret(rpc: &mut Rpc, dockerconfigjson: &str) -> Result<()> {
         Err(e) => return Err(e),
     }
 
+    // On the account the pod runs as, which the ground has already made. The pod
+    // does not exist yet, so there is none to restart.
     let patch = format!(r#"{{"imagePullSecrets":[{{"name":"{PULL_SECRET}"}}]}}"#);
-    let sa_deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        match rpc.exec(&[
-            "k3s",
-            "kubectl",
-            "patch",
-            "serviceaccount",
-            "default",
-            "-n",
-            "hanzo",
-            "-p",
-            &patch,
-        ]) {
-            Ok((_, _, 0)) => break,
-            Ok((_, err, _))
-                if Instant::now() < sa_deadline
-                    && (err.contains("NotFound") || err.contains("not found")) =>
-            {
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            Ok((_, err, _)) => bail!("attaching registry pull secret: {}", err.trim()),
-            Err(e) => return Err(e),
-        }
-    }
-
-    let _ = rpc.exec(&[
+    match rpc.exec(&[
         "k3s",
         "kubectl",
-        "delete",
-        "pod",
+        "patch",
+        "serviceaccount",
+        ACCOUNT,
         "-n",
         "hanzo",
-        "-l",
-        "app=cloud",
-        "--ignore-not-found",
-        "--wait=false",
-    ]);
-    Ok(())
+        "-p",
+        &patch,
+    ])? {
+        (_, _, 0) => Ok(()),
+        (_, err, _) => bail!("attaching registry pull secret: {}", err.trim()),
+    }
 }
 
 pub(crate) fn deployed(image: &str, manifest: &str) -> Log {
@@ -261,17 +273,45 @@ fn drive(
     runtime_only: bool,
 ) -> Result<()> {
     write_state(dir, "boot");
+    let vm_home = vm::vm_home_dir()?;
     let log = dir.join("supervisor.log");
-    let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
-    write_pid(dir, VM, rpc.child.id())?;
+    let mut rpc = Rpc::start(bin, &run_args_in(boot, &vm_home), &log)?;
+    let vm_pid = rpc.child.id();
+    write_pid(dir, VM, vm_pid)?;
+    let out = drive_started(dir, boot, &vm_home, &mut rpc, pull_secret, runtime_only);
+    drop(rpc);
+    vm::remove_instance_dir_in(&vm_home, vm_pid);
+    out
+}
+
+fn drive_started(
+    dir: &Path,
+    boot: &Boot,
+    vm_home: &Path,
+    rpc: &mut Rpc,
+    pull_secret: Option<&str>,
+    runtime_only: bool,
+) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = vm_home;
     let launch = rpc.wait_ready()?;
 
-    rpc.write_file(GROUND, &ground())?;
-    if !runtime_only {
+    // Preserve any bound PVC storage size from a resumed state checkpoint so
+    // `kubectl apply -f GROUND` never mutates an immutable claim size on resize.
+    let claim_mb = rpc
+        .read_file(GROUND)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|s| persist::existing_claim_mb(&s))
+        .unwrap_or_else(|| budget::data_mb(boot.disk_mb));
+    rpc.write_file(GROUND, &ground(claim_mb))?;
+    let manifest = if runtime_only {
+        None
+    } else {
         let manifest = workload_for(boot)?;
-        rpc.write_file(WORKLOAD, &manifest)?;
-        record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
-    }
+        record(dir, rpc, launch, &boot.cloud, &manifest)?;
+        Some(manifest)
+    };
 
     write_state(dir, "k3s");
     rpc.spawn(&server_argv())?;
@@ -292,25 +332,46 @@ fn drive(
         std::thread::sleep(Duration::from_secs(3));
     }
 
-    ensure_ground(&mut rpc)?;
+    // A checkpoint saved on `hanzo stop` cordoned the node so pods could drain
+    // without mutating `Deployment.spec.replicas`; uncordon now so resumed
+    // workloads schedule onto it immediately.
+    let _ = rpc.exec(&["k3s", "kubectl", "uncordon", "--all"]);
+
+    ensure_ground(rpc)?;
     if let Some(secret) = pull_secret {
-        plant_pull_secret(&mut rpc, secret)?;
+        plant_pull_secret(rpc, secret)?;
     }
-    plant_key(&mut rpc)?;
+    plant_key(rpc)?;
+    if let Some(manifest) = &manifest {
+        apply_workload(rpc, manifest)?;
+    }
 
     let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
         .context("the guest kubeconfig is not utf-8")?;
     write_kubeconfig(&kubeconfig_path()?, &rewrite_server(&yaml))?;
-    write_state(
-        dir,
-        if runtime_only {
-            "runtime-ready"
-        } else {
-            "ready"
-        },
-    );
+    // Proves k3s runtime reachability; callers deploying or resuming Cloud wait
+    // for the Deployment's observed generation and ready replicas before `ready`.
+    write_state(dir, "runtime-ready");
 
-    let status = rpc.child.wait().context("waiting on hanzo-vm")?;
-    write_state(dir, &format!("down ({status})"));
+    // Hold the vm, and between looks at it answer whoever asks through the
+    // control socket: this process is the only one that can reach the guest.
+    #[cfg(unix)]
+    let listener = super::control::listen(dir)?;
+    let status = loop {
+        if let Some(status) = rpc.exited() {
+            break Some(status);
+        }
+        #[cfg(unix)]
+        if super::control::serve_pending_in(&listener, rpc, boot, vm_home) {
+            break rpc.wait_stopped(Duration::from_secs(5));
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    };
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(super::control::socket_path(dir));
+    match status {
+        Some(status) => write_state(dir, &format!("down ({status})")),
+        None => write_state(dir, "down"),
+    }
     Ok(())
 }
