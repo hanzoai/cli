@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(b.store_bytes, 2048 * 1024 * 1024);
         assert_eq!(b.data_mb, 8192);
         // The request that was scheduled before, and did not fit twice.
-        assert!(SYSTEM_MB + 2 * 2048 > 4096);
+        const { assert!(SYSTEM_MB + 2 * 2048 > 4096) };
     }
 
     #[test]

@@ -5,24 +5,36 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use vm_measure::{Log, Measurement};
 
-use super::manifest::{ground_for, workload_for, ACCOUNT};
+use super::manifest::{ground, workload_for, ACCOUNT};
 use super::{
-    checkpoint, clear_pid, kubeconfig_path, measure_path, up_dir, write_pid, write_state, Boot,
-    CLOUD_NODE_PORT, DATA, GROUND, K3S_PORT, KEYFILE, KEYFILE_FALLBACK, KUBECONFIG, LOCAL_PORT,
-    PULLFILE, PULLFILE_FALLBACK, PULL_SECRET, READY_TIMEOUT, SUPERVISOR, VM, WORKLOAD,
+    budget, clear_pid, kubeconfig_path, measure_path, persist, up_dir, write_pid, write_state,
+    Boot, CLOUD_NODE_PORT, DATA, GROUND, K3S_PORT, KEYFILE, KEYFILE_FALLBACK, KUBECONFIG,
+    LOCAL_PORT, PULLFILE, PULLFILE_FALLBACK, PULL_SECRET, READY_TIMEOUT, SUPERVISOR, VM, WORKLOAD,
 };
 use crate::commands::host::key;
 use crate::commands::vm::{self, Rpc};
 use crate::config::Config;
 use crate::image;
 
+#[cfg(test)]
 pub(crate) fn run_args(boot: &Boot) -> Vec<String> {
     vm::run_args(
         boot.cpus,
         boot.memory_mb,
         boot.disk_mb,
         &[(K3S_PORT, K3S_PORT), (LOCAL_PORT, CLOUD_NODE_PORT)],
-        &checkpoint(),
+        &super::checkpoint(),
+    )
+}
+
+pub(crate) fn run_args_in(boot: &Boot, vm_home: &Path) -> Vec<String> {
+    let (disk_mb, from) = persist::boot_target_in(boot, vm_home);
+    vm::run_args(
+        boot.cpus,
+        boot.memory_mb,
+        disk_mb,
+        &[(K3S_PORT, K3S_PORT), (LOCAL_PORT, CLOUD_NODE_PORT)],
+        &from,
     )
 }
 
@@ -261,17 +273,43 @@ fn drive(
     runtime_only: bool,
 ) -> Result<()> {
     write_state(dir, "boot");
+    let vm_home = vm::vm_home_dir()?;
     let log = dir.join("supervisor.log");
-    let mut rpc = Rpc::start(bin, &run_args(boot), &log)?;
-    write_pid(dir, VM, rpc.child.id())?;
+    let mut rpc = Rpc::start(bin, &run_args_in(boot, &vm_home), &log)?;
+    let vm_pid = rpc.child.id();
+    write_pid(dir, VM, vm_pid)?;
+    let out = drive_started(dir, boot, &vm_home, &mut rpc, pull_secret, runtime_only);
+    drop(rpc);
+    vm::remove_instance_dir_in(&vm_home, vm_pid);
+    out
+}
+
+fn drive_started(
+    dir: &Path,
+    boot: &Boot,
+    vm_home: &Path,
+    rpc: &mut Rpc,
+    pull_secret: Option<&str>,
+    runtime_only: bool,
+) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = vm_home;
     let launch = rpc.wait_ready()?;
 
-    rpc.write_file(GROUND, &ground_for(boot))?;
+    // Preserve any bound PVC storage size from a resumed state checkpoint so
+    // `kubectl apply -f GROUND` never mutates an immutable claim size on resize.
+    let claim_mb = rpc
+        .read_file(GROUND)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|s| persist::existing_claim_mb(&s))
+        .unwrap_or_else(|| budget::data_mb(boot.disk_mb));
+    rpc.write_file(GROUND, &ground(claim_mb))?;
     let manifest = if runtime_only {
         None
     } else {
         let manifest = workload_for(boot)?;
-        record(dir, &mut rpc, launch, &boot.cloud, &manifest)?;
+        record(dir, rpc, launch, &boot.cloud, &manifest)?;
         Some(manifest)
     };
 
@@ -294,26 +332,26 @@ fn drive(
         std::thread::sleep(Duration::from_secs(3));
     }
 
-    ensure_ground(&mut rpc)?;
+    // A checkpoint saved on `hanzo stop` cordoned the node so pods could drain
+    // without mutating `Deployment.spec.replicas`; uncordon now so resumed
+    // workloads schedule onto it immediately.
+    let _ = rpc.exec(&["k3s", "kubectl", "uncordon", "--all"]);
+
+    ensure_ground(rpc)?;
     if let Some(secret) = pull_secret {
-        plant_pull_secret(&mut rpc, secret)?;
+        plant_pull_secret(rpc, secret)?;
     }
-    plant_key(&mut rpc)?;
+    plant_key(rpc)?;
     if let Some(manifest) = &manifest {
-        apply_workload(&mut rpc, manifest)?;
+        apply_workload(rpc, manifest)?;
     }
 
     let yaml = String::from_utf8(rpc.read_file(KUBECONFIG)?)
         .context("the guest kubeconfig is not utf-8")?;
     write_kubeconfig(&kubeconfig_path()?, &rewrite_server(&yaml))?;
-    write_state(
-        dir,
-        if runtime_only {
-            "runtime-ready"
-        } else {
-            "ready"
-        },
-    );
+    // Proves k3s runtime reachability; callers deploying or resuming Cloud wait
+    // for the Deployment's observed generation and ready replicas before `ready`.
+    write_state(dir, "runtime-ready");
 
     // Hold the vm, and between looks at it answer whoever asks through the
     // control socket: this process is the only one that can reach the guest.
@@ -321,14 +359,19 @@ fn drive(
     let listener = super::control::listen(dir)?;
     let status = loop {
         if let Some(status) = rpc.exited() {
-            break status;
+            break Some(status);
         }
         #[cfg(unix)]
-        super::control::serve_pending(&listener, &mut rpc, boot);
+        if super::control::serve_pending_in(&listener, rpc, boot, vm_home) {
+            break rpc.wait_stopped(Duration::from_secs(5));
+        }
         std::thread::sleep(Duration::from_millis(150));
     };
     #[cfg(unix)]
     let _ = std::fs::remove_file(super::control::socket_path(dir));
-    write_state(dir, &format!("down ({status})"));
+    match status {
+        Some(status) => write_state(dir, &format!("down ({status})")),
+        None => write_state(dir, "down"),
+    }
     Ok(())
 }

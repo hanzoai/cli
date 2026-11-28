@@ -15,9 +15,7 @@ pub mod workloads;
 #[cfg(test)]
 mod tests;
 
-pub use status::{
-    collect_local_snapshot, doctor_checks, ps, render_local_status_section,
-};
+pub use status::{collect_local_snapshot, doctor_checks, ps, render_local_status_section};
 
 use anyhow::Result;
 use colored::*;
@@ -119,7 +117,14 @@ pub async fn runtime_stop(cfg: &mut Config) -> Result<()> {
 
     let mut state = load_state().unwrap_or_default();
     state.runtime.desired_running = false;
-    let kube = local_kube_client();
+    let native_only = up::up_dir()
+        .ok()
+        .is_some_and(|d| up::running(&d, up::SUPERVISOR).is_none() && up::host_native_k3s_active());
+    let kube = if native_only {
+        local_kube_client()
+    } else {
+        None
+    };
     for app in state.apps.values_mut() {
         if let Some(pid) = app.local_pid.take() {
             let _ = up::stop(pid as i32, Duration::from_secs(5));
@@ -139,7 +144,12 @@ pub async fn runtime_stop(cfg: &mut Config) -> Result<()> {
 pub async fn runtime_restart(cfg: &mut Config, boot: up::Boot, native: bool) -> Result<()> {
     let mut state = load_state().unwrap_or_default();
     let live_cloud = match local_kube_client() {
-        Some(k) => k.cloud_replicas().await.ok().flatten().is_some_and(|r| r > 0),
+        Some(k) => k
+            .cloud_replicas()
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|r| r > 0),
         None => false,
     };
     let restore_cloud = state.platform.cloud_enabled || live_cloud;
@@ -207,10 +217,16 @@ pub async fn runtime_restart(cfg: &mut Config, boot: up::Boot, native: bool) -> 
         // loaded again from the layout it came from, not replaced by a published
         // image because the restart's flags name the default one.
         let boot = match &state.platform.cloud_local {
-            Some(layout) if live_local && boot.cloud == up::CLOUD => up::Boot {
-                local: Some(layout.clone()),
-                ..boot
-            },
+            Some(layout)
+                if live_local
+                    && boot.cloud == up::CLOUD
+                    && std::path::Path::new(layout).exists() =>
+            {
+                up::Boot {
+                    local: Some(layout.clone()),
+                    ..boot
+                }
+            }
             _ => boot,
         };
         up::up(cfg, boot, None, false, true).await?;

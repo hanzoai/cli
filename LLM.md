@@ -1531,10 +1531,11 @@ hanzoai/cloud `apps/pubsub/budget.go` and `sdk/bus/budget.go`.
   written only once the node holds the image. `hanzod`'s `/v1/lifecycle/environment` is not called for a
   local up, because its request names an image to deploy.
 - **The control socket** (`up/control.rs`, `~/.hanzo/up/control.sock`, 0600). The supervisor is the only
-  process that can run a command in the guest, so it listens between looks at its vm and answers three
+  process that can run a command in the guest, so it listens between looks at its vm and answers four
   named operations: `load` (an OCI layout into containerd), `prune` (older local images), `facts` (the
-  runtime's shape and what it has free). JSON lines; never a command a caller wrote. A runtime booted by an
-  older `hanzo` has no socket: `--local` says to restart it once.
+  runtime's shape and what it has free), and `stop` (cordons the node, drains pods, stops `k3s` and
+  `containerd`, and checkpoints the live ext4 rootfs before exiting). JSON lines; never a command a caller
+  wrote. A runtime booted by an older `hanzo` has no socket: `--local` says to restart it once.
 - **Loading** (`up/load.rs`). `ctr content ls` says what the node holds; the archive sent is the image's
   documents and only the layers it lacks, and `ctr images import` resolves the rest against its store
   (verified on k3s v1.37 / containerd 2.3). The archive crosses the vm's stdio wire in 512 KiB parts:
@@ -1553,12 +1554,17 @@ hanzoai/cloud `apps/pubsub/budget.go` and `sdk/bus/budget.go`.
   `apps.hanzo.ai` list in `hanzo` (the deploy plane's health; a local cluster answers 404, not 403).
   `up/diagnose.rs` `GRANTS` is the same list, asked of the API server by SubjectAccessReview; a test holds
   the two together.
-- **Data** is on the `cloud-data` volume claim (local-path), so it survives `hanzo down` and a replaced
-  pod. It does NOT survive `hanzo stop`: hanzo-vm boots every vm from the checkpoint and has no disk that
-  outlives one (`--rootfs` is copied, measured). The Deployment is replaced (PUT), not merged: a merge
-  kept the old `emptyDir` beside the claim, which the API server refuses.
-- **`hanzo stop` prunes.** A vm stopped by signal leaves its whole disk in `~/.hanzo/vm/instances/<pid>`
-  (26 GB measured, once per stop). `vm::prune` runs `hanzo-vm prune` after the vm is gone.
+- **Data** is on the `cloud-data` volume claim (local-path), so it survives `hanzo down`, a replaced pod,
+  and `hanzo stop` / `hanzo start` (`up/persist.rs`). On `hanzo stop`, the supervisor cordons the node so
+  `Deployment.spec.replicas` stays untouched, deletes pods so Cloud flushes SQLite WAL and NATS JetStream,
+  stops `k3s`, and asks `hanzo-vm` over `--stdio` (`checkpoint`) to clone the quiescent ext4 disk to
+  `k3s-<ver>-state.ext4` (promoted atomically from a staging name so macOS `clonefile` never sees `EEXIST`),
+  preserving SQLite WAL `mmap`, JetStream, KMS secrets, and containerd's unpacked `hanzo.local/*` layers.
+  `hanzo reset` deletes `k3s-<ver>-state.ext4` when a fresh cluster is asked for. The Deployment is replaced
+  (PUT), not merged: a merge kept the old `emptyDir` beside the claim, which the API server refuses.
+- **`hanzo stop` leaves zero instance disks.** Both the supervisor's teardown (`vm::remove_instance_dir_in`)
+  and `vm::prune` (`hanzo-vm prune`) sweep `~/.hanzo/vm/instances/<pid>` whether stopped via `control.sock`
+  or by signal fallback.
 - **`hanzo doctor`** prints a runtime section when one is up (`up/diagnose.rs`): shape and budget, this
   machine's memory beside the runtime's, node disk against the kubelet's thresholds, image provenance
   (local and never pulled, or published), whether two pods fit, whether data is on a claim, every grant, and

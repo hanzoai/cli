@@ -186,18 +186,55 @@ fn the_ground_carries_no_secret() {
 #[test]
 fn the_ground_grants_what_cloud_asks_and_no_more() {
     let y = ground(8192);
-    assert!(y.contains("kind: ServiceAccount\nmetadata:\n  name: cloud\n  namespace: hanzo"), "{y}");
-    assert!(y.contains("kind: PersistentVolumeClaim\nmetadata:\n  name: cloud-data"), "{y}");
+    assert!(
+        y.contains("kind: ServiceAccount\nmetadata:\n  name: cloud\n  namespace: hanzo"),
+        "{y}"
+    );
+    assert!(
+        y.contains("kind: PersistentVolumeClaim\nmetadata:\n  name: cloud-data"),
+        "{y}"
+    );
     assert!(y.contains("storage: 8192Mi"), "{y}");
-    for forbidden in ["cluster-admin", "\"*\"", "name: default", "create", "delete", "patch", "update", "secrets"] {
-        assert!(!y.contains(forbidden), "the ground must not grant `{forbidden}`:\n{y}");
+    for forbidden in [
+        "cluster-admin",
+        "\"*\"",
+        "name: default",
+        "create",
+        "delete",
+        "patch",
+        "update",
+        "secrets",
+    ] {
+        assert!(
+            !y.contains(forbidden),
+            "the ground must not grant `{forbidden}`:\n{y}"
+        );
     }
-    let rules: Vec<&str> = y.lines().filter(|l| l.trim_start().starts_with("verbs:")).collect();
+    let rules: Vec<&str> = y
+        .lines()
+        .filter(|l| l.trim_start().starts_with("verbs:"))
+        .collect();
     assert_eq!(rules.len(), 4, "{rules:?}");
-    assert_eq!(rules.iter().filter(|r| r.contains("[\"list\", \"watch\"]")).count(), 1, "{rules:?}");
-    assert_eq!(rules.iter().filter(|r| r.contains("[\"list\"]")).count(), 3, "{rules:?}");
+    assert_eq!(
+        rules
+            .iter()
+            .filter(|r| r.contains("[\"list\", \"watch\"]"))
+            .count(),
+        1,
+        "{rules:?}"
+    );
+    assert_eq!(
+        rules.iter().filter(|r| r.contains("[\"list\"]")).count(),
+        3,
+        "{rules:?}"
+    );
     // Every binding names the one account, in the one namespace.
-    assert_eq!(y.matches("kind: ServiceAccount\n    name: cloud\n    namespace: hanzo").count(), 3, "{y}");
+    assert_eq!(
+        y.matches("kind: ServiceAccount\n    name: cloud\n    namespace: hanzo")
+            .count(),
+        3,
+        "{y}"
+    );
 }
 
 /// A local build is in the node's store or nowhere: the kubelet is told never to
@@ -209,7 +246,10 @@ fn a_local_build_is_never_pulled() {
         ..boot()
     })
     .unwrap();
-    assert!(y.contains("image: hanzo.local/hanzo-inc/cloud:0123456789abcdef"), "{y}");
+    assert!(
+        y.contains("image: hanzo.local/hanzo-inc/cloud:0123456789abcdef"),
+        "{y}"
+    );
     assert!(y.contains("imagePullPolicy: Never"), "{y}");
     assert!(!y.contains("IfNotPresent"), "{y}");
 }
@@ -218,10 +258,19 @@ fn a_local_build_is_never_pulled() {
 /// arithmetic, rather than left to the scheduler to refuse a pod at a time.
 #[test]
 fn the_workload_is_refused_on_a_runtime_it_does_not_fit() {
-    let e = workload_for(&Boot { memory_mb: 2048, ..boot() }).unwrap_err().to_string();
+    let e = workload_for(&Boot {
+        memory_mb: 2048,
+        ..boot()
+    })
+    .unwrap_err()
+    .to_string();
     assert!(e.contains("2048 MiB of memory"), "{e}");
     // The ground is still laid: a runtime started for something else has a namespace.
-    assert!(ground_for(&Boot { memory_mb: 2048, ..boot() }).contains("kind: Namespace"));
+    assert!(ground_for(&Boot {
+        memory_mb: 2048,
+        ..boot()
+    })
+    .contains("kind: Namespace"));
 }
 
 #[test]
@@ -599,8 +648,14 @@ fn has_workload_overrides_detects_changed_flags() {
 #[test]
 fn a_deployment_scaled_to_zero_is_still_a_deployment() {
     assert_eq!(scale_replicas(&json!({"kind": "Scale", "spec": {}})), 0);
-    assert_eq!(scale_replicas(&json!({"kind": "Scale", "spec": {"replicas": 0}})), 0);
-    assert_eq!(scale_replicas(&json!({"kind": "Scale", "spec": {"replicas": 1}})), 1);
+    assert_eq!(
+        scale_replicas(&json!({"kind": "Scale", "spec": {"replicas": 0}})),
+        0
+    );
+    assert_eq!(
+        scale_replicas(&json!({"kind": "Scale", "spec": {"replicas": 1}})),
+        1
+    );
 }
 
 #[test]
@@ -613,7 +668,12 @@ fn every_kind_the_cli_writes_has_its_api_path() {
         "https://127.0.0.1:6443/api/v1/namespaces/hanzo/serviceaccounts/cloud"
     );
     assert_eq!(
-        at("rbac.authorization.k8s.io/v1", "ClusterRole", "", "hanzo-cloud"),
+        at(
+            "rbac.authorization.k8s.io/v1",
+            "ClusterRole",
+            "",
+            "hanzo-cloud"
+        ),
         "https://127.0.0.1:6443/apis/rbac.authorization.k8s.io/v1/clusterroles/hanzo-cloud"
     );
     assert_eq!(
@@ -625,9 +685,156 @@ fn every_kind_the_cli_writes_has_its_api_path() {
         let v: serde_json::Value = serde_norway::from_str(doc).unwrap();
         let s = |p: &str| v.pointer(p).and_then(|x| x.as_str()).unwrap_or("");
         if s("/kind") != "Namespace" {
-            at(s("/apiVersion"), s("/kind"), s("/metadata/namespace"), s("/metadata/name"));
+            at(
+                s("/apiVersion"),
+                s("/kind"),
+                s("/metadata/namespace"),
+                s("/metadata/name"),
+            );
         }
     }
     assert!(resource_url("https://x", "v1", "Secret", "hanzo", "cloud").is_err());
     assert!(resource_url("https://x", "v1", "ServiceAccount", "", "cloud").is_err());
+}
+
+#[test]
+fn cloud_readiness_requires_current_rollout_and_nonzero_replicas() {
+    let mut v = json!({
+        "metadata": {"generation": 2},
+        "spec": {"replicas": 1},
+        "status": {
+            "observedGeneration": 1,
+            "replicas": 1,
+            "updatedReplicas": 1,
+            "readyReplicas": 1,
+            "availableReplicas": 1
+        }
+    });
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["observedGeneration"] = json!(2);
+    assert!(cloud_deployment_ready(&v));
+    v["status"]["updatedReplicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["updatedReplicas"] = json!(1);
+    v["status"]["readyReplicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["readyReplicas"] = json!(1);
+    v["status"]["availableReplicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+    v["status"]["availableReplicas"] = json!(1);
+    v["status"]["replicas"] = json!(2);
+    assert!(
+        !cloud_deployment_ready(&v),
+        "stale terminating replica must wait"
+    );
+    v["status"]["replicas"] = json!(1);
+    v["spec"]["replicas"] = json!(0);
+    assert!(!cloud_deployment_ready(&v));
+}
+
+#[test]
+fn strict_registry_is_a_workload_override_on_warm_runtime() {
+    let mut b = boot();
+    b.cloud = CLOUD.into();
+    assert!(!has_workload_overrides(&b));
+    b.strict_registry = true;
+    assert!(has_workload_overrides(&b));
+}
+
+/// Fresh boots start from the immutable `k3s-<ver>-airgap` checkpoint; once
+/// `hanzo stop` has saved `k3s-<ver>-state.ext4`, `hanzo start` and `hanzo up`
+/// boot from that state checkpoint and clamp `--disk-size` up if the saved
+/// ext4 image was previously grown beyond the CLI flag's default.
+#[test]
+fn run_args_selects_saved_state_checkpoint_when_present_and_clamps_disk() {
+    let vm_home = tempfile::tempdir().unwrap();
+    let fresh = run_args_in(&boot(), vm_home.path());
+    assert_eq!(
+        fresh.last().map(String::as_str),
+        Some(checkpoint().as_str())
+    );
+    assert!(fresh.windows(2).any(|w| w == ["--disk-size", "16384"]));
+
+    let state_path = persist::checkpoint_file(vm_home.path(), &persist::state_checkpoint());
+    std::fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+    let f = std::fs::File::create(&state_path).unwrap();
+    // Simulate a 48 GiB saved runtime state image while `boot().disk_mb` is 16384.
+    f.set_len(48 * 1024 * 1024 * 1024).unwrap();
+    drop(f);
+
+    assert!(persist::has_state_checkpoint_in(vm_home.path()));
+    let resumed = run_args_in(&boot(), vm_home.path());
+    assert_eq!(
+        resumed.last().map(String::as_str),
+        Some(persist::state_checkpoint().as_str())
+    );
+    assert!(
+        resumed.windows(2).any(|w| w == ["--disk-size", "49152"]),
+        "disk-size must never shrink below saved checkpoint image: {resumed:?}"
+    );
+
+    // `hanzo reset` deletes the saved runtime state checkpoint while leaving
+    // the base airgap checkpoint intact.
+    let airgap_path = persist::checkpoint_file(vm_home.path(), &checkpoint());
+    std::fs::write(&airgap_path, b"base-airgap").unwrap();
+    assert!(persist::delete_state_checkpoint_in(vm_home.path()));
+    assert!(!persist::has_state_checkpoint_in(vm_home.path()));
+    assert!(airgap_path.is_file(), "base airgap checkpoint stays cached");
+    assert_eq!(
+        run_args_in(&boot(), vm_home.path())
+            .last()
+            .map(String::as_str),
+        Some(checkpoint().as_str())
+    );
+}
+
+/// Resuming after `hanzo stop` or `hanzo down` preserves a `hanzo.local/*`
+/// build (even when flags like `--staged` change) and never falls back to a
+/// published image unless the caller explicitly names `--cloud` or `--strict-registry`.
+#[test]
+fn resuming_preserves_local_image_and_bound_pvc_size() {
+    let mut b = boot();
+    b.cloud = CLOUD.into();
+    let local_ref = "hanzo.local/hanzo-inc/cloud:0123456789abcdef";
+
+    // Default resume (`hanzo start` / `hanzo up`) keeps the local image.
+    assert_eq!(
+        persist::preserved_cluster_image(&b, Some(local_ref)),
+        Some(local_ref)
+    );
+    // Changing non-image workload env (`--staged`) still keeps the local image!
+    let with_staged = Boot {
+        staged: Some("fanclub".into()),
+        ..b.clone()
+    };
+    assert_eq!(
+        persist::preserved_cluster_image(&with_staged, Some(local_ref)),
+        Some(local_ref)
+    );
+    // Explicit `--cloud` replaces the image.
+    let explicit_cloud = Boot {
+        cloud: "ghcr.io/hanzoai/cloud-oss:v8.5.1473".into(),
+        ..b.clone()
+    };
+    assert_eq!(
+        persist::preserved_cluster_image(&explicit_cloud, Some(local_ref)),
+        None
+    );
+    // `--strict-registry` refuses non-Hanzo refs while keeping `oci.hanzo.ai`.
+    let strict = Boot {
+        strict_registry: true,
+        ..b
+    };
+    assert_eq!(
+        persist::preserved_cluster_image(&strict, Some(local_ref)),
+        None
+    );
+    assert_eq!(
+        persist::preserved_cluster_image(&strict, Some("oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa")),
+        Some("oci.hanzo.ai/hanzoai/cloud-oss@sha256:aa")
+    );
+
+    // Resumed `GROUND` preserves the bound PVC's immutable storage request.
+    let saved_ground = ground(8192);
+    assert_eq!(persist::existing_claim_mb(&saved_ground), Some(8192));
 }

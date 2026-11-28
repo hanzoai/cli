@@ -78,9 +78,7 @@ impl KubeClient {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        let cert_b64 = user
-            .get("client-certificate-data")
-            .and_then(|v| v.as_str());
+        let cert_b64 = user.get("client-certificate-data").and_then(|v| v.as_str());
         let key_b64 = user.get("client-key-data").and_then(|v| v.as_str());
 
         let client_pem = match (cert_b64, key_b64) {
@@ -112,8 +110,8 @@ impl KubeClient {
     }
 
     pub(crate) fn from_kubeconfig(path: &Path) -> Result<Self> {
-        let yaml = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let yaml =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let auth = Self::parse_kubeconfig(&yaml)?;
         let mut builder = reqwest::Client::builder()
             .use_rustls_tls()
@@ -238,12 +236,13 @@ impl KubeClient {
             .send()
             .await
             .with_context(|| format!("creating namespace {namespace}"))?;
-        if !create.status().is_success()
-            && create.status() != reqwest::StatusCode::CONFLICT
-        {
+        if !create.status().is_success() && create.status() != reqwest::StatusCode::CONFLICT {
             let status = create.status();
             let body = create.text().await.unwrap_or_default();
-            bail!("k3s POST namespace {namespace} returned {status}: {}", body.trim());
+            bail!(
+                "k3s POST namespace {namespace} returned {status}: {}",
+                body.trim()
+            );
         }
         Ok(())
     }
@@ -266,8 +265,10 @@ impl KubeClient {
             .await
             .with_context(|| format!("applying deployment {namespace}/{name}"))?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            let create_url =
-                format!("{}/apis/apps/v1/namespaces/{namespace}/deployments", self.server);
+            let create_url = format!(
+                "{}/apis/apps/v1/namespaces/{namespace}/deployments",
+                self.server
+            );
             let doc: serde_json::Value = serde_norway::from_str(deploy_yaml)
                 .context("converting deployment YAML to JSON")?;
             let create = self
@@ -339,10 +340,15 @@ impl KubeClient {
     /// earlier writer set and this one no longer states — an `emptyDir` beside the
     /// volume claim that replaced it, which the API server refuses — so what runs
     /// would depend on what ran before. Replaced, it is the manifest.
-    pub(crate) async fn apply_workload(&self, ground_yaml: &str, workload_yaml: &str) -> Result<()> {
+    pub(crate) async fn apply_workload(
+        &self,
+        ground_yaml: &str,
+        workload_yaml: &str,
+    ) -> Result<()> {
         self.apply_docs(ground_yaml).await?;
         let deploy_yaml = extract_deployment_yaml(workload_yaml)?;
-        self.replace_deployment("hanzo", "cloud", deploy_yaml).await?;
+        self.replace_deployment("hanzo", "cloud", deploy_yaml)
+            .await?;
         if let Ok(svc_yaml) = extract_service_yaml(workload_yaml) {
             self.apply_service_doc("hanzo", "cloud", svc_yaml).await?;
         }
@@ -382,7 +388,10 @@ impl KubeClient {
                 }
             }
             let resp = self
-                .auth_req(self.http.patch(format!("{url}?fieldManager=hanzo-cli&force=true")))
+                .auth_req(
+                    self.http
+                        .patch(format!("{url}?fieldManager=hanzo-cli&force=true")),
+                )
                 .header("Content-Type", "application/apply-patch+yaml")
                 .body(doc.to_string())
                 .send()
@@ -407,7 +416,10 @@ impl KubeClient {
     ) -> Result<()> {
         let mut doc: serde_json::Value =
             serde_norway::from_str(deploy_yaml).context("converting deployment YAML to JSON")?;
-        let all = format!("{}/apis/apps/v1/namespaces/{namespace}/deployments", self.server);
+        let all = format!(
+            "{}/apis/apps/v1/namespaces/{namespace}/deployments",
+            self.server
+        );
         let one = format!("{all}/{name}");
         for attempt in 0..2 {
             let have = self
@@ -438,7 +450,10 @@ impl KubeClient {
                 continue;
             }
             let body = resp.text().await.unwrap_or_default();
-            bail!("writing deployment {namespace}/{name}: {status}: {}", body.trim());
+            bail!(
+                "writing deployment {namespace}/{name}: {status}: {}",
+                body.trim()
+            );
         }
         Ok(())
     }
@@ -456,24 +471,28 @@ impl KubeClient {
         if !resp.status().is_success() {
             bail!("k3s GET {path} returned {}", resp.status());
         }
-        Ok(Some(resp.json().await.with_context(|| format!("decoding {path}"))?))
+        Ok(Some(
+            resp.json()
+                .await
+                .with_context(|| format!("decoding {path}"))?,
+        ))
     }
 
     /// Wait until the Deployment runs what it was last told to: its newest
-    /// generation observed, every replica updated and available. A wait that runs
-    /// out says what the pod is doing instead, because "not ready" is not a reason.
-    pub(crate) async fn rollout(&self, namespace: &str, name: &str, patience: Duration) -> Result<()> {
+    /// generation observed, every replica updated, ready, and available. A wait
+    /// that runs out says what the pod is doing instead, because "not ready" is
+    /// not a reason.
+    pub(crate) async fn rollout(
+        &self,
+        namespace: &str,
+        name: &str,
+        patience: Duration,
+    ) -> Result<()> {
         let deadline = std::time::Instant::now() + patience;
         let path = format!("/apis/apps/v1/namespaces/{namespace}/deployments/{name}");
         loop {
             if let Some(d) = self.get(&path).await? {
-                let n = |ptr: &str| d.pointer(ptr).and_then(|x| x.as_i64()).unwrap_or(0);
-                let want = n("/spec/replicas");
-                if n("/status/observedGeneration") >= n("/metadata/generation")
-                    && n("/status/updatedReplicas") == want
-                    && n("/status/availableReplicas") == want
-                    && n("/status/replicas") == want
-                {
+                if cloud_deployment_ready(&d) {
                     return Ok(());
                 }
             }
@@ -488,6 +507,78 @@ impl KubeClient {
         }
     }
 
+    /// Plant or refresh the `registry-pull` dockerconfigjson Secret in `hanzo`
+    /// and attach it to `ServiceAccount/cloud` over the Kubernetes API.
+    pub(crate) async fn ensure_pull_secret(&self, dockerconfigjson: &str) -> Result<()> {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(dockerconfigjson);
+        let secret = serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": { "name": super::PULL_SECRET, "namespace": "hanzo" },
+            "type": "kubernetes.io/dockerconfigjson",
+            "data": { ".dockerconfigjson": encoded }
+        });
+        let secrets = format!("{}/api/v1/namespaces/hanzo/secrets", self.server);
+        let one = format!("{secrets}/{}", super::PULL_SECRET);
+        let have = self
+            .auth_req(self.http.get(&one))
+            .send()
+            .await
+            .context("reading registry-pull secret")?;
+        let resp = if have.status() == reqwest::StatusCode::NOT_FOUND {
+            self.auth_req(self.http.post(&secrets))
+                .json(&secret)
+                .send()
+                .await
+        } else if have.status().is_success() {
+            let live: serde_json::Value =
+                have.json().await.context("decoding registry-pull secret")?;
+            let mut updated = secret;
+            updated["metadata"]["resourceVersion"] = live
+                .pointer("/metadata/resourceVersion")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            self.auth_req(self.http.put(&one))
+                .json(&updated)
+                .send()
+                .await
+        } else {
+            bail!("k3s GET registry-pull secret returned {}", have.status());
+        }
+        .context("writing registry-pull secret")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("writing registry-pull secret: {status}: {}", body.trim());
+        }
+
+        let sa_url = format!(
+            "{}/api/v1/namespaces/hanzo/serviceaccounts/{}",
+            self.server,
+            super::manifest::ACCOUNT
+        );
+        let patch = serde_json::json!({
+            "imagePullSecrets": [{ "name": super::PULL_SECRET }]
+        });
+        let sa = self
+            .auth_req(self.http.patch(&sa_url))
+            .header("Content-Type", "application/strategic-merge-patch+json")
+            .json(&patch)
+            .send()
+            .await
+            .context("attaching registry-pull secret to cloud serviceaccount")?;
+        if !sa.status().is_success() {
+            let status = sa.status();
+            let body = sa.text().await.unwrap_or_default();
+            bail!(
+                "patching cloud serviceaccount pull secret: {status}: {}",
+                body.trim()
+            );
+        }
+        Ok(())
+    }
+
     /// Why the pods behind a selector are not running, in the kubelet's own words.
     pub(crate) async fn pod_trouble(&self, namespace: &str, selector: &str) -> String {
         let path = format!("/api/v1/namespaces/{namespace}/pods?labelSelector={selector}");
@@ -495,9 +586,20 @@ impl KubeClient {
             return "its pods could not be read".into();
         };
         let mut said = Vec::new();
-        for pod in list.pointer("/items").and_then(|i| i.as_array()).into_iter().flatten() {
-            let name = pod.pointer("/metadata/name").and_then(|x| x.as_str()).unwrap_or("?");
-            let phase = pod.pointer("/status/phase").and_then(|x| x.as_str()).unwrap_or("?");
+        for pod in list
+            .pointer("/items")
+            .and_then(|i| i.as_array())
+            .into_iter()
+            .flatten()
+        {
+            let name = pod
+                .pointer("/metadata/name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            let phase = pod
+                .pointer("/status/phase")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
             let mut why = String::new();
             for c in pod
                 .pointer("/status/containerStatuses")
@@ -513,7 +615,12 @@ impl KubeClient {
                 }
             }
             if why.is_empty() {
-                for c in pod.pointer("/status/conditions").and_then(|x| x.as_array()).into_iter().flatten() {
+                for c in pod
+                    .pointer("/status/conditions")
+                    .and_then(|x| x.as_array())
+                    .into_iter()
+                    .flatten()
+                {
                     if c.get("status").and_then(|x| x.as_str()) == Some("False") {
                         let g = |k: &str| c.get(k).and_then(|x| x.as_str()).unwrap_or("");
                         why = format!(" {} {}", g("reason"), g("message"));
@@ -563,7 +670,9 @@ impl KubeClient {
             bail!("k3s POST subjectaccessreviews returned {}", resp.status());
         }
         let v: serde_json::Value = resp.json().await.context("decoding the review")?;
-        Ok(v.pointer("/status/allowed").and_then(|x| x.as_bool()).unwrap_or(false))
+        Ok(v.pointer("/status/allowed")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false))
     }
 
     /// Apply a multi-document YAML bundle (`Namespace`, `Deployment`, `Service`)
@@ -625,7 +734,9 @@ impl KubeClient {
         let pod_name = v
             .pointer("/items/0/metadata/name")
             .and_then(|x| x.as_str())
-            .ok_or_else(|| anyhow!("no pods found in namespace `{namespace}` matching `{label_selector}`"))?;
+            .ok_or_else(|| {
+                anyhow!("no pods found in namespace `{namespace}` matching `{label_selector}`")
+            })?;
         let log_url = format!(
             "{}/api/v1/namespaces/{namespace}/pods/{pod_name}/log?tailLines={tail_lines}",
             self.server
@@ -705,4 +816,19 @@ pub(crate) fn scale_replicas(scale: &serde_json::Value) -> u32 {
         .pointer("/spec/replicas")
         .and_then(|r| r.as_u64())
         .unwrap_or(0) as u32
+}
+
+/// Whether a Deployment's current generation is observed and all desired
+/// replicas are updated, ready, and available with no stale terminating pods.
+pub(crate) fn cloud_deployment_ready(d: &serde_json::Value) -> bool {
+    let n = |ptr: &str| d.pointer(ptr).and_then(|x| x.as_i64()).unwrap_or(0);
+    let generation = n("/metadata/generation");
+    let want = n("/spec/replicas");
+    generation > 0
+        && want > 0
+        && n("/status/observedGeneration") >= generation
+        && n("/status/updatedReplicas") == want
+        && n("/status/readyReplicas") == want
+        && n("/status/availableReplicas") == want
+        && n("/status/replicas") == want
 }

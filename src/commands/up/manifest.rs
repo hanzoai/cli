@@ -363,7 +363,11 @@ pub(crate) fn workload_for(boot: &Boot) -> Result<String> {
     // kubelet is told never to pull, so a missing one is `ErrImageNeverPull` and
     // not a registry's image under the same name. Decided by the name, which is
     // the fact about the image; how this invocation came by it is not.
-    let pull_policy = if is_local(image) { "Never" } else { "IfNotPresent" };
+    let pull_policy = if is_local(image) {
+        "Never"
+    } else {
+        "IfNotPresent"
+    };
     Ok(format!(
         "apiVersion: apps/v1
 kind: Deployment
@@ -537,6 +541,7 @@ pub(crate) fn install_cmd(strict_registry: bool) -> Result<String> {
 
 pub(crate) fn has_workload_overrides(boot: &Boot) -> bool {
     boot.cloud != CLOUD
+        || boot.strict_registry
         || boot.local.is_some()
         || boot.staged.is_some()
         || boot.iam_issuer.is_some()
