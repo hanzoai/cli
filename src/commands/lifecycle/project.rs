@@ -283,6 +283,27 @@ pub fn is_system_checkout(dir: &Path) -> bool {
     false
 }
 
+/// Canonicalize `dir` and strip Windows `\\?\` verbatim prefixes so state lookups
+/// and CLI displays match cleanly across Windows and Unix hosts.
+pub fn normalize_project_dir(dir: &Path) -> PathBuf {
+    let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    strip_windows_verbatim_prefix(canonical)
+}
+
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
 /// Statically detect a user application in `dir`.
 ///
 /// Inspects `hanzo.toml`, `hanzo.yaml`/`hanzo.yml`, `hanzo.config.{json,ts}`,
@@ -290,7 +311,7 @@ pub fn is_system_checkout(dir: &Path) -> bool {
 /// and `go.mod`. Returns `Ok(None)` if `dir` has no application manifest or is a
 /// Hanzo system checkout (`hanzoai/cloud`, `hanzoai/cli`, etc.).
 pub fn detect_project(dir: &Path) -> Result<Option<DetectedProject>> {
-    let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let canonical = normalize_project_dir(dir);
     if !canonical.is_dir() || is_system_checkout(&canonical) {
         return Ok(None);
     }
@@ -661,11 +682,10 @@ pub fn resolve_registered_app<'a>(
     }
 
     if let Some(dir) = cwd {
-        let canonical = std::fs::canonicalize(dir)
-            .unwrap_or_else(|_| dir.to_path_buf())
-            .to_string_lossy()
-            .into_owned();
-        if let Some(found) = state.apps.values().find(|a| a.project_dir == canonical) {
+        let canonical = normalize_project_dir(dir).to_string_lossy().into_owned();
+        if let Some(found) = state.apps.values().find(|a| {
+            normalize_project_dir(Path::new(&a.project_dir)).to_string_lossy() == canonical
+        }) {
             return Ok(found);
         }
     }
@@ -732,4 +752,55 @@ spec:
       nodePort: {node_port}
 "
     )
+}
+
+#[cfg(test)]
+mod project_dir_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_project_dir_strips_verbatim_prefixes_when_present() {
+        let trimmed = strip_windows_verbatim_prefix(PathBuf::from(r"\\?\E:\repo\demo"));
+        let unc = strip_windows_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\demo"));
+        #[cfg(windows)]
+        {
+            assert_eq!(trimmed, PathBuf::from(r"E:\repo\demo"));
+            assert_eq!(unc, PathBuf::from(r"\\server\share\demo"));
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(trimmed, PathBuf::from(r"\\?\E:\repo\demo"));
+            assert_eq!(unc, PathBuf::from(r"\\?\UNC\server\share\demo"));
+        }
+    }
+
+    #[test]
+    fn resolve_registered_app_matches_normalized_project_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let norm = normalize_project_dir(dir.path());
+        let stored_path = if cfg!(windows) {
+            format!(r"\\?\{}", norm.display())
+        } else {
+            norm.display().to_string()
+        };
+        let mut state = DesiredState::default();
+        state.apps.insert(
+            "demo".into(),
+            RegisteredApp {
+                slug: "demo".into(),
+                name: "Demo".into(),
+                project_dir: stored_path,
+                namespace: "hanzo-app-demo".into(),
+                kind: "package.json".into(),
+                image: None,
+                command: Some("npm start".into()),
+                container_port: 3000,
+                node_port: 30100,
+                desired_running: true,
+                local_pid: None,
+            },
+        );
+        let found = resolve_registered_app(&state, None, Some(dir.path())).expect("resolve app");
+        assert_eq!(found.slug, "demo");
+    }
 }
