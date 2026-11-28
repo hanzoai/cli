@@ -139,7 +139,8 @@ pub async fn checks() -> Vec<Check> {
     }
 
     // The runtime, from the process that booted it.
-    let mut shape = None;
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut shape: Option<(u64, u64)> = None;
     #[cfg(unix)]
     match super::control::call(&dir, &super::control::Request::Facts, |_| {}) {
         Ok(f) => {
