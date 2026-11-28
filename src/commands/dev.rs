@@ -66,7 +66,7 @@ impl Store {
     }
 }
 
-/// Whether the active network's API trusts hanzo.id, the issuer whose realm the
+/// Whether the active network's API trusts hanzo.ai, the issuer whose realm the
 /// stored Hanzo key (`hk-`, `sk-`) belongs to. A network with an issuer of its
 /// own (devnet) is never sent it: the key is a production credential, and
 /// devnet runs code no review has passed. There the session routes by the
@@ -247,7 +247,7 @@ pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> 
 mod network_tests {
     use super::*;
 
-    /// The stored Hanzo key is hanzo.id's: offered on mainnet and testnet, whose
+    /// The stored Hanzo key is hanzo.ai's: offered on mainnet and testnet, whose
     /// APIs trust that issuer, and never to devnet's.
     #[test]
     fn the_hanzo_key_stays_with_the_issuer_that_minted_it() {

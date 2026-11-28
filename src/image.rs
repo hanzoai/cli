@@ -256,7 +256,7 @@ pub async fn pull_secret_for(http: &Client, reference: &str, cfg: &mut Config) -
 /// 3. Native CLI credentials:
 ///    - `oci.hanzo.ai` / `pkg.hanzo.ai`: stored Hanzo `sk-*` key, then the
 ///      active `hanzo auth login` OIDC access token (accepted for pull-only
-///      registry tokens at `hanzo.id/v1/iam/registry/token`).
+///      registry tokens at `hanzo.ai/v1/iam/registry/token`).
 ///    - `forge.hanzo.ai` / `git.hanzo.ai`: active Hanzo identity token.
 ///    - `ghcr.io`: `gh auth token`.
 pub async fn credentials_for(registry: &str, cfg: &mut Config) -> Vec<Credential> {

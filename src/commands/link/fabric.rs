@@ -12,7 +12,7 @@ use super::{network, stopped, unit, zt, Caller};
 /// Who a tunnel, and the calls before it, sign in as.
 #[derive(clap::Args, Debug, Clone, Default)]
 pub struct Signer {
-    /// Sign in with what this command prints instead of your hanzo.id session: a
+    /// Sign in with what this command prints instead of your hanzo.ai session: a
     /// machine's own IAM client (e.g. /etc/hanzo/link/token). Run without a shell
     /// and split on spaces, as zt runs it
     #[arg(long, value_name = "CMD")]

@@ -23,7 +23,7 @@ use crate::iam::{context_switch, login as iam, onboarding, store};
 /// `hanzo auth login` — sign in through Hanzo IAM (OIDC), or store a provider key.
 /// Bare on a terminal shows the interactive picker; `--provider`/`--token -` is
 /// the non-interactive path, and `--account` signs in to Hanzo as that account
-/// (otherwise hanzo.id asks which). The credential is filed in the portable vault.
+/// (otherwise hanzo.ai asks which). The credential is filed in the portable vault.
 pub async fn login(
     cfg: &mut Config,
     brand: &str,

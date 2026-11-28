@@ -28,7 +28,7 @@ use super::{device, oauth, store};
 /// was active; an account other than the one `--account` named is added beside
 /// the active identity, never in its place.
 ///
-/// The sign-in asks hanzo.id for its account chooser (`prompt=select_account`)
+/// The sign-in asks hanzo.ai for its account chooser (`prompt=select_account`)
 /// every time, rather than continuing as whichever account the browser signed
 /// in last: the person picks one, or signs in as another. `--account` names
 /// the account instead (`login_hint`).
@@ -128,7 +128,7 @@ pub async fn login(cfg: &mut Config, brand: &str, account: Option<&str>) -> Resu
     Ok(())
 }
 
-/// The account `--account` names: what hanzo.id is asked for (`login_hint`),
+/// The account `--account` names: what hanzo.ai is asked for (`login_hint`),
 /// and the identity, when it is given as `owner/name`.
 struct Wanted {
     raw: String,
@@ -301,7 +301,7 @@ fn browser_here() -> bool {
     std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
-/// `hanzo auth login --token`: store a hanzo.id bearer directly, for a shell
+/// `hanzo auth login --token`: store a hanzo.ai bearer directly, for a shell
 /// that cannot open a browser (CI, a container, a remote host). Same identity law
 /// as the browser flow — the principal comes from the token's own claims, never
 /// from the caller.
@@ -350,7 +350,7 @@ async fn report(cfg: &Config, brand: &str, filed: &Filed, want: Option<&Wanted>)
     );
     if let Some(want) = want.filter(|w| tokens.as_ref().is_some_and(|t| !w.names(id, t))) {
         crate::warn(&format!(
-            "you asked for {}, and hanzo.id signed in {id}; `hanzo auth login --account {}` asks again",
+            "you asked for {}, and hanzo.ai signed in {id}; `hanzo auth login --account {}` asks again",
             want.raw, want.raw
         ));
     }
@@ -684,7 +684,7 @@ mod tests {
         }
     }
 
-    /// The case that stranded hanzo/z: a second sign-in that hanzo.id answered
+    /// The case that stranded hanzo/z: a second sign-in that hanzo.ai answered
     /// from the browser's session made that account active. Unchosen, it is
     /// only added.
     #[test]

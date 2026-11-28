@@ -1,7 +1,7 @@
 //! `hanzo auth`, against the shipped `hanzo` binary: which identity a sign-in
 //! files and activates, what `list` shows, and how `logout` ends the browser's
 //! session. Config and credentials sit under a throwaway `HOME`, so nothing
-//! touches the machine this suite runs on. Nothing here dials hanzo.id except
+//! touches the machine this suite runs on. Nothing here dials hanzo.ai except
 //! the seeding logins, which give up on userinfo after its own two seconds.
 
 #![cfg(unix)]
@@ -168,7 +168,7 @@ fn an_account_never_rides_a_handed_token() {
 }
 
 /// With no browser to open, `logout` still ends the session at the server and
-/// prints the end-session link for the browser that holds hanzo.id's cookie:
+/// prints the end-session link for the browser that holds hanzo.ai's cookie:
 /// the CLI's own client, and no id token written into a URL.
 #[test]
 fn logout_without_a_browser_prints_the_end_session_link() {
@@ -490,7 +490,7 @@ fn switch_persists_org_context_for_subsequent_commands_without_as_flag() {
             "--api",
             "http://api.ctx.invalid",
             "--iam",
-            "https://hanzo.id",
+            "https://hanzo.ai",
             "--activate",
         ])
         .assert()

@@ -21,7 +21,7 @@ use crate::http::{Method, Request, Transport};
 pub const ISSUE: &str = "/v1/iam/tokens/issue";
 
 /// Where IAM answers. Override for a private estate.
-pub const ISSUER: &str = "https://hanzo.id";
+pub const ISSUER: &str = "https://hanzo.ai";
 
 /// Re-mint this far ahead of expiry.
 const SKEW: Duration = Duration::from_secs(30);

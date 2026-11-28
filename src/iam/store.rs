@@ -226,7 +226,7 @@ fn moved_in(
 ///
 /// Every function here that takes a brand resolves it through this, so no
 /// caller can reach another network's identities, whatever it passes: on devnet
-/// `hanzo` is `hanzo@id-dev.hanzo.ai`, a credential hanzo.id signed is not in
+/// `hanzo` is `hanzo@id-dev.hanzo.ai`, a credential hanzo.ai signed is not in
 /// that realm, and no other brand has one. A realm passed back in (the detached
 /// account menu, a session's token helper) must be the one the active network
 /// names. A network that names no issuer is sent no credential at all.
@@ -252,7 +252,7 @@ pub(crate) fn realm(cfg: &Config, brand: &str) -> Result<String> {
 
 /// Refuse a credential its realm's issuer did not sign, by the token's own
 /// `iss`: one filed in a realm is one sent to that realm's network, so a
-/// hanzo.id credential is never filed where devnet would receive it, nor a
+/// hanzo.ai credential is never filed where devnet would receive it, nor a
 /// devnet one where mainnet would. A token that states no issuer is held to
 /// this only in a network's own realm, where every credential states one.
 fn issued(realm: &str, access_token: &str) -> Result<()> {
@@ -288,7 +288,7 @@ pub(crate) fn relogin(brand: &str, id: &Identity) -> String {
     sign_in(brand, id, &format!(" --account {id}"))
 }
 
-/// The command that signs in as a different account than `id`: hanzo.id asks
+/// The command that signs in as a different account than `id`: hanzo.ai asks
 /// which, through the same client `id` came from.
 pub(crate) fn choose(brand: &str, id: &Identity) -> String {
     sign_in(brand, id, "")
@@ -1003,13 +1003,13 @@ mod tests {
 
     // ---- networks ------------------------------------------------------------
 
-    /// Devnet runs unreviewed code, so a credential hanzo.id signed is never
+    /// Devnet runs unreviewed code, so a credential hanzo.ai signed is never
     /// filed where devnet would be sent it — stated issuer or none.
     #[test]
     fn devnet_refuses_a_credential_its_issuer_did_not_sign() {
         let (v, mut c) = (MemVault::new(), devnet());
         for token in [
-            issued_jwt("https://hanzo.id", "hanzo", "z"),
+            issued_jwt("https://hanzo.ai", "hanzo", "z"),
             jwt("hanzo", "z"),
         ] {
             let err = add_in(&v, &mut c, "hanzo", &tokens(&token))
@@ -1020,7 +1020,7 @@ mod tests {
         assert!(list(&c, "hanzo").is_empty());
     }
 
-    /// hanzo signs in at hanzo.ai and still honours what hanzo.id signed: a
+    /// hanzo signs in at hanzo.ai and still honours what hanzo.ai signed: a
     /// credential from either is filed and sent; an issuer that is neither is
     /// refused, and no other brand takes hanzo's two.
     #[test]
@@ -1029,7 +1029,7 @@ mod tests {
         for (iss, name) in [
             ("https://hanzo.ai", "a"),
             ("https://hanzo.ai/", "b"),
-            ("https://hanzo.id", "c"),
+            ("https://hanzo.ai", "c"),
         ] {
             let token = issued_jwt(iss, "hanzo", name);
             add_in(&v, &mut c, "hanzo", &tokens(&token))
@@ -1057,7 +1057,7 @@ mod tests {
         }
         assert_eq!(list(&c, "hanzo").len(), 3, "a refused credential was filed");
 
-        for iss in ["https://hanzo.ai", "https://hanzo.id"] {
+        for iss in ["https://hanzo.ai", "https://hanzo.ai"] {
             let err = add_in(&v, &mut c, "lux", &tokens(&issued_jwt(iss, "lux", "z")))
                 .unwrap_err()
                 .to_string();
@@ -1082,7 +1082,7 @@ mod tests {
             })
             .unwrap();
         };
-        let prod = issued_jwt("https://hanzo.id", "hanzo", "z");
+        let prod = issued_jwt("https://hanzo.ai", "hanzo", "z");
         let own = issued_jwt("https://id-dev.hanzo.ai", "hanzo", "z");
         on(&mut c, "mainnet");
         add_in(&v, &mut c, "hanzo", &tokens(&prod)).unwrap();
@@ -1097,13 +1097,13 @@ mod tests {
         let (_, t) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
         assert_eq!(t.access_token, own);
 
-        // Testnet trusts hanzo.id, so it is mainnet's realm.
+        // Testnet trusts hanzo.ai, so it is mainnet's realm.
         for network in ["mainnet", "testnet"] {
             on(&mut c, network);
             let (_, t) = active_token_in(&v, &mut c, "hanzo").unwrap().unwrap();
             assert_eq!(t.access_token, prod, "{network}");
         }
-        // Mainnet's realm refuses devnet's credential as devnet's refuses hanzo.id's.
+        // Mainnet's realm refuses devnet's credential as devnet's refuses hanzo.ai's.
         assert!(add_in(&v, &mut c, "hanzo", &tokens(&own)).is_err());
         let _ = std::fs::remove_file(c.effective_path());
     }

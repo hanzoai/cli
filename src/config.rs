@@ -205,7 +205,7 @@ pub struct StoredNetwork {
     pub api: String,
     /// The issuer this network's API trusts: where `hanzo auth login` signs in
     /// and whose credentials go to `api`. `None` (a network added before this
-    /// field) is the brand's own, hanzo.id.
+    /// field) is the brand's own, hanzo.ai.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iam: Option<String>,
     /// Block explorer, if any.

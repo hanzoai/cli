@@ -41,7 +41,7 @@ struct EnableResp {
 ///
 /// ONE VALUE, because it is one decision. Naming a provider and not naming a
 /// person publishes a shell to everyone that provider has ever heard of — every
-/// account on hanzo.id, in any org — which is what "protected" used to mean here
+/// account on hanzo.ai, in any org — which is what "protected" used to mean here
 /// and is not what anybody means by it. The two were separate flags on the
 /// helper and it was possible, in fact usual, to pass the first without the
 /// second.
@@ -213,7 +213,7 @@ async fn open(
     // A published terminal is a shell, so it is published FOR SOMEONE. Both
     // halves travel together: the provider makes the URL insufficient on its own,
     // and the address makes the provider insufficient on its own. Without the
-    // second, every account hanzo.id knows — every org — could open this shell by
+    // second, every account hanzo.ai knows — every org — could open this shell by
     // learning the hostname, which is a smaller set than the internet and not a
     // small one.
     if let Some(o) = owner {
@@ -568,7 +568,7 @@ mod tests {
 
     // A SHARE IS PUBLISHED FOR SOMEONE, and both halves of that say so. The
     // provider alone was the old behaviour: it makes the URL insufficient, and
-    // leaves every account hanzo.id knows — every org — able to open the shell
+    // leaves every account hanzo.ai knows — every org — able to open the shell
     // by learning the hostname.
     #[test]
     fn a_published_share_names_the_person_it_is_for() {

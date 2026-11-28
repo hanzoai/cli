@@ -188,7 +188,7 @@ pub(crate) enum Done {
     Browser(TokenSet, Held),
 }
 
-/// What a sign-in asks hanzo.id for: the account it is for (`login_hint`), or,
+/// What a sign-in asks hanzo.ai for: the account it is for (`login_hint`), or,
 /// with none named, the person's choice among the accounts signed in on that
 /// browser (`prompt=select_account`). It never continues as whichever account
 /// the browser signed in last: that is a guess, and a wrong one files the
@@ -988,7 +988,7 @@ fn conclusion(origin: &str, failure: Option<&str>) -> String {
     }
 }
 
-/// The Hanzo block-H at the size hanzo.id draws it in the footer: 24px, no
+/// The Hanzo block-H at the size hanzo.ai draws it in the footer: 24px, no
 /// baked-in square, so it reads white on this page's dark ground.
 const HANZO_MARK: &str = concat!(
     r##"<svg width="24" height="24" viewBox="0 0 67 67" fill="#f4f4f5" aria-hidden="true">"##,
@@ -1000,7 +1000,7 @@ const HANZO_MARK: &str = concat!(
     "</svg>"
 );
 
-/// "lux.id" → "Lux ID". hanzo.id does not use this: that corner says "Hanzo AI".
+/// "lux.id" → "Lux ID". hanzo.ai does not use this: that corner says "Hanzo AI".
 fn id_label(host: &str) -> String {
     let short = host.split('.').next().unwrap_or(host);
     let mut chars = short.chars();
@@ -1010,11 +1010,11 @@ fn id_label(host: &str) -> String {
     }
 }
 
-/// The corner name and footer mark of a loopback page, as hanzo.id places
-/// them: on hanzo.id the name is "Hanzo AI" and both open https://hanzo.ai;
+/// The corner name and footer mark of a loopback page, as hanzo.ai places
+/// them: on hanzo.ai the name is "Hanzo AI" and both open https://hanzo.ai;
 /// another issuer gets its own "<Name> ID" and no mark.
 fn chrome(host: &str) -> (String, String) {
-    if matches!(host, "hanzo.ai" | "hanzo.id") {
+    if matches!(host, "hanzo.ai" | "hanzo.ai") {
         (
             "<a href=\"https://hanzo.ai\" style=\"position:absolute;top:24px;left:24px;margin:0;\
              font-size:19px;font-weight:600;letter-spacing:-0.4px;line-height:1;color:#f4f4f5;\
@@ -1062,7 +1062,7 @@ fn page(origin: &str, title: &str, account: &str, heading: &str, detail: &str) -
 
 /// The page a finished `hanzo login` leaves in the browser. It names the
 /// identity that signed in, and the one the terminal goes on as: the same one,
-/// or `kept` when hanzo.id answered with an account nobody chose, or `--as`
+/// or `kept` when hanzo.ai answered with an account nobody chose, or `--as`
 /// signed in another org, and the active identity stays as it was. The account
 /// chip at the top right opens a panel that says the same plainly and offers
 /// `again`, the command that asks which account, to copy. Nothing on it
@@ -1088,7 +1088,7 @@ fn signed_in_page(origin: &str, who: Option<&Shown>, kept: Option<&str>, again: 
     page(origin, "Signed in", &account, "You're signed in", &detail)
 }
 
-/// The page `hanzo auth logout` leaves in the browser once hanzo.id has ended
+/// The page `hanzo auth logout` leaves in the browser once hanzo.ai has ended
 /// that browser's sessions.
 fn signed_out_page(origin: &str) -> String {
     page(
@@ -1104,7 +1104,7 @@ fn signed_out_page(origin: &str) -> String {
 /// panel (a `<details>`, so it needs no script to open) that says which
 /// account signed in, which identity the terminal uses, and how to sign in as
 /// a different account: `again` is shown and copied, since only the terminal
-/// that holds the sign-in can ask hanzo.id which account to continue as.
+/// that holds the sign-in can ask hanzo.ai which account to continue as.
 fn account_face(who: &Shown, kept: Option<&str>, again: &str) -> String {
     let letter = who
         .label
@@ -1146,7 +1146,7 @@ fn account_face(who: &Shown, kept: Option<&str>, again: &str) -> String {
              style=\"font:inherit;font-size:13px;font-weight:600;color:#f4f4f5;background:#27272a;\
              border:1px solid #3f3f46;border-radius:8px;padding:6px 12px;cursor:pointer\">Use a different account</button>\
              <div style=\"margin-top:8px;color:#a1a1aa\">Run <code style=\"color:#f4f4f5\">{cmd}</code> in the terminal \
-             and hanzo.id asks which account.</div></div>",
+             and hanzo.ai asks which account.</div></div>",
             cmd = escape(again)
         )
     };
@@ -1744,7 +1744,7 @@ mod tests {
     #[test]
     fn authorize_url_is_hip0111_pkce_s256() {
         let url = build_authorize_url(
-            "https://hanzo.id",
+            "https://hanzo.ai",
             None,
             "http://127.0.0.1:54321/callback",
             "CHALLENGE",
@@ -1769,7 +1769,7 @@ mod tests {
         assert!(!q.contains_key("login_hint"));
 
         let chosen = build_authorize_url(
-            "https://hanzo.id",
+            "https://hanzo.ai",
             Some("admin"),
             "http://127.0.0.1:1/callback",
             "C",
@@ -1786,7 +1786,7 @@ mod tests {
 
         // `--account`: the hint, and no chooser, since the account is named.
         let named = build_authorize_url(
-            "https://hanzo.id",
+            "https://hanzo.ai",
             None,
             "http://127.0.0.1:1/callback",
             "C",
@@ -1882,10 +1882,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            let (cb, mut stream) = capture_callback(&listener, "xyz", "https://hanzo.id")
+            let (cb, mut stream) = capture_callback(&listener, "xyz", "https://hanzo.ai")
                 .await
                 .unwrap();
-            reply(&mut stream, &conclusion("https://hanzo.id", None)).await;
+            reply(&mut stream, &conclusion("https://hanzo.ai", None)).await;
             cb
         });
 
@@ -1939,7 +1939,7 @@ mod tests {
             label: "z@hanzo.ai".into(),
             id: "hanzo/z".into(),
         };
-        let page = signed_in_page("https://hanzo.id", Some(&who), None, "hanzo auth login");
+        let page = signed_in_page("https://hanzo.ai", Some(&who), None, "hanzo auth login");
         assert!(
             page.contains("The terminal continues as hanzo/z."),
             "{page}"
@@ -1977,7 +1977,7 @@ mod tests {
         }
 
         let kept = signed_in_page(
-            "https://hanzo.id",
+            "https://hanzo.ai",
             Some(&who),
             Some("hanzo/grundy"),
             "hanzo auth login",
@@ -1999,7 +1999,7 @@ mod tests {
             "{kept}"
         );
 
-        let bare = signed_in_page("https://hanzo.id", None, None, "");
+        let bare = signed_in_page("https://hanzo.ai", None, None, "");
         assert!(
             !bare.contains("<details") && !bare.contains("Use a different account"),
             "{bare}"
@@ -2010,7 +2010,7 @@ mod tests {
             id: "hanzo/<i>".into(),
         };
         let page = signed_in_page(
-            "https://hanzo.id",
+            "https://hanzo.ai",
             Some(&hostile),
             Some("hanzo/<s>"),
             "hanzo \"<u>\"",
@@ -2037,7 +2037,7 @@ mod tests {
         let (held_stream, _) = listener.accept().await.unwrap();
         let held = Held {
             listener,
-            origin: "https://hanzo.id".into(),
+            origin: "https://hanzo.ai".into(),
             waiting: vec![held_stream],
         };
         let tokens = TokenSet {
@@ -2104,7 +2104,7 @@ mod tests {
     #[test]
     fn the_end_session_url_names_the_client_and_its_loopback() {
         let url = end_session_url(
-            "https://hanzo.id",
+            "https://hanzo.ai",
             "hanzo-cli",
             Some(("http://127.0.0.1:5123/callback", "S-1")),
         )
@@ -2119,7 +2119,7 @@ mod tests {
         assert_eq!(q["state"], "S-1");
         assert!(!q.contains_key("id_token_hint"));
 
-        let bare = end_session_url("https://hanzo.id", "hanzo-cli", None).unwrap();
+        let bare = end_session_url("https://hanzo.ai", "hanzo-cli", None).unwrap();
         let q: HashMap<_, _> = bare.query_pairs().into_owned().collect();
         assert_eq!(q.len(), 1, "{bare}");
     }
@@ -2133,7 +2133,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server =
-            tokio::spawn(async move { signed_out(&listener, "mine", "https://hanzo.id").await });
+            tokio::spawn(async move { signed_out(&listener, "mine", "https://hanzo.ai").await });
 
         for target in ["/favicon.ico", "/callback?state=other", "/callback"] {
             let mut stray = TcpStream::connect(addr).await.unwrap();
@@ -2175,7 +2175,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
-                capture_callback(&listener, "xyz", "https://hanzo.id").await
+                capture_callback(&listener, "xyz", "https://hanzo.ai").await
             });
 
             let mut client = TcpStream::connect(addr).await.unwrap();

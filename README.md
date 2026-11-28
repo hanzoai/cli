@@ -138,12 +138,12 @@ hanzo provider connect|verify|disconnect <provider>  # add / re-check / drop a c
 hanzo connection list|rm [id]                        # your connectors across providers, and forget one
 ```
 
-`auth login` asks hanzo.id for its account chooser every time (the accounts
+`auth login` asks hanzo.ai for its account chooser every time (the accounts
 signed in on that browser, and "Use another account") instead of continuing as
 the browser's latest session; `--account` names the account instead. The
 account you choose becomes active, and the output says which identity the
 terminal uses. `auth logout` revokes the
-session at IAM and signs the browser out of hanzo.id too, so the next sign-in
+session at IAM and signs the browser out of hanzo.ai too, so the next sign-in
 asks again.
 
 Secrets arrive on **stdin only**, never argv (`--token -`) — nothing lands in
@@ -258,7 +258,7 @@ cargo clippy --bin hanzo
 
 `tests/cli.rs` runs the real binary with real argv and exit codes; state is isolated
 behind `--config <tempdir>`. The live auth flow is gated on `HANZO_E2E_TOKEN` (a real
-`hanzo.id` bearer) and honestly skips when absent.
+`hanzo.ai` bearer) and honestly skips when absent.
 
 ## Contributing
 

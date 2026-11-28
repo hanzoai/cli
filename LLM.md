@@ -1188,12 +1188,12 @@ command (`sign in again: hanzo --as admin auth login`), never another identity.
 name the default.
 
 **Issuers** (`iam/paths.rs`, `crates/identity/src/discovery.rs`). hanzo signs in at
-`https://hanzo.ai` (`brand_origin`); hanzo.ai and hanzo.id are interchangeable
+`https://hanzo.ai` (`brand_origin`); hanzo.ai and hanzo.ai are interchangeable
 issuers. A credential is filed and sent when its `iss` is the issuer that origin's OIDC
 discovery publishes (hanzo.ai) or one the brand held before it moved (`former_origins`:
-hanzo → hanzo.id); any other issuer is refused (`store::issued`, `paths::trusts`), and
+hanzo → hanzo.ai); any other issuer is refused (`store::issued`, `paths::trusts`), and
 no other brand borrows hanzo's two. Endpoints come from discovery; the `/v1/iam/oauth/*`
-constants answer only when discovery was never reachable. hanzo.id credentials stay
+constants answer only when discovery was never reachable. hanzo.ai credentials stay
 valid until they expire. A refresh runs under `refresh.lock`, a sibling of the
 credential file and never its own `credentials.lock` (`FileVault::set` takes that one
 inside the refresh and would block on itself); `tests/refresh.rs` runs 8 processes
@@ -1222,7 +1222,7 @@ memory only; `--as owner` is the org's active one as everywhere); `hanzo auth li
 network); `hanzo auth switch <identity>` is `auth use`, the one change that is
 global to every tool on the machine.
 
-**Which account a sign-in continues as** (`src/iam/login.rs`). hanzo.id answers an
+**Which account a sign-in continues as** (`src/iam/login.rs`). hanzo.ai answers an
 authorize request from the browser's latest session unless asked otherwise, so a
 person holding several identities used to land on whichever account the browser
 signed in last, and one holding none or one could not pick at all (owner,
@@ -1242,7 +1242,7 @@ menu process and no browser-side switch, `hanzo auth use` is the one way. Its
 top-right chip is a `<details>` that opens a panel: who signed in, which identity
 the terminal uses (and what `--as <org>` uses when that differs), and "Use a
 different account", which copies `hanzo [--as org] auth login`
-(`store::choose`) — only the terminal holding the PKCE verifier can ask hanzo.id
+(`store::choose`) — only the terminal holding the PKCE verifier can ask hanzo.ai
 which account, so the page names the command rather than call anything. `relogin` names the identity (`--account <owner/name>`).
 `auth logout` ends the browser's issuer session too (`oauth::end_session`, OIDC
 RP-Initiated Logout at `/v1/iam/oauth/logout`): through `hanzo-cli`, whose

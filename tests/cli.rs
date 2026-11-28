@@ -3,8 +3,8 @@
 //! state behind `--config <tempdir>` (the global flag, placed after the
 //! subcommand); nothing here reads or writes the developer's own config.
 //!
-//! Live tests (real login against hanzo.id / api.hanzo.ai) are gated on
-//! `HANZO_E2E_TOKEN` — a real hanzo.id bearer. Absent → the test SKIPS with the
+//! Live tests (real login against hanzo.ai / api.hanzo.ai) are gated on
+//! `HANZO_E2E_TOKEN` — a real hanzo.ai bearer. Absent → the test SKIPS with the
 //! env var named on stderr (honest skip, never a fake green). NOTE: a live
 //! login stores a credential through the real vault (the OS keychain on a
 //! desktop; the file vault in CI) for the token's OWN identity — the same slot
@@ -567,7 +567,7 @@ fn hanzo_files_a_credential_from_hanzo_ai_and_hanzo_id_and_refuses_a_foreign_iss
         cmd.assert()
     };
     login("https://hanzo.ai", "ai").success();
-    login("https://hanzo.id", "id").success();
+    login("https://hanzo.ai", "id").success();
     login("https://hanzo.evil.example", "evil")
         .failure()
         .stderr(predicate::str::contains(
@@ -575,7 +575,7 @@ fn hanzo_files_a_credential_from_hanzo_ai_and_hanzo_id_and_refuses_a_foreign_iss
         ));
 }
 
-/// Identities never cross networks: devnet refuses a hanzo.id credential, holds
+/// Identities never cross networks: devnet refuses a hanzo.ai credential, holds
 /// none of mainnet's, and each network's `auth token` is its own issuer's.
 #[test]
 fn identities_never_cross_networks() {
@@ -589,7 +589,7 @@ fn identities_never_cross_networks() {
         cmd.assert()
     };
     let login = ["auth", "login", "--provider", "hanzo", "--token", "-"];
-    let prod = issued("https://hanzo.id", "hanzo", "net");
+    let prod = issued("https://hanzo.ai", "hanzo", "net");
     let dev = issued("https://id-dev.hanzo.ai", "hanzo", "net");
 
     run(&login, Some(&prod)).success();
@@ -599,7 +599,7 @@ fn identities_never_cross_networks() {
         .stderr(predicate::str::contains("not signed in"));
     run(&login, Some(&prod))
         .failure()
-        .stderr(predicate::str::contains("issued by https://hanzo.id"));
+        .stderr(predicate::str::contains("issued by https://hanzo.ai"));
     run(&login, Some(&dev)).success();
     run(&["auth", "token"], None)
         .success()
@@ -771,7 +771,7 @@ fn e2e_token() -> Option<String> {
         Ok(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
         _ => {
             eprintln!(
-                "SKIP: set HANZO_E2E_TOKEN (a real hanzo.id bearer) to run the live auth flow"
+                "SKIP: set HANZO_E2E_TOKEN (a real hanzo.ai bearer) to run the live auth flow"
             );
             None
         }

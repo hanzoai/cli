@@ -72,7 +72,7 @@ async fn mint_addresses_iam_and_names_the_subject_in_the_query() {
     assert_eq!(seen.len(), 2, "one mint, one call");
     assert_eq!(
         seen[0].url,
-        "https://hanzo.id/v1/iam/tokens/issue?id=usr_42"
+        "https://hanzo.ai/v1/iam/tokens/issue?id=usr_42"
     );
     assert_eq!(seen[0].method, Method::POST);
     assert_eq!(seen[0].token.as_deref(), Some("hk-operator"));
@@ -115,7 +115,7 @@ async fn the_subject_is_encoded_not_interpolated() {
 
     assert_eq!(
         stub.seen()[0].url,
-        "https://hanzo.id/v1/iam/tokens/issue?id=a+b%26role%3Dadmin"
+        "https://hanzo.ai/v1/iam/tokens/issue?id=a+b%26role%3Dadmin"
     );
 }
 
@@ -185,7 +185,7 @@ async fn a_401_remints_and_retries_once() {
     assert_eq!(seen[1].token.as_deref(), Some("act_1"));
     assert_eq!(
         seen[2].url,
-        "https://hanzo.id/v1/iam/tokens/issue?id=usr_42"
+        "https://hanzo.ai/v1/iam/tokens/issue?id=usr_42"
     );
     assert_eq!(
         seen[3].token.as_deref(),
@@ -507,9 +507,9 @@ async fn each_subject_holds_its_own_token() {
         .unwrap();
 
     let seen = stub.seen();
-    assert_eq!(seen[0].url, "https://hanzo.id/v1/iam/tokens/issue?id=usr_a");
+    assert_eq!(seen[0].url, "https://hanzo.ai/v1/iam/tokens/issue?id=usr_a");
     assert_eq!(seen[1].token.as_deref(), Some("act_a"));
-    assert_eq!(seen[2].url, "https://hanzo.id/v1/iam/tokens/issue?id=usr_b");
+    assert_eq!(seen[2].url, "https://hanzo.ai/v1/iam/tokens/issue?id=usr_b");
     assert_eq!(seen[3].token.as_deref(), Some("act_b"));
 }
 

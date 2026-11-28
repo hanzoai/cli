@@ -314,7 +314,7 @@ pub async fn run(
     // WHOSE SHELL THIS IS, said out loud. A terminal reachable by anyone who
     // learns the URL is not something to opt in to protecting — and neither is
     // one reachable by anyone with an account. The address comes off the token
-    // already in hand, and the frontend checks it against what hanzo.id says
+    // already in hand, and the frontend checks it against what hanzo.ai says
     // about whoever turns up, so this is a claim about the publisher rather than
     // a decision made here.
     let Some(email) = crate::iam::identity::email(&caller.token) else {

@@ -45,7 +45,7 @@ OK
 # tests (`trusts`, the credential store) fetch the live discovery documents
 # and cache them through dirs::cache_dir; with XDG_CACHE_HOME unset that is
 # OME/.cache, so a test run wrote the runner's HOME and the gate refused
-# it (forge run #85 on the PR #72 merge: hanzo.ai, hanzo.id, lux.id). The
+# it (forge run #85 on the PR #72 merge: hanzo.ai, hanzo.ai, lux.id). The
 # cache belongs in the build tree, never in a person's HOME.
    Compiling hanzo-identity v0.1.0 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/identity)
    Compiling hanzo-event v0.1.0 (/private/var/folders/xh/_fpw0c6d7rs1sn8nwx93t7gw0000gn/T/opencode/cli-swarm/crates/event)

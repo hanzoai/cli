@@ -38,7 +38,7 @@ pub struct Caller {
 
 impl Caller {
     /// Sign in with `token_command`'s output when given (a machine's own IAM
-    /// client), else with the active hanzo.id session.
+    /// client), else with the active hanzo.ai session.
     pub async fn sign_in(cfg: &mut Config, token_command: Option<&str>) -> Result<Caller> {
         let api = network::active(cfg).api.trim_end_matches('/').to_string();
         let token = match token_command {

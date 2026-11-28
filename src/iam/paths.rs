@@ -102,7 +102,7 @@ fn authority_origin(authority: &str) -> Option<String> {
 /// brand's own realm; a re-login replaces them.
 fn former_origins(brand: &str) -> &'static [&'static str] {
     match brand {
-        "hanzo" => &["https://hanzo.id"],
+        "hanzo" => &["https://hanzo.ai"],
         _ => &[],
     }
 }
@@ -122,7 +122,7 @@ pub fn brand_of(realm: &str) -> &str {
 /// because its credential would be sent to an API that trusts none of them. An
 /// issuer the realm could not name exactly — not https (or http on loopback),
 /// carrying a path, a query or credentials — is refused rather than read as
-/// hanzo.id.
+/// hanzo.ai.
 pub fn realm(brand: &str, issuer: &str) -> anyhow::Result<String> {
     let issuer = trim_server_url(issuer.trim());
     if Some(issuer) == brand_origin(DEFAULT_BRAND)
@@ -202,7 +202,7 @@ pub fn endpoint(origin: &str, path: &str) -> String {
 ///
 /// ```
 /// # use hanzo::iam::paths::{iam_url, TOKEN};
-/// assert_eq!(iam_url("https://hanzo.id", TOKEN), "https://hanzo.id/v1/iam/oauth/token");
+/// assert_eq!(iam_url("https://hanzo.ai", TOKEN), "https://hanzo.ai/v1/iam/oauth/token");
 /// ```
 pub fn iam_url(server_url: &str, path: &str) -> String {
     format!("{}{}", trim_server_url(server_url), path)
@@ -242,7 +242,7 @@ mod tests {
     /// no other host is hanzo's, and another brand takes its own issuer alone.
     #[test]
     fn hanzo_trusts_its_two_issuers_and_nobody_else() {
-        for iss in ["https://hanzo.ai", "https://hanzo.ai/", "https://hanzo.id"] {
+        for iss in ["https://hanzo.ai", "https://hanzo.ai/", "https://hanzo.ai"] {
             assert!(trusts("hanzo", iss), "{iss}");
         }
         for iss in [
@@ -262,20 +262,20 @@ mod tests {
     }
 
     /// A network with its own issuer signs the default brand in there, under a
-    /// realm of its own, and refuses every other brand; a network on hanzo.id
+    /// realm of its own, and refuses every other brand; a network on hanzo.ai
     /// keeps each brand's own realm, and so the credentials it already holds.
     #[test]
     fn a_network_with_its_own_issuer_is_a_realm_of_its_own() {
         for own in [
             "https://hanzo.ai",
             "https://hanzo.ai/",
-            "https://hanzo.id",
-            "https://hanzo.id/",
+            "https://hanzo.ai",
+            "https://hanzo.ai/",
         ] {
             assert_eq!(realm("hanzo", own).unwrap(), "hanzo", "{own}");
         }
         assert_eq!(realm("lux", "https://hanzo.ai").unwrap(), "lux");
-        assert_eq!(realm("lux", "https://hanzo.id").unwrap(), "lux");
+        assert_eq!(realm("lux", "https://hanzo.ai").unwrap(), "lux");
         let dev = realm("hanzo", "https://id-dev.hanzo.ai").unwrap();
         assert_eq!(dev, "hanzo@id-dev.hanzo.ai");
         assert_eq!(
@@ -298,7 +298,7 @@ mod tests {
     }
 
     /// An issuer the realm cannot name exactly is refused, never read as the
-    /// brand's own: that would hand a hanzo.id credential to another network.
+    /// brand's own: that would hand a hanzo.ai credential to another network.
     #[test]
     fn an_issuer_the_realm_cannot_name_is_refused() {
         for bad in [
@@ -373,16 +373,16 @@ mod tests {
     fn endpoints_are_hip0111_exact() {
         // No /api/ prefix, no legacy /oauth/*. Exactly the HIP-0111 paths.
         assert_eq!(
-            iam_url("https://hanzo.id", AUTHORIZE),
-            "https://hanzo.id/v1/iam/oauth/authorize"
+            iam_url("https://hanzo.ai", AUTHORIZE),
+            "https://hanzo.ai/v1/iam/oauth/authorize"
         );
         assert_eq!(
-            iam_url("https://hanzo.id", TOKEN),
-            "https://hanzo.id/v1/iam/oauth/token"
+            iam_url("https://hanzo.ai", TOKEN),
+            "https://hanzo.ai/v1/iam/oauth/token"
         );
         assert_eq!(
-            iam_url("https://hanzo.id", USERINFO),
-            "https://hanzo.id/v1/iam/oauth/userinfo"
+            iam_url("https://hanzo.ai", USERINFO),
+            "https://hanzo.ai/v1/iam/oauth/userinfo"
         );
     }
 

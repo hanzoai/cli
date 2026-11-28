@@ -303,7 +303,7 @@ mod tests {
     }
 
     /// Each network's API trusts one issuer, and the realm a credential is filed
-    /// under follows it: mainnet and testnet share hanzo.id's, devnet has its own.
+    /// under follows it: mainnet and testnet share hanzo.ai's, devnet has its own.
     #[test]
     fn each_network_signs_in_at_the_issuer_its_api_trusts() {
         for (name, api, iam, realm_name) in [

@@ -44,7 +44,7 @@ struct Claims {
 /// The SAME unverified decode as [`Identity::from_access_token`], for the same
 /// kind of use: a label, never a decision. `hanzo link` hands this to the
 /// share's frontend as the one address that may open the published shell, and
-/// the frontend then asks hanzo.id who the visitor actually is — so a wrong
+/// the frontend then asks hanzo.ai who the visitor actually is — so a wrong
 /// value here can only lock the publisher out of their own terminal, never let
 /// anybody else in.
 pub fn email(access_token: &str) -> Option<String> {
@@ -188,7 +188,7 @@ impl Identity {
             // NOT an identity in this store. Do not re-litigate this into a
             // synthetic principal.
             _ => bail!(
-                "not a hanzo.id access token: the CLI files a credential under the `owner`/`name` \
+                "not a hanzo.ai access token: the CLI files a credential under the `owner`/`name` \
                  claims the token itself carries, and this value has none.\n\
                  An `hk-` gateway API key identifies no principal, so it is not an identity and \
                  cannot be stored as one.\n\

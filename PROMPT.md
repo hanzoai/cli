@@ -79,7 +79,7 @@ All Hanzo-controlled inference via `api.hanzo.ai` or configured local Hanzo rout
 `https://api.hanzo.ai` is canonical. `/v1/` only; no `/api/`, unnecessary per-app API hosts/gateways, or v2. Generated contracts govern CLI/MCP/SDK/API. Discover operations, don't guess. Native services use approved ZAP transport; Windows uses supported IPC instead of assumed Unix sockets. UI/IAM/KMS/operator hosts are distinct from public API authority.
 
 ## IAM
-Hanzo IAM (`hanzo.id`) owns all authentication, tokens, sessions, SSO, recovery, verification. Native ZAP/IAM integration; no bespoke auth, passwords, OTP, middleware, or competing gates. Apps: `<org>-<app>`.
+Hanzo IAM (`hanzo.ai`) owns all authentication, tokens, sessions, SSO, recovery, verification. Native ZAP/IAM integration; no bespoke auth, passwords, OTP, middleware, or competing gates. Apps: `<org>-<app>`.
 
 *SuperAdmin ⇔ IAM-validated `owner == "admin"`* in reserved org; one predicate everywhere. Org `isAdmin` ≠ SuperAdmin. Provision named privileged users through IAM, never promote from brand org. Least privilege, separation of duties, audits. No shared/default/predictable bootstrap credentials in prompts or source.
 

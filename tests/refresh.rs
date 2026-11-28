@@ -1,6 +1,6 @@
 //! Several `hanzo` processes that need a refresh at the same moment, against the
 //! shipped binary and a stand-in IAM that rotates single-use refresh tokens and
-//! revokes the family on a replay, as hanzo.id does. Config and credentials sit
+//! revokes the family on a replay, as hanzo.ai does. Config and credentials sit
 //! under a throwaway `HOME`.
 
 #![cfg(unix)]

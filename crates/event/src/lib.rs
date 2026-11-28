@@ -15,7 +15,7 @@
 //!  - **no PII** — the visitor is a random per-install [`device_id`]; a command
 //!    reports only its verb, duration, and outcome. Never argv, paths, or free text.
 //!
-//! Auth is one bearer header: a hanzo.id JWT when the caller is signed in, else a
+//! Auth is one bearer header: a hanzo.ai JWT when the caller is signed in, else a
 //! write-only publishable key (`pk_…`) supplied via config or `HANZO_EVENT_KEY`.
 //! The `/v1/event` endpoint is fail-closed, so a run with neither credential resolves a
 //! device id but does not transmit — provisioning a `pk_` turns anonymous telemetry
@@ -103,7 +103,7 @@ pub struct Config {
     pub api_base: String,
     /// The per-install device id used as `distinctId`.
     pub distinct_id: String,
-    /// A hanzo.id JWT (or a `pk-`/`sk-` key) when one is cheaply available; else the
+    /// A hanzo.ai JWT (or a `pk-`/`sk-` key) when one is cheaply available; else the
     /// handle falls back to [`KEY_ENV`], else it transmits nothing.
     pub bearer: Option<String>,
 }
