@@ -790,3 +790,40 @@ fn every_capability_the_document_carries_is_a_command() {
     );
 }
 
+#[test]
+fn model_table_renders_progressive_enso_glyphs_and_hides_enso_free() {
+    let payload = json!({
+        "object": "list",
+        "data": [
+            { "id": "enso-auto", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-ultra", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-max", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-pro", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-flash", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-free", "object": "model", "owned_by": "hanzo" },
+            { "id": "zen6", "object": "model", "owned_by": "hanzo" }
+        ]
+    });
+    let cleaned = dispatch::sanitize_model_catalog(&payload);
+    let arr = cleaned["data"].as_array().unwrap();
+    assert_eq!(arr.len(), 7);
+    assert!(!arr.iter().any(|m| m["id"] == "enso-free"));
+
+    let rendered = dispatch::render(&cleaned["data"], Output::Table, 120).unwrap();
+    for expected in [
+        "○ enso-auto",
+        "◕ enso-ultra",
+        "◑ enso-max",
+        "◔ enso-pro",
+        "◌ enso",
+        "◦ enso-flash",
+        "zen6",
+    ] {
+        assert!(rendered.contains(expected), "missing `{expected}` in:\n{rendered}");
+    }
+    assert!(!rendered.contains("enso-free"), "enso-free leaked:\n{rendered}");
+    assert!(!rendered.contains("○ enso-ultra"));
+    assert!(!rendered.contains("○ enso-flash"));
+}
+

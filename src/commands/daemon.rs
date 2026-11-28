@@ -51,9 +51,16 @@ pub enum DaemonCommand {
         /// Workspace root for file/exec/git tools (defaults to current directory)
         #[arg(long, value_name = "DIR")]
         workspace: Option<PathBuf>,
-        /// Model to use (e.g. `zen5-coder`, `enso-auto`, or a `local:*` model)
+        /// Model to use (e.g. `enso-auto`, `enso-ultra`, `enso-flash`, `zen5-coder`, or a `local:*` model)
         #[arg(long)]
         model: Option<String>,
+        /// Reasoning effort: auto | off (none) | minimal | low | medium | high | xhigh | max
+        #[arg(
+            long,
+            visible_alias = "reasoning-effort",
+            value_parser = hanzo_gen::reasoning::parse_cli_effort
+        )]
+        effort: Option<hanzo_gen::ReasoningEffort>,
         /// Optional label when creating a new session
         #[arg(long)]
         label: Option<String>,
@@ -134,6 +141,7 @@ pub async fn run(cfg: &mut Config, args: DaemonArgs) -> Result<()> {
             session,
             workspace,
             model,
+            effort,
             label,
             json,
         } => {
@@ -141,7 +149,23 @@ pub async fn run(cfg: &mut Config, args: DaemonArgs) -> Result<()> {
             if text.is_empty() {
                 bail!("a prompt is required: `hanzo daemon dev \"summarize this repo\"`");
             }
-            run_turn(cfg, &text, session, workspace, model, label, json).await
+            let effective_effort = effort.or_else(|| {
+                cfg.code
+                    .effort
+                    .as_deref()
+                    .and_then(hanzo_gen::ReasoningEffort::parse)
+            });
+            run_turn(
+                cfg,
+                &text,
+                session,
+                workspace,
+                model,
+                effective_effort,
+                label,
+                json,
+            )
+            .await
         }
         DaemonCommand::Computer {
             action,
@@ -154,15 +178,18 @@ pub async fn run(cfg: &mut Config, args: DaemonArgs) -> Result<()> {
 }
 
 /// Entry point shared with `hanzo dev --daemon <prompt>`.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_turn(
     cfg: &mut Config,
     prompt: &str,
     session_id: Option<String>,
     workspace: Option<PathBuf>,
     model: Option<String>,
+    effort: Option<hanzo_gen::ReasoningEffort>,
     label: Option<String>,
     as_json: bool,
 ) -> Result<()> {
+    let model = model.map(|m| hanzo_gen::enso::normalize_enso_model(&m).to_string());
     let token = bearer(cfg).await?;
     let sid = match session_id {
         Some(id) => id,
@@ -182,6 +209,9 @@ pub async fn run_turn(
     if let Some(m) = model.as_deref().filter(|s| !s.trim().is_empty()) {
         req_body["model"] = json!(m);
     }
+    if let Some(eff) = effort {
+        req_body["effort"] = json!(eff.cloud_wire());
+    }
 
     let path = format!("/v1/dev/sessions/{sid}/turns");
     let reply = call(&Method::POST, &path, &token, Some(req_body)).await?;
@@ -197,10 +227,18 @@ pub async fn run_turn(
         .get("outcome")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
+    let model_suffix = val
+        .get("model")
+        .and_then(Value::as_str)
+        .or(model.as_deref())
+        .filter(|m| !m.trim().is_empty())
+        .map(|m| format!(" · {}", hanzo_gen::enso::format_model_id(m)))
+        .unwrap_or_default();
     eprintln!(
-        "{} session {} · turn {} · {}",
+        "{} session {}{} · turn {} · {}",
         "hanzod".cyan().bold(),
         sid.dimmed(),
+        model_suffix,
         turn_id,
         outcome
     );
@@ -579,7 +617,7 @@ pub(crate) fn create_session_body(
         obj["label"] = json!(l);
     }
     if let Some(m) = model.filter(|s| !s.trim().is_empty()) {
-        obj["model"] = json!(m);
+        obj["model"] = json!(hanzo_gen::enso::normalize_enso_model(m));
     }
     obj
 }
@@ -599,6 +637,48 @@ mod tests {
             full,
             json!({ "workspace": "/tmp/work", "label": "sprint", "model": "zen5-coder" })
         );
+
+        let normalized = create_session_body(None, "/tmp/work", Some("enso-free"));
+        assert_eq!(
+            normalized,
+            json!({ "workspace": "/tmp/work", "model": "enso-auto" })
+        );
+    }
+
+    #[test]
+    fn daemon_dev_parses_expanded_reasoning_effort_ladder() {
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            daemon: DaemonArgs,
+        }
+
+        for (raw, want) in [
+            ("auto", hanzo_gen::ReasoningEffort::Auto),
+            ("off", hanzo_gen::ReasoningEffort::Off),
+            ("none", hanzo_gen::ReasoningEffort::Off),
+            ("minimal", hanzo_gen::ReasoningEffort::Minimal),
+            ("low", hanzo_gen::ReasoningEffort::Low),
+            ("medium", hanzo_gen::ReasoningEffort::Medium),
+            ("high", hanzo_gen::ReasoningEffort::High),
+            ("xhigh", hanzo_gen::ReasoningEffort::XHigh),
+            ("max", hanzo_gen::ReasoningEffort::Max),
+        ] {
+            let parsed = Cli::try_parse_from(["hanzo", "dev", "--effort", raw, "check"]).unwrap();
+            match parsed.daemon.command.unwrap() {
+                DaemonCommand::Dev { effort, .. } => assert_eq!(effort, Some(want), "{raw}"),
+                _ => panic!("expected dev command"),
+            }
+        }
+        let alias =
+            Cli::try_parse_from(["hanzo", "dev", "--reasoning-effort", "xhigh", "check"]).unwrap();
+        match alias.daemon.command.unwrap() {
+            DaemonCommand::Dev { effort, .. } => {
+                assert_eq!(effort, Some(hanzo_gen::ReasoningEffort::XHigh))
+            }
+            _ => panic!("expected dev command"),
+        }
+        assert!(Cli::try_parse_from(["hanzo", "dev", "--effort", "extreme", "check"]).is_err());
     }
 
     #[test]

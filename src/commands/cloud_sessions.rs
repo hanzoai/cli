@@ -63,9 +63,6 @@ pub struct CloudArgs {
     /// Bound cloud execution time in seconds (maximum 30 minutes).
     #[arg(long, requires = "cloud_execution", value_parser = clap::value_parser!(u32).range(1..=1800))]
     timeout_seconds: Option<u32>,
-    /// Reasoning effort for the cloud agent.
-    #[arg(long, requires = "cloud_execution", value_parser = ["low", "medium", "high"])]
-    effort: Option<String>,
     /// Follow cloud progress until the run finishes (Ctrl-C only detaches).
     #[arg(long, requires = "cloud_execution")]
     watch: bool,
@@ -111,7 +108,6 @@ impl Default for CloudArgs {
             mode: None,
             target: None,
             timeout_seconds: None,
-            effort: None,
             watch: false,
             await_followup: false,
             teleport: None,
@@ -202,7 +198,7 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
                 || remote.mode.is_some()
                 || remote.target.is_some()
                 || remote.timeout_seconds.is_some()
-                || remote.effort.is_some()
+                || args.effort.is_some()
                 || args.model.is_some()
             {
                 bail!("steering keeps the running session's configuration; send only the new prompt, or start a separate cloud task");
@@ -272,12 +268,24 @@ pub(crate) async fn run(cfg: &mut Config, input: SessionArgs, desktop: bool) -> 
         }
         body["base"] = json!(branch);
     }
+    let normalized_model = args
+        .model
+        .map(|m| hanzo_gen::enso::normalize_enso_model(&m).to_string());
+    let effective_effort = args
+        .effort
+        .or_else(|| {
+            cfg.code
+                .effort
+                .as_deref()
+                .and_then(hanzo_gen::ReasoningEffort::parse)
+        })
+        .map(|e| e.cloud_wire().to_string());
     for (key, value) in [
         ("base", remote.base),
         ("mode", remote.mode),
-        ("model", args.model),
+        ("model", normalized_model),
         ("targetId", remote.target),
-        ("effort", remote.effort),
+        ("effort", effective_effort),
     ] {
         if let Some(value) = value {
             body[key] = json!(value);

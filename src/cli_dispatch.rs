@@ -469,14 +469,42 @@ fn list_models() {
         "MODEL ID", "BACKEND", "TARGET NODE", "PARAMS", "STATUS"
     );
     for m in &app.local_models {
+        if hanzo_gen::enso::is_hidden_enso_model(&m.id) {
+            continue;
+        }
         println!(
             "{:<36} {:<16} {:<24} {:<10} {:<18} {}",
-            m.id, m.backend, m.target_node, m.parameters, m.status, m.endpoint,
+            hanzo_gen::enso::format_model_id(&m.id),
+            m.backend,
+            m.target_node,
+            m.parameters,
+            m.status,
+            m.endpoint,
         );
     }
 }
 
 fn explore_models() {
+    println!("Hanzo Enso Cloud Models:\n");
+    println!(
+        "  {:<18} {:<14} {:<12} DESCRIPTION",
+        "MODEL ID", "NAME", "TIER"
+    );
+    for m in hanzo_gen::enso::ENSO_MODELS {
+        let id_col = format!("{} {}", m.glyph, m.id);
+        let tier = if m.free_tier { "Free & Pro" } else { "Pro" };
+        println!("  {:<18} {:<14} {:<12} {}", id_col, m.name, tier, m.desc);
+    }
+    println!(
+        "\n  Free tier: {} enso-auto (default) and {} enso-flash.",
+        hanzo_gen::enso::GLYPH_AUTO,
+        hanzo_gen::enso::GLYPH_FLASH
+    );
+    println!(
+        "  Reasoning effort (--effort / --reasoning-effort): {}\n",
+        hanzo_gen::reasoning::CLI_EFFORT_VALUES.join(" | ")
+    );
+
     println!("Hanzo Open AI Model Catalog (Qwen 3+ series & Zen Endpoints):\n");
     println!(
         "  {:<36} {:<10} {:<14} {:<12} HUGGING FACE REPO",
