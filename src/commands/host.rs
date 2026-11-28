@@ -454,7 +454,7 @@ fn retire(dir: &Path, is_shared: fn(&str) -> bool) -> Result<bool> {
 }
 
 /// `${XDG_DATA_HOME}/hanzo` — the daemon's socket, pid and log.
-fn data_dir() -> Result<PathBuf> {
+pub(crate) fn data_dir() -> Result<PathBuf> {
     let dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("hanzo");

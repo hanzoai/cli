@@ -544,8 +544,34 @@ fn install_broken_pipe_quiet() {
     }));
 }
 
+#[cfg(not(windows))]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    entry().await
+}
+
+/// Windows defaults to a 1 MiB PE main-thread stack, whereas Linux/macOS give
+/// 8 MiB. Spawning the entry thread with an 8 MiB stack avoids debug-build stack
+/// overflows when polling the top-level CLI dispatch future.
+#[cfg(windows)]
+fn main() -> std::process::ExitCode {
+    std::thread::Builder::new()
+        .name("hanzo-main".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(8 * 1024 * 1024)
+                .build()
+                .expect("Failed building the Runtime")
+                .block_on(entry())
+        })
+        .expect("Failed spawning main thread")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
+async fn entry() -> std::process::ExitCode {
     install_broken_pipe_quiet();
     match run().await {
         Ok(()) => std::process::ExitCode::SUCCESS,

@@ -32,9 +32,11 @@ Use `curl -fsSL https://hanzo.sh | sh -s -- --strict` to require provenance veri
 before installation (requires a current, authenticated GitHub CLI and release
 attestations). Checksums are required in either mode.
 
-Run `hanzo doctor` to check executable paths, versions, authentication and GPU
-runtimes. `--offline` skips network checks; `--verify` downloads current releases
-and compares installed bytes against checksummed, provenance-verified artifacts.
+Run `hanzo doctor` to check executable paths, versions, authentication, GPU
+runtimes, local kubeconfig validity (`~/.kube/hanzo.yaml`), default port
+conflicts (`8080`, `9090`, `1234`, `8000`), and stale runtime sockets.
+`--offline` skips network checks; `--verify` downloads current releases and
+compares installed bytes against checksummed, provenance-verified artifacts.
 
 `hanzo.sh` drives this repo's `install.sh`, which is the one implementation of
 "fetch a Hanzo binary". To install only the CLI: `curl -fsSL https://hanzo.sh | sh -s -- hanzo`.
