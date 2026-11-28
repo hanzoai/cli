@@ -1014,7 +1014,7 @@ fn id_label(host: &str) -> String {
 /// them: on hanzo.ai the name is "Hanzo AI" and both open https://hanzo.ai;
 /// another issuer gets its own "<Name> ID" and no mark.
 fn chrome(host: &str) -> (String, String) {
-    if matches!(host, "hanzo.ai" | "hanzo.ai") {
+    if host == "hanzo.ai" {
         (
             "<a href=\"https://hanzo.ai\" style=\"position:absolute;top:24px;left:24px;margin:0;\
              font-size:19px;font-weight:600;letter-spacing:-0.4px;line-height:1;color:#f4f4f5;\

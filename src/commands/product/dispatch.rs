@@ -319,7 +319,7 @@ pub(crate) async fn call(
         if let Some(msg) = envelope_error(&resp) {
             bail!("{path}: {msg}");
         }
-        print_body(&resp, output);
+        print_body_for_path(&path, &resp, output);
         return Ok(());
     }
 
@@ -587,6 +587,55 @@ pub(crate) fn envelope_error(body: &Value) -> Option<String> {
     }
 }
 
+/// Whether `path` names a model catalog endpoint whose retired `enso-free`
+/// entries must never be surfaced in CLI lists or pickers.
+fn is_model_catalog_path(path: &str) -> bool {
+    let clean = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    clean == "/v1/models" || clean.ends_with("/models")
+}
+
+/// Strip retired `enso-free` entries from a model catalog payload (preserving
+/// every other model and envelope shape).
+pub(super) fn sanitize_model_catalog(v: &Value) -> Value {
+    let hidden = |item: &Value| {
+        item.get("id")
+            .and_then(Value::as_str)
+            .is_some_and(hanzo_gen::enso::is_hidden_enso_model)
+            || item
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(hanzo_gen::enso::is_hidden_enso_model)
+    };
+    match v {
+        Value::Array(items) => {
+            Value::Array(items.iter().filter(|it| !hidden(it)).cloned().collect())
+        }
+        Value::Object(map) => {
+            let mut out = map.clone();
+            for key in ["data", "models"] {
+                if let Some(Value::Array(items)) = out.get(key) {
+                    let filtered: Vec<Value> =
+                        items.iter().filter(|it| !hidden(it)).cloned().collect();
+                    out.insert(key.to_string(), Value::Array(filtered));
+                }
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+/// Print the response for `path`, filtering retired `enso-free` entries from
+/// model catalog endpoints before rendering in table, JSON, or YAML form.
+pub(super) fn print_body_for_path(path: &str, resp: &Value, output: Option<Output>) {
+    if is_model_catalog_path(path) {
+        let cleaned = sanitize_model_catalog(resp);
+        print_body(&cleaned, output);
+    } else {
+        print_body(resp, output);
+    }
+}
+
 /// Print the response. The cloud `/v1` envelope is `{status,msg,data}` and what is shown is `data`. A list
 /// prints as a table on a terminal and as JSON anywhere else, so a pipe still gets what it can parse; `-o`
 /// names the format outright.
@@ -673,8 +722,21 @@ const LEAD: [&str; 2] = ["id", "name"];
 
 /// A list's header and rows, or `None` when its items have nothing scalar to show.
 pub(super) fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
+    let visible: Vec<&Value> = list
+        .iter()
+        .filter(|item| {
+            !item
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(hanzo_gen::enso::is_hidden_enso_model)
+                && !item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(hanzo_gen::enso::is_hidden_enso_model)
+        })
+        .collect();
     let mut keys: Vec<&str> = Vec::new();
-    for item in list.iter().filter_map(Value::as_object) {
+    for item in visible.iter().copied().filter_map(Value::as_object) {
         for (key, value) in item {
             if cell(value).is_some() && !keys.contains(&key.as_str()) {
                 keys.push(key);
@@ -689,11 +751,25 @@ pub(super) fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)>
             .position(|lead| lead == key)
             .unwrap_or(LEAD.len())
     });
-    let grid = list
+    let grid = visible
         .iter()
         .map(|item| {
+            let id_is_enso = item
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(hanzo_gen::enso::is_enso_model);
             keys.iter()
-                .map(|key| item.get(*key).and_then(cell).unwrap_or_else(|| "-".into()))
+                .map(|key| {
+                    let raw = item
+                        .get(*key)
+                        .and_then(cell)
+                        .unwrap_or_else(|| "-".into());
+                    match *key {
+                        "id" => hanzo_gen::enso::format_model_id(&raw),
+                        "name" if !id_is_enso => hanzo_gen::enso::format_model_id(&raw),
+                        _ => raw,
+                    }
+                })
                 .collect()
         })
         .collect();
@@ -704,7 +780,15 @@ pub(super) fn columns(list: &[Value]) -> Option<(Vec<String>, Vec<Vec<String>>)>
 pub(super) fn fields(o: &Map<String, Value>) -> (Vec<String>, Vec<Vec<String>>) {
     let grid = o
         .iter()
-        .filter_map(|(key, value)| Some(vec![key.clone(), cell(value)?]))
+        .filter_map(|(key, value)| {
+            let val = cell(value)?;
+            let shown = if key == "id" {
+                hanzo_gen::enso::format_model_id(&val)
+            } else {
+                val
+            };
+            Some(vec![key.clone(), shown])
+        })
         .collect();
     (vec!["FIELD".into(), "VALUE".into()], grid)
 }

@@ -170,7 +170,8 @@ pub(super) fn render_machines(f: &mut Frame, area: Rect, board: &Board, units: &
             .unwrap_or_else(|| "—".into());
         let model: String = m
             .model
-            .clone()
+            .as_deref()
+            .map(|id| hanzo_gen::enso::format_model_id(hanzo_gen::enso::normalize_enso_model(id)))
             .unwrap_or_else(|| "—".into())
             .chars()
             .take(21)

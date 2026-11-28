@@ -2677,6 +2677,7 @@ fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
     let rows: Vec<Row> = app
         .local_models
         .iter()
+        .filter(|m| !hanzo_gen::enso::is_hidden_enso_model(&m.id))
         .enumerate()
         .map(|(idx, m)| {
             let is_sel = idx == app.selected_model_row;
@@ -2699,7 +2700,7 @@ fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
 
             Row::new(vec![
                 Span::styled(
-                    &m.id,
+                    hanzo_gen::enso::format_model_id(&m.id),
                     Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
@@ -2769,6 +2770,30 @@ fn render_local_models_view(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled("ENGRAFT Overlays:   ", Style::default().fg(Color::DarkGray)),
             Span::styled("Per-request .pleo token-addressed memory overlays supported with prefix-cache affinity", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(vec![
+            Span::styled("Enso Cloud Tiers:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(
+                    "{} enso-auto (default) · {} enso-ultra · {} enso-max · {} enso-pro · {} enso-flash  [Free: Auto & Flash]",
+                    hanzo_gen::enso::GLYPH_AUTO,
+                    hanzo_gen::enso::GLYPH_ULTRA,
+                    hanzo_gen::enso::GLYPH_MAX,
+                    hanzo_gen::enso::GLYPH_PRO,
+                    hanzo_gen::enso::GLYPH_FLASH,
+                ),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Reasoning Effort:   ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(
+                    "{}  (--effort / --reasoning-effort)",
+                    hanzo_gen::reasoning::CLI_EFFORT_VALUES.join(" | ")
+                ),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
     ];
     f.render_widget(Paragraph::new(diag_text), diag_inner);

@@ -60,6 +60,9 @@ pub async fn model_list(as_json: bool) -> Result<()> {
                 if let Some(arr) = val.get("data").and_then(Value::as_array) {
                     for m in arr {
                         if let Some(id) = m.get("id").and_then(Value::as_str) {
+                            if hanzo_gen::enso::is_hidden_enso_model(id) {
+                                continue;
+                            }
                             models_map.insert(
                                 id.to_string(),
                                 json!({
@@ -85,6 +88,9 @@ pub async fn model_list(as_json: bool) -> Result<()> {
         {
             for m in arr {
                 if let Some(id) = m.get("id").or_else(|| m.get("name")).and_then(Value::as_str) {
+                    if hanzo_gen::enso::is_hidden_enso_model(id) {
+                        continue;
+                    }
                     let loaded = m.get("loaded").and_then(Value::as_bool).unwrap_or(false);
                     models_map.entry(id.to_string()).or_insert_with(|| {
                         json!({
@@ -116,9 +122,10 @@ pub async fn model_list(as_json: bool) -> Result<()> {
     }
     println!("{:<42} {:<12} {:<24} REV", "MODEL", "STATE", "SOURCE");
     for r in rows {
+        let model_display = hanzo_gen::enso::format_model_id(r["id"].as_str().unwrap_or("-"));
         println!(
             "{:<42} {:<12} {:<24} {}",
-            r["id"].as_str().unwrap_or("-"),
+            model_display,
             color_state(r["state"].as_str().unwrap_or("Cached")),
             r["source"].as_str().unwrap_or("-"),
             r["revision"].as_str().unwrap_or("-"),
@@ -169,7 +176,7 @@ pub async fn model_run(cfg: &mut Config, model: &str, prompt_words: Vec<String>)
     }
 
     // Delegate through `hanzod` runtime
-    daemon::run_turn(cfg, &prompt, None, None, Some(resolved), None, false).await
+    daemon::run_turn(cfg, &prompt, None, None, Some(resolved), None, None, false).await
 }
 
 // ── `hanzo sandbox start / stop` ─────────────────────────────────────────────
@@ -318,6 +325,7 @@ pub async fn run_target(cfg: &mut Config, target: String, args: Vec<String>) -> 
                 brand: crate::iam::paths::DEFAULT_BRAND.to_string(),
                 theme: None,
                 model: None,
+                effort: None,
                 positional: (!args.is_empty()).then(|| args.join(" ")),
                 tail: None,
                 passthrough: Vec::new(),

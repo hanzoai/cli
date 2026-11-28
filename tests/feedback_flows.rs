@@ -227,7 +227,12 @@ fn models_list_formats_table_json_and_yaml_anonymously() {
         "object": "list",
         "data": [
             { "id": "zen6-flash", "object": "model", "owned_by": "hanzo" },
-            { "id": "enso-auto", "object": "model", "owned_by": "hanzo" }
+            { "id": "enso-auto", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-ultra", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-max", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-pro", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-flash", "object": "model", "owned_by": "hanzo" },
+            { "id": "enso-free", "object": "model", "owned_by": "hanzo" }
         ]
     })
     .to_string();
@@ -241,7 +246,7 @@ fn models_list_formats_table_json_and_yaml_anonymously() {
     });
     use_mock_network(&home, &api_url, &iam_url);
 
-    // 1. JSON output (works anonymously when signed out)
+    // 1. JSON output (works anonymously when signed out; retired `enso-free` excluded)
     let json_out = hanzo_in(&home)
         .args([
             "models",
@@ -259,11 +264,12 @@ fn models_list_formats_table_json_and_yaml_anonymously() {
         .as_array()
         .or_else(|| parsed.as_array())
         .unwrap_or_else(|| panic!("expected array or .data array in models list JSON: {parsed}"));
-    assert_eq!(items.len(), 2, "unexpected models list JSON: {parsed}");
+    assert_eq!(items.len(), 6, "unexpected models list JSON: {parsed}");
     assert_eq!(items[0]["id"], "zen6-flash");
     assert_eq!(items[1]["id"], "enso-auto");
+    assert!(!items.iter().any(|it| it["id"] == "enso-free"));
 
-    // 2. Table output (human-readable rows containing model IDs)
+    // 2. Table output (human-readable rows with progressive Enso glyphs; `enso-free` hidden)
     hanzo_in(&home)
         .args([
             "models",
@@ -275,9 +281,17 @@ fn models_list_formats_table_json_and_yaml_anonymously() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("zen6-flash").and(predicate::str::contains("enso-auto")));
+        .stdout(
+            predicate::str::contains("zen6-flash")
+                .and(predicate::str::contains("○ enso-auto"))
+                .and(predicate::str::contains("◕ enso-ultra"))
+                .and(predicate::str::contains("◑ enso-max"))
+                .and(predicate::str::contains("◔ enso-pro"))
+                .and(predicate::str::contains("◦ enso-flash"))
+                .and(predicate::str::contains("enso-free").not()),
+        );
 
-    // 3. YAML output
+    // 3. YAML output (`enso-free` hidden)
     hanzo_in(&home)
         .args([
             "models",
@@ -289,7 +303,11 @@ fn models_list_formats_table_json_and_yaml_anonymously() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("zen6-flash").and(predicate::str::contains("enso-auto")));
+        .stdout(
+            predicate::str::contains("zen6-flash")
+                .and(predicate::str::contains("enso-auto"))
+                .and(predicate::str::contains("enso-free").not()),
+        );
 
     let reqs = captured.lock().unwrap();
     let model_reqs: Vec<_> = reqs.iter().filter(|r| r.path == "/v1/models").collect();

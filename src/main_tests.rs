@@ -515,3 +515,50 @@ fn broken_pipe_detection() {
     ));
     assert!(!is_broken_pipe(&"index out of bounds".to_string()));
 }
+
+#[test]
+fn expanded_reasoning_effort_flag_parses_on_all_coding_entry_points() {
+    use hanzo_gen::ReasoningEffort;
+
+    for (raw, want) in [
+        ("auto", ReasoningEffort::Auto),
+        ("off", ReasoningEffort::Off),
+        ("none", ReasoningEffort::Off),
+        ("minimal", ReasoningEffort::Minimal),
+        ("low", ReasoningEffort::Low),
+        ("medium", ReasoningEffort::Medium),
+        ("high", ReasoningEffort::High),
+        ("xhigh", ReasoningEffort::XHigh),
+        ("max", ReasoningEffort::Max),
+    ] {
+        let bare = Cli::try_parse_from(["hanzo", "--effort", raw, "audit"]).expect(raw);
+        assert_eq!(bare.code.effort, Some(want), "bare --effort {raw}");
+        assert_eq!(bare.code.into_options(root()).unwrap().effort, Some(want));
+
+        let cloud = Cli::try_parse_from(["hanzo", "--cloud", "--effort", raw, "audit"]).expect(raw);
+        assert_eq!(cloud.code.effort, Some(want), "--cloud --effort {raw}");
+    }
+
+    let dev = Cli::try_parse_from(["hanzo", "dev", "--reasoning-effort", "xhigh", "audit"])
+        .expect("dev --reasoning-effort");
+    let Some(Commands::Dev(args)) = dev.command else {
+        panic!("expected dev");
+    };
+    assert_eq!(
+        args.dev("hanzo dev")
+            .unwrap()
+            .into_options(root())
+            .unwrap()
+            .effort,
+        Some(ReasoningEffort::XHigh)
+    );
+
+    let desktop = Cli::try_parse_from(["hanzo", "desktop", "--effort", "max", "audit"])
+        .expect("desktop --effort");
+    let Some(Commands::Desktop(args)) = desktop.command else {
+        panic!("expected desktop");
+    };
+    assert_eq!(args.effort, Some(ReasoningEffort::Max));
+
+    assert!(Cli::try_parse_from(["hanzo", "--effort", "extreme"]).is_err());
+}

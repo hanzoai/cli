@@ -32,15 +32,23 @@ pub fn get(cfg: &Config, key: &str) -> Result<()> {
 
 /// `hanzo config set KEY VALUE` — set one dotted key, verified.
 pub fn set(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
+    let stored = if key == "code.effort" {
+        hanzo_gen::reasoning::parse_cli_effort(value)
+            .map_err(|e| anyhow!(e))?
+            .as_str()
+            .to_string()
+    } else {
+        value.to_string()
+    };
     cfg.update(|fresh| {
         let mut v = tree(fresh)?;
-        place(&mut v, key, scalar(value))?;
+        place(&mut v, key, scalar(&stored))?;
         // Round-trip: the mutated document MUST still deserialize to a valid
         // Config, or we refuse — never write a file `Config::load` would reject.
         // `path` is `#[serde(skip)]`, so it is absent here and defaulted back on
         // load; `update` writes with its own captured path regardless.
         *fresh = serde_json::from_value(v)
-            .with_context(|| format!("`{key} = {value}` would make the config invalid"))?;
+            .with_context(|| format!("`{key} = {stored}` would make the config invalid"))?;
         // AND IT MUST HAVE SURVIVED THE ROUND TRIP. serde drops a field the type
         // does not declare rather than refusing it, so a key this Config has no
         // home for is silently discarded here — the write then succeeds, the file
@@ -53,7 +61,7 @@ pub fn set(cfg: &mut Config, key: &str, value: &str) -> Result<()> {
         }
         Ok(())
     })?;
-    println!("{key} = {value}");
+    println!("{key} = {stored}");
     Ok(())
 }
 
@@ -157,5 +165,28 @@ mod tests {
         assert_eq!(walk(&v, "a.b.c"), Some(&Value::from(1i64)));
         // Setting THROUGH a scalar is refused, not silently reshaped.
         assert!(place(&mut v, "code.link.x", Value::from(1i64)).is_err());
+    }
+
+    #[test]
+    fn code_effort_validates_and_normalizes_full_reasoning_ladder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_path_for_test(dir.path().join("config.toml"));
+
+        for (raw, canonical) in [
+            ("auto", "auto"),
+            ("off", "off"),
+            ("none", "off"),
+            ("minimal", "minimal"),
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("xhigh", "xhigh"),
+            ("max", "max"),
+        ] {
+            set(&mut cfg, "code.effort", raw).expect(raw);
+            assert_eq!(cfg.code.effort.as_deref(), Some(canonical), "{raw}");
+        }
+        assert!(set(&mut cfg, "code.effort", "extreme").is_err());
     }
 }

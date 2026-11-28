@@ -149,6 +149,11 @@ pub struct CodeState {
     /// Antigravity, Cursor). A session on that agent keeps the agent's login
     /// instead of sending model calls through the Hanzo gateway.
     pub own_account: bool,
+    /// Default reasoning effort level (`auto`, `off`/`none`, `minimal`, `low`,
+    /// `medium`, `high`, `xhigh`, `max`). Overridden per-invocation with
+    /// `--effort` / `--reasoning-effort`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 impl Default for CodeState {
@@ -157,6 +162,7 @@ impl Default for CodeState {
             link: true,
             theme: "auto".to_string(),
             own_account: false,
+            effort: None,
         }
     }
 }
@@ -305,6 +311,7 @@ impl Config {
         fresh.network.bound = self.network.bound.clone();
         let out = f(&mut fresh)?;
         fresh.write_atomic(&path)?;
+        fresh.path = path;
         *self = fresh;
         Ok(out)
     }
@@ -714,5 +721,8 @@ mod tests {
         assert!(!off.link);
         let on: CodeState = toml::from_str("link = true").expect("parses");
         assert!(on.link);
+        let eff: CodeState = toml::from_str("effort = \"xhigh\"").expect("parses");
+        assert_eq!(eff.effort.as_deref(), Some("xhigh"));
+        assert!(eff.link);
     }
 }

@@ -28,7 +28,7 @@ fn cloud_controls_require_a_cloud_session_and_valid_bounds() {
         vec!["--await-followup"],
         vec!["--cloud", "--await-followup"],
         vec!["--target", "machine"],
-        vec!["--effort", "high"],
+        vec!["--effort", "extreme"],
         vec!["--cloud", "--effort", "extreme", "task"],
         vec!["--cloud", "--timeout-seconds", "0", "task"],
         vec!["--cloud", "--timeout-seconds", "1801", "task"],
@@ -58,4 +58,43 @@ fn cloud_does_not_silently_ignore_local_execution_options() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("--cloud"));
+}
+
+#[test]
+fn help_advertises_expanded_reasoning_effort_ladder() {
+    for args in [
+        vec!["-h"],
+        vec!["dev", "--help"],
+        vec!["daemon", "dev", "--help"],
+    ] {
+        Command::cargo_bin("hanzo")
+            .unwrap()
+            .args(args)
+            .assert()
+            .success()
+            .stdout(
+                predicate::str::contains("--effort")
+                    .and(predicate::str::contains("--reasoning-effort"))
+                    .and(predicate::str::contains("minimal"))
+                    .and(predicate::str::contains("xhigh"))
+                    .and(predicate::str::contains("max")),
+            );
+    }
+
+    let home = tempfile::tempdir().unwrap();
+    Command::cargo_bin("hanzo")
+        .unwrap()
+        .env("HOME", home.path())
+        .args(["sandbox", "explore"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("○ enso-auto")
+                .and(predicate::str::contains("◕ enso-ultra"))
+                .and(predicate::str::contains("◑ enso-max"))
+                .and(predicate::str::contains("◔ enso-pro"))
+                .and(predicate::str::contains("◦ enso-flash"))
+                .and(predicate::str::contains("enso-free").not())
+                .and(predicate::str::contains("Enso Free").not()),
+        );
 }

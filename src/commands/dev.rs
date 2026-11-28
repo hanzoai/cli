@@ -201,6 +201,11 @@ pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> 
         )
         .await;
     }
+    let configured_effort = config
+        .code
+        .effort
+        .as_deref()
+        .and_then(hanzo_gen::ReasoningEffort::parse);
     if args.remote.daemon {
         let prompt = [args.local.positional.as_deref(), args.local.tail.as_deref()]
             .into_iter()
@@ -224,6 +229,7 @@ pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> 
             args.remote.daemon_session,
             None,
             args.local.model,
+            args.local.effort.or(configured_effort),
             None,
             false,
         )
@@ -235,6 +241,14 @@ pub async fn session(config: &mut Config, args: SessionArgs, target: Target) -> 
     let _ = super::prompt::ensure_installed_prompt();
     onboarding::first_run(config, paths::DEFAULT_BRAND).await;
     let mut opts = args.into_options(Root::need()?)?;
+    if opts.effort.is_none()
+        && std::env::var("HANZO_REASONING_EFFORT")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_none()
+    {
+        opts.effort = configured_effort;
+    }
     if target == Target::Desktop {
         // The browser/computer tools ARE how an agent drives a desktop, so this
         // target cannot run without them and never inherits a persisted opt-out.
