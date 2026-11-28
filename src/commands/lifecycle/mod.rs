@@ -135,6 +135,7 @@ pub async fn runtime_stop(cfg: &mut Config) -> Result<()> {
     }
     save_state(&state)?;
 
+    let _ = engine::down().await;
     up::stop_runtime().await
 }
 
@@ -339,8 +340,8 @@ pub async fn env_up(
     }
     let cwd = std::env::current_dir().ok();
     let project_dir_str = cwd
-        .as_ref()
-        .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+        .as_deref()
+        .map(project::normalize_project_dir)
         .map(|p| p.to_string_lossy().into_owned());
 
     let mut state = load_state().unwrap_or_default();
@@ -484,8 +485,8 @@ pub async fn env_down(
 
     let cwd = std::env::current_dir().ok();
     let project_dir_str = cwd
-        .as_ref()
-        .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+        .as_deref()
+        .map(project::normalize_project_dir)
         .map(|p| p.to_string_lossy().into_owned());
 
     let scope = if all_workloads {
@@ -539,6 +540,8 @@ pub async fn env_down(
         for slug in slugs {
             let _ = stop_registered_app_instance(&mut state, &slug).await;
         }
+        state.platform.engine_enabled = false;
+        let _ = engine::down().await;
     }
     state.platform.cloud_enabled = false;
     save_state(&state)?;

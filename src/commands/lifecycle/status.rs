@@ -13,9 +13,31 @@ use crate::config::Config;
 use super::client::{
     call_lifecycle, DoctorCheck, DoctorResponse, HanzodOutcome, PsResponse, PsRow,
 };
-use super::project::load_state;
+use super::project::{load_state, RegisteredApp};
 use super::resources::{color_state, local_engine_healthy, local_kube_client};
 use super::units::format_size_mb;
+
+fn app_ps_row(app: &RegisteredApp, live: bool, k3s_up: bool) -> PsRow {
+    let port = if app.image.is_some() {
+        app.node_port
+    } else {
+        app.container_port
+    };
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let running = live || (app.image.is_some() && app.desired_running && k3s_up);
+    PsRow {
+        component: app.name.clone(),
+        layer: "application".to_string(),
+        status: if running {
+            "Running".into()
+        } else {
+            "Stopped".into()
+        },
+        detail: format!("ns/{} · {endpoint}", app.namespace),
+        namespace: Some(app.namespace.clone()),
+        endpoint: Some(endpoint),
+    }
+}
 
 /// `hanzo ps` — render the §5 multi-layer local status table (`Infrastructure`,
 /// `Platform`, `Applications`, `Sandboxes`).
@@ -31,23 +53,18 @@ pub async fn ps(as_json: bool) -> Result<()> {
     if rows.is_empty() {
         rows = build_local_ps_rows().await?;
     } else if let Ok(state) = load_state() {
+        let k3s_up = up::up_dir()
+            .ok()
+            .and_then(|d| up::running(&d, up::SUPERVISOR))
+            .is_some()
+            || up::host_native_k3s_active();
         for app in state.apps.values() {
             if !rows
                 .iter()
                 .any(|r| r.component.eq_ignore_ascii_case(&app.name))
             {
-                rows.push(PsRow {
-                    component: app.name.clone(),
-                    layer: "application".to_string(),
-                    status: if app.desired_running {
-                        "Running".into()
-                    } else {
-                        "Stopped".into()
-                    },
-                    detail: format!("ns/{} · :{}", app.namespace, app.container_port),
-                    namespace: Some(app.namespace.clone()),
-                    endpoint: Some(format!("http://127.0.0.1:{}", app.container_port)),
-                });
+                let live = app.local_pid.is_some_and(|p| vm::alive(p as i32));
+                rows.push(app_ps_row(app, live, k3s_up));
             }
         }
     }
@@ -225,24 +242,7 @@ pub(crate) async fn build_local_ps_rows() -> Result<Vec<PsRow>> {
                     .is_some_and(|r| r > 0);
             }
         }
-        let port = if app.image.is_some() {
-            app.node_port
-        } else {
-            app.container_port
-        };
-        let ep = format!("http://127.0.0.1:{port}");
-        rows.push(PsRow {
-            component: app.name.clone(),
-            layer: "application".into(),
-            status: if live || (app.desired_running && k3s_up) {
-                "Running".into()
-            } else {
-                "Stopped".into()
-            },
-            detail: format!("ns/{} · {ep}", app.namespace),
-            namespace: Some(app.namespace.clone()),
-            endpoint: Some(ep),
-        });
+        rows.push(app_ps_row(app, live, k3s_up));
     }
 
     let dev_health = daemon::probe_dev_health().await;
@@ -394,27 +394,19 @@ async fn build_local_ps_rows_with_hanzod(cfg: &mut Config) -> Result<Vec<PsRow>>
         if let Ok(mut parsed) = serde_json::from_value::<PsResponse>(val) {
             if !parsed.rows.is_empty() {
                 if let Ok(state) = load_state() {
+                    let k3s_up = up::up_dir()
+                        .ok()
+                        .and_then(|d| up::running(&d, up::SUPERVISOR))
+                        .is_some()
+                        || up::host_native_k3s_active();
                     for app in state.apps.values() {
                         if !parsed
                             .rows
                             .iter()
                             .any(|r| r.component.eq_ignore_ascii_case(&app.name))
                         {
-                            parsed.rows.push(PsRow {
-                                component: app.name.clone(),
-                                layer: "application".into(),
-                                status: if app.desired_running {
-                                    "Running".into()
-                                } else {
-                                    "Stopped".into()
-                                },
-                                detail: format!("ns/{} · :{}", app.namespace, app.container_port),
-                                namespace: Some(app.namespace.clone()),
-                                endpoint: Some(format!(
-                                    "http://127.0.0.1:{}",
-                                    app.container_port
-                                )),
-                            });
+                            let live = app.local_pid.is_some_and(|p| vm::alive(p as i32));
+                            parsed.rows.push(app_ps_row(app, live, k3s_up));
                         }
                     }
                 }
@@ -555,4 +547,44 @@ pub async fn doctor_checks(cfg: &mut Config) -> Result<DoctorResponse> {
         checks,
         summary: None,
     })
+}
+
+#[cfg(test)]
+mod status_row_tests {
+    use super::*;
+
+    fn sample_app(image: Option<&str>) -> RegisteredApp {
+        RegisteredApp {
+            slug: "sample".into(),
+            name: "Sample".into(),
+            project_dir: "/tmp/sample".into(),
+            namespace: "hanzo-app-sample".into(),
+            kind: "package.json".into(),
+            image: image.map(str::to_string),
+            command: Some("node index.js".into()),
+            container_port: 3000,
+            node_port: 31234,
+            desired_running: true,
+            local_pid: None,
+        }
+    }
+
+    #[test]
+    fn host_app_without_live_pid_is_stopped_even_when_k3s_up() {
+        let host_app = sample_app(None);
+        let dead_row = app_ps_row(&host_app, false, true);
+        assert_eq!(dead_row.status, "Stopped");
+        assert_eq!(dead_row.endpoint.as_deref(), Some("http://127.0.0.1:3000"));
+
+        let live_row = app_ps_row(&host_app, true, false);
+        assert_eq!(live_row.status, "Running");
+    }
+
+    #[test]
+    fn containerized_app_uses_node_port_and_k3s_state() {
+        let k8s_app = sample_app(Some("hanzo.local/sample:dev"));
+        let row = app_ps_row(&k8s_app, false, true);
+        assert_eq!(row.status, "Running");
+        assert_eq!(row.endpoint.as_deref(), Some("http://127.0.0.1:31234"));
+    }
 }
