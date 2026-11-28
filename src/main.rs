@@ -23,7 +23,7 @@ pub use hanzo_gen::warn;
 
 use cli_subcommands::*;
 use commands::dev::Target;
-use commands::lifecycle::units::parse_size_mb;
+use commands::lifecycle::units::{parse_cpus, parse_disk_mb, parse_memory_mb};
 
 #[derive(Parser)]
 #[command(name = "hanzo")]
@@ -269,13 +269,13 @@ enum Commands {
         #[command(subcommand)]
         command: Option<UpCommands>,
         /// CPUs for the VM
-        #[arg(long, default_value_t = 4)]
+        #[arg(long, default_value = "4", value_parser = parse_cpus)]
         cpus: u32,
         /// Memory size (e.g. `8GiB`, `4096MiB`, or plain MiB integer `4096`)
-        #[arg(long, default_value = "4096", value_parser = parse_size_mb)]
+        #[arg(long, default_value = "4096", value_parser = parse_memory_mb)]
         memory: u64,
         /// Disk size (e.g. `32GiB`, `8192MiB`, or plain MiB integer `32768`)
-        #[arg(long, visible_alias = "disk", default_value = "32768", value_parser = parse_size_mb)]
+        #[arg(long, visible_alias = "disk", default_value = "32768", value_parser = parse_disk_mb)]
         disk_size: u64,
         /// The cloud image to deploy
         #[arg(long, value_name = "IMAGE", default_value = commands::up::CLOUD)]
@@ -330,26 +330,26 @@ enum Commands {
     /// Stop workloads in the selected environment while keeping the local runtime warm
     Down {
         /// Also shut down the local k3s microVM (equivalent to `hanzo stop`)
-        #[arg(long, alias = "all")]
+        #[arg(long, alias = "all", conflicts_with_all = ["cloud", "all_workloads"])]
         vm: bool,
         /// Stop Hanzo Cloud platform workloads explicitly (even inside an app directory)
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["vm", "all_workloads"])]
         cloud: bool,
         /// Stop both Hanzo Cloud and all registered local applications while keeping runtime warm
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["vm", "cloud"])]
         all_workloads: bool,
     },
 
     /// Start the local Hanzo runtime (microVM or native Linux k3s) without deploying Cloud or apps
     Start {
         /// CPUs for the VM
-        #[arg(long, default_value_t = 4)]
+        #[arg(long, default_value = "4", value_parser = parse_cpus)]
         cpus: u32,
         /// Memory size (e.g. `8GiB`, `4096MiB`, or plain MiB integer `4096`)
-        #[arg(long, default_value = "4096", value_parser = parse_size_mb)]
+        #[arg(long, default_value = "4096", value_parser = parse_memory_mb)]
         memory: u64,
         /// Disk size (e.g. `32GiB`, `8192MiB`, or plain MiB integer `32768`)
-        #[arg(long, visible_alias = "disk", default_value = "32768", value_parser = parse_size_mb)]
+        #[arg(long, visible_alias = "disk", default_value = "32768", value_parser = parse_disk_mb)]
         disk_size: u64,
         /// Use native Linux host runtime (`k3s` + `containerd`) instead of a microVM
         #[arg(long)]
@@ -365,13 +365,13 @@ enum Commands {
     /// Restart the local Hanzo runtime and restore previously running workloads
     Restart {
         /// CPUs for the VM
-        #[arg(long, default_value_t = 4)]
+        #[arg(long, default_value = "4", value_parser = parse_cpus)]
         cpus: u32,
         /// Memory size (e.g. `8GiB`, `4096MiB`, or plain MiB integer `4096`)
-        #[arg(long, default_value = "4096", value_parser = parse_size_mb)]
+        #[arg(long, default_value = "4096", value_parser = parse_memory_mb)]
         memory: u64,
         /// Disk size (e.g. `32GiB`, `8192MiB`, or plain MiB integer `32768`)
-        #[arg(long, visible_alias = "disk", default_value = "32768", value_parser = parse_size_mb)]
+        #[arg(long, visible_alias = "disk", default_value = "32768", value_parser = parse_disk_mb)]
         disk_size: u64,
         /// The cloud image to deploy if Cloud was running
         #[arg(long, value_name = "IMAGE", default_value = commands::up::CLOUD)]

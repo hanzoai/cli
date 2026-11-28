@@ -14,8 +14,10 @@ use super::project::{
     save_state, upsert_detected_app, RegisteredApp, DEFAULT_CPUS, DEFAULT_DISK_MB,
     DEFAULT_MEMORY_MB,
 };
-use super::units::{format_size_mb, parse_size_mb};
-pub use super::workloads::{model_list, model_pull, model_run, run_target, sandbox_start, sandbox_stop};
+use super::units::{format_size_mb, parse_cpus, parse_disk_mb, parse_memory_mb};
+pub use super::workloads::{
+    model_list, model_pull, model_run, run_target, sandbox_start, sandbox_stop,
+};
 use crate::commands::{engine, launch, up, vm};
 use crate::config::Config;
 
@@ -32,11 +34,11 @@ pub struct VmLifecycleCli {
 pub enum VmLifecycleCommand {
     /// Start the local Hanzo microVM (or native Linux runtime) without deploying Cloud
     Start {
-        #[arg(long)]
+        #[arg(long, value_parser = parse_cpus)]
         cpus: Option<u32>,
-        #[arg(long, value_parser = parse_size_mb)]
+        #[arg(long, value_parser = parse_memory_mb)]
         memory: Option<u64>,
-        #[arg(long = "disk", visible_alias = "disk-size", value_parser = parse_size_mb)]
+        #[arg(long = "disk", visible_alias = "disk-size", value_parser = parse_disk_mb)]
         disk_mb: Option<u64>,
         #[arg(long)]
         native: bool,
@@ -47,11 +49,11 @@ pub enum VmLifecycleCommand {
     Stop,
     /// Resize CPU, memory, or disk allocation for the local Hanzo microVM
     Resize {
-        #[arg(long)]
+        #[arg(long, value_parser = parse_cpus)]
         cpus: Option<u32>,
-        #[arg(long, value_parser = parse_size_mb)]
+        #[arg(long, value_parser = parse_memory_mb)]
         memory: Option<u64>,
-        #[arg(long = "disk", visible_alias = "disk-size", value_parser = parse_size_mb)]
+        #[arg(long = "disk", visible_alias = "disk-size", value_parser = parse_disk_mb)]
         disk_mb: Option<u64>,
     },
     /// Show local Hanzo microVM / runtime status, sizing, and checkpoints
@@ -326,7 +328,10 @@ async fn render_local_service_list(
     }
 
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&json!({ "services": items }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "services": items }))?
+        );
         return Ok(());
     }
     println!("{:<16} {:<12} DETAIL", "SERVICE", "STATE");
@@ -397,7 +402,11 @@ pub(crate) async fn deploy_or_spawn_app(
     if let Some(ref image) = app.image {
         if let Some(kube) = local_kube_client() {
             let manifest = render_app_k8s_manifest(app, image);
-            if kube.apply_manifest_bundle(&app.namespace, &manifest).await.is_ok() {
+            if kube
+                .apply_manifest_bundle(&app.namespace, &manifest)
+                .await
+                .is_ok()
+            {
                 let _ = kube.scale_deployment(&app.namespace, &app.slug, 1).await;
                 println!(
                     "{} deployed {} ({}) → namespace `{}` · Service `{}:{}` (NodePort {})",
@@ -518,7 +527,9 @@ pub(crate) async fn stop_registered_app_instance(
             let _ = up::stop(pid as i32, std::time::Duration::from_secs(5));
         }
         if let Some(kube) = local_kube_client() {
-            let _ = kube.scale_deployment(&entry.namespace, &entry.slug, 0).await;
+            let _ = kube
+                .scale_deployment(&entry.namespace, &entry.slug, 0)
+                .await;
         }
     }
     Ok(())
@@ -552,7 +563,9 @@ pub async fn app_list(cfg: &mut Config, as_json: bool) -> Result<()> {
                             println!(
                                 "{:<20} {:<12} {:<24} {}",
                                 a.get("name").and_then(Value::as_str).unwrap_or("-"),
-                                color_state(a.get("state").and_then(Value::as_str).unwrap_or("Stopped")),
+                                color_state(
+                                    a.get("state").and_then(Value::as_str).unwrap_or("Stopped")
+                                ),
                                 a.get("namespace").and_then(Value::as_str).unwrap_or("-"),
                                 a.get("endpoint").and_then(Value::as_str).unwrap_or("-"),
                             );
@@ -612,7 +625,10 @@ pub async fn app_list(cfg: &mut Config, as_json: bool) -> Result<()> {
     }
 
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&json!({ "apps": rows }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "apps": rows }))?
+        );
         return Ok(());
     }
     println!("{:<20} {:<12} {:<24} ENDPOINT", "APP", "STATE", "NAMESPACE");
@@ -664,13 +680,20 @@ pub async fn app_logs(cfg: &mut Config, name: Option<&str>, follow: bool) -> Res
         }
     }
 
-    let log_file = lifecycle_dir()?.join("logs").join(format!("{}.log", app.slug));
+    let log_file = lifecycle_dir()?
+        .join("logs")
+        .join(format!("{}.log", app.slug));
     if log_file.is_file() {
         if follow {
             if let Ok(tail_bin) = which::which("tail") {
                 return launch::exec(
                     &tail_bin,
-                    &["-n".into(), "200".into(), "-f".into(), log_file.display().to_string()],
+                    &[
+                        "-n".into(),
+                        "200".into(),
+                        "-f".into(),
+                        log_file.display().to_string(),
+                    ],
                 );
             }
         }
@@ -728,8 +751,16 @@ pub(crate) async fn local_engine_healthy() -> bool {
     else {
         return false;
     };
-    for url in ["http://127.0.0.1:1234/v1/models", "http://127.0.0.1:1235/health"] {
-        if client.get(url).send().await.is_ok_and(|r| r.status().is_success()) {
+    for url in [
+        "http://127.0.0.1:1234/v1/models",
+        "http://127.0.0.1:1235/health",
+    ] {
+        if client
+            .get(url)
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+        {
             return true;
         }
     }

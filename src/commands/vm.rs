@@ -96,15 +96,34 @@ fn args_need_virtualization(args: &[String]) -> bool {
 }
 
 /// State of `/dev/kvm` on a Linux virtualization host.
-#[cfg_attr(
-    not(all(target_os = "linux", target_arch = "x86_64")),
-    allow(dead_code)
-)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KvmState {
     Available,
     Missing,
     Unreadable,
+}
+
+/// Validate Linux `/dev/kvm` presence and permissions for both `x86_64` and `aarch64`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn check_linux_kvm(kvm: KvmState, arch: &str) -> Result<()> {
+    let module_hint = match arch {
+        "x86_64" => "sudo modprobe kvm_intel   # or: sudo modprobe kvm_amd",
+        _ => "sudo modprobe kvm",
+    };
+    match kvm {
+        KvmState::Missing => bail!(
+            "/dev/kvm does not exist — KVM is required to run hanzo-vm on Linux {arch}.\n\
+             Enable CPU virtualization in firmware and load the KVM module:\n  \
+               {module_hint}"
+        ),
+        KvmState::Unreadable => bail!(
+            "/dev/kvm is not readable/writable by the current user.\n\
+             Add your user to the `kvm` group and start a new login session:\n  \
+               sudo usermod -aG kvm $USER && newgrp kvm"
+        ),
+        KvmState::Available => Ok(()),
+    }
 }
 
 /// Validate Linux x86-64 virtualization prerequisites, separating `/dev/kvm`
@@ -115,19 +134,7 @@ enum KvmState {
     allow(dead_code)
 )]
 fn check_linux_x86_64_host(kvm: KvmState, cloud_hypervisor: Option<&Path>) -> Result<()> {
-    match kvm {
-        KvmState::Missing => bail!(
-            "/dev/kvm does not exist — KVM is required to run hanzo-vm on Linux x86-64.\n\
-             Enable Intel VT-x / AMD-V in firmware and load the KVM module:\n  \
-               sudo modprobe kvm_intel   # or: sudo modprobe kvm_amd"
-        ),
-        KvmState::Unreadable => bail!(
-            "/dev/kvm is not readable/writable by the current user.\n\
-             Add your user to the `kvm` group and start a new login session:\n  \
-               sudo usermod -aG kvm $USER"
-        ),
-        KvmState::Available => {}
-    }
+    check_linux_kvm(kvm, "x86_64")?;
     if cloud_hypervisor.is_none() {
         bail!(
             "cloud-hypervisor is required on Linux x86-64 (not found in PATH or ~/.local/bin).\n\
@@ -140,7 +147,36 @@ fn check_linux_x86_64_host(kvm: KvmState, cloud_hypervisor: Option<&Path>) -> Re
     Ok(())
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// Validate macOS `Virtualization.framework` prerequisites before spawning `hanzo-vm`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn check_macos_virtualization_host(
+    arch: &str,
+    hv_support: Option<i64>,
+    codesigned_entitled: Option<bool>,
+) -> Result<()> {
+    if arch != "aarch64" {
+        bail!(
+            "hanzo-vm requires Apple Silicon (arm64) Virtualization.framework (detected `{arch}`).\n\
+             Connect to a remote cluster (`hanzo network use ...`) or use a Linux KVM host."
+        );
+    }
+    if hv_support == Some(0) {
+        bail!(
+            "Virtualization.framework is unavailable (`kern.hv_support=0`).\n\
+             Ensure this Mac supports hypervisor execution and is not inside an unprivileged nested VM."
+        );
+    }
+    if codesigned_entitled == Some(false) {
+        bail!(
+            "hanzo-vm is missing the `com.apple.security.virtualization` entitlement and macOS will SIGKILL it.\n\
+             Reinstall and re-sign the pinned binary:\n  \
+               hanzo reset --all && hanzo start"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn probe_kvm(path: &Path) -> KvmState {
     if !path.exists() {
         return KvmState::Missing;
@@ -173,15 +209,52 @@ fn is_executable_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Preflight check before spawning `hanzo-vm` on Linux x86-64.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// Preflight check before spawning `hanzo-vm` on Linux.
+#[cfg(target_os = "linux")]
 pub(crate) fn preflight_host() -> Result<()> {
     let kvm = probe_kvm(Path::new("/dev/kvm"));
-    let ch = find_cloud_hypervisor();
-    check_linux_x86_64_host(kvm, ch.as_deref())
+    #[cfg(target_arch = "x86_64")]
+    {
+        let ch = find_cloud_hypervisor();
+        check_linux_x86_64_host(kvm, ch.as_deref())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        check_linux_kvm(kvm, std::env::consts::ARCH)
+    }
 }
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+/// Preflight check before spawning `hanzo-vm` on macOS.
+#[cfg(target_os = "macos")]
+pub(crate) fn preflight_host() -> Result<()> {
+    let hv_support = Command::new("sysctl")
+        .args(["-n", "kern.hv_support"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<i64>()
+                .ok()
+        });
+    let codesigned_entitled = resolve().and_then(|bin| {
+        let out = Command::new("codesign")
+            .args(["-d", "--entitlements", ":-"])
+            .arg(&bin)
+            .output()
+            .ok()?;
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Some(out.status.success() && combined.contains("com.apple.security.virtualization"))
+    });
+    check_macos_virtualization_host(std::env::consts::ARCH, hv_support, codesigned_entitled)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn preflight_host() -> Result<()> {
     Ok(())
 }
