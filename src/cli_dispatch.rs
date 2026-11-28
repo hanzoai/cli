@@ -22,7 +22,7 @@ pub(crate) async fn dispatch(command: Commands, mut config: config::Config) -> R
             commands::dev::session(&mut config, args, Target::Desktop).await?
         }
         Commands::Daemon(args) => commands::daemon::run(&mut config, args).await?,
-        Commands::Sources(args) => commands::sources::run(&mut config, args).await?,
+        Commands::Machines(args) => commands::machines::run(&mut config, args).await?,
         Commands::Mcp { command, args } => commands::mcp::run(command, args)?,
         Commands::Prompt(args) => commands::prompt::run(args).await?,
 

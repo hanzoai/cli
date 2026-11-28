@@ -1,5 +1,5 @@
-//! `hanzo sources` — HIP-1350 unified machine sources, provider accounts, and
-//! cross-source usage (`/v1/sources`, `/v1/sources/accounts`, `/v1/sources/usage`).
+//! `hanzo machines` — HIP-1350 unified linked machines, provider accounts, and
+//! usage (`/v1/machines`, `/v1/machines/accounts`, `/v1/machines/usage`).
 //!
 //! Links this machine under the signed-in person with a persistent Ed25519
 //! device keypair, signs heartbeats using the exact `hanzo-source-heartbeat/1`
@@ -27,20 +27,20 @@ use crate::config::Config;
 use crate::iam::{paths::DEFAULT_BRAND, provider};
 
 #[derive(Args, Clone)]
-pub struct SourcesArgs {
+pub struct MachinesArgs {
     #[command(subcommand)]
-    pub command: Option<SourcesCommand>,
+    pub command: Option<MachinesCommand>,
 }
 
 #[derive(Subcommand, Clone)]
-pub enum SourcesCommand {
-    /// List your linked machines / sources (`GET /v1/sources`)
+pub enum MachinesCommand {
+    /// List your linked machines (`GET /v1/machines`)
     List {
         /// Emit raw JSON
         #[arg(long)]
         json: bool,
     },
-    /// Link this machine as a HIP-1350 source and send signed Ed25519 heartbeats
+    /// Link this machine under your Hanzo account and send signed Ed25519 heartbeats
     Link {
         /// Display name for this machine (defaults to hostname)
         #[arg(long)]
@@ -58,21 +58,21 @@ pub enum SourcesCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Revoke a linked source (`DELETE /v1/sources/:id`)
+    /// Revoke a linked machine (`DELETE /v1/machines/:id`)
     #[command(alias = "rm")]
     Revoke {
-        /// Source id (`src_...`)
+        /// Machine id (`src_...`)
         id: String,
     },
-    /// Manage unified provider accounts (KMS-sealed keys + logins reported by sources)
+    /// Manage unified provider accounts (KMS-sealed keys + logins reported by machines)
     Accounts {
         #[command(subcommand)]
         command: Option<AccountsCommand>,
     },
-    /// Show unified cross-source usage (`GET /v1/sources/usage`)
+    /// Show unified usage across machines and providers (`GET /v1/machines/usage`)
     Usage {
-        /// Grouping dimension: source | provider | model | user | day
-        #[arg(long, default_value = "provider", value_parser = ["source", "provider", "model", "user", "day"])]
+        /// Grouping dimension: machine | provider | model | user | day
+        #[arg(long, default_value = "provider", value_parser = ["machine", "provider", "model", "user", "day", "source"])]
         by: String,
         /// Start timestamp (RFC 3339)
         #[arg(long)]
@@ -88,12 +88,12 @@ pub enum SourcesCommand {
 
 #[derive(Subcommand, Clone)]
 pub enum AccountsCommand {
-    /// List unified provider accounts (`GET /v1/sources/accounts`)
+    /// List unified provider accounts (`GET /v1/machines/accounts`)
     List {
         #[arg(long)]
         json: bool,
     },
-    /// Seal a provider API key into Hanzo KMS (`POST /v1/sources/accounts`)
+    /// Seal a provider API key into Hanzo KMS (`POST /v1/machines/accounts`)
     Add {
         /// Provider catalog name (e.g. `anthropic`, `openai`, `google`, `openrouter`)
         #[arg(long)]
@@ -107,13 +107,13 @@ pub enum AccountsCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Delete a KMS-sealed provider account (`DELETE /v1/sources/accounts/:id`)
+    /// Delete a KMS-sealed provider account (`DELETE /v1/machines/accounts/:id`)
     #[command(alias = "delete")]
     Rm { id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SourceProvider {
+pub struct MachineProvider {
     pub provider: String,
     pub instance: String,
     pub kind: String,
@@ -123,18 +123,18 @@ pub struct SourceProvider {
     pub shared: bool,
 }
 
-pub async fn run(cfg: &mut Config, args: SourcesArgs) -> Result<()> {
-    match args.command.unwrap_or(SourcesCommand::List { json: false }) {
-        SourcesCommand::List { json } => list(cfg, json).await,
-        SourcesCommand::Link {
+pub async fn run(cfg: &mut Config, args: MachinesArgs) -> Result<()> {
+    match args.command.unwrap_or(MachinesCommand::List { json: false }) {
+        MachinesCommand::List { json } => list(cfg, json).await,
+        MachinesCommand::Link {
             name,
             zap,
             share_providers,
             once,
             json,
         } => link(cfg, name, zap, share_providers, once, json).await,
-        SourcesCommand::Revoke { id } => revoke(cfg, &id).await,
-        SourcesCommand::Accounts { command } => {
+        MachinesCommand::Revoke { id } => revoke(cfg, &id).await,
+        MachinesCommand::Accounts { command } => {
             match command.unwrap_or(AccountsCommand::List { json: false }) {
                 AccountsCommand::List { json } => list_accounts(cfg, json).await,
                 AccountsCommand::Add {
@@ -146,42 +146,43 @@ pub async fn run(cfg: &mut Config, args: SourcesArgs) -> Result<()> {
                 AccountsCommand::Rm { id } => delete_account(cfg, &id).await,
             }
         }
-        SourcesCommand::Usage { by, from, to, json } => usage(cfg, &by, from, to, json).await,
+        MachinesCommand::Usage { by, from, to, json } => usage(cfg, &by, from, to, json).await,
     }
 }
 
 async fn list(cfg: &mut Config, as_json: bool) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     let val = expect_ok(
-        seam.send(Method::GET, "/v1/sources", &[], None).await?,
-        "list sources",
+        seam.send(Method::GET, "/v1/machines", &[], None).await?,
+        "list machines",
     )?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&val)?);
         return Ok(());
     }
-    let sources = val
-        .get("sources")
+    let machines = val
+        .get("machines")
+        .or_else(|| val.get("sources"))
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if sources.is_empty() {
-        println!("no linked sources — run `hanzo sources link` to link this machine");
+    if machines.is_empty() {
+        println!("no linked machines — run `hanzo machines link` to link this machine");
         return Ok(());
     }
-    for s in sources {
-        let id = s.get("id").and_then(Value::as_str).unwrap_or("");
-        let name = s.get("name").and_then(Value::as_str).unwrap_or("");
-        let state = s.get("state").and_then(Value::as_str).unwrap_or("offline");
-        let os = s.get("os").and_then(Value::as_str).unwrap_or("");
-        let arch = s.get("arch").and_then(Value::as_str).unwrap_or("");
-        let version = s.get("version").and_then(Value::as_str).unwrap_or("");
+    for m in machines {
+        let id = m.get("id").and_then(Value::as_str).unwrap_or("");
+        let name = m.get("name").and_then(Value::as_str).unwrap_or("");
+        let state = m.get("state").and_then(Value::as_str).unwrap_or("offline");
+        let os = m.get("os").and_then(Value::as_str).unwrap_or("");
+        let arch = m.get("arch").and_then(Value::as_str).unwrap_or("");
+        let version = m.get("version").and_then(Value::as_str).unwrap_or("");
         let dot = match state {
             "online" => "●".green(),
             "revoked" => "✗".red(),
             _ => "○".dimmed(),
         };
-        let provs: Vec<String> = s
+        let provs: Vec<String> = m
             .get("providers")
             .and_then(Value::as_array)
             .map(|arr| {
@@ -211,7 +212,7 @@ async fn link(
     as_json: bool,
 ) -> Result<()> {
     let mut seam = Seam::open(cfg, DEFAULT_BRAND).await?;
-    let key_path = source_key_path()?;
+    let key_path = machine_key_path()?;
     let kp = load_or_create_keypair(&key_path)?;
     let pub_b64 = URL_SAFE_NO_PAD.encode(kp.public_key().as_ref());
 
@@ -235,14 +236,14 @@ async fn link(
     }
 
     let linked = expect_ok(
-        seam.send(Method::POST, "/v1/sources", &[], Some(link_body))
+        seam.send(Method::POST, "/v1/machines", &[], Some(link_body))
             .await?,
-        "link source",
+        "link machine",
     )?;
     let id = linked
         .get("id")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("cloud did not return a source id"))?
+        .ok_or_else(|| anyhow!("cloud did not return a machine id"))?
         .to_string();
     let interval_secs = linked
         .get("interval")
@@ -259,7 +260,7 @@ async fn link(
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "source": linked,
+                "machine": linked,
                 "heartbeat": beat_reply,
                 "zap": effective_zap,
                 "providers": providers,
@@ -346,7 +347,7 @@ async fn send_heartbeat(
     id: &str,
     version: &str,
     zap: &str,
-    providers: &[SourceProvider],
+    providers: &[MachineProvider],
     busy: i32,
 ) -> Result<Value> {
     let at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -363,30 +364,30 @@ async fn send_heartbeat(
     expect_ok(
         seam.send(
             Method::POST,
-            &format!("/v1/sources/{id}/heartbeat"),
+            &format!("/v1/machines/{id}/heartbeat"),
             &[],
             Some(body),
         )
         .await?,
-        "source heartbeat",
+        "machine heartbeat",
     )
 }
 
 async fn revoke(cfg: &mut Config, id: &str) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     expect_ok(
-        seam.send(Method::DELETE, &format!("/v1/sources/{id}"), &[], None)
+        seam.send(Method::DELETE, &format!("/v1/machines/{id}"), &[], None)
             .await?,
-        "revoke source",
+        "revoke machine",
     )?;
-    println!("{} revoked source {id}", "✓".green());
+    println!("{} revoked machine {id}", "✓".green());
     Ok(())
 }
 
 async fn list_accounts(cfg: &mut Config, as_json: bool) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
     let val = expect_ok(
-        seam.send(Method::GET, "/v1/sources/accounts", &[], None)
+        seam.send(Method::GET, "/v1/machines/accounts", &[], None)
             .await?,
         "list provider accounts",
     )?;
@@ -400,7 +401,7 @@ async fn list_accounts(cfg: &mut Config, as_json: bool) -> Result<()> {
         .cloned()
         .unwrap_or_default();
     if accounts.is_empty() {
-        println!("no unified provider accounts yet — run `hanzo sources link --share-providers` or `hanzo sources accounts add`");
+        println!("no unified provider accounts yet — run `hanzo machines link --share-providers` or `hanzo machines accounts add`");
         return Ok(());
     }
     for a in accounts {
@@ -449,7 +450,7 @@ async fn add_account(
         "value": value,
     });
     let val = expect_ok(
-        seam.send(Method::POST, "/v1/sources/accounts", &[], Some(body))
+        seam.send(Method::POST, "/v1/machines/accounts", &[], Some(body))
             .await?,
         "add provider account",
     )?;
@@ -471,7 +472,7 @@ async fn delete_account(cfg: &mut Config, id: &str) -> Result<()> {
     expect_ok(
         seam.send(
             Method::DELETE,
-            &format!("/v1/sources/accounts/{id}"),
+            &format!("/v1/machines/accounts/{id}"),
             &[],
             None,
         )
@@ -490,7 +491,8 @@ async fn usage(
     as_json: bool,
 ) -> Result<()> {
     let seam = Seam::open(cfg, DEFAULT_BRAND).await?;
-    let mut query = vec![format!("by={by}")];
+    let canonical_by = if by == "source" { "machine" } else { by };
+    let mut query = vec![format!("by={canonical_by}")];
     if let Some(f) = from {
         query.push(format!("from={f}"));
     }
@@ -498,9 +500,9 @@ async fn usage(
         query.push(format!("to={t}"));
     }
     let val = expect_ok(
-        seam.send(Method::GET, "/v1/sources/usage", &query, None)
+        seam.send(Method::GET, "/v1/machines/usage", &query, None)
             .await?,
-        "sources usage",
+        "machines usage",
     )?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&val)?);
@@ -534,7 +536,7 @@ pub fn heartbeat_signing_message(
     version: &str,
     zap: &str,
     busy: i32,
-    providers: &[SourceProvider],
+    providers: &[MachineProvider],
 ) -> String {
     let mut out = String::new();
     out.push_str("hanzo-source-heartbeat/1\n");
@@ -557,34 +559,35 @@ pub fn heartbeat_signing_message(
     out
 }
 
-fn source_key_path() -> Result<PathBuf> {
+fn machine_key_path() -> Result<PathBuf> {
     let dir = dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
         .ok_or_else(|| anyhow!("cannot locate config directory"))?
         .join("hanzo");
     std::fs::create_dir_all(&dir)?;
+    // Keep existing on-disk filename so already-linked machines preserve their device key.
     Ok(dir.join("source-key.ed25519"))
 }
 
 pub fn load_or_create_keypair(path: &Path) -> Result<Ed25519KeyPair> {
-    // Two first-time `hanzo sources link` processes must share one device key.
+    // Two first-time `hanzo machines link` processes must share one device key.
     // The lock lives beside the key, so it also guards a not-yet-created file.
     let _guard = crate::config::Lock::acquire(path)?;
     if path.is_file() {
         let pkcs8 = std::fs::read(path)
-            .with_context(|| format!("reading source device key {}", path.display()))?;
+            .with_context(|| format!("reading machine device key {}", path.display()))?;
         return Ed25519KeyPair::from_pkcs8(&pkcs8)
             .map_err(|_| anyhow!("invalid Ed25519 keypair in {}", path.display()));
     }
     let rng = SystemRandom::new();
     let doc = Ed25519KeyPair::generate_pkcs8(&rng)
-        .map_err(|_| anyhow!("generating Ed25519 source keypair"))?;
+        .map_err(|_| anyhow!("generating Ed25519 machine keypair"))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     write_private(path, doc.as_ref())?;
     Ed25519KeyPair::from_pkcs8(doc.as_ref())
-        .map_err(|_| anyhow!("loading generated Ed25519 source keypair"))
+        .map_err(|_| anyhow!("loading generated Ed25519 machine keypair"))
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -610,8 +613,8 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Discover local AI provider state on this machine (metadata/state only —
 /// never credentials, tokens, or emails).
-fn discover_local_providers(shared: bool) -> Vec<SourceProvider> {
-    let mut out = vec![SourceProvider {
+fn discover_local_providers(shared: bool) -> Vec<MachineProvider> {
+    let mut out = vec![MachineProvider {
         provider: "hanzo".into(),
         instance: "hanzo-gateway".into(),
         kind: "login".into(),
@@ -626,7 +629,7 @@ fn discover_local_providers(shared: bool) -> Vec<SourceProvider> {
         (provider::Provider::OpenAI, "openai"),
     ] {
         if provider::key(prov).ok().flatten().is_some() {
-            out.push(SourceProvider {
+            out.push(MachineProvider {
                 provider: name.into(),
                 instance: format!("{name}-vault"),
                 kind: "key".into(),
@@ -648,7 +651,7 @@ fn discover_local_providers(shared: bool) -> Vec<SourceProvider> {
         ("opencode", "opencode"),
     ] {
         if which::which(bin).is_ok() {
-            out.push(SourceProvider {
+            out.push(MachineProvider {
                 provider: prov.into(),
                 instance: prov.into(),
                 kind: "login".into(),
@@ -698,7 +701,7 @@ mod tests {
     #[test]
     fn heartbeat_signing_message_matches_cloud_wire_format() {
         let provs = vec![
-            SourceProvider {
+            MachineProvider {
                 provider: "anthropic".into(),
                 instance: "claude-1".into(),
                 kind: "login".into(),
@@ -706,7 +709,7 @@ mod tests {
                 plan: "max".into(),
                 shared: true,
             },
-            SourceProvider {
+            MachineProvider {
                 provider: "openai".into(),
                 instance: "codex-cli".into(),
                 kind: "login".into(),
@@ -739,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_first_source_links_share_one_persisted_keypair() {
+    fn concurrent_first_machine_links_share_one_persisted_keypair() {
         use std::sync::{Arc, Barrier};
 
         let tmp = tempfile::tempdir().unwrap();
@@ -792,11 +795,11 @@ mod tests {
     #[test]
     fn detects_401_auth_failure_for_heartbeat_refresh() {
         assert!(is_auth_failure(&anyhow!(
-            "source heartbeat failed (401): a validated principal is required: send Authorization: Bearer <API key>"
+            "machine heartbeat failed (401): a validated principal is required: send Authorization: Bearer <API key>"
         )));
         assert!(is_auth_failure(&anyhow!("401 Unauthorized")));
         assert!(!is_auth_failure(&anyhow!(
-            "source heartbeat failed (503): no instance running"
+            "machine heartbeat failed (503): no instance running"
         )));
     }
 }

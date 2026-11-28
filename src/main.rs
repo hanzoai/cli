@@ -95,9 +95,9 @@ enum Commands {
     /// Talk directly to the local Rust `hanzod` daemon (same backend Hanzo Desktop uses)
     Daemon(commands::daemon::DaemonArgs),
 
-    /// Unified linked machines, provider accounts, and cross-source usage (HIP-1350)
-    #[command(alias = "source")]
-    Sources(commands::sources::SourcesArgs),
+    /// Unified linked machines, provider accounts, and usage (HIP-1350)
+    #[command(alias = "machine")]
+    Machines(commands::machines::MachinesArgs),
 
     /// Run or configure the local Hanzo MCP server (`hanzo mcp`, `doctor`, `install`, `pair`)
     #[command(args_conflicts_with_subcommands = true)]
